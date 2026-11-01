@@ -48,7 +48,7 @@ async function fixture(t: test.TestContext) {
     nodeId: "00000000-0000-4000-8000-0000000000aa", name: "synthetic-node",
     publicKey: identity.publicKey, privateKeyFile: paths.privateKey, policyFile: paths.policy,
     enrolledAt: new Date(0).toISOString() };
-  // Closed by its miss streak (known-sessions.mts: CLOSED_AFTER_MISSES over CLOSED_MIN_AGE_MS).
+  // #706: old miss/min-age eligibility plus injected exact positive closure metadata.
   const now = Date.now();
   fs.writeFileSync(knownSessionsFile(paths), JSON.stringify({ sessions: [{ sessionId: CLOSED, runtime: CLAUDE_RUNTIME, cwd: work,
     lastSeen: new Date(now - 200_000).toISOString(), misses: 3, missedSince: new Date(now - 120_000).toISOString(),
@@ -80,7 +80,14 @@ async function fixture(t: test.TestContext) {
     this.authenticated = true;
     return this.refreshPolicy(loadPolicy(paths.policy));
   };
-  const handle = startDaemon(config, paths, () => {}, async () => [], () => new Promise<ProbeResult>(() => {}));
+  const handle = startDaemon(config, paths, () => {}, async () => [], () => new Promise<ProbeResult>(() => {}), undefined, {}, {}, {
+    observe: async () => ({ status: "value", complete: true, source: "native-app", reasonCode: "observed", observedAt: now,
+      value: [{ runtime: CLAUDE_RUNTIME, sessionId: CLOSED,
+        app: { status: "value", value: "absent", complete: true, source: "native-app", reasonCode: "observed", observedAt: now },
+        holder: { status: "value", value: { present: false }, complete: true, source: "native-holder", reasonCode: "observed", observedAt: now },
+      }],
+    }),
+  });
   t.after(() => {
     handle.stop();
     Object.defineProperty(globalThis, "WebSocket", { configurable: true, writable: true, value: original.socket });

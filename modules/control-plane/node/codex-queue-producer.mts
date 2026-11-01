@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { livenessAdmission } from "./session-lifecycle.mts";
 import path from "node:path";
 
 import { bypassesPermissions, takeTurn, type WakeGrant } from "./autonomy.mts";
@@ -69,6 +70,7 @@ export function scheduleNativeQueue(deps: RunnerDeps, owner: string, messageIds:
 function admitted(deps: RunnerDeps, owner: string, messageIds: string[], fingerprint: string, grant?: WakeGrant):
   { ids: string[]; budget: ReturnType<typeof wakeBudget> } | null {
   const now = deps.now?.() ?? Date.now();
+  if (livenessAdmission(deps.paths, { runtime: "codex", sessionId: owner }, "queue", now, undefined, deps.livenessAuthority) === null) return null;
   const policy = readPolicy(deps.paths.policy, true);
   const session = readCodexSession(deps.paths, owner);
   const seen = Date.parse(session?.lastSeen ?? "");

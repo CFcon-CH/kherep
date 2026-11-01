@@ -1,4 +1,7 @@
+import { createAdmissionAuthority } from "./session-authority.mts";
+import { publishSynthetic } from "./session-authority-fixture.mts";
 import fs from "node:fs";
+import { publishLiveness } from "./session-lifecycle.mts";
 import path from "node:path";
 import type test from "node:test";
 
@@ -8,7 +11,7 @@ import { deliverToClosed } from "./closed-delivery.mts";
 import { SESSIONS_INTERVAL_MS } from "./daemon.mts";
 import { writeLocalSessions } from "./exchange.mts";
 import { storeMessage } from "./inbox.mts";
-import { CLOSED_AFTER_MISSES, rememberSessions } from "./known-sessions.mts";
+import { CLOSED_AFTER_MISSES, readKnownSessions, rememberSessions } from "./known-sessions.mts";
 import { WORKING_SETTLE_MS } from "./run-progress.mts";
 import type { ExecOptions } from "./sessions.mts";
 import { T0, taskNode } from "./task-fixture.mts";
@@ -20,18 +23,21 @@ import { watchTasks } from "./task-watch.mts";
 // session listed an hour ago and missing from the listing taken now. Issue
 // #389: one listing without a session no longer closes it; the fixture records
 // the misses explicitly, by default CLOSED_AFTER_MISSES periodic listings
-// (SESSIONS_INTERVAL_MS apart, the last at T0), which close the session.
+// (SESSIONS_INTERVAL_MS apart, the last at T0). #706 adds independent fresh
+// exact app/holder absence; neither misses nor policy alone authorize fallback.
 
 export const SESSION = "1f0e2c9a-6d0b-4c11-9f39-2a77c1d4e8b5";
 export const PEER = { nodeId: "00000000-0000-4000-8000-0000000000bb", session: "peer-1" };
 export const ACCEPT_ALL = { accept: [{ session: "*", from: ["*"] }] };
 let counter = 0;
 
-export type Node = ReturnType<typeof taskNode>;
+export type Node = ReturnType<typeof taskNode> & { livenessAuthority?: ReturnType<typeof createAdmissionAuthority> };
 
 export function closedNode(t: test.TestContext, sessions: Record<string, unknown> = {}, messaging: Record<string, unknown> = {},
-  misses: number = CLOSED_AFTER_MISSES): Node {
-  const node = taskNode(t, { delegate: { accept: true }, ...sessions }, { messaging: { ...ACCEPT_ALL, resumeClosed: true, ...messaging } });
+  misses: number = CLOSED_AFTER_MISSES) {
+  const base = taskNode(t, { delegate: { accept: true }, ...sessions }, { messaging: { ...ACCEPT_ALL, resumeClosed: true, ...messaging } });
+  const livenessAuthority = createAdmissionAuthority(base.paths);
+  const node = { ...base, livenessAuthority, deps: () => ({ ...base.deps(), livenessAuthority }) };
   rememberSessions(node.paths, [{ sessionId: SESSION, runtime: "claude-code", state: "idle", name: "review",
     cwd: path.join(node.workspace, "repo") }], T0 - 3_600_000);
   missListings(node, misses);
@@ -43,6 +49,11 @@ export function closedNode(t: test.TestContext, sessions: Record<string, unknown
 export function missListings(node: Node, count: number, end: number = T0, spacing: number = SESSIONS_INTERVAL_MS,
   listed: SessionInfo[] = []): void {
   for (let i = count - 1; i >= 0; i--) rememberSessions(node.paths, listed, end - i * spacing);
+  const targets = readKnownSessions(node.paths).filter(s => !listed.some(v => v.runtime === s.runtime && v.sessionId === s.sessionId));
+  publishSynthetic(node.paths, targets.map(({ runtime, sessionId }) => ({ runtime, sessionId,
+    holder: { status: "value" as const, value: { present: false }, source: "native-holder" as const, observedAt: end, complete: true, reasonCode: "observed" as const },
+    app: { status: "value" as const, value: "absent" as const, source: "native-app" as const, observedAt: end, complete: true, reasonCode: "observed" as const },
+  })), end, listed, node.livenessAuthority);
   writeLocalSessions(node.paths, listed, end);
 }
 
@@ -93,7 +104,7 @@ export async function endedIntercom(node: Node): Promise<{ task: TaskRecord; id:
   const [task] = listTasks(node.paths);
   writeTask(node.paths, { ...task, state: "done" });
   node.tick(TURN_SPACING_MS * 2);
-  writeLocalSessions(node.paths, [], T0 + TURN_SPACING_MS * 2);
+  missListings(node, CLOSED_AFTER_MISSES, T0 + TURN_SPACING_MS * 2);
   return { task, id: deliver(node, { text: "and the lint?" }) };
 }
 

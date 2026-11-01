@@ -1,3 +1,4 @@
+import type { AdmissionAuthority } from "./session-authority.mts";
 import { execFile } from "node:child_process";
 
 import { isSessionRef } from "../protocol-messages.mts";
@@ -50,7 +51,7 @@ export const RUN_TIMEOUT_MS = 60_000;
 export const BACKGROUNDED = /^backgrounded · ([A-Za-z0-9]+)/m;
 
 export interface RunnerDeps {
-  paths: NodePaths; policy: NodePolicy;
+  paths: NodePaths; policy: NodePolicy; livenessAuthority?: AdmissionAuthority;
   exec?: Exec; findClaude?: () => string | null; platform?: NodeJS.Platform; comSpec?: string;
   now?: () => number; realpath?: (p: string) => string; cli?: string;
   // The Codex runner's process hooks; tests replace them.

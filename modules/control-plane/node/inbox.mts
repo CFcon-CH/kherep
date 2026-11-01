@@ -350,16 +350,17 @@ export function markReported(dir: string, messageId: string, state: ReportedStat
   } satisfies ReceiptRecord);
 }
 
-// Refuses the waiting messages whose session no listed session matches by id
-// or name and that arrived more than afterMs ago. A message handed to an
-// intercom session (closedTo, issues #105, #109, #111) is judged by that
-// session, from the time it was handed over. Call it with a successful
-// listing only: a failed listing is not an empty node. Returns the ids.
+// Positive terminal metadata may refuse an unlisted target. Absence, even
+// after the legacy age bound, is not proof. Recheck the exact current address
+// and message state under the existing record lock. Returns the refused IDs.
 export function refuseUndeliverable(dir: string, sessions: SessionInfo[], now: number = Date.now(),
-  afterMs: number = UNDELIVERABLE_AFTER_MS, records: InboxRecord[] = listInbox(dir)): string[] {
-  const live = new Set(sessions.flatMap((s) => s.name ? [s.sessionId, s.name] : [s.sessionId]));
+  afterMs: number = UNDELIVERABLE_AFTER_MS, records: InboxRecord[] = listInbox(dir),
+  terminal: (ref: string) => boolean = () => false, closed: (ref: string) => boolean = () => false): string[] {
+  const live = new Set(sessions.filter(s => !["closed", "archived", "deleted"].includes(s.state))
+    .flatMap((s) => s.name ? [s.sessionId, s.name] : [s.sessionId]));
   const since = (r: InboxRecord): number => Date.parse((r.closedTo && r.closedAttempt) || r.receivedAt);
-  const refusable = (r: InboxRecord): boolean => (r.state === "accepted" || r.state === "offered") && !live.has(r.toSession) && now - since(r) > afterMs;
+  const refusable = (r: InboxRecord): boolean => (r.state === "accepted" || r.state === "offered") && !live.has(r.toSession)
+    && (terminal(r.toSession) || now - since(r) > afterMs && closed(r.toSession));
   return records.filter(refusable).filter((r) => markRefused(dir, r.messageId, "target session not running", refusable))
     .map((r) => r.messageId);
 }

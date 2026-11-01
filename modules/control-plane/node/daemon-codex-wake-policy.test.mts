@@ -4,11 +4,13 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
+import { publishLiveness } from "./session-lifecycle.mts";
+import { writeLocalSessions } from "./exchange-sessions.mts";
 import { wakeAudit } from "./autonomy.mts";
 import { NodeClient } from "./client.mts";
 import { codexQueueIdle } from "./codex-queue.mts";
 import { nodePaths, writeConfig, type NodeConfig } from "./config.mts";
-import { startDaemon } from "./daemon.mts";
+import { startDaemon, SESSIONS_INTERVAL_MS } from "./daemon.mts";
 import { EXCHANGE_INTERVAL_MS } from "./exchange.mts";
 import { generateIdentity, writePrivateKey } from "./identity.mts";
 import { getMessageProgress, storeMessage } from "./inbox.mts";
@@ -34,7 +36,7 @@ const until = async (done: () => boolean, what: string): Promise<void> => {
 };
 const settle = async (): Promise<void> => { await flush(); await codexQueueIdle(); await flush(); };
 
-function daemon(t: test.TestContext) {
+async function daemon(t: test.TestContext) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "kherep-daemon-codex-wake-policy-"));
   const paths = nodePaths(root);
   fs.mkdirSync(paths.dir, { recursive: true });
@@ -55,6 +57,14 @@ function daemon(t: test.TestContext) {
   const startedAt = new Date(Date.now() - 60_000).toISOString();
   writeTask(paths, { taskId: TASK, name: `task-${TASK.slice(0, 8)}`, runtime: "codex", sessionId: OWNER, cwd: work,
     permissionMode: "default", state: "done", startedAt, deadline: new Date(Date.now() + 3_600_000).toISOString(), updatedAt: startedAt });
+  const measuredAt = Date.now();
+  const evidence = [{ runtime: "codex", sessionId: OWNER,
+    holder: { status: "value", value: { present: true, creationIdentity: "synthetic-created-1" }, source: "native-holder", observedAt: measuredAt, complete: true, reasonCode: "observed" },
+    loaded: { status: "value", value: true, source: "native-app", observedAt: measuredAt, complete: true, reasonCode: "observed" },
+    turn: { status: "value", value: "idle", source: "native-turn", observedAt: measuredAt, complete: true, reasonCode: "observed" },
+  }] satisfies import("./session-liveness.mts").SessionEvidence[];
+  publishLiveness(paths, evidence, measuredAt);
+  writeLocalSessions(paths, [{ runtime: "codex", sessionId: OWNER, state: "idle-loaded" }], measuredAt);
   storeMessage(paths.inbox, { messageId: MSG, from: PEER, toSession: OWNER, text: "synthetic question", createdAt: new Date().toISOString() });
   const original = { socket: globalThis.WebSocket, interval: globalThis.setInterval, clear: globalThis.clearInterval,
     refresh: NodeClient.prototype.refreshPolicy, frame: NodeClient.prototype.onFrame, codexHome: process.env.CODEX_HOME };
@@ -72,11 +82,14 @@ function daemon(t: test.TestContext) {
     send(_data: string) {}
     close(code = 1000) { this.readyState = 3; listeners.get("close")?.({ code }); }
   } });
-  globalThis.setInterval = ((callback: () => void, ms: number) => { timers.set(ms, callback); return { interval: ms }; }) as unknown as typeof setInterval;
+  globalThis.setInterval = ((callback: () => void, ms: number) => { if (!timers.has(ms)) timers.set(ms, callback); return { interval: ms }; }) as unknown as typeof setInterval;
   globalThis.clearInterval = (() => {}) as typeof clearInterval;
   NodeClient.prototype.refreshPolicy = async () => [];
   NodeClient.prototype.onFrame = async () => [];
-  const handle = startDaemon(config, paths, () => {}, async () => [], () => new Promise<ProbeResult>(() => {}));
+  const handle = startDaemon(config, paths, () => {}, async () => [{ runtime: "codex", sessionId: OWNER, state: "unknown" }],
+    () => new Promise<ProbeResult>(() => {}), undefined, {}, {}, {
+      observe: () => ({ status: "value", value: evidence, observedAt: measuredAt, source: "native-app", complete: true, reasonCode: "observed" }),
+    });
   t.after(() => {
     handle.stop();
     Object.defineProperty(globalThis, "WebSocket", { configurable: true, writable: true, value: original.socket });
@@ -90,16 +103,23 @@ function daemon(t: test.TestContext) {
     fs.rmSync(root, { recursive: true, force: true });
   });
   listeners.get("open")?.({});
+  const generationBefore = JSON.parse(fs.readFileSync(paths.sessions, "utf8")).generation;
+  timers.get(SESSIONS_INTERVAL_MS)!();
+  await until(() => JSON.parse(fs.readFileSync(paths.sessions, "utf8")).generation !== generationBefore, "current daemon source observation committed");
   const tick = timers.get(EXCHANGE_INTERVAL_MS);
   assert.ok(tick);
   const audit = (): string[] => (fs.existsSync(wakeAudit(paths)) ? fs.readFileSync(wakeAudit(paths), "utf8").trim().split("\n")
     .map((line) => JSON.parse(line) as { sessionId: string; action: string }).filter((line) => line.sessionId === OWNER)
     .map((line) => line.action) : []);
-  return { paths, work, tick, audit, writePolicy, progress: () => getMessageProgress(paths.inbox, MSG)?.code };
+  const unknown = () => {
+    publishLiveness(paths, [{ runtime: "codex", sessionId: OWNER }], Date.now());
+    writeLocalSessions(paths, [{ runtime: "codex", sessionId: OWNER, state: "unknown" }]);
+  };
+  return { paths, work, tick, audit, writePolicy, unknown, progress: () => getMessageProgress(paths.inbox, MSG)?.code };
 }
 
 test("a sessions edit after start reaches the Codex task wake at the next exchange round", async (t) => {
-  const d = daemon(t);
+  const d = await daemon(t);
   d.tick();
   await until(() => d.progress() === "wake-disabled", "the first round held the message: sessions not enabled");
   await settle();
@@ -111,5 +131,8 @@ test("a sessions edit after start reaches the Codex task wake at the next exchan
   // The next gate: no readiness verdict for codex yet (the probe never answers), so the message waits; nothing spawned.
   assert.equal(d.progress(), "retry-pending");
   assert.deepEqual(d.audit(), ["disabled"]);
+  d.unknown();
+  d.tick();
+  await until(() => d.progress() === "awaiting-user-turn", "unknown metadata independently vetoes wake before readiness");
   assert.equal(listTasks(d.paths).find((record) => record.taskId === TASK)?.running, undefined, "no resume started");
 });

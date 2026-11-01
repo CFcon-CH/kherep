@@ -47,7 +47,7 @@ test("lists Codex sessions seen within the window, skips older ones and prunes t
   recordCodexSession(paths, "thr_old", undefined, NOW - CODEX_RETENTION_MS - 1);
   fs.writeFileSync(file(paths, "thr_forged"), JSON.stringify({ sessionId: "thr_other", lastSeen: new Date(NOW).toISOString() }));
   assert.deepEqual(listCodexSessions(paths, NOW), [
-    { sessionId: CODEX, runtime: "codex", state: "active", name: "codex-89abcdef", cwd: "/work/repo", kind: "codex" },
+    { sessionId: CODEX, runtime: "codex", state: "reachable-probable", name: "codex-89abcdef", cwd: "/work/repo", kind: "codex" },
   ]);
   assert.equal(codexSessionName(CODEX), "codex-89abcdef");
   assert.equal(fs.existsSync(file(paths, "thr_old")), false, "pruned after 7 days");
@@ -69,7 +69,7 @@ test("the daemon listing adds Codex sessions, and the undeliverable check keeps 
   ids.forEach((messageId, n) => storeMessage(paths.inbox, { messageId, from: { nodeId: "00000000-0000-4000-8000-0000000000cc", session: "b" },
     toSession: [CODEX, "codex-89abcdef", "gone"][n], text: "hi", createdAt: new Date(0).toISOString() }, received));
   await recordingSessions(paths, list, () => {}, () => NOW)();
-  assert.deepEqual(ids.map((id) => getMessage(paths.inbox, id)?.state), ["accepted", "accepted", "refused"]);
+  assert.deepEqual(ids.map((id) => getMessage(paths.inbox, id)?.state), ["accepted", "accepted", "accepted"]);
   assert.deepEqual(readLocalSessions(paths).map((s) => s.name), ["review", "codex-89abcdef"]);
 });
 

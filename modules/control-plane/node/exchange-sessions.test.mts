@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { publishLiveness } from "./session-lifecycle.mts";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -29,6 +30,10 @@ test("U1: recordingSessions refuses from the record source it is given, not from
   const [a, b] = [id(1), id(2)];
   waiting(paths.inbox, a, now - UNDELIVERABLE_AFTER_MS - HOUR);
   waiting(paths.inbox, b, now - UNDELIVERABLE_AFTER_MS - HOUR);
+  publishLiveness(paths, [{ runtime: "codex", sessionId: "gone", lifecycle: {
+    status: "value", value: { state: "deleted", generation: 1 }, observedAt: now,
+    source: "native-lifecycle", complete: true, reasonCode: "observed",
+  } }], now);
   const logs: string[] = [];
   const list = recordingSessions(paths, async () => [], (line) => logs.push(line), () => now, UNDELIVERABLE_AFTER_MS, () => [getMessage(paths.inbox, a)!]);
   assert.deepEqual(await list(), []);

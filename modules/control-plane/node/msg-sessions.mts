@@ -1,3 +1,4 @@
+import { normalizedState } from "./session-liveness.mts";
 import type { DirectoryBody, DirectorySession } from "../protocol-messages.mts";
 import { CODEX_RUNTIME, isCodexHookEvent, readCodexSession } from "./codex-sessions.mts";
 import { readConfig } from "./config.mts";
@@ -82,7 +83,7 @@ export function sessions(io: Io, from?: string): number {
       const task = isBackgroundTask(s);
       background ||= task;
       const event = node.nodeId === nodeId && s.runtime === CODEX_RUNTIME ? lastEvent(io, s.sessionId) : "";
-      io.out(`  ${mine ? "*" : " "} ${s.label ?? s.name ?? "-"}${title}  ${s.sessionId}  ${s.state}  ${s.runtime}${s.cwd ? `  ${s.cwd}` : ""}`
+      io.out(`  ${mine ? "*" : " "} ${s.label ?? s.name ?? "-"}${title}  ${s.sessionId}  ${normalizedState(s.state, s)}  ${s.runtime}${s.cwd ? `  ${s.cwd}` : ""}`
         + event + (task ? "  [background task]" : ""));
     }
   }

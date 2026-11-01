@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { closedFallbackGeneration } from "./session-lifecycle.mts";
 
 import { isSessionRef, OPERATOR_NODE_ID, type MessageProgressCode } from "../protocol-messages.mts";
 import { DELEGATED_PERMISSION_MODES, type PermissionMode, type TaskRuntime } from "../protocol-tasks.mts";
@@ -93,10 +94,10 @@ export async function deliverToClosed(deps: RunnerDeps, log: (line: string) => v
   for (const record of waiting) {
     const target = resolveTarget(paths, record.toSession);
     if (!target || live.has(target.sessionId)) continue;
-    // Issue #389: one listing without a session is no proof that it ended.
-    // Until its miss streak closes it, the message waits for the session's
-    // own hook, and is refused after UNDELIVERABLE_AFTER_MS if it never returns.
-    if (!closedSession(paths, target.sessionId)) {
+    // #706: retain the baseline miss/age veto and require fresh exact closure.
+    // Unknown targets keep their tracking/progress, without enabling fallback.
+    if (closedFallbackGeneration(paths, { runtime: target.runtime === "codex" ? "codex" : "claude-code", sessionId: target.sessionId }, now, undefined, deps.livenessAuthority) === null
+      || !closedSession(paths, target.sessionId, now)) {
       trackSession(paths, { sessionId: target.sessionId, runtime: target.runtime === "codex" ? CODEX_RUNTIME : CLAUDE_RUNTIME,
         ...(target.cwd ? { cwd: target.cwd } : {}) }, now);
       progressRecords(paths, [record], "waiting", "awaiting-user-turn", now);
@@ -135,6 +136,11 @@ function marked(deps: RunnerDeps, record: InboxRecord, now: number, toSession?: 
 async function deliver(deps: RunnerDeps, found: Target, all: InboxRecord[], now: number): Promise<boolean> {
   const { paths, policy } = deps;
   const sessionId = found.sessionId;
+  const target = { runtime: found.runtime === "codex" ? "codex" : "claude-code", sessionId };
+  const generation = closedFallbackGeneration(paths, target, now, undefined, deps.livenessAuthority);
+  if (generation === null) return false;
+  const stillEligible = () => closedFallbackGeneration(paths, target, deps.now?.() ?? Date.now(), generation, deps.livenessAuthority) !== null
+    && closedSession(paths, sessionId, deps.now?.() ?? Date.now());
   // Issue #230: each refusal names its code. A policy refusal waits with the
   // code of its guard; only a launch that failed is fallback-failed.
   const refuse = (reason: string, code: MessageProgressCode, records: InboxRecord[] = all): false => {
@@ -166,11 +172,13 @@ async function deliver(deps: RunnerDeps, found: Target, all: InboxRecord[], now:
     progressRecords(paths, records, "waiting", "target-busy", now);
     return false;
   }
+  if (!stillEligible()) return false;
   const intercom = intercomFor(paths, records[0]);
   if (intercom?.operatorStoppedAt !== undefined) return refuse("intercom session stopped by operator", "operator-stopped");
   const runtime = intercom ? intercom.runtime ?? "claude" : found.runtime;
   if (!sessions.runtimes.includes(runtime)) return refuse(`runtime ${runtime} is not enabled on this node`, "wake-disabled");
   if (intercom && await runs(deps, intercom)) {
+    if (!stillEligible()) return false;
     // Its delivery hook, or the wake through its task grant, offers them.
     const linked = attachDelivery(paths, intercom, records.map((r) => r.messageId));
     if (linked !== intercom) writeTask(paths, linked, now);
@@ -209,6 +217,7 @@ async function deliver(deps: RunnerDeps, found: Target, all: InboxRecord[], now:
   };
   const before = reusable ? null : startRefusal();
   if (before) return refuse(...before);
+  if (!stillEligible()) return false;
   const budget = takeTurn(paths, reusable?.sessionId ?? sessionId, now, wakeBudget(policy));
   if (budget === "spacing" || budget === "locked") {
     progressRecords(paths, records, "waiting", "retry-pending", now);
@@ -241,6 +250,7 @@ async function deliver(deps: RunnerDeps, found: Target, all: InboxRecord[], now:
       return true;
     }
   }
+  if (!stillEligible()) return false;
   const started = await startIntercom(deps, { sessionId, runtime: found.runtime, cwd: cwd.cwd }, records, mode);
   if (started === null) {
     audit(paths, now, sessionId, records, "new", why);

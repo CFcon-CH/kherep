@@ -1,5 +1,82 @@
 # Control Plane architecture
 
+## Session liveness metadata (Phase 1, #706)
+
+`session-liveness.mts` judges exact runtime/full-ID metadata as `running`,
+`idle-loaded`, `reachable-probable`, `closed`, `archived`, `deleted` or `unknown`.
+Approval waiting is never safe idle. Historical hooks and task records do not
+prove application load. Missing, failed, capped, incomplete, future and stale
+observations remain uncertainty; miss counters are diagnostic only. A complete
+fresh app-absence observation also needs exact holder absence to prove closed.
+An exact CLI holder can remain running while Desktop is absent.
+
+`liveness-pass.mts` coalesces metadata observation at most once per five minutes
+on existing daemon discovery ticks. It adds no timer or subprocess. The existing
+serialized publication lane writes `session-liveness.json` and `sessions.json`
+with one snapshot generation. `sessions.json` is the commit marker: admission
+requires matching generations and the published target state. A failed second
+write rejects the listing, reports no active snapshot, and makes old local rows
+UNKNOWN until a successful publication. Evidence ages from its original observation, with
+a 60-second display lifetime; publication never renews it. The daemon aborts and
+drains observation at stop. Unsupported native capabilities default to UNKNOWN.
+Injected sources are an adapter seam, not a measured or installed native adapter.
+
+`session-lifecycle.mts` retains bounded authoritative archive/delete tombstones
+by runtime/full ID, even after directory exclusion. Hooks, names and scan misses
+cannot clear them. Only a newer authoritative restore generation can supersede
+a terminal generation. A higher generation with a backwards lifecycle observation
+time is rejected consistently: the retained ledger stays unchanged, conflicting
+display state is UNKNOWN. Prior identity retention and final directory visibility
+consume that ledger-normalized result, including when the raw list omits the ID;
+they do not classify the rejected event independently. The rejected event grants no receipt or early
+terminal refusal. Terminal cache rows must match an actual retained lifecycle
+fact in state, generation and time. Contradictory fresh exact holder evidence yields UNKNOWN
+and inhibits autonomy. Invalid caches fail closed. Persisted fields are IDs,
+fixed state/reason codes, generations and timestamps, never bodies or argv.
+
+Publication, exact-reference refusal and existing queue/wake admission read the
+same snapshot. Archived/deleted rows are excluded; uncertain rows remain
+addressable as uncertain. Positive archive/delete evidence can refuse early; positive exact closure also
+keeps the original age bound. An unknown target still waits after one hour. Admission is
+a deny-only overlay on existing permission, policy, depth, claim, budget, ACK
+and durable-attempt guards. The task wake rechecks generation after its awaited
+process check. Unknown/terminal targets cannot activate legacy intercom fallback. Fresh complete
+positive closure may only narrow that existing route: its original three-miss,
+minimum-age, address/listing, policy, permission, depth and budget vetoes remain
+independent. The old miss/minimum-age input remains the unfiltered raw listing;
+archive/delete exclusion cannot fabricate misses before a later restore.
+A complete metadata envelope does not certify each runtime listing: unseen/capped
+runtimes and per-target UNKNOWN retain prior addressable identity, separately
+from terminal visibility. Legacy remote Codex task/intercom `idle` means an ended
+run and displays UNKNOWN; explicit normalized `idle-loaded` is preserved.
+Generation is rechecked after existing process awaits and before
+an attempt; no previously ineligible fallback becomes eligible.
+Positive disk rows never grant autonomous authority. Each daemon constructs one
+nonpersistent authority, empty on boot, shared by direct/background recorders
+and all existing admission gates. Only exact current-run source observations
+can supply receipts. Publication revokes before either write and grants only
+after both coherent writes; any persistence-boundary failure faults authority
+for the rest of that run. Cached/pending observations cannot repair a fault.
+An ordinary restart begins empty and needs new source evidence plus publication;
+no unwritten terminal fact is claimed durable. Stop revokes before drain.
+
+Display/nonterminal history and the authoritative lifecycle ledger are separate
+populations, each capped at 512. Current raw identities take priority; oldest
+uncertain history is evicted as unavailable/UNKNOWN, never deleted. Eviction
+surfaces the existing partial marker. Terminal/restored ledger entries are never
+evicted and need not occupy display slots. A full ledger itself fences every
+unrecorded identity as UNKNOWN/capped across restart, even with positive holder
+evidence; existing recorded restore generations retain replay protection. No
+separate permanent capacity latch or automatic reset is introduced.
+
+No route, queue pointer, native argv, target resume or deadline wiring changes
+belong to Phase 1. Native acceptance and installed artifact identity are open.
+
+The accepted later deadline design checks an immutable authenticated sender
+24-hour origin immediately before each Kherep queue/launch/resume. Phase 1 does
+not implement it. Native scheduling may start a turn after expiry following
+timely admission; actual-native-start expiry is not guaranteed.
+
 ## Managed daemon service
 
 `node/service-cli.mts` dispatches `service install|upgrade|status|rollback`
@@ -200,12 +277,11 @@ mark, any error, the admission release included, propagates to the per-burst
 catch of the closed delivery, which starts nothing more for that burst. A kept
 run listed under a malformed ID keeps the old full ID, the new short ID and the
 pending marker, and its attempted messages stay at the old ID. No second session
-starts for them; they can still be refused under the existing rules: a
-successful listing that shows neither their target ID nor name, state accepted
-or offered, and an age over the threshold, counted from `closedAttempt` when
-`closedTo` is set and from `receivedAt` otherwise, checked again under the record
-lock. A failed listing, a live target, a terminal state, a younger message or a
-busy record refuses nothing, so neither refusal nor delivery is guaranteed.
+starts for them. Phase 1 liveness requires positive exact terminal metadata to
+refuse an unlisted accepted/offered message, checked again under the record lock.
+Absence alone, including after the legacy age threshold, proves no closure. A
+failed listing, live/unknown target, terminal message or busy record refuses
+nothing, so neither refusal nor delivery is guaranteed.
 
 The start and continue mapping (`node/session-runner.mts` `background`) applies
 the same classification locally (issue #639): a malformed nonempty listed full

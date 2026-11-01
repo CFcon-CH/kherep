@@ -1,3 +1,7 @@
+import { createAdmissionAuthority, revokeAuthority, stopAuthority } from "./session-authority.mts";
+import { readLivenessSnapshot } from "./session-lifecycle.mts";
+import { targetKey } from "./session-liveness.mts";
+import { attachLiveness, createLivenessPass, type LivenessSource } from "./liveness-pass.mts";
 import { PING_FRAME, type SessionInfo } from "../protocol.mts";
 import { isTaskRuntime, type TaskRuntime } from "../protocol-tasks.mts";
 import { reconnectDelay } from "./backoff.mts";
@@ -83,7 +87,7 @@ export function startDaemon(config: NodeConfig, paths: NodePaths, log: (line: st
   sessionSource?: (signal?: AbortSignal) => Promise<SessionInfo[]>,
   probe: (runtime: TaskRuntime, onUnconfirmedShutdown?: () => void) => Promise<ProbeResult> = (runtime, onUnconfirmedShutdown) =>
     probeRuntime(runtime, { forgetSession: (threadId) => forgetCodexSession(paths, threadId), onUnconfirmedShutdown }),
-  service?: DaemonServiceBinding, lanes: LaneOptions = {}, maintenance: MaintenanceOptions = {}): DaemonHandle {
+  service?: DaemonServiceBinding, lanes: LaneOptions = {}, maintenance: MaintenanceOptions = {}, livenessSource?: LivenessSource): DaemonHandle {
   const identity = readPrivateKey(config.privateKeyFile);
   if (identity.publicKey !== config.publicKey) throw new Error("private key does not match the enrolled public key");
   const policy = loadPolicy(config.policyFile);
@@ -104,7 +108,16 @@ export function startDaemon(config: NodeConfig, paths: NodePaths, log: (line: st
   // Successful listings update sessions.json and include hook-recorded Codex sessions.
   let backgroundDiscovery: { controller: AbortController; socket: WebSocket } | null = null;
   const rawSource = sessionSource ?? ((signal?: AbortSignal) => listSessions({ paths, codexHome: codexHome(), signal }));
-  const source = (signal?: AbortSignal) => waitForServiceAdmission(paths, () => rawSource(signal), { signal });
+  const livenessAuthority = createAdmissionAuthority(paths);
+  const liveness = createLivenessPass(livenessSource, Date.now, livenessAuthority);
+  const source = (signal?: AbortSignal) => waitForServiceAdmission(paths, async () => {
+    revokeAuthority(livenessAuthority);
+    const rows = await rawSource(signal);
+    const targets = new Map([...rows, ...(readLivenessSnapshot(paths)?.sessions ?? [])].map(s => [targetKey(s), s]));
+    const observation = await liveness.observe([...targets.values()], signal);
+    signal?.throwIfAborted();
+    return attachLiveness(rows, observation);
+  }, { signal });
   // Filesystem/loopback runtime discovery starts no user runtime process and
   // must remain available while a replacement service authenticates.
   const runtimeDiscovery = () => discoverRuntimes();
@@ -130,7 +143,7 @@ export function startDaemon(config: NodeConfig, paths: NodePaths, log: (line: st
   const sessions = recordingSessions(paths, (signal) => {
     backgroundDiscovery?.controller.abort();
     return source(signal);
-  }, log, undefined, undefined, () => inbox.records());
+  }, log, undefined, undefined, () => inbox.records(), livenessAuthority);
   // Issue #197: one readiness probe per enabled runtime at the start, then only
   // when a run needs a runtime whose verdict aged out (runtime-readiness.mts).
   // Issue #420: none at the start for a runtime with a carried-over verdict.
@@ -143,16 +156,17 @@ export function startDaemon(config: NodeConfig, paths: NodePaths, log: (line: st
   // Issue #420: a stop waits for the probe in flight instead of leaving it to a
   // kill that may cut a login renewal short; no new probe starts meanwhile.
   const drainProbes = (): Promise<void> => {
+    stopAuthority(livenessAuthority);
     const drained = readiness.stop();
     halt.abort(); // also stops the start maintenance (issue #581)
     clearTimeout(fallback);
-    return drained;
+    return Promise.all([drained, liveness.stop()]).then(() => {});
   };
   // Issue #427: unless a seeded ready verdict (issue #420), a drain or an install pause defers it,
   // the first check runs the Windows identity lookup before connect().
   for (const runtime of enabledRuntimes(policy)) void readiness.check(runtime);
   // Issue #408, PR 4: the capability proven on the current connection, read lazily from the client below.
-  const runner: RunnerDeps = { paths, policy, log, readiness, workerCapabilities: () => client.workerCapabilities, inbox: () => inbox.records() };
+  const runner: RunnerDeps = { paths, policy, livenessAuthority, log, readiness, workerCapabilities: () => client.workerCapabilities, inbox: () => inbox.records() };
   const live = (): RunnerDeps => ({ ...runner, policy: loadPolicy(config.policyFile) });
   recoverOperations(paths);
   recoverForkAttemptsAtStart(paths, Date.now(), log);
@@ -261,7 +275,7 @@ export function startDaemon(config: NodeConfig, paths: NodePaths, log: (line: st
         }).then((listed) => {
           chain = chain.then(enqueued(timed, "chain", "snapshot", async () => {
             if (socket !== ws || ws.readyState !== WebSocket.OPEN) return;
-            if (listed && !controller.signal.aborted) await recordAndPublishSessions(client, paths, listed, send, log, controller.signal, () => inbox.records());
+            if (listed && !controller.signal.aborted) await recordAndPublishSessions(client, paths, listed, send, log, controller.signal, () => inbox.records(), livenessAuthority);
             await watchTasks(runner, log);
             await deliverToClosed(live(), log);
           })).catch((error: unknown) => log(`kherep-node: session snapshot failed: ${String(error)}`));
@@ -336,7 +350,7 @@ export function startDaemon(config: NodeConfig, paths: NodePaths, log: (line: st
             void source(controller.signal).then((listed) => {
               chain = chain.then(enqueued(timed, "chain", "snapshot", async () => {
                 if (socket !== ws || ws.readyState !== WebSocket.OPEN || controller.signal.aborted) return;
-                await recordAndPublishSessions(client, paths, listed, send, log, controller.signal, () => inbox.records());
+                await recordAndPublishSessions(client, paths, listed, send, log, controller.signal, () => inbox.records(), livenessAuthority);
               }));
               return chain;
             }).catch((error: unknown) => {

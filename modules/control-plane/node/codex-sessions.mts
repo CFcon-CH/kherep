@@ -15,7 +15,7 @@ import { isActive, listTasks } from "./task-records.mts";
 // sessions seen recently.
 
 export const CODEX_RUNTIME = "codex";
-// A Codex session seen by a hook within this window counts as running.
+// Historical hook evidence is retained within this window; it never proves running.
 export const CODEX_ACTIVE_MS = 12 * 60 * 60_000;
 // Files of sessions not seen for this long are removed.
 export const CODEX_RETENTION_MS = 7 * 24 * 60 * 60_000;
@@ -224,7 +224,7 @@ export function listCodexSessions(paths: NodePaths, now: number = Date.now(), ac
       continue;
     }
     if (!record || !isCodexSessionId(record.sessionId) || `${record.sessionId}.json` !== name || now - seen > activeMs) continue;
-    const session: SessionInfo = { sessionId: record.sessionId, runtime: CODEX_RUNTIME, state: "active",
+    const session: SessionInfo = { sessionId: record.sessionId, runtime: CODEX_RUNTIME, state: seen <= now ? "reachable-probable" : "unknown",
       name: codexSessionName(record.sessionId), ...(record.cwd ? { cwd: record.cwd } : {}), kind: "codex" };
     if (isSessionInfo(session) && isSessionRef(session.name)) sessions.push(session);
   }
@@ -242,7 +242,7 @@ export function listCodexTaskSessions(paths: NodePaths, now: number = Date.now()
     if (task.runtime !== CODEX_RUNTIME || !task.sessionId) return [];
     const active = isActive(task);
     if (!active && !(now - Date.parse(task.updatedAt) <= activeMs)) return [];
-    const session: SessionInfo = { sessionId: task.sessionId, runtime: CODEX_RUNTIME, state: active ? "running" : "idle",
+    const session: SessionInfo = { sessionId: task.sessionId, runtime: CODEX_RUNTIME, state: "unknown",
       startedAt: task.startedAt, name: task.name, ...(task.cwd.length <= 512 ? { cwd: task.cwd } : {}),
       kind: task.local === "intercom" ? "codex-intercom" : "codex-task", ...(task.label ? { label: task.label } : {}) };
     return isSessionInfo(session) ? [session] : [];

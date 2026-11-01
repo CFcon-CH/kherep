@@ -13,10 +13,9 @@ import {
 } from "./known-sessions.mts";
 import { listSessions } from "./sessions.mts";
 
-// Issue #389: a session counts as closed only after CLOSED_AFTER_MISSES
-// consecutive successful listings without it that span CLOSED_MIN_AGE_MS. A
-// listing that shows it resets the streak; a failed or partial one counts no
-// miss. The streak is kept with the session's entry in known-sessions.json.
+// #706: miss/min-age remains a diagnostic and an independent baseline veto.
+// It cannot prove closure without fresh complete exact native absence metadata.
+// Reset, retention and per-runtime completeness behavior remain covered below.
 
 const S = "1f0e2c9a-6d0b-4c11-9f39-2a77c1d4e8b5";
 const CODEX = "019a2b3c-4d5e-7f60-8123-456789abcdef";
@@ -41,14 +40,14 @@ test("the minimum age keeps N listings within one periodic cycle apart (issue #3
   assert.ok(CLOSED_MIN_AGE_MS < (CLOSED_AFTER_MISSES - 1) * SESSIONS_INTERVAL_MS, "N periodic listings do");
 });
 
-test("a session missing from fewer than N listings is not closed; the Nth periodic miss closes it (issue #389)", (t) => {
+test("even N periodic misses do not prove closure without positive metadata (#706)", (t) => {
   const paths = setup(t);
   miss(paths, T + MINUTE, T + 2 * MINUTE);
   assert.equal(closedSession(paths, S), false);
   assert.deepEqual(readKnownSessions(paths).map((s) => [s.misses, s.missedSince, s.lastSeen]),
     [[2, new Date(T + MINUTE).toISOString(), new Date(T).toISOString()]]);
   miss(paths, T + 3 * MINUTE);
-  assert.equal(closedSession(paths, S), true);
+  assert.equal(closedSession(paths, S), false, "#706: misses alone never prove closed");
   assert.equal(closedSession(paths, "never-listed"), false, "a session this node never listed has no streak");
 });
 
@@ -59,7 +58,7 @@ test("N misses in less than the minimum age do not close a session (issue #389)"
   miss(paths, T + 1_000 + CLOSED_MIN_AGE_MS - 1);
   assert.equal(closedSession(paths, S), false);
   miss(paths, T + 1_000 + CLOSED_MIN_AGE_MS);
-  assert.equal(closedSession(paths, S), true);
+  assert.equal(closedSession(paths, S), false, "#706: misses alone never prove closed");
 });
 
 test("a listing that shows the session resets its streak (issue #389)", (t) => {
@@ -71,7 +70,7 @@ test("a listing that shows the session resets its streak (issue #389)", (t) => {
   miss(paths, T + 4 * MINUTE, T + 5 * MINUTE);
   assert.equal(closedSession(paths, S), false);
   miss(paths, T + 6 * MINUTE);
-  assert.equal(closedSession(paths, S), true);
+  assert.equal(closedSession(paths, S), false, "#706: misses alone never prove closed");
 });
 
 test("a failed listing counts no miss, and the streak survives a new recorder (daemon restart) (issue #389)", async (t) => {
@@ -101,7 +100,7 @@ test("a failed listing counts no miss, and the streak survives a new recorder (d
   clock += MINUTE;
   await second();
   assert.equal(readKnownSessions(paths)[0].misses, 3);
-  assert.equal(closedSession(paths, S), true);
+  assert.equal(closedSession(paths, S), false, "#706: misses alone never prove closed");
   const stored = JSON.parse(fs.readFileSync(knownSessionsFile(paths), "utf8")) as { sessions: Record<string, unknown>[] };
   assert.deepEqual(Object.keys(stored.sessions[0]).sort(), ["lastSeen", "missedAt", "missedSince", "misses", "name", "runtime", "sessionId"]);
 });
@@ -118,7 +117,7 @@ test("a listing without claude on PATH counts no miss for Claude sessions, only 
   }
   assert.equal(closedSession(paths, S), false, "a runtime the listing could not see is not missing");
   assert.equal(readKnownSessions(paths).find((s) => s.sessionId === S)?.misses, undefined);
-  assert.equal(closedSession(paths, CODEX), true);
+  assert.equal(closedSession(paths, CODEX), false, "#706: Codex misses alone are not closure evidence");
   // An unseen runtime "*" (a listing at its cap) counts no miss for any session.
   rememberSessions(paths, [], T + 10 * MINUTE, ["*"]);
   assert.equal(readKnownSessions(paths).find((s) => s.sessionId === CODEX)?.misses, CLOSED_AFTER_MISSES);
@@ -139,7 +138,7 @@ test("a listing that shows a session through claude resets the streak a Claude-l
 test("the streak is pruned with its known session (issue #389)", (t) => {
   const paths = setup(t);
   miss(paths, T + MINUTE, T + 2 * MINUTE, T + 3 * MINUTE);
-  assert.equal(closedSession(paths, S), true);
+  assert.equal(closedSession(paths, S), false, "#706: misses alone never prove closed");
   miss(paths, T + KNOWN_RETENTION_MS + 1);
   assert.deepEqual(readKnownSessions(paths), []);
   assert.equal(closedSession(paths, S), false);

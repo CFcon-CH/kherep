@@ -130,3 +130,19 @@ test("native enqueue, original Receive, Stop and explicit processing ACK remain 
   acknowledgeCodexOffer(node.paths, node.owner, token, [node.owner]);
   assert.equal(getMessage(node.paths.inbox, id)?.state, "delivered");
 });
+
+test("unknown or terminal liveness vetoes an already scheduled queue before the launch spy", async (t) => {
+  const { publishLiveness, livenessFile } = await import("./session-lifecycle.mts");
+  for (const state of ["unknown", "archived", "deleted"] as const) await t.test(state, async sub => {
+    const node = nativeQueueNode(sub);
+    const id = node.add();
+    pollCodexQueue(node.deps());
+    if (state === "unknown") fs.rmSync(livenessFile(node.paths));
+    else publishLiveness(node.paths, [{ runtime: "codex", sessionId: node.owner, lifecycle: {
+      status: "value", value: { state, generation: 1 }, observedAt: T0, source: "native-lifecycle", complete: true, reasonCode: "observed",
+    } }], T0);
+    await codexQueueIdle();
+    assert.equal(node.fake.runs().length, 0);
+    assert.equal(getMessage(node.paths.inbox, id)?.state, "accepted");
+  });
+});

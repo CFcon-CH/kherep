@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { livenessAdmission } from "./session-lifecycle.mts";
 
 import type { MessageProgressCode } from "../protocol-messages.mts";
 import { audit, bypassesPermissions, isPlainSessionId, takeTurn, type AutonomyAction, type WakeGrant } from "./autonomy.mts";
@@ -154,6 +155,9 @@ async function wakeTask(deps: RunnerDeps, record: TaskRecord, log: (line: string
     if (due.some((id) => noted.get(id) !== "cwd-refused")) log(`kherep-node: not resuming task ${record.taskId} for messages: ${cwd.reason}`);
     return note(paths, now, sessionId, due, "cwd-refused");
   }
+  const target = { runtime: "codex", sessionId };
+  const generation = livenessAdmission(paths, target, "wake", now, undefined, deps.livenessAuthority);
+  if (generation === null) return explain(waiting, "awaiting-user-turn");
   // The previous run may still be ending (a stop's grace period); a failed read throws.
   // Issue #473: read after the guards that start no process, before the
   // readiness verdict that refuses and the turn that counts against the budget.
@@ -166,6 +170,7 @@ async function wakeTask(deps: RunnerDeps, record: TaskRecord, log: (line: string
     for (const r of waiting) markRefused(paths.inbox, r.messageId, blocked);
     return note(paths, now, sessionId, due, "runtime-not-ready");
   }
+  if (livenessAdmission(paths, target, "wake", deps.now?.() ?? Date.now(), generation, deps.livenessAuthority) === null) return explain(waiting, "awaiting-user-turn");
   const budget = takeTurn(paths, sessionId, now, wakeBudget(policy));
   if (budget === "spacing" || budget === "locked") return explain(waiting, "retry-pending");
   if (budget === "exhausted") {

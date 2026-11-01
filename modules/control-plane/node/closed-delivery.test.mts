@@ -271,3 +271,54 @@ test("a local task reports nothing to the Worker", (t) => {
   assert.deepEqual(reportIds(node.paths), []);
   assert.equal(readTask(node.paths, id)?.local, "intercom");
 });
+
+// #706 keeps the old route a strict subset of baseline eligibility: even an
+// otherwise authorized fixture with a complete old miss streak needs fresh
+// exact closure metadata. Archive/delete/unknown never activate the old route.
+test("liveness vetoes preserve baseline fallback guards and never spend a turn", async (t) => {
+  const { publishLiveness } = await import("./session-lifecycle.mts");
+  const { writeLocalSessions } = await import("./exchange-sessions.mts");
+  for (const state of ["unknown", "archived", "deleted", "stale", "future", "partial"] as const) await t.test(state, async sub => {
+    const node = closedNode(sub);
+    const at = state === "stale" ? T0 - 60_001 : state === "future" ? T0 + 1 : T0;
+    const common = { status: "value" as const, observedAt: at, complete: state !== "partial", reasonCode: "observed" as const };
+    publishLiveness(node.paths, [{ runtime: "claude-code", sessionId: SESSION,
+      ...(state === "archived" || state === "deleted" ? { lifecycle: { ...common, source: "native-lifecycle" as const, value: { state, generation: 1 } } }
+        : state === "unknown" ? {} : { holder: { ...common, source: "native-holder" as const, value: { present: false } },
+          app: { ...common, source: "native-app" as const, value: "absent" as const } }),
+    }], T0);
+    writeLocalSessions(node.paths, [], T0);
+    const id = deliver(node);
+    await deliverToClosed(node.deps());
+    assert.equal(claudeRuns(node).length, 0);
+    assert.equal(getMessage(node.paths.inbox, id)?.state, "accepted");
+    assert.equal(getMessage(node.paths.inbox, id)?.closedAttempt, undefined);
+    assert.equal(takeTurn(node.paths, SESSION, T0), "ok", "liveness veto leaves the turn budget untouched");
+  });
+  for (const misses of [0, 1, 2]) await t.test(`fresh closure but only ${misses} old misses`, async sub => {
+    const node = closedNode(sub, {}, {}, misses);
+    deliver(node);
+    await deliverToClosed(node.deps());
+    assert.equal(claudeRuns(node).length, 0, "positive metadata cannot remove the baseline miss veto");
+  });
+});
+
+test("a terminal generation published during the existing process await vetoes fallback before its attempt", async (t) => {
+  const node = closedNode(t);
+  writeTask(node.paths, { taskId: taskId(707), name: "task-000002c3", sessionId: SESSION, runtime: "claude", cwd: repo(node),
+    permissionMode: "auto", state: "done", pid: 42, pidStart: "synthetic-start", startedAt: new Date(T0).toISOString(),
+    updatedAt: new Date(T0).toISOString(), deadline: new Date(T0).toISOString() }, T0);
+  const id = deliver(node);
+  const { publishLiveness } = await import("./session-lifecycle.mts");
+  const { writeLocalSessions } = await import("./exchange-sessions.mts");
+  await deliverToClosed({ ...node.deps(), codex: { processStart: async () => {
+    publishLiveness(node.paths, [{ runtime: "claude-code", sessionId: SESSION, lifecycle: {
+      status: "value", value: { state: "deleted", generation: 1 }, observedAt: T0, complete: true, source: "native-lifecycle", reasonCode: "observed",
+    } }], T0);
+    writeLocalSessions(node.paths, [], T0);
+    return null;
+  } } });
+  assert.equal(claudeRuns(node).length, 0);
+  assert.equal(getMessage(node.paths.inbox, id)?.closedAttempt, undefined);
+  assert.equal(takeTurn(node.paths, SESSION, T0), "ok");
+});

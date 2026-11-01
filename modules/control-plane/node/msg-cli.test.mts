@@ -77,8 +77,8 @@ test("msg sessions lists every node, marks this session and warns about a stale 
   const listed = await run(paths, ["sessions"]);
   assert.equal(listed.code, 0);
   assert.equal(listed.err, "");
-  assert.match(listed.out, /node-a \(.*\) online \[this node\]\n    intake: .*\n  \* review  s-self  busy  claude-code  \/work\/a/);
-  assert.match(listed.out, /node-b .*\n    intake: .*\n    build  s-b1  idle  claude-code/);
+  assert.match(listed.out, /node-a \(.*\) online \[this node\]\n    intake: .*\n  \* review  s-self  running  claude-code  \/work\/a/);
+  assert.match(listed.out, /node-b .*\n    intake: .*\n    build  s-b1  idle-loaded  claude-code/);
   assert.match(listed.out, /node-c .* offline\n    intake: .*\n    no sessions reported/);
   assert.ok(fs.existsSync(paths.directoryRequest), "a refresh is requested");
 
@@ -164,9 +164,9 @@ test("msg sessions shows a Codex thread title next to the name, and the title is
     { nodeId: PEER, sessionId: codex, name: "codex-d7d07717", state: "active", runtime: "codex", kind: "codex", title: "Kherep \"Funktionen\" nachschlagen" }] };
   const listed = await run(setup(t, directory), ["sessions"]);
   assert.equal(listed.code, 0);
-  assert.ok(listed.out.includes(`    codex-d7d07717  "Kherep \\"Funktionen\\" nachschlagen"  ${codex}  active  codex`), listed.out);
+  assert.ok(listed.out.includes(`    codex-d7d07717  "Kherep \\"Funktionen\\" nachschlagen"  ${codex}  reachable-probable  codex`), listed.out);
   // Sessions without a title keep the earlier format.
-  assert.match(listed.out, /\n    docs  s-b3  idle  claude-code\n/);
+  assert.match(listed.out, /\n    docs  s-b3  idle-loaded  claude-code\n/);
   assert.deepEqual(resolveTarget(directory, "node-b/codex-d7d07717"), { ok: true, value: { nodeId: PEER, session: codex } });
   const byTitle = resolveTarget(directory, "node-b/Kherep \"Funktionen\" nachschlagen");
   assert.equal(byTitle.ok, false);
@@ -363,12 +363,12 @@ test("msg sessions marks background tasks and the session --from names (issue #1
   const listed = await run(paths, ["sessions", "--from", codex], {});
   assert.equal(listed.code, 0, listed.err);
   const lines = listed.out.split("\n");
-  assert.ok(lines.includes(`  * codex-89abcdef  ${codex}  idle  codex`), listed.out);
+  assert.ok(lines.includes(`  * codex-89abcdef  ${codex}  idle-loaded  codex`), listed.out);
   assert.ok(lines.includes("    intercom: codex@node-a  019a0000-0000-7000-8000-000000000002  running  codex  [background task]"), listed.out);
   // An unlabelled intercom run is still marked by its kind.
-  assert.ok(lines.includes("    task-4e5f6a7b  019a0000-0000-7000-8000-000000000003  idle  codex  [background task]"), listed.out);
-  assert.ok(lines.includes("    notes  s-b4  idle  claude-code"), listed.out);
-  assert.ok(lines.includes("    review  s-self  busy  claude-code  /work/a"), listed.out);
+  assert.ok(lines.includes("    task-4e5f6a7b  019a0000-0000-7000-8000-000000000003  unknown  codex  [background task]"), listed.out);
+  assert.ok(lines.includes("    notes  s-b4  idle-loaded  claude-code"), listed.out);
+  assert.ok(lines.includes("    review  s-self  running  claude-code  /work/a"), listed.out);
   assert.match(listed.out, /\[background task\] runs as a Control Plane task, not as a desktop app chat, and the desktop apps may not list it/);
   assert.match(listed.out, /kherep-node attach <node>\/<session id>.*kherep-node task status <taskId>/);
   const unverified = await run(paths, ["sessions", "--from", "codex-89abcdef"], {});
@@ -387,8 +387,8 @@ test("msg sessions shows the last recorded hook event of this node's Codex sessi
   recordCodexSession(paths, remote, "/work/c", NOW, "default", "Stop");
   const lines = (await run(paths, ["sessions"])).out.split("\n");
   const stoppedAt = new Date(NOW - 120_000).toISOString();
-  assert.ok(lines.includes(`    codex-89abcdef  ${codex}  active  codex  /work/b  last event Stop at ${stoppedAt}`), lines.join("\n"));
-  assert.ok(lines.includes(`    codex-00000004  ${remote}  active  codex`), "another node's session shows no local record");
+  assert.ok(lines.includes(`    codex-89abcdef  ${codex}  reachable-probable  codex  /work/b  last event Stop at ${stoppedAt}`), lines.join("\n"));
+  assert.ok(lines.includes(`    codex-00000004  ${remote}  reachable-probable  codex`), "another node's session shows no local record");
 });
 
 test("msg status shows the threaded replies that reached this node (issue #200)", async (t) => {
@@ -446,7 +446,7 @@ test("msg send from a codex exec started inside a Claude Code tool is sent by th
   assert.deepEqual([getOutbox(paths, reply.out)?.fromSession, getOutbox(paths, reply.out)?.fromSessionId], [THREAD, THREAD]);
   const listed = await run(paths, ["sessions"], NESTED_ENV, NOW, codexUnderClaude);
   assert.equal(listed.code, 0, listed.err);
-  assert.ok(listed.out.includes("    review  s-self  busy  claude-code  /work/a"), listed.out);
+  assert.ok(listed.out.includes("    review  s-self  running  claude-code  /work/a"), listed.out);
 });
 
 test("msg send refuses an undecidable nesting with the fixed reason and writes nothing (issue #471)", async (t) => {

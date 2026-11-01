@@ -7,7 +7,8 @@ import { listCodexSessions, listCodexTaskSessions } from "./codex-sessions.mts";
 import { readCodexTitles, withCodexTitles } from "./codex-titles.mts";
 import type { NodePaths } from "./config.mts";
 import { findOnPath } from "./discovery.mts";
-import { markUnseen } from "./known-sessions.mts";
+import { normalizedState } from "./session-liveness.mts";
+import { markUnseen, unlistedRuntimes } from "./known-sessions.mts";
 import { listTasks, type TaskRecord } from "./task-records.mts";
 
 // Agent session discovery (issue #31, step 2). Claude Code lists its running
@@ -114,14 +115,14 @@ export function mapClaudeAgents(value: unknown): SessionInfo[] | null {
     const r = row as Record<string, unknown>;
     const started = typeof r.startedAt === "number" && Number.isFinite(r.startedAt) ? new Date(r.startedAt) : null;
     const session: SessionInfo = {
-      sessionId: r.sessionId as string, runtime: CLAUDE_RUNTIME, state: r.status as string,
+      sessionId: r.sessionId as string, runtime: CLAUDE_RUNTIME, state: typeof r.status === "string" ? normalizedState(r.status) : r.status as string,
       startedAt: started && !Number.isNaN(started.getTime()) ? started.toISOString() : undefined,
       name: optional(r.name, 128), cwd: optional(r.cwd, 512), kind: optional(r.kind, 32),
     };
     for (const key of Object.keys(session) as (keyof SessionInfo)[]) if (session[key] === undefined) delete session[key];
     if (isSessionInfo(session) && sessions.length < MAX_SESSIONS) sessions.push(session);
   }
-  return sessions;
+  return markUnseen(sessions, sessions.length < value.length ? [CLAUDE_RUNTIME] : []);
 }
 
 // Resolves with the sessions of every runtime found on PATH plus the recorded
@@ -140,7 +141,7 @@ export async function listSessions(deps: SessionDeps = {}): Promise<SessionInfo[
   // Issue #389: what this listing could not see is no evidence that a session
   // ended: Claude without claude on PATH, any runtime at the cap.
   const unseen: string[] = [];
-  if (!claude) unseen.push(CLAUDE_RUNTIME);
+  if (!claude || unlistedRuntimes(claude).length > 0) unseen.push(CLAUDE_RUNTIME);
   if (all.length >= MAX_SESSIONS) unseen.push("*");
   return markUnseen(all.slice(0, MAX_SESSIONS), unseen);
 }

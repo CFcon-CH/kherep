@@ -1,5 +1,6 @@
 import path from "node:path";
 
+import { sessionVerdict } from "./session-lifecycle.mts";
 import type { SessionInfo } from "../protocol.mts";
 import { ensureDir, type NodePaths } from "./config.mts";
 import { readJson, writeJsonAtomic } from "./inbox.mts";
@@ -20,13 +21,7 @@ import { readJson, writeJsonAtomic } from "./inbox.mts";
 export const KNOWN_RETENTION_MS = 7 * 24 * 60 * 60_000;
 const MAX_KNOWN = 512;
 
-// A session counts as closed only after CLOSED_AFTER_MISSES consecutive
-// listings without it that span at least CLOSED_MIN_AGE_MS. The daemon lists
-// every SESSIONS_INTERVAL_MS (60 s, daemon.mts), so three periodic misses span
-// about 120 s and close a session at the third. Other listings (registration,
-// a Worker session.list, a reconnect) can come seconds apart; the minimum age of
-// 1.5 periodic intervals keeps such a burst from closing a session on its own,
-// while the jitter of a periodic listing cannot delay the third periodic miss.
+// Legacy miss counters are diagnostic only. Positive metadata decides closure.
 export const CLOSED_AFTER_MISSES = 3;
 export const CLOSED_MIN_AGE_MS = 90_000;
 
@@ -58,9 +53,9 @@ export function rememberSessions(paths: NodePaths, sessions: SessionInfo[], now:
   const seen = new Date(now).toISOString();
   const fresh: KnownSession[] = sessions.map((s) => ({ sessionId: s.sessionId, runtime: s.runtime,
     ...(s.name ? { name: s.name } : {}), ...(s.cwd ? { cwd: s.cwd } : {}), lastSeen: seen }));
-  const ids = new Set(fresh.map((s) => s.sessionId));
+  const ids = new Set(fresh.map((s) => `${s.runtime}/${s.sessionId}`));
   const missed = (s: KnownSession): boolean => !unseen.includes("*") && !unseen.includes(s.runtime);
-  const kept = readKnownSessions(paths).filter((s) => !ids.has(s.sessionId) && now - Date.parse(s.lastSeen) <= KNOWN_RETENTION_MS)
+  const kept = readKnownSessions(paths).filter((s) => !ids.has(`${s.runtime}/${s.sessionId}`) && now - Date.parse(s.lastSeen) <= KNOWN_RETENTION_MS)
     .map((s) => missed(s) ? { ...s, misses: (s.misses ?? 0) + 1, missedSince: s.missedSince ?? seen, missedAt: seen } : s);
   ensureDir(paths.dir);
   writeJsonAtomic(knownSessionsFile(paths), { sessions: [...fresh, ...kept].slice(0, MAX_KNOWN) });
@@ -85,10 +80,13 @@ export function trackSession(paths: NodePaths, session: { sessionId: string; run
   writeJsonAtomic(knownSessionsFile(paths), { sessions: [{ ...session, lastSeen: new Date(now).toISOString() }, ...known].slice(0, MAX_KNOWN) });
 }
 
-// True only for a known session whose miss streak is complete; a session
-// without an entry is never taken for closed.
-export function closedSession(paths: NodePaths, sessionId: string): boolean {
-  const known = readKnownSessions(paths).find((s) => s.sessionId === sessionId);
-  if (!known || (known.misses ?? 0) < CLOSED_AFTER_MISSES) return false;
-  return Date.parse(known.missedAt ?? "") - Date.parse(known.missedSince ?? "") >= CLOSED_MIN_AGE_MS;
+// Positive liveness/lifecycle evidence only; miss counters confer no authority.
+export function closedSession(paths: NodePaths, sessionId: string, now = Date.now()): boolean {
+  const known = readKnownSessions(paths).filter(s => s.sessionId === sessionId);
+  if (known.length !== 1) return false;
+  const row = known[0];
+  // Keep the old miss/min-age veto: metadata can narrow, never widen, fallback.
+  return (row.misses ?? 0) >= CLOSED_AFTER_MISSES
+    && Date.parse(row.missedAt ?? "") - Date.parse(row.missedSince ?? "") >= CLOSED_MIN_AGE_MS
+    && sessionVerdict(paths, row, now).state === "closed";
 }

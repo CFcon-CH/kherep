@@ -68,6 +68,7 @@ flowchart LR
     runner["Local inference runner"]
     bridge["MCP auth bridge"]
     nodeDaemon["Control Plane node daemon"]
+    liveness["Session metadata<br/>shared generation, UNKNOWN native adapters"]
     daemonService["Per-user daemon service<br/>verified source pin and rollback"]
     queueRetire["Native Queue reconciliation"]
   end
@@ -89,6 +90,8 @@ flowchart LR
   observationAdapter -->|authority, journal, readback| brokers
   runtimes --> runner --> model
   runtimes --> bridge --> mcp
+  nodeDaemon -->|five-minute coalesced pass| liveness
+  liveness -->|truthful listing and deny-only admission| nodeDaemon
   nodeDaemon <--> worker <--> peers
   daemonService -->|starts and upgrades| nodeDaemon
   nodeDaemon -.->|delivers peer messages| runtimes
@@ -123,6 +126,11 @@ Sessions are asked to search the space before answering, and a substantial turn 
 ### Control Plane
 
 [![Relief: two temples on opposite banks exchange sealed scrolls by boat through a central obelisk, where waiting messages are kept in jars.](assets/illustrations/kherep-control-plane-relief.svg)](https://raw.githubusercontent.com/cfaysal/kherep/main/assets/illustrations/kherep-control-plane.svg)
+
+Phase 1 session liveness uses metadata and local lifecycle tombstones, with UNKNOWN
+native adapters. It does not establish native acceptance or wire the later
+24-hour admission deadline; native turn start can follow timely admission after
+expiry. See the [liveness contract](modules/control-plane/ARCHITECTURE.md#session-liveness-metadata-phase-1-706).
 
 Sessions on different nodes exchange messages through one Cloudflare Worker, and a session can ask another node to start a new intercom session. A peer message informs; it never approves. See the [detailed diagram](https://raw.githubusercontent.com/cfaysal/kherep/main/assets/illustrations/kherep-control-plane.svg).
 

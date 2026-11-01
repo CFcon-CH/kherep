@@ -21,7 +21,7 @@ test("maps claude agents rows to session info and ignores unknown fields", () =>
   }]);
   // Optional fields that are missing or out of bounds are left out, not guessed.
   assert.deepEqual(mapClaudeAgents([{ sessionId: "s2", status: "idle", name: "n".repeat(129), startedAt: "yesterday" }]),
-    [{ sessionId: "s2", runtime: CLAUDE_RUNTIME, state: "idle" }]);
+    [{ sessionId: "s2", runtime: CLAUDE_RUNTIME, state: "idle-loaded" }]);
 });
 
 test("skips malformed rows and fails only on output that is not a list", () => {
@@ -122,7 +122,7 @@ test("sends a sessions snapshot on register and afterwards only when the list ch
   assert.deepEqual(await node.sessionsSnapshot(), []); // not authenticated
   assert.deepEqual(types(await node.onFrame(authOk)), ["register", "sessions.snapshot", "directory.get"]);
   assert.deepEqual(await node.sessionsSnapshot(), []);
-  list = [...list, { sessionId: "s2", runtime: CLAUDE_RUNTIME, state: "idle" }];
+  list = [...list, { sessionId: "s2", runtime: CLAUDE_RUNTIME, state: "idle-loaded" }];
   assert.deepEqual(types(await node.sessionsSnapshot()), ["sessions.snapshot"]);
   assert.deepEqual(await node.sessionsSnapshot(), []);
   // A new connection registers again with a fresh snapshot.
