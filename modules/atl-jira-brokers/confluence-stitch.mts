@@ -11,8 +11,8 @@
 // The old path chose neighbours by shared title words and wrote them. Rare
 // shared words were still the wrong topic often enough to be a recurring bug
 // (#86, #736), so that path is gone rather than switched off.
-import { checkDecisions, candidateRow, parseDecisions, parseReceipt, RECEIPT_KIND, selectCandidates,
-  type Candidate, type StitchReceipt } from "./confluence-candidates.mts";
+import { checkDecisions, candidateRow, parseDecisions, parseReceipt, proposalItems, RECEIPT_KIND, selectCandidates,
+  type Candidate, type Problem, type StitchReceipt } from "./confluence-candidates.mts";
 import { existingRelated, findOrphans, relatedSection, withRelated, type NeighbourDeps } from "./confluence-neighbours.mts";
 import { pageStorage, spaceIndex, type IndexedPage, type SpaceIndex } from "./confluence-related.mts";
 import { textFailureLine, textSearch } from "./confluence-text-search.mts";
@@ -37,8 +37,7 @@ async function searchCandidates(
   if (proposed.error) return { error: proposed.error };
   const exact = await textSearch(deps.session, deps.spaceKey, page.title);
   if (exact.failure) return { error: textFailureLine(exact) };
-  const items = proposed.items ?? proposed.titles.map((title) => ({ id: "", title, snippet: "" }));
-  return { candidates: selectCandidates(index, page, items, exact.titles, limit) };
+  return { candidates: selectCandidates(index, page, proposalItems(proposed), exact.titles, limit) };
 }
 
 export async function stitchCandidates(
@@ -85,22 +84,23 @@ async function readOrNull(deps: StitchDeps, path: string): Promise<string | null
   try { return await deps.readText(path); } catch { return null; }
 }
 
+function refuse(deps: NeighbourDeps, problems: readonly Problem[]): number {
+  for (const problem of problems) deps.log(`refused\t${problem.id}\t${problem.why}`);
+  deps.logError("Nothing was written.");
+  return 1;
+}
+
 export async function stitchDecisions(
   deps: StitchDeps, options: { id: string; candidates: string; decisions: string },
 ): Promise<number> {
-  const refuse = (problems: { id: string; why: string }[]) => {
-    for (const problem of problems) deps.log(`refused\t${problem.id}\t${problem.why}`);
-    deps.logError("Nothing was written.");
-    return 1;
-  };
   const receiptText = await readOrNull(deps, options.candidates);
   const decisionsText = await readOrNull(deps, options.decisions);
-  if (receiptText === null) return refuse([{ id: options.id, why: "--candidates is not readable" }]);
-  if (decisionsText === null) return refuse([{ id: options.id, why: "--decisions is not readable" }]);
+  if (receiptText === null) return refuse(deps, [{ id: options.id, why: "--candidates is not readable" }]);
+  if (decisionsText === null) return refuse(deps, [{ id: options.id, why: "--decisions is not readable" }]);
   const receipt = parseReceipt(receiptText);
   const decisions = parseDecisions(decisionsText);
   const problems = checkDecisions(receipt, decisions, { source: options.id, spaceKey: deps.spaceKey, now: deps.now() });
-  if (problems.length || !receipt) return refuse(problems);
+  if (problems.length || !receipt) return refuse(deps, problems);
   const approved = decisions.map((decision) => ({
     ...decision, area: receipt.candidates.find((candidate) => candidate.id === decision.id)?.area ?? "",
   }));
@@ -127,11 +127,7 @@ export async function writeApproved(
   const late = [source, ...approved.map((decision) => decision.id)]
     .filter((id) => !index.byId.has(id) || (id !== source && index.parents.has(id)))
     .map((id) => ({ id, why: index.byId.has(id) ? "the page has become a shelf" : "not a page in this space" }));
-  if (late.length) {
-    for (const problem of late) deps.log(`refused\t${problem.id}\t${problem.why}`);
-    deps.logError("Nothing was written.");
-    return 1;
-  }
+  if (late.length) return refuse(deps, late);
 
   let written = 0;
   let unchanged = 0;
