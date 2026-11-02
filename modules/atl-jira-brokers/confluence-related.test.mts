@@ -316,10 +316,15 @@ test("relatedSection escapes the title, because storage format is XHTML", () => 
 });
 
 test("relatedSection keeps text apostrophes raw and encodes injection-shaped titles and hrefs", () => {
-  const section = relatedSection('KB"/><tag>', [{ id: '7" onclick="bad', title: 'isn\'t & <script> "quoted"' }]);
-  assert.ok(section.includes('isn\'t &amp; &lt;script&gt; &quot;quoted&quot;'));
-  assert.ok(section.includes('/spaces/KB%22%2F%3E%3Ctag%3E/pages/7%22%20onclick%3D%22bad"'));
-  assert.doesNotMatch(section, /<script>|<tag>| onclick="|&#39;/);
+  for (const [title, escaped] of [
+    ['isn\'t & <script> "quoted"', 'isn\'t &amp; &lt;script&gt; &quot;quoted&quot;'],
+    ['isn\'t & <SCRIPT> "quoted"', 'isn\'t &amp; &lt;SCRIPT&gt; &quot;quoted&quot;'],
+    ['isn\'t & <ScRiPt data-x="x"> "quoted"', 'isn\'t &amp; &lt;ScRiPt data-x=&quot;x&quot;&gt; &quot;quoted&quot;'],
+  ]) {
+    const section = relatedSection('KB"/><tag>', [{ id: '7" onclick="bad', title }]);
+    assert.equal(section, '<h2>Related pages</h2><ul><li><p><a href="/wiki/spaces/KB%22%2F%3E%3Ctag%3E/pages/7%22%20onclick%3D%22bad">'
+      + escaped + '</a></p></li></ul>');
+  }
 });
 
 test("existingRelated reads legacy direct anchors and paragraph-wrapped anchors", () => {
