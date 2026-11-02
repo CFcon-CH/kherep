@@ -137,7 +137,7 @@ for (const [version, previous] of identityVersions) test(`exact ${version} nativ
         const hook = spawnSync(process.execPath, ['--disable-warning=ExperimentalWarning', hookFile, '--workspace-b64', Buffer.from(f.workspace).toString('base64url')], { encoding: 'utf8', env,
             input: JSON.stringify({ hook_event_name: 'UserPromptSubmit', cwd: f.workspace, session_id: 'main-session', turn_id, prompt: 'PRIVATE_PROMPT_CANARY' }) });
         assert.equal(hook.status, 0, hook.stderr);
-        assert.ok(hook.stdout.includes(turn_id ? '{"sessionId":"main-session","turnId":"native-turn"}' : 'OBS-RESULT: failed missing-turn-identity'));
+        assert.ok(hook.stdout.includes(turn_id ? '{"sessionId":"main-session","turnId":"native-turn"}' : 'OBS-ATTEMPT: failed missing-turn-identity detail=none publication=not-attempted created=none'));
         assert.doesNotMatch(hook.stdout, /PRIVATE_PROMPT_CANARY/);
     }
     const after = snapshot(f.root);

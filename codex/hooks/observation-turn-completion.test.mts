@@ -47,7 +47,7 @@ test("blocks an exact false lifecycle state with one bounded observation instruc
   assert.match(result.reason, /one strict OBS-RESULT receipt/i);
   assert.match(result.reason, /mcp__kherep_observations__publish_observations/);
   assert.match(result.reason, /literal canonical authority/);
-  assert.match(result.reason, /Independently validate the receipt/);
+  assert.match(result.reason, /Independently validate the handback/);
   assert.match(result.reason, /NO further publication/);
   assert.doesNotMatch(result.reason, /__KHEREP_SELECTED_WORKSPACE__/);
   assert.doesNotMatch(result.reason, /D:\/CFcon-DEV/i);

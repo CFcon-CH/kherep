@@ -153,15 +153,16 @@ function xml(value: string): string {
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
+    .replace(/"/g, "&quot;");
 }
 
 export function relatedSection(spaceKey: string, rows: { id: string; title: string }[]): string {
   const items = rows
     .map((row) => {
       const href = `/wiki/spaces/${encodeURIComponent(spaceKey)}/pages/${encodeURIComponent(row.id)}`;
-      return `<li><a href="${xml(href)}">${xml(row.title)}</a></li>`;
+      // Match stored XHTML before submission so exact readback stays strict:
+      // Modeled storage serialization wraps list anchors and stores text ' raw.
+      return `<li><p><a href="${xml(href)}">${xml(row.title)}</a></p></li>`;
     })
     .join("");
   return `${RELATED_HEADING}<ul>${items}</ul>`;

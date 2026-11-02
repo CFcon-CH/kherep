@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { checkObsResult } from "./obs-result-policy.mts";
+import { checkObsHandback } from "./obs-result-policy.mts";
 import { readLatestTurn } from "./research-transcript.mts";
 
 export interface SubagentStopPayload {
@@ -21,9 +21,11 @@ const OBSERVATION_AGENT = "codex-obs";
 const PREFIX = "Kherep obs-result-check:";
 
 export const OBS_RESULT_REASON = [
-  "Observation receipt check: your final message is not one valid publication receipt.",
-  "Restate only the existing result as one strict OBS-RESULT line with no Markdown fence or surrounding prose.",
+  "Observation receipt check: your final message is not one strict publication receipt or worker attempt.",
+  "Restate only the existing result as one strict OBS-RESULT line or the bounded OBS-ATTEMPT form in your worker contract, with no Markdown fence or surrounding prose.",
   "Use wrote <n> <comma-separated numeric IDs>, empty no-admissible-findings, or failed <safe-code> with created=<IDs> when applicable.",
+  "Preserve a visible canonical receipt and all its IDs even when isError is true. Do not invent adapter codes or infer missing IDs as none.",
+  "If the original tool result is unavailable, return exactly OBS-ATTEMPT: failed evidence-unavailable detail=unknown publication=unknown created=unknown.",
   "NO further publication, tool call, retry, new extraction or replacement pages. Perform no configuration or broker I/O.",
 ].join(" ");
 const NOT_VISIBLE = `${PREFIX} the codex-obs result was not visible to the hook; the Maestro independently validates the receipt and target.`;
@@ -43,7 +45,10 @@ export function decide(value: unknown): HookOutput | null {
   if (payload.agent_type !== OBSERVATION_AGENT) return null;
   const text = resultText(payload);
   if (!text.trim()) return { systemMessage: NOT_VISIBLE };
-  const check = checkObsResult(text);
+  const check = checkObsHandback(text);
+  if ('status' in check && check.status === 'attempt-failed') return { systemMessage:
+    `${PREFIX} non-adapter worker attempt failed (${check.reason}/${check.detail}); report this failure in the same turn; ${check.publication === 'unknown'
+      ? 'publication and created IDs are UNKNOWN' : 'publication was not attempted; created IDs: none'}; no retry, publication or silent repair.` };
   if ("status" in check) return check.status === "failed"
     ? {systemMessage: `${PREFIX} OBS-RESULT: failed; report this failure and any created IDs to the operator in the same turn.`} : null;
   if (payload.stop_hook_active === false) return { decision: "block", reason: OBS_RESULT_REASON };

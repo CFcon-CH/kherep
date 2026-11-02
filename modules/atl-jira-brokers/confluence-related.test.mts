@@ -275,8 +275,8 @@ test("relatedSection builds one list of space-relative page links", () => {
   const section = relatedSection("KB", [{ id: "1", title: "First" }, { id: "2", title: "Second" }]);
   assert.equal(
     section,
-    '<h2>Related pages</h2><ul><li><a href="/wiki/spaces/KB/pages/1">First</a></li>'
-    + '<li><a href="/wiki/spaces/KB/pages/2">Second</a></li></ul>',
+    '<h2>Related pages</h2><ul><li><p><a href="/wiki/spaces/KB/pages/1">First</a></p></li>'
+    + '<li><p><a href="/wiki/spaces/KB/pages/2">Second</a></p></li></ul>',
   );
 });
 
@@ -313,6 +313,25 @@ test("relatedSection escapes the title, because storage format is XHTML", () => 
   const section = relatedSection("KB", [{ id: "1", title: 'A & B <tag> "quoted"' }]);
   assert.ok(section.includes("A &amp; B &lt;tag&gt; &quot;quoted&quot;"));
   assert.ok(!section.includes("<tag>"), "an unescaped title decides what markup the page carries");
+});
+
+test("relatedSection keeps text apostrophes raw and encodes injection-shaped titles and hrefs", () => {
+  const section = relatedSection('KB"/><tag>', [{ id: '7" onclick="bad', title: 'isn\'t & <script> "quoted"' }]);
+  assert.ok(section.includes('isn\'t &amp; &lt;script&gt; &quot;quoted&quot;'));
+  assert.ok(section.includes('/spaces/KB%22%2F%3E%3Ctag%3E/pages/7%22%20onclick%3D%22bad"'));
+  assert.doesNotMatch(section, /<script>|<tag>| onclick="|&#39;/);
+});
+
+test("existingRelated reads legacy direct anchors and paragraph-wrapped anchors", () => {
+  for (const link of ['<a href="/wiki/spaces/KB/pages/7">old</a>', '<p><a href="/wiki/spaces/KB/pages/7">new</a></p>']) {
+    assert.deepEqual(existingRelated(`${RELATED_HEADING}<ul><li>${link}</li></ul>`), ['7']);
+  }
+});
+
+test("generated Related markup is unchanged by modeled paragraph and apostrophe storage serialization", () => {
+  const body = relatedSection('KB', [{ id: '7', title: "isn't duplicated" }]);
+  const stored = body.replace(/<li>(<a\b[^>]*>.*?<\/a>)<\/li>/g, '<li><p>$1</p></li>').replaceAll('&#39;', "'");
+  assert.equal(stored, body);
 });
 
 test("existingRelated still reads back an escaped block", () => {
