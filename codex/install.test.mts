@@ -1890,7 +1890,7 @@ test("installs the disabled-by-default messaging client with its public dependen
   for (const relative of [
     "protocol.mts", "protocol-mcp.mts", "protocol-messages.mts", "protocol-task-control.mts", "protocol-tasks.mts",
     "node/config.mts", "node/inbox.mts", "node/inbox-record-lock.mts", "node/mcp-local.mts", "node/mcp-credential-file.mts",
-    "node/session-publication.mts",
+    "node/session-publication.mts", "node/guarded-replies.mts",
     "node/policy.mts", "node/session-policy.mts",
     "node/mcp-intent-hook.mts", "node/mcp-stdio-bridge.mts",
   ]) assert.ok(fs.statSync(path.join(clientRoot, relative)).isFile(), relative);

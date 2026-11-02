@@ -68,7 +68,7 @@ it("adds the retention columns and the tombstone table once and leaves earlier r
     const indexes = sql.exec("SELECT name FROM sqlite_master WHERE type = 'index'").toArray().map((r) => String(r.name));
     expect(indexes).toEqual(expect.arrayContaining(["messages_delete_after", "tombstones_deleted_at"]));
     expect(sql.exec("PRAGMA table_info(message_tombstones)").toArray().map((c) => String(c.name)))
-      .toEqual(["id", "from_node", "to_node", "state", "reason", "depth", "reply_message_id", "deleted_at"]);
+      .toEqual(["id", "from_node", "to_node", "state", "reason", "depth", "reply_message_id", "deleted_at", "loop_thread", "loop_pair", "loop_generation", "loop_ordinal", "loop_direction"]);
   });
 });
 

@@ -182,3 +182,15 @@ test("ticket persistence failure retries its CP admission without booking a real
   assert.deepEqual(node.runs(), [], "metadata failure must never queue");
   assert.equal(getMessage(node.paths.inbox, node.ids[0])?.state, "accepted");
 });
+
+test("guarded20 reaches the busy publication recheck without a native runtime", async (t) => {
+  for (const valid of [true, false]) {
+    const node = fixture(t);
+    const id = node.ids[0], file = path.join(node.paths.inbox, `${id}.json`);
+    fs.writeFileSync(file, JSON.stringify({ ...getMessage(node.paths.inbox, id)!, depth: 20,
+      loop: { version: valid ? 1 : 2, threadId: id, depth: 20, generation: 0, ordinal: 21 } }));
+    pollCodexQueue(node.deps()); await codexQueueIdle();
+    assert.equal(fs.existsSync(node.ticket), valid);
+    assert.deepEqual(node.runs(), []);
+  }
+});

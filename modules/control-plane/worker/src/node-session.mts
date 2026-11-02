@@ -188,6 +188,7 @@ export class NodeSession extends DurableObject<Env> {
   // in the object that sends, and is dropped unless it is still queued.
   async pushFrame(type: "message.deliver" | "message.status" | "event", body: Record<string, unknown>): Promise<boolean> {
     if (isProxyDelivery(type, body) && !await registryStub(this.env).messageQueued(String(body.messageId))) return false;
+    if (type === "message.deliver" && body.loop !== undefined && !await registryStub(this.env).messageDeliveryReady(String(body.messageId))) return false;
     const ws = this.authedSocket();
     if (ws) this.sendControl(ws, type, body);
     return ws !== null;

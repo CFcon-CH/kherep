@@ -103,7 +103,7 @@ export class McpRegistry {
     return { ok: true, requestId: intent.requestId, expiresAt, version: Number(credential.version) };
   }
 
-  claim(input: McpIntentClaim, now: number): Claim {
+  private inspect(input: McpIntentClaim, now: number): { ok: true; row: Record<string, SqlStorageValue>; sessionId: string } | Failure {
     if (!isMcpIntentClaim(input)) return { ok: false, error: "invalid intent claim metadata" };
     if (!this.enabled(input.nodeId, input.runtime)) return { ok: false, error: this.disabledError(input.nodeId, input.runtime) };
     const credential = this.sql.exec("SELECT version FROM mcp_credentials WHERE node_id = ?", input.nodeId).toArray()[0];
@@ -123,6 +123,18 @@ export class McpRegistry {
     if (this.sessionRuntime(input.nodeId, sessionId) !== input.runtime) {
       return { ok: false, error: "native session is no longer registered" };
     }
+    if (input.runtime === "codex" && row.thread_id !== null && String(row.thread_id) !== input.threadId) return { ok: false, error: "native call identity does not match intent" };
+    return { ok: true, row, sessionId };
+  }
+  // Read-only: no claim, thread binding, or outcome mutation.
+  peekClaimSession(input: McpIntentClaim, now: number): { ok: true; sessionId: string } | Failure {
+    const found = this.inspect(input, now);
+    return found.ok ? { ok: true, sessionId: found.sessionId } : found;
+  }
+  claim(input: McpIntentClaim, now: number): Claim {
+    const found = this.inspect(input, now);
+    if (!found.ok) return found;
+    const { row, sessionId } = found;
     if (input.runtime === "codex" && row.thread_id === null) {
       this.sql.exec("UPDATE mcp_intents SET thread_id = ? WHERE request_id = ? AND thread_id IS NULL", input.threadId, input.requestId);
     } else if (input.runtime === "codex" && String(row.thread_id) !== input.threadId) {

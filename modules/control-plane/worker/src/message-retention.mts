@@ -1,3 +1,5 @@
+import { safeLoopReason } from "../../protocol-loop-brake.mts";
+import { LOOP_COLUMNS, LOOP_FIELDS, parentOf } from "./message-loop-identity.mts";
 import type { McpInboxItem } from "../../protocol-mcp.mts";
 import {
   isFinalMessageState, MESSAGING_ACK_CAPABILITY, type MessageAddress, type MessageReceiptBody, type MessageState,
@@ -35,9 +37,9 @@ CREATE INDEX IF NOT EXISTS messages_delete_after ON messages (delete_after) WHER
 `;
 
 const FINAL = "('delivered', 'replied', 'refused', 'expired')";
-const ROW_COLUMNS = "id, from_node, to_node, state, reason, depth, reply_message_id, deletable, settled_state";
+const ROW_COLUMNS = "id, from_node, to_node, state, reason, depth, reply_message_id, deletable, settled_state, " + LOOP_COLUMNS;
 const ROW = `SELECT ${ROW_COLUMNS} FROM messages WHERE id = ?`;
-const TOMBSTONE = "SELECT id, from_node, to_node, state, reason, depth, reply_message_id, deleted_at FROM message_tombstones WHERE id = ?";
+const TOMBSTONE = `SELECT id, from_node, to_node, state, reason, depth, reply_message_id, deleted_at, ${LOOP_COLUMNS} FROM message_tombstones WHERE id = ?`;
 // Due rows in deadline order, whatever they are: a deadline the sweep must not
 // act on (a row stored before this version, or not final) is cleared instead, or
 // the alarm would re-arm on it forever.
@@ -67,7 +69,7 @@ interface Tombstone {
 }
 // What MCP status reads from a message row or, after deletion, its tombstone.
 export interface MessageStatusView {
-  state: MessageState; progress: MessageStatusBody["progress"] | null; updatedAt: number; replyMessageId?: string;
+  state: MessageState; reason?: string; progress: MessageStatusBody["progress"] | null; updatedAt: number; replyMessageId?: string;
 }
 
 type Audit = (actor: string, action: string, target: string | null, detail: unknown) => void;
@@ -90,6 +92,10 @@ export class MessageRetention {
     this.audit = audit;
     this.capabilities = capabilities;
     this.sql.exec(SCHEMA);
+    const columns = this.sql.exec("PRAGMA table_info(message_tombstones)").toArray().map((c) => String(c.name));
+    for (const field of LOOP_FIELDS) if (!columns.includes(field)) {
+      this.sql.exec(`ALTER TABLE message_tombstones ADD COLUMN ${field} ${field === "loop_thread" || field === "loop_pair" ? "TEXT" : "INTEGER"}`);
+    }
   }
 
   private tombstone(messageId: string): Tombstone | null {
@@ -176,8 +182,12 @@ export class MessageRetention {
   // The reply target of an MCP reply whose parent row is gone: the inbox item
   // the replying node returned for that id and session, checked against the
   // tombstone when one is left, within the depth the Worker derives itself.
-  inboxReplyTarget(nodeId: string, inReplyTo: string, item: McpInboxItem | null): MessageAddress | null {
-    if (item?.messageId !== inReplyTo || depthExceeded(replyDepth(this.sql, inReplyTo))) return null;
+  inboxReplyTarget(claimant: MessageAddress, inReplyTo: string, item: McpInboxItem | null): MessageAddress | null {
+    const nodeId = claimant.nodeId;
+    if (item?.messageId !== inReplyTo) return null;
+    const provenance = parentOf(this.sql, inReplyTo);
+    if (provenance.kind === "guarded-invalid") return null;
+    if (provenance.kind !== "guarded" && depthExceeded(replyDepth(this.sql, inReplyTo))) return null;
     const tombstone = this.tombstone(inReplyTo);
     if (tombstone && (tombstone.toNode !== nodeId || tombstone.fromNode !== item.from.nodeId)) return null;
     return { nodeId: item.from.nodeId, session: item.from.session };
@@ -192,14 +202,15 @@ export class MessageRetention {
     const tombstone = this.tombstone(messageId);
     if (!tombstone || (tombstone.fromNode !== nodeId && tombstone.toNode !== nodeId)) return null;
     return { state: tombstone.state, progress: null, updatedAt: tombstone.deletedAt,
+      ...(safeLoopReason(tombstone.reason) ? { reason: safeLoopReason(tombstone.reason) } : {}),
       ...(tombstone.replyMessageId ? { replyMessageId: tombstone.replyMessageId } : {}) };
   }
 
   // One transaction (the caller's): the tombstone, the delete, and an audit
   // entry with ids only.
   private remove(row: Row, actor: string, via: "ack" | "fallback", now: number): void {
-    this.sql.exec(`INSERT OR REPLACE INTO message_tombstones (id, from_node, to_node, state, reason, depth, reply_message_id, deleted_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, row.id, row.from_node, row.to_node, row.state, row.reason, row.depth, row.reply_message_id, now);
+    this.sql.exec(`INSERT OR REPLACE INTO message_tombstones (id, from_node, to_node, state, reason, depth, reply_message_id, deleted_at, ${LOOP_COLUMNS})
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, row.id, row.from_node, row.to_node, row.state, row.reason, row.depth, row.reply_message_id, now, ...LOOP_FIELDS.map((f) => row[f]));
     this.sql.exec("DELETE FROM messages WHERE id = ?", row.id);
     this.audit(actor, "message.delete", String(row.to_node), { messageId: String(row.id), via });
   }

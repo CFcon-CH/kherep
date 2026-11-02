@@ -146,3 +146,15 @@ test("unknown or terminal liveness vetoes an already scheduled queue before the 
     assert.equal(getMessage(node.paths.inbox, id)?.state, "accepted");
   });
 });
+
+test("guarded20 traverses Queue and producer; malformed context cannot enqueue a generated native attempt", async (t) => {
+  for (const valid of [true, false]) await t.test(String(valid), async (sub) => {
+    const node = nativeQueueNode(sub);
+    const id = node.add();
+    writeJsonAtomic(path.join(node.paths.inbox, `${id}.json`), { ...getMessage(node.paths.inbox, id)!, depth: 20,
+      loop: { version: valid ? 1 : 2, threadId: id, depth: 20, generation: 0, ordinal: 21 } });
+    await node.poll();
+    assert.equal(node.fake.runs().length, valid ? 1 : 0);
+    assert.equal(getMessage(node.paths.inbox, id)?.state, "accepted");
+  });
+});

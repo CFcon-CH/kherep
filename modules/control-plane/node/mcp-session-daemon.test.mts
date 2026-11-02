@@ -1,3 +1,4 @@
+import { MESSAGING_LOOP_BRAKE_CAPABILITY } from "../protocol-loop-brake.mts";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
@@ -109,7 +110,7 @@ test("the daemon reloads a policy-file revocation after discovery and sends no n
   release(); await flush();
   const frames = f.frames.map(decode);
   assert.deepEqual(frames.map(frame => frame.type), ["register"]);
-  assert.deepEqual((frames[0]!.body as { capabilities: unknown }).capabilities, [MESSAGING_ACK_CAPABILITY, MESSAGING_PROGRESS_V2_CAPABILITY]);
+  assert.deepEqual((frames[0]!.body as { capabilities: unknown }).capabilities, [MESSAGING_ACK_CAPABILITY, MESSAGING_PROGRESS_V2_CAPABILITY, MESSAGING_LOOP_BRAKE_CAPABILITY]);
 });
 
 test("the daemon publishes the one complete discovery result before the intent with ascending seq", async t => {

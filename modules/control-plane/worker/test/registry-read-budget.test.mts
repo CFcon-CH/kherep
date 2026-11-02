@@ -176,6 +176,9 @@ describe("Registry read budget", () => {
         queuedProxies: expect.stringContaining("USING INDEX messages_to_state"),
         // Issue #441: the queue head of one listed node in the directory.
         queueHead: expect.stringContaining("messages_to_state"),
+        loopDue: expect.stringMatching(/loop_idle.*messages_loop_pair.*tombstones_loop_pair/),
+        loopNext: expect.stringMatching(/loop_idle.*messages_loop_pair.*tombstones_loop_pair/),
+        loopPair: expect.stringContaining("sqlite_autoindex_message_loop_pairs_1"),
       });
       for (const [name, plan] of plans) expect(plan, name).not.toMatch(/SCAN (messages|message_tombstones)|TEMP B-TREE/);
     });

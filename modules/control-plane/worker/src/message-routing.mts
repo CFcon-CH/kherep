@@ -17,6 +17,7 @@ export async function routeEffects(env: Env, effects: MessageEffects, local?: Lo
     if (local && local.nodeId === frame.nodeId) {
       // Issue #408 (design r3 section 4.3): a proxy refused since its effect was produced is dropped here.
       if (isProxyDelivery(frame.type, frame.body) && !await registryStub(env).messageQueued(String(frame.body.messageId))) continue;
+      if (frame.type === "message.deliver" && frame.body.loop !== undefined && !await registryStub(env).messageDeliveryReady(String(frame.body.messageId))) continue;
       local.send(frame.type, frame.body);
     } else await sessionStub(env, frame.nodeId).pushFrame(frame.type, frame.body);
   }

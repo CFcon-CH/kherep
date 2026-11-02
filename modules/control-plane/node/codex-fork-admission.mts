@@ -1,3 +1,4 @@
+import { automaticReplyDecision } from "./reply-admission.mts";
 import path from "node:path";
 
 import { MESSAGING_PROXY_CAPABILITY, OPERATOR_NODE_ID, type MESSAGE_PROGRESS_CODES } from "../protocol-messages.mts";
@@ -8,7 +9,7 @@ import { forkAttempts, MAX_FORK_ATTEMPTS, type ForkAttempt } from "./codex-fork-
 import { CODEX_ACTIVE_MS, CODEX_RUNTIME, idleEvidence, readCodexSession, type CodexSessionRecord } from "./codex-sessions.mts";
 import { readConfig, type NodePaths } from "./config.mts";
 import { codexPostToolHookInstalled } from "./doctor-hooks.mts";
-import { getMessage, MAX_REPLY_DEPTH, type InboxRecord } from "./inbox.mts";
+import { getMessage, type InboxRecord } from "./inbox.mts";
 import { explicitlyListed, readPolicy, wakeBudget, type NodePolicy } from "./policy.mts";
 import { notReadyNow, type Readiness } from "./runtime-readiness.mts";
 import { resolveCwd } from "./task-prompt.mts";
@@ -129,7 +130,7 @@ function sessionRefusal(f: Facts, policy: NodePolicy): PreClaimRefusal | null {
 // The operator API cannot be answered with msg send, nor by a proxy answer.
 const eligible = (m: InboxRecord | null, owner: string): m is InboxRecord => m?.state === "accepted" && m.toSession === owner
   && m.taskId === undefined && m.from.nodeId !== OPERATOR_NODE_ID;
-const depthOk = (m: InboxRecord): boolean => Number.isSafeInteger(m.depth ?? 0) && (m.depth ?? 0) >= 0 && (m.depth ?? 0) < MAX_REPLY_DEPTH;
+const depthOk = (m: InboxRecord): boolean => automaticReplyDecision(m).allowed;
 
 function messageRefusal(f: Facts): PreClaimRefusal | null {
   const m = f.message;

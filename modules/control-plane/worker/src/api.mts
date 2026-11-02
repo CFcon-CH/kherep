@@ -1,3 +1,4 @@
+import { handleMessageHolds } from "./message-holds-api.mts";
 import { isNodeId, isPhase1Command, PHASE1_COMMANDS } from "../../protocol.mts";
 import { isMessageId, isMessageText, isSessionRef, MAX_SESSION_REF, OPERATOR_NODE_ID } from "../../protocol-messages.mts";
 import { registryStub, sessionStub, type Env } from "./env.mts";
@@ -13,6 +14,8 @@ export async function handleApi(request: Request, env: Env, actor: string): Prom
   const parts = pathname.split("/").filter(Boolean); // ["api", ...]
   const method = request.method;
   const registry = registryStub(env);
+
+  if (parts[1] === "message-holds") return handleMessageHolds(request, env, actor);
 
   if (parts.length === 2 && parts[1] === "nodes" && method === "GET") return json({ nodes: await registry.listNodes() });
   if (parts.length === 2 && parts[1] === "sessions" && method === "GET") return json({ sessions: await registry.listSessions() });

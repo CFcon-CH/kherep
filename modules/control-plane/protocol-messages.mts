@@ -2,6 +2,9 @@
 // Session-to-session messages between nodes, routed and queued by the Worker.
 // Plain ECMAScript like protocol.mts, so the Worker and the node load it alike.
 
+import { isLoopAdmissionV1, type LoopAdmissionV1 } from "./protocol-loop-brake.mts";
+export { isLoopAdmissionV1, type LoopAdmissionV1 } from "./protocol-loop-brake.mts";
+
 import { isNodeId, isSessionInfo, type SessionInfo } from "./protocol.mts";
 
 // A node advertises this capability when it can take message.deliver. The
@@ -90,7 +93,7 @@ export interface MessageSendBody {
 // Worker -> target node.
 export interface MessageDeliverBody {
   messageId: string; from: MessageAddress; toSession: string; text: string; inReplyTo?: string; createdAt: string; taskId?: string;
-  proxyOf?: string;
+  proxyOf?: string; loop?: LoopAdmissionV1;
 }
 // node -> Worker (target reports progress) and Worker -> sending node.
 export interface MessageStatusBody { messageId: string; state: MessageState; reason?: string; progress?: MessageProgress }
@@ -163,13 +166,15 @@ function isLineage(body: Record<string, unknown>): boolean {
 }
 
 export function isMessageSendBody(body: unknown): body is MessageSendBody {
-  return isObject(body) && isMessageId(body.messageId) && isSessionRef(body.fromSession) && isMessageAddress(body.to)
+  return isObject(body) && !Object.keys(body).some((k) => k === "loop" || k.startsWith("loop_"))
+    && isMessageId(body.messageId) && isSessionRef(body.fromSession) && isMessageAddress(body.to)
     && isMessageText(body.text) && isLineage(body) && isOptionalReplyTo(body.taskId);
 }
 
 export function isMessageDeliverBody(body: unknown): body is MessageDeliverBody {
   return isObject(body) && isMessageId(body.messageId) && isMessageAddress(body.from, true) && isSessionRef(body.toSession)
     && isMessageText(body.text) && isLineage(body) && isOptionalReplyTo(body.taskId)
+    && (!Object.hasOwn(body, "loop") || isLoopAdmissionV1(body.loop))
     && typeof body.createdAt === "string" && !Number.isNaN(Date.parse(body.createdAt));
 }
 

@@ -1,3 +1,7 @@
+import { LOOP_LINEAGE, LOOP_STALE, LOOP_COMPATIBILITY, MESSAGING_LOOP_BRAKE_CAPABILITY, type LoopAdmissionV1 } from "../../protocol-loop-brake.mts";
+import { LoopIdentity, LOOP_COLUMNS, LOOP_FIELDS, parentOf, storedLoopLineage, type LoopSnapshot } from "./message-loop-identity.mts";
+import { MessageLoopStore, LOOP_QUERIES } from "./message-loop-store.mts";
+import { prepareLoopSignal, type LoopSigner, type LoopSignal } from "./message-loop-signals.mts";
 import {
   MAX_REPLY_DEPTH, MESSAGING_CAPABILITY, OPERATOR_NODE_ID, type MessageAddress, type MessageDeliverBody, type MessageProgress, type MessageReceiptBody, type MessageState,
   type MessageStatusBody, type NodeReportedState, legacyProgress,
@@ -47,6 +51,7 @@ const RANK: Partial<Record<MessageState, number>> = { queued: 0, accepted: 1, de
 export interface MessageRecord {
   messageId: string; fromNode: string; fromSession: string; toNode: string; toSession: string; inReplyTo: string | null;
   proxyOf: string | null; state: MessageState; reason: string | null; progress: MessageProgress | null;
+  loop?: LoopAdmissionV1;
   createdAt: number; updatedAt: number; expiresAt: number;
 }
 
@@ -69,7 +74,7 @@ type Audit = (actor: string, action: string, target: string | null, detail: unkn
 // Registered capabilities of an enrolled, non-revoked node, or null.
 type Capabilities = (nodeId: string) => string[] | null;
 
-const COLUMNS = "id, from_node, from_session, to_node, to_session, in_reply_to, proxy_of, state, reason, progress_phase, progress_code, progress_observed_at, progress_retry_at, created_at, updated_at, expires_at";
+const COLUMNS = "id, from_node, from_session, to_node, to_session, in_reply_to, proxy_of, state, reason, progress_phase, progress_code, progress_observed_at, progress_retry_at, created_at, updated_at, expires_at, depth, " + LOOP_COLUMNS;
 
 // The queries that run on every send, status report and sender reconnect.
 // Each names its index of SCHEMA (INDEXED BY fails the query rather than fall
@@ -92,10 +97,17 @@ export const HOT_MESSAGE_QUERIES = {
   nextExpiry: { sql: NEXT_EXPIRY, args: [] },
   statusPage: { sql: STATUS_PAGE, args: ["node", 0, 128] },
   queueHead: { sql: QUEUE_HEAD, args: ["node"] },
-  ...DEPTH_QUERIES, ...RETENTION_QUERIES, ...PROXY_QUERIES,
+  ...DEPTH_QUERIES, ...RETENTION_QUERIES, ...PROXY_QUERIES, ...LOOP_QUERIES,
 } as const;
 
-function toRecord(row: Record<string, SqlStorageValue>): MessageRecord {
+export interface PreparedLoop { snapshot: LoopSnapshot; key: string | null; signal: LoopSignal | null; error?: string }
+function loopOf(row: Record<string, SqlStorageValue>): LoopAdmissionV1 | undefined {
+  const lineage = storedLoopLineage(row);
+  if (lineage.kind === "guarded-invalid") throw new Error(LOOP_LINEAGE);
+  return lineage.kind === "guarded" ? lineage.loop : undefined;
+}
+
+function recordMetadata(row: Record<string, SqlStorageValue>): MessageRecord {
   return {
     messageId: String(row.id), fromNode: String(row.from_node), fromSession: String(row.from_session),
     toNode: String(row.to_node), toSession: String(row.to_session), inReplyTo: row.in_reply_to as string | null,
@@ -109,6 +121,15 @@ function toRecord(row: Record<string, SqlStorageValue>): MessageRecord {
   };
 }
 
+function toRecord(row: Record<string, SqlStorageValue>): MessageRecord {
+  const metadata = recordMetadata(row);
+  // Refused corrupt proof remains stored verbatim. Only its fixed terminal
+  // status may be projected; no authoritative loop context or legacy parent.
+  if (metadata.state === "refused" && metadata.reason === LOOP_LINEAGE && storedLoopLineage(row).kind === "guarded-invalid") return metadata;
+  const loop = loopOf(row);
+  return { ...metadata, ...(loop ? { loop } : {}) };
+}
+
 function statusBody(messageId: string, state: MessageState, reason: string | null, progress: MessageProgress | null = null): MessageStatusBody {
   return { messageId, state, ...(reason === null || progress ? {} : { reason }), ...(state === "accepted" && progress ? { progress } : {}) };
 }
@@ -119,12 +140,14 @@ function statusOf(record: MessageRecord): MessageStatusBody {
 
 // Builds the deliver body from a queued row, which always still has its text.
 function deliverBodyOf(row: Record<string, SqlStorageValue>): MessageDeliverBody {
+  const loop = loopOf(row);
   return {
     messageId: String(row.id), from: { nodeId: String(row.from_node), session: String(row.from_session) },
     toSession: String(row.to_session), text: String(row.text),
     ...(row.in_reply_to === null ? {} : { inReplyTo: String(row.in_reply_to) }),
     ...(row.proxy_of === null || row.proxy_of === undefined ? {} : { proxyOf: String(row.proxy_of) }),
     ...(row.task_id === null || row.task_id === undefined ? {} : { taskId: String(row.task_id) }),
+    ...(loop ? { loop } : {}),
     createdAt: new Date(Number(row.created_at)).toISOString(),
   };
 }
@@ -135,6 +158,8 @@ const none = (): MessageEffects => ({ deliveries: [], statuses: [] });
 export class MessageStore {
   // Issue #308: tombstones and the deletion of acknowledged messages.
   readonly retention: MessageRetention;
+  readonly loops: MessageLoopStore;
+  private readonly identity: LoopIdentity;
   private readonly sql: SqlStorage;
   private readonly audit: Audit;
   private readonly capabilities: Capabilities;
@@ -149,16 +174,44 @@ export class MessageStore {
     if (!columns.includes("task_id")) this.sql.exec("ALTER TABLE messages ADD COLUMN task_id TEXT");
     for (const [name, type] of [["progress_phase", "TEXT"], ["progress_code", "TEXT"], ["progress_observed_at", "TEXT"],
       ["progress_retry_at", "TEXT"], ["reply_message_id", "TEXT"], ["depth", "INTEGER"], ["delete_after", "INTEGER"],
-      ["deletable", "INTEGER"], ["proxy_of", "TEXT"], ["settled_state", "TEXT"]] as const) {
+      ["deletable", "INTEGER"], ["proxy_of", "TEXT"], ["settled_state", "TEXT"], ...LOOP_FIELDS.map((name) => [name, name === "loop_thread" || name === "loop_pair" ? "TEXT" : "INTEGER"] as const)] as const) {
       if (!columns.includes(name)) this.sql.exec(`ALTER TABLE messages ADD COLUMN ${name} ${type}`);
     }
     this.sql.exec(REPLAY_INDEX);
     this.retention = new MessageRetention(sql, audit, capabilities);
+    this.loops = new MessageLoopStore(sql);
+    this.identity = new LoopIdentity(sql, capabilities);
+  }
+
+  contextMatches(message: NewMessage, prepared: PreparedLoop): boolean {
+    return !prepared.error && JSON.stringify(prepared.snapshot) === JSON.stringify(this.identity.snapshot(message.from, message.to, message.inReplyTo ?? message.proxyOf));
+  }
+
+  async prepare(message: NewMessage, sign: LoopSigner): Promise<PreparedLoop> {
+    const snapshot = this.identity.snapshot(message.from, message.to, message.inReplyTo ?? message.proxyOf);
+    if (!snapshot.encoding) return { snapshot, key: null, signal: null };
+    try {
+      const key = await sign("kherep-loop-pair-v1", snapshot.encoding);
+      // Prefix stripping has exactly the same live-original authorization as admission.
+      const proxy = message.proxyOf && proxyRefusal(this.sql, message.proxyOf, message.from, message.to) === null
+        ? { owner: message.from.session, messageId: message.proxyOf } : undefined;
+      const signal = await prepareLoopSignal(message.text, sign, proxy);
+      return { snapshot, key, signal };
+    } catch { return { snapshot, key: null, signal: null, error: "loop-crypto-unavailable" }; }
+  }
+
+  // Authorization is checked by the caller; replay never scores or creates a delivery.
+  replay(messageId: string, fromNode: string): SendResult | null {
+    const existing = this.get(messageId);
+    if (existing) return existing.fromNode !== fromNode ? { ok: false, error: "duplicate messageId" }
+      : { ok: true, status: this.statusFor(fromNode, statusOf(existing)), effects: none() };
+    const settled = this.retention.resend(messageId, fromNode);
+    return settled ? settled.ok ? { ...settled, effects: none() } : settled : null;
   }
 
   // Records one message as queued, or as refused when the target cannot take
   // it. A repeated messageId from the same sender returns the current state.
-  send(message: NewMessage, actor: string, now: number): SendResult {
+  send(message: NewMessage, actor: string, now: number, prepared?: PreparedLoop): SendResult {
     const effects = this.expireDue(now);
     const existing = this.get(message.messageId);
     if (existing) {
@@ -171,14 +224,42 @@ export class MessageStore {
     const target = message.to.nodeId;
     const capabilities = this.capabilities(target);
     // A proxy answer is one hop deeper than its original, like a reply.
-    const depth = replyDepth(this.sql, message.inReplyTo ?? message.proxyOf);
+    let depth = replyDepth(this.sql, message.inReplyTo ?? message.proxyOf);
     const proxy = message.proxyOf === undefined ? null : proxyRefusal(this.sql, message.proxyOf, message.from, message.to);
     let reason: string | null = null;
     if (proxy !== null) reason = proxy;
-    else if (depthExceeded(depth)) reason = REPLY_DEPTH_EXCEEDED;
     else if (capabilities === null) reason = "unknown or revoked target node";
     else if (!capabilities.includes(MESSAGING_CAPABILITY)) reason = `target node lacks ${MESSAGING_CAPABILITY}`;
     else if (this.queuedCount(target) >= MAX_QUEUED_PER_NODE) reason = `more than ${MAX_QUEUED_PER_NODE} queued messages for the target node`;
+    let loop: LoopAdmissionV1 | undefined;
+    const current = this.identity.snapshot(message.from, message.to, message.inReplyTo ?? message.proxyOf);
+    const mode = this.identity.validate(current, prepared?.key ?? null, !!(message.inReplyTo ?? message.proxyOf));
+    if (reason === null) {
+      if (prepared && JSON.stringify(prepared.snapshot) !== JSON.stringify(current)) reason = LOOP_STALE;
+      else if (prepared?.error) reason = prepared.error;
+      else if (typeof mode === "object") reason = mode.reason;
+      else if (prepared?.key && this.loops.held(prepared.key)) reason = this.loops.held(prepared.key);
+      else if (mode === "legacy") { if (depthExceeded(depth)) reason = REPLY_DEPTH_EXCEEDED; }
+      else if (!prepared?.key || !prepared.signal || current.direction === null) reason = "loop-crypto-unavailable";
+      else {
+        const parent = current.parent.kind === "guarded" ? current.parent : null;
+        depth = parent ? parent.depth + 1 : 0;
+        if (!Number.isSafeInteger(depth)) reason = LOOP_LINEAGE;
+        else {
+          const admitted = this.loops.admit({ key: prepared.key, fromNode: message.from.nodeId, toNode: message.to.nodeId,
+            messageId: message.messageId, threadId: parent?.threadId ?? message.messageId, depth,
+            ...(parent ? { parentGeneration: parent.generation } : {}), signal: prepared.signal, now });
+          if ("reason" in admitted) reason = admitted.reason;
+          else loop = admitted.loop;
+        }
+      }
+    }
+    if (reason?.startsWith("loop-held:") && prepared?.key) {
+      for (const row of this.sql.exec(`SELECT ${COLUMNS} FROM messages INDEXED BY messages_loop_queued
+        WHERE loop_pair = ? AND state = 'queued'`, prepared.key).toArray()) {
+        this.setState(toRecord(row), "refused", reason, actor, now, effects);
+      }
+    }
     const state: MessageState = reason === null ? "queued" : "refused";
 
     // deletable = 1: a row this Worker version stored, which it may delete (#308).
@@ -187,6 +268,8 @@ export class MessageStore {
       message.messageId, message.from.nodeId, message.from.session, target, message.to.session, message.inReplyTo ?? null,
       state === "queued" ? message.text : null, state, reason, now, now, now + MESSAGE_TTL_MS, message.taskId ?? null, depth,
       message.proxyOf ?? null);
+    if (loop) this.sql.exec(`UPDATE messages SET loop_thread = ?, loop_pair = ?, loop_generation = ?, loop_ordinal = ?, loop_direction = ? WHERE id = ?`,
+      loop.threadId, prepared!.key, loop.generation, loop.ordinal, current.direction, message.messageId);
     this.retention.finalized(message.messageId, message.from.nodeId, state, now);
     this.audit(actor, "message.send", target, { messageId: message.messageId, toSession: message.to.session, state, reason });
     if (state === "queued") {
@@ -194,7 +277,7 @@ export class MessageStore {
         messageId: message.messageId, from: { nodeId: message.from.nodeId, session: message.from.session }, toSession: message.to.session, text: message.text,
         ...(message.inReplyTo === undefined ? {} : { inReplyTo: message.inReplyTo }),
         ...(message.proxyOf === undefined ? {} : { proxyOf: message.proxyOf }),
-        ...(message.taskId === undefined ? {} : { taskId: message.taskId }), createdAt: new Date(now).toISOString(),
+        ...(message.taskId === undefined ? {} : { taskId: message.taskId }), ...(loop ? { loop } : {}), createdAt: new Date(now).toISOString(),
       } });
       this.markReplied(message, now, effects);
     }
@@ -245,9 +328,11 @@ export class MessageStore {
   // limit bounds this set independently of sender-status history.
   pendingFor(nodeId: string, now: number): MessageEffects {
     const effects = this.expireDue(now);
-    const rows = this.sql.exec(`SELECT id, from_node, from_session, to_session, in_reply_to, proxy_of, text, created_at, task_id FROM messages
+    const rows = this.sql.exec(`SELECT ${COLUMNS}, text, task_id FROM messages
       WHERE to_node = ? AND state = 'queued' ORDER BY created_at, rowid`, nodeId).toArray();
-    for (const row of rows) effects.deliveries.push({ nodeId, body: deliverBodyOf(row) });
+    for (const row of rows) {
+      if (this.queueDeliveryAllowed(row, now, effects)) effects.deliveries.push({ nodeId, body: deliverBodyOf(row) });
+    }
     return effects;
   }
 
@@ -308,9 +393,13 @@ export class MessageStore {
   replyTarget(messageId: string, nodeId: string, session: string): MessageAddress | "missing" | null {
     let record = this.get(messageId);
     if (!record) return "missing";
-    if (record.toNode !== nodeId || record.toSession !== session
-      || !["accepted", "delivered", "replied"].includes(record.state)) return null;
+    if (record.toNode !== nodeId || !["accepted", "delivered", "replied"].includes(record.state)) return null;
     const to = { nodeId: record.fromNode, session: record.fromSession };
+    const parent = parentOf(this.sql, messageId);
+    if (parent.kind === "guarded-invalid") return null;
+    if (parent.kind === "guarded") return this.identity.resolve({ nodeId, session: record.toSession })?.session
+      === this.identity.resolve({ nodeId, session })?.session && this.identity.resolve({ nodeId, session }) ? to : null;
+    if (record.toSession !== session) return null;
     let depth = 0;
     const seen = new Set<string>();
     while (record.inReplyTo !== null) {
@@ -356,8 +445,21 @@ export class MessageStore {
   }
 
   // Issue #408 (design r3 section 4.3): a proxy delivery goes out only while its row is queued.
-  isQueued(messageId: string): boolean {
-    return isQueued(this.sql, messageId);
+  isQueued(messageId: string): boolean { return isQueued(this.sql, messageId); }
+  deliveryReady(messageId: string, now: number): { ready: boolean; effects: MessageEffects } {
+    const effects = none();
+    const row = this.sql.exec(`SELECT ${COLUMNS} FROM messages WHERE id = ?`, messageId).toArray()[0];
+    return { ready: !!row && row.state === "queued" && this.queueDeliveryAllowed(row, now, effects), effects };
+  }
+
+  private queueDeliveryAllowed(row: Record<string, SqlStorageValue>, now: number, effects: MessageEffects): boolean {
+    const lineage = storedLoopLineage(row);
+    const reason = lineage.kind === "guarded-invalid" ? LOOP_LINEAGE
+      : lineage.kind === "guarded" && (!this.capabilities(String(row.from_node))?.includes(MESSAGING_LOOP_BRAKE_CAPABILITY)
+        || !this.capabilities(String(row.to_node))?.includes(MESSAGING_LOOP_BRAKE_CAPABILITY)) ? LOOP_COMPATIBILITY : null;
+    if (reason === null) return true;
+    this.setState(recordMetadata(row), "refused", reason, "system", now, effects);
+    return false;
   }
 
   // The reply recorded when a message was marked replied; null for other

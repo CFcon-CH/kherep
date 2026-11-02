@@ -267,3 +267,15 @@ test("a message resume checks the working directory again", posix, async (t) => 
   assert.equal(node.runs().length, 1, "nothing resumed");
   assert.match(lines[0] ?? "", /not resuming task .*outside the workspace roots/);
 });
+
+test("guarded20 can resume an eligible generated Codex task; malformed context cannot", posix, async (t) => {
+  for (const valid of [true, false]) {
+    const node = await doneTask(t);
+    const id = deliver(node, "Synthetic useful result [no-reply]", { depth: 20 });
+    fs.writeFileSync(path.join(node.paths.inbox, `${id}.json`), JSON.stringify({ ...getMessage(node.paths.inbox, id)!,
+      loop: { version: valid ? 1 : 2, threadId: id, depth: 20, generation: 0, ordinal: 21 } }));
+    await pollCodexInbound(node.deps());
+    if (valid) await runEnds(node, 2);
+    assert.equal(node.runs().length, valid ? 2 : 1);
+  }
+});

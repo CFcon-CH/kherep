@@ -19,7 +19,7 @@ describe("deletion after the sender's acknowledgement", () => {
     await deletedByAck(id, a.nodeId, b.nodeId);
     const stone = await tombstone(id);
     expect(stone).toMatchObject({ from_node: a.nodeId, to_node: b.nodeId, state: "delivered", depth: 0 });
-    expect(Object.keys(stone ?? {}).sort()).toEqual(["deleted_at", "depth", "from_node", "id", "reason", "reply_message_id", "state", "to_node"]);
+    expect(Object.keys(stone ?? {}).sort()).toEqual(["deleted_at", "depth", "from_node", "id", "loop_direction", "loop_generation", "loop_ordinal", "loop_pair", "loop_thread", "reason", "reply_message_id", "state", "to_node"]);
     expect(await deletes(id)).toEqual([{ actor: `node:${a.nodeId}`, detail: JSON.stringify({ messageId: id, via: "ack" }) }]);
     expect(await settles(id)).toEqual([]); // issue #493: a deletable row is deleted, never settled
     expect((await registry().listMessages(a.nodeId, 100)).map((m) => m.messageId)).not.toContain(id);

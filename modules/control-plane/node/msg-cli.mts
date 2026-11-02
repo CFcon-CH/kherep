@@ -184,12 +184,14 @@ async function send(io: Io, rest: string[], values: MsgArgs["values"]): Promise<
   let words = rest;
   // A reply is one hop deeper than the message it answers, and belongs to its task.
   let depth = 0;
+  let guarded = false;
   let taskId: string | undefined;
   if (replyTo !== undefined) {
     if (!isMessageId(replyTo)) return fail(io, `--reply-to needs a message id, got "${replyTo}"`);
     const original = getMessage(io.paths.inbox, replyTo);
     if (!original) return fail(io, `message ${replyTo} is not in this node's inbox`);
     depth = (original.depth ?? 0) + 1;
+    guarded = original.loop !== undefined;
     taskId = original.taskId;
     if (!target) {
       if (original.from.nodeId === OPERATOR_NODE_ID) return fail(io, "the message came from the operator API and cannot be answered with msg send");
@@ -220,7 +222,7 @@ async function send(io: Io, rest: string[], values: MsgArgs["values"]): Promise<
   taskId = (own && !own.local ? own.taskId : undefined) ?? taskId;
   const record: OutboxRecord = { messageId: crypto.randomUUID(), fromSession: from.value,
     fromSessionId: senderSessionId(io.paths, io.env, from.value, io), to, text,
-    ...(replyTo ? { inReplyTo: replyTo } : {}), ...(taskId ? { taskId } : {}), createdAt: new Date(io.now()).toISOString(), depth };
+    ...(replyTo ? { inReplyTo: replyTo } : {}), ...(taskId ? { taskId } : {}), createdAt: new Date(io.now()).toISOString(), depth, ...(guarded ? { guarded: true as const } : {}) };
   writeOutbox(io.paths, record);
   if (replyTo) markAnswered(io.paths.inbox, replyTo);
   io.out(record.messageId);

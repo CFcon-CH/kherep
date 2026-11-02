@@ -1,10 +1,11 @@
+import { automaticReplyDecision } from "./reply-admission.mts";
 import fs from "node:fs";
 import path from "node:path";
 
 import { isPlainSessionId, listenerDir, type ListenerLock } from "./autonomy.mts";
 import type { NodePaths } from "./config.mts";
 import { MAX_OFFERS, offerEnded, sessionInbox } from "./deliver-core.mts";
-import { getMessage, MAX_REPLY_DEPTH, readJson, writeJsonAtomic, type InboxRecord } from "./inbox.mts";
+import { getMessage, readJson, writeJsonAtomic, type InboxRecord } from "./inbox.mts";
 
 // Which inbox records a wake listener (wake-hook.mts) wakes its session for.
 
@@ -16,7 +17,7 @@ export const WAKE_GRACE_MS = 3_000;
 // prompt typed right after a resume comes first and supersedes it (issue #101).
 export const WAKE_BACKLOG_AFTER_MS = 8_000;
 
-export const atReplyLimit = (record: InboxRecord): boolean => (record.depth ?? 0) >= MAX_REPLY_DEPTH;
+export const atReplyLimit = (record: InboxRecord): boolean => !automaticReplyDecision(record).allowed;
 
 // Records a stuck offer or the backlog was woken for, each once at most, kept
 // while the record exists.

@@ -1,3 +1,4 @@
+import { safeLoopReason } from "../../protocol-loop-brake.mts";
 import { createMcpHandler } from "agents/mcp/server";
 import { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
@@ -117,7 +118,7 @@ function server(env: Env, principal: Principal): McpServer {
     const progress = record.state === "accepted" && isMessageProgress(record.progress) ? record.progress : undefined;
     const silent = silentlyAccepted(record.state, progress, record.updatedAt, Date.now());
     return result({ ok: true, messageId, state: record.state, senderState: senderState(record.state, progress), updatedAt: record.updatedAt,
-      ...(progress ? { progress } : {}), ...(silent ? { hint: SILENCE_HINT } : {}),
+      ...(safeLoopReason(record.reason) ? { reason: safeLoopReason(record.reason) } : {}), ...(progress ? { progress } : {}), ...(silent ? { hint: SILENCE_HINT } : {}),
       ...(record.replyMessageId ? { replyMessageId: record.replyMessageId } : {}) });
   });
 

@@ -1,3 +1,4 @@
+import { automaticReplyDecision } from "./reply-admission.mts";
 import crypto from "node:crypto";
 
 import { bypassesPermissions, listenerDir } from "./autonomy.mts";
@@ -5,7 +6,7 @@ import { busyPolicyFingerprint, busyWakeDisabled } from "./codex-busy-policy.mts
 export { busyPolicyFingerprint } from "./codex-busy-policy.mts";
 import { publishBusyHint, type BusyHintAdmission } from "./codex-busy-ticket.mts";
 import { CODEX_ACTIVE_MS, codexSessionRefs, readCodexSession } from "./codex-sessions.mts";
-import { getMessage, MAX_REPLY_DEPTH, type InboxRecord } from "./inbox.mts";
+import { getMessage, type InboxRecord } from "./inbox.mts";
 import { readConfig } from "./config.mts";
 import { listTasks } from "./task-records.mts";
 import { explicitlyListed, readPolicy } from "./policy.mts";
@@ -36,10 +37,9 @@ export function publishAdmittedBusyHint(deps: RunnerDeps, ticket: BusyHintAdmiss
       ? codexSessionRefs(deps.paths, ticket.owner, now).refs : [ticket.owner]);
     const messages = ticket.messages.filter((admitted) => {
       const record = getMessage(deps.paths.inbox, admitted.messageId);
-      const depth = record?.depth ?? 0;
-      return record?.messageId === admitted.messageId && record.state === "accepted"
+        return record?.messageId === admitted.messageId && record.state === "accepted"
         && record.toSession === admitted.toSession && refs.has(admitted.toSession)
-        && Number.isSafeInteger(depth) && depth >= 0 && depth < MAX_REPLY_DEPTH;
+        && automaticReplyDecision(record).allowed;
     });
     if (messages.length === 0) return "invalid";
     return publishBusyHint(listenerDir(deps.paths), { ...ticket, messages }, now);
