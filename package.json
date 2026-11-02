@@ -10,7 +10,7 @@
     "typecheck": "tsc -p tsconfig.json",
     "test:bootstrap": "node --test \"bootstrap/*.test.mts\"",
     "test:codex": "node --test \"codex/*.test.mts\" \"codex/lib/*.test.mts\" \"codex/hooks/*.test.mts\" \"codex/scripts/*.test.mts\"",
-    "test:brokers": "node --test \"modules/atl-jira-brokers/*.test.mts\"",
+    "test:brokers": "node --test \"modules/atl-jira-brokers/*.test.mts\" \"modules/github-broker/*.test.mts\"",
     "test:modules": "node --test \"lib/*.test.mts\" \"modules/local-inference/*.test.mts\" \"modules/mcp-auth-bridge/*.test.mts\"",
     "test:control-plane": "node --test \"modules/control-plane/*.test.mts\" \"modules/control-plane/node/*.test.mts\"",
     "audit:publication": "node bootstrap/publication-audit.mts"

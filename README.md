@@ -36,6 +36,7 @@ Use Kherep to give your agents consistent working rules, reusable skills and a s
 - **Local inference:** use configured local processing routes, including a separate path for private inputs.
 - **Central Brain:** a shared knowledge base in a dedicated Confluence space. With a configured space and brokers, durable findings from completed turns become pages: the Claude observation agent files them itself, and the pinned Codex Luna observation agent extracts and publishes through a narrow local service-account adapter. The Codex Maestro independently checks its receipt and target pages. A finding about repository code counts as `confirmed` only when it names each repository as `<name>@<full commit sha>` measured on a clean tree; otherwise it is filed as `assumed`.
 - **Brain drainage:** operator-invoked knowledge-space hygiene review through the read-only service-account scanner, with explicit-authority repairs and reviewed-version protection, and an operator-requested confirm path that measures `evidence-assumed` pages against their primary source before proposing a new evidence label. See [broker workflow](modules/atl-jira-brokers/README.md#brain-drainage).
+- **GitHub App issue broker:** fixed Claude and Codex CLIs for public-repository issue creation, comments and updates, with selected App identities, constrained installation tokens and durable duplicate protection. Source installation stays disabled until separately authorized operator configuration; see the [broker contract](modules/github-broker/README.md).
 - **Turn-completion observations:** after a substantial Claude turn a Stop hook has the Maestro dispatch `claude-obs`, and Codex can dispatch one bounded `codex-obs` pass; see [Codex integration](docs/CODEX.md#turn-completion-observations).
 - **Control Plane:** enrolled nodes connect to a Cloudflare Worker to exchange session messages and start tasks on each other. On a host with a managed service, sessions use one stable command, `node "<config directory>/bin/kherep-node.mjs"`, which follows the active service pin. The details are in [Control Plane](modules/control-plane/README.md), including prerequisites, task controls and platform limits:
   - **Delivery:** a running Claude Code session receives accepted messages after its next successful tool call, and its Stop confirms delivery.
@@ -65,6 +66,7 @@ flowchart LR
     end
     githook["Git hooks<br/>commit-msg, post-checkout, pre-push"]
     brokers["Atlassian brokers"]
+    githubBroker["GitHub App issue broker<br/>default off"]
     runner["Local inference runner"]
     bridge["MCP auth bridge"]
     nodeDaemon["Control Plane node daemon"]
@@ -86,6 +88,7 @@ flowchart LR
   bootstrap -->|one resolved model snapshot| codex
   bootstrap -->|binds| githook
   runtimes --> brokers --> confluence
+  runtimes --> githubBroker --> github["GitHub.com public repository"]
   codex -->|validated native main-turn IDs, pinned Luna, read-only filesystem| observationAdapter["Narrow observation MCP adapter"]
   observationAdapter -->|authority, journal, readback| brokers
   runtimes --> runner --> model
@@ -107,6 +110,7 @@ flowchart LR
 | Codex adapter | `codex/` | Projection of the shared rules, skills and agents into Codex; see [adapter architecture](codex/ARCHITECTURE.md) |
 | Bootstrap | `bootstrap/` | Host profiles, managed installation, backups, drift checks and the commit policy |
 | Atlassian brokers | `modules/atl-jira-brokers/` | Jira and Confluence operations under a service account, including the Central Brain space |
+| GitHub App broker | `modules/github-broker/` | Fixed runtime issue operations, constrained App authentication, durable receipts; disabled until authorized configuration |
 | Teamwork Graph | `modules/twg/` | Bounded, read-only Teamwork Graph lookups |
 | Local inference | `modules/local-inference/` | Runner for a configured local model server, reached locally or over SSH |
 | MCP auth bridge | `modules/mcp-auth-bridge/` | Authenticated transport wrappers for configured MCP servers |

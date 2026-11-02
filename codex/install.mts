@@ -17,6 +17,7 @@ import { setPluginEnabled } from "./lib/plugin-config.mts";
 import {
   atlassianMcpServer, hasManagedAtlassianTable, managedAtlassianTokenFile, PREDECESSOR_NATIVE_ATLASSIAN,
 } from "./lib/atlassian-mcp.mts";
+import { copyGithubBroker } from "../lib/github-broker-projection.mts";
 import { copyObservationBroker, renderObservationHook } from "./lib/observation-projection.mts";
 import { copyObservationSnapshot } from "./lib/observation-source.mts";
 import { componentHash } from "./lib/component-hash.mts";
@@ -525,6 +526,7 @@ export function install(options: InstallOptions = {}) {
     ] as const) workspaceTransaction.copyFile(source, target);
 
     copyObservationBroker(repoRoot, workspace, workspaceTransaction);
+    copyGithubBroker(repoRoot, workspace, workspaceTransaction);
 
     if (installAtlassianTools) {
       workspaceTransaction.copyFile(sources.jiraAdfRenderer, targets.jiraAdfRenderer);

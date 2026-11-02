@@ -5,6 +5,8 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import test from "node:test";
 
+import { copyGithubBroker } from "../lib/github-broker-projection.mts";
+
 const repo = path.resolve(import.meta.dirname, "..");
 
 test("projected runtime artifacts import from their installed layouts", async (t) => {
@@ -25,6 +27,8 @@ test("projected runtime artifacts import from their installed layouts", async (t
   const brokers = path.join(root, "tools");
   fs.cpSync(path.join(repo, "modules", "atl-jira-brokers"), brokers, { recursive: true });
 
+  copyGithubBroker(repo, root, { copyFile(source, target) { fs.mkdirSync(path.dirname(target), {recursive:true}); fs.copyFileSync(source,target); return target; } });
+
   const twg = path.join(root, "twg");
   fs.cpSync(path.join(repo, "modules", "twg", "runtime"), twg, { recursive: true });
 
@@ -43,6 +47,8 @@ test("projected runtime artifacts import from their installed layouts", async (t
     path.join(brokers, "atl-confluence.mts"),
     path.join(brokers, "atl-confluence-ccoder.mts"),
     path.join(twg, "resolve-binary.mts"),
+    path.join(root, "tools", "github-broker", "github-claude.mts"),
+    path.join(root, "tools", "github-broker", "github-codex.mts"),
   ]) {
     const loaded = await import(`${pathToFileURL(file).href}?isolated=${Date.now()}`);
     assert.ok(loaded && typeof loaded === "object", `${path.basename(file)} imports in isolation`);

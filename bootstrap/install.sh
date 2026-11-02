@@ -117,6 +117,8 @@ if [ "$INSTALL_ATLASSIAN_TOOLS" = "1" ]; then
   [ -e "$REPO_ROOT/modules/atl-jira-brokers" ] || { echo "FATAL: optional Atlassian source missing"; exit 1; }
 fi
 
+GITHUB_BROKER_FILES="$(node "$REPO_ROOT/lib/github-broker-projection.mts" "$REPO_ROOT")"
+
 # Validate every managed destination before creating bootstrap state. Target
 # leaves may themselves be symlinks (the atomic swap replaces them), but no
 # ancestor below an explicitly configured root may redirect the operation.
@@ -140,6 +142,9 @@ if [ "$INSTALL_ATLASSIAN_TOOLS" = "1" ]; then
     transaction_validate_path_under_root "optional Atlassian tool" "$WS/tools/$target" "$WS" 0 || exit $?
   done
 fi
+for target in $GITHUB_BROKER_FILES; do
+  transaction_validate_path_under_root "GitHub broker" "$WS/tools/github-broker/$target" "$WS" 0 || exit $?
+done
 transaction_validate_path_under_root "local-inference runner" "$CLAUDE_HOME/kherep/local-inference/runner.mts" "$CLAUDE_HOME" 0 || exit $?
 transaction_validate_path_under_root "local-inference lib" "$CLAUDE_HOME/kherep/local-inference/lib" "$CLAUDE_HOME" 0 || exit $?
 transaction_validate_path_under_root "local-inference config" "$CLAUDE_HOME/kherep/local-inference/config.json" "$CLAUDE_HOME" 0 || exit $?
@@ -260,6 +265,12 @@ for tool in $CONFLUENCE_TOOLS; do
   install_path "project/tools/$tool" \
     "$REPO_ROOT/modules/atl-jira-brokers/$tool" "$WS/tools/$tool" \
     "$INSTALL_BACKUP/project/tools/$tool"
+done
+
+for tool in $GITHUB_BROKER_FILES; do
+  install_path "project/tools/github-broker/$tool" \
+    "$REPO_ROOT/modules/github-broker/$tool" "$WS/tools/github-broker/$tool" \
+    "$INSTALL_BACKUP/project/tools/github-broker/$tool"
 done
 
 if [ "$INSTALL_ATLASSIAN_TOOLS" = "1" ]; then
