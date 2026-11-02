@@ -177,7 +177,7 @@ test("the Codex projection keeps its own worker contract and no Claude broker", 
   assert.match(text, /mcp__kherep_observations__publish_observations/);
   assert.match(text, /NO further publication/);
   assert.match(text, /Maestro independently validates/);
-  for (const pattern of [/dispatching MAIN turn[^.]{0,100}never[^.]{0,100}worker/i, /\^\[a-z0-9\]\[a-z0-9\._-\]\{0,79\}\$/, /missing or invalid[\s\S]{0,200}`OBS-RESULT: failed missing-turn-identity`[\s\S]{0,100}no tool calls/i]) assert.match(text, pattern);
+  for (const pattern of [/dispatching MAIN turn[^.]{0,100}never[^.]{0,100}worker/i, /\^\[a-z0-9\]\[a-z0-9\._-\]\{0,79\}\$/, /missing or invalid[\s\S]{0,200}`OBS-ATTEMPT: failed missing-turn-identity detail=none publication=not-attempted created=none`[\s\S]{0,100}no tool calls/i]) assert.match(text, pattern);
   assert.doesNotMatch(text, /atl-confluence-ccoder|KHEREP_ATL_CRED_FILE_CLAUDE/);
 });
 test("both routing files treat OBS-RESULT: failed as a failure, not an empty result", () => {

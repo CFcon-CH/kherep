@@ -79,7 +79,7 @@ function store(reserialize: (storage: string) => string) {
   return { run, writes, log, bodies };
 }
 
-const wrapItems = (storage: string) => storage.replace(/<li>(.*?)<\/li>/g, "<li><p>$1</p></li>");
+const wrapItems = (storage: string) => storage.replace(/<li>(<a\b[^>]*>.*?<\/a>)<\/li>/g, "<li><p>$1</p></li>");
 
 for (const [name, reserialize] of [["verbatim", (s: string) => s], ["re-serialized", wrapItems]] as const) {
   test(`a second stitch of the same orphan writes nothing (${name} store, sibling neighbour)`, async () => {

@@ -14,7 +14,7 @@ const finding = { title: 'Synthetic journal transport', bodyStorage: '<p>Origin:
 const request = () => ({ sessionId: 'synthetic', turnId: 'turn', observations: [structuredClone(finding)] });
 function fixture(t: {
     after(fn: () => void): void;
-}) {
+}, options: { serialize?: (body: string, method: 'POST' | 'PUT') => string; peerTitle?: string; peerBody?: string } = {}) {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), 'observation-adapter-'));
     t.after(() => fs.rmSync(home, { recursive: true, force: true }));
     fs.mkdirSync(path.join(home, 'kherep'));
@@ -28,7 +28,7 @@ function fixture(t: {
     }[] = [];
     const labels: string[] = [];
     let page: any;
-    let peer: any = { id: '30', title: 'Synthetic journal transport baseline', spaceId: '10', parentId: '20', status: 'current', version: { number: 1 }, body: { storage: { value: '<p>Synthetic peer</p>' } } };
+    let peer: any = { id: '30', title: options.peerTitle ?? 'Synthetic journal transport baseline', spaceId: '10', parentId: '20', status: 'current', version: { number: 1 }, body: { storage: { value: options.peerBody ?? '<p>Synthetic peer</p>' } } };
     let mode = '';
     let peerReads = 0;
     const context: ConfluenceContext = { env: { KHEREP_ATL_SITE: 'https://synthetic.invalid', KHEREP_ATL_CRED_FILE_CODEX: '/synthetic-credential', KHEREP_PROFILE: 'mac' },
@@ -60,6 +60,7 @@ function fixture(t: {
             else if (route === '/wiki/api/v2/pages' && method === 'POST') {
                 // Model Confluence's stored text nodes, independently of the broker serializer.
                 let stored = body.body.value.split(/(<[^>]*>)/).map((part: string, index: number) => index % 2 ? part : part.replaceAll('>', '&gt;').replaceAll('"', '&quot;')).join('');
+                stored = options.serialize?.(stored, 'POST') ?? stored;
                 if (mode === 'stitch-corrupt-text') stored = stored.replace('measured', 'changed');
                 if (mode === 'stitch-corrupt-backslash') stored = stored.replace('\\synthetic', '\\\\synthetic');
                 if (mode === 'stitch-corrupt-tag') stored = stored.replace('<code>', '<pre>');
@@ -75,7 +76,7 @@ function fixture(t: {
             else if (route === '/wiki/api/v2/pages/21')
                 json = { id: '21', spaceId: '10', title: 'SyntheticApp', status: 'current', parentId: '999' };
             else if (route === '/wiki/api/v2/pages/30' && method === 'PUT') {
-                peer = { ...peer, version: body.version, body: { storage: { value: mode === 'stitch-missing-link' ? '<p>missing link</p>' : body.body.value } } };
+                peer = { ...peer, version: body.version, body: { storage: { value: mode === 'stitch-missing-link' ? '<p>missing link</p>' : options.serialize?.(body.body.value, 'PUT') ?? body.body.value } } };
                 json = peer;
             }
             else if (route.startsWith('/wiki/api/v2/pages/30')) {
@@ -111,6 +112,36 @@ test('actual broker publishes with mandatory successful-empty related section, r
     assert.ok(f.calls.some(c => c.route === '/wiki/rest/api/content/100/label'));
     const local = fs.readdirSync(path.join(f.home, 'receipts')).map(n => fs.readFileSync(path.join(f.home, 'receipts', n), 'utf8')).join();
     assert.doesNotMatch(local, /CANARY/);
+});
+for (const mode of ['success', 'denial', 'partial']) test(`RPC preserves real publisher ${mode} and terminal zero-I/O replay`, async t => {
+    const f = fixture(t), r = request();
+    if (mode === 'denial') {
+        const file = path.join(f.home, 'kherep', 'confluence.json');
+        const authority = JSON.parse(fs.readFileSync(file, 'utf8'));
+        authority.observationPublishingAuthorized = false;
+        fs.writeFileSync(file, JSON.stringify(authority));
+    }
+    if (mode === 'partial') f.mode('stitch-missing-link');
+    const call = { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'publish_observations', arguments: r } };
+    const publish = (args: unknown) => publishObservations(args, f.broker, f.store);
+    const result = await observationRpc(call, publish) as any;
+    const expected = mode === 'success' ? 'OBS-RESULT: wrote 1 100' : mode === 'denial'
+        ? 'OBS-RESULT: failed authority-denied' : 'OBS-RESULT: failed stitch-unverified created=100';
+    assert.equal(result.result.content[0].text, expected);
+    assert.equal(result.result.isError, mode !== 'success');
+    const count = f.calls.length;
+    assert.deepEqual(await observationRpc(call, publish), result);
+    assert.equal(f.calls.length, count);
+    assert.equal(f.calls.filter(c => c.method === 'POST' && c.route === '/wiki/api/v2/pages').length, mode === 'denial' ? 0 : 1);
+});
+test('RPC empty publication performs zero broker and journal I/O', async t => {
+    const f = fixture(t);
+    const call = { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'publish_observations', arguments: { ...request(), observations: [] } } };
+    const response = await observationRpc(call, args => publishObservations(args, f.broker, { claim() { throw new Error('unexpected journal I/O'); } })) as any;
+    assert.equal(response.result.content[0].text, 'OBS-RESULT: empty no-admissible-findings');
+    assert.equal(response.result.isError, false);
+    assert.deepEqual(f.calls, []);
+    assert.equal(fs.existsSync(path.join(f.home, 'receipts')), false);
 });
 for (const mode of ['missing-author', 'wrong-author', 'partial-related', 'related-http', 'semantic-error'])
     test(`actual broker fails safely for ${mode}`, async (t) => {
@@ -173,10 +204,90 @@ test('targeted stitching adds and independently verifies the new page link on it
     assert.match(writes[0].body.body.value, /pages\/100/);
     assert.ok(f.calls.some(call => call.method === 'GET' && call.route === '/wiki/api/v2/pages/30?body-format=storage'));
 });
+// Issue #730: model storage serialization after the actual POST or guarded PUT,
+// not a replacement broker/update callback. The stored page also serves GETs.
+for (const phase of ['POST', 'PUT'] as const) for (const transform of ['paragraph', 'apostrophe'])
+    test(`exact production readback survives ${phase} ${transform} storage serialization`, async t => {
+        const f = fixture(t, {
+            peerTitle: "Synthetic journal transport isn't duplicated",
+            // A legacy Related block and ordinary link must both survive the merge.
+            peerBody: '<p>Synthetic peer <a href="/wiki/spaces/SYNTHETIC/pages/20">shelf</a></p><h2>Related pages</h2><ul><li><a href="/wiki/spaces/SYNTHETIC/pages/20">Kherep</a></li></ul>',
+            serialize: (body, method) => method !== phase ? body : transform === 'paragraph'
+                ? body.replace(/<li>(<a\b[^>]*>.*?<\/a>)<\/li>/g, '<li><p>$1</p></li>')
+                : body.replaceAll('&#39;', "'"),
+        });
+        f.mode('stitch-ok');
+        const r = request();
+        r.observations[0].title = "Synthetic journal transport isn't repeated";
+        const result = await publishObservations(r, f.broker, f.store);
+        const count = f.calls.length;
+        assert.equal(await publishObservations(r, f.broker, f.store), result);
+        assert.equal(f.calls.length, count, 'terminal receipt replay must perform zero I/O');
+        assert.equal(result, 'OBS-RESULT: wrote 1 100');
+        const create = f.calls.find(c => c.method === 'POST' && c.route === '/wiki/api/v2/pages')!;
+        const writes = f.calls.filter(c => c.method === 'PUT');
+        assert.equal(writes.length, 1);
+        assert.equal(writes[0].route, '/wiki/api/v2/pages/30');
+        const peer = await (await f.context.fetch('https://api.atlassian.com/ex/confluence/synthetic-cloud/wiki/api/v2/pages/30?body-format=storage')).json() as any;
+        assert.equal((await f.broker.read('100')).body, create.body.body.value);
+        assert.equal(peer.body.storage.value, writes[0].body.body.value);
+        assert.match(peer.body.storage.value, /^<p>Synthetic peer <a href="\/wiki\/spaces\/SYNTHETIC\/pages\/20">shelf<\/a><\/p>/);
+        assert.match(peer.body.storage.value, /<li><p><a href="\/wiki\/spaces\/SYNTHETIC\/pages\/20">Kherep<\/a><\/p><\/li>/);
+        assert.match(peer.body.storage.value, /pages\/100/);
+    });
+for (const corruption of ['text', 'tag', 'link', 'version', 'space', 'title', 'status'])
+    test(`guarded stitch rejects changed ${corruption} and replays the created ID without I/O`, async t => {
+        const f = fixture(t);
+        f.mode('stitch-ok');
+        const transport = f.context.fetch;
+        f.context.fetch = async (url, opts) => {
+            const response = await transport(url, opts);
+            const data = await response.json() as any;
+            if (url.endsWith('/wiki/api/v2/pages/30') && opts?.method === 'PUT') {
+                if (corruption === 'text') data.body.storage.value = data.body.storage.value.replace('Synthetic peer', 'Changed peer');
+                if (corruption === 'tag') data.body.storage.value = data.body.storage.value.replace('<ul>', '<ol>');
+                if (corruption === 'link') data.body.storage.value = data.body.storage.value.replace('/pages/100"', '/pages/20"');
+                if (corruption === 'version') data.version.number++;
+                if (corruption === 'space') data.spaceId = '999';
+                if (corruption === 'title') data.title = 'Changed title';
+                if (corruption === 'status') data.status = 'draft';
+            }
+            return { ...response, json: async () => data, text: async () => JSON.stringify(data) };
+        };
+        const r = request(), expected = 'OBS-RESULT: failed stitch-unverified created=100';
+        assert.equal(await publishObservations(r, f.broker, f.store), expected);
+        const count = f.calls.length;
+        assert.equal(await publishObservations(r, f.broker, f.store), expected);
+        assert.equal(f.calls.length, count);
+        assert.equal(f.calls.filter(c => c.method === 'POST' && c.route === '/wiki/api/v2/pages').length, 1);
+        assert.deepEqual(f.calls.filter(c => c.method === 'PUT').map(c => c.route), ['/wiki/api/v2/pages/30']);
+    });
 test('a stitch write whose link cannot be read back fails with the created ID', async (t) => {
     const f = fixture(t);
     f.mode('stitch-missing-link');
     assert.equal(await publishObservations(request(), f.broker, f.store), 'OBS-RESULT: failed stitch-unverified created=100');
+});
+test('independent backlink read rejects a link lost after successful guarded readback', async t => {
+    const f = fixture(t);
+    f.mode('stitch-ok');
+    const transport = f.context.fetch;
+    let written = false, reads = 0;
+    f.context.fetch = async (url, opts) => {
+        const response = await transport(url, opts);
+        if (opts?.method === 'PUT') written = true;
+        if (written && url.endsWith('/pages/30?body-format=storage') && ++reads === 2) {
+            const data = structuredClone(await response.json()) as any;
+            data.body.storage.value = '<p>Backlink removed</p>';
+            return { ...response, json: async () => data, text: async () => JSON.stringify(data) };
+        }
+        return response;
+    };
+    const r = request(), expected = 'OBS-RESULT: failed stitch-unverified created=100';
+    assert.equal(await publishObservations(r, f.broker, f.store), expected);
+    assert.equal(reads, 2, 'guarded readback passed before the independent read failed');
+    const count = f.calls.length;
+    assert.equal(await publishObservations(r, f.broker, f.store), expected);
+    assert.equal(f.calls.length, count);
 });
 test('stitch fresh-version merge preserves an intervening human body edit', async (t) => {
     const f = fixture(t);

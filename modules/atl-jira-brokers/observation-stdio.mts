@@ -8,6 +8,7 @@ import { publishObservations } from './observation-publisher.mts';
 import { observationBroker } from './observation-broker.mts';
 import { observationRequest } from './observation-policy.mts';
 import { receiptStore } from './observation-receipt.mts';
+import { checkObsResult } from './observation-result.mts';
 export const OBSERVATION_TOOL = {
     name: 'publish_observations', description: 'Publish admissible observations once through the authorized Codex service-account broker; returns a safe OBS-RESULT receipt.',
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
@@ -75,14 +76,15 @@ export async function observationRpc(value: unknown, publish: Publish): Promise<
         return { jsonrpc: '2.0', id, error: { code: -32602, message: 'invalid-parameters' } };
     }
     if (r.method === 'tools/call' && r.params?.name === 'publish_observations') {
-        let receipt: string;
         try {
-            receipt = await publish(r.params.arguments);
+            const receipt = await publish(r.params.arguments);
+            const checked = typeof receipt === 'string' ? checkObsResult(receipt) : null;
+            if (checked && 'status' in checked)
+                return result({ content: [{ type: 'text', text: receipt }], isError: checked.status === 'failed' });
         }
-        catch {
-            receipt = 'OBS-RESULT: failed broker-unavailable';
-        }
-        return result({ content: [{ type: 'text', text: receipt }], isError: receipt.startsWith('OBS-RESULT: failed') });
+        catch { }
+        // No verified phase or complete ID evidence exists at this boundary.
+        return { jsonrpc: '2.0', id, error: { code: -32603, message: 'publication-outcome-unknown' } };
     }
     return { jsonrpc: '2.0', id, error: { code: -32601, message: 'method-unavailable' } };
 }

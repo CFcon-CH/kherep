@@ -85,7 +85,7 @@ function run(input: unknown, env: NodeJS.ProcessEnv = {}, args: string[] = []) {
 
 const payload = { hook_event_name: "UserPromptSubmit", cwd: "/synthetic/work/project" };
 const workspaceEnv = { KHEREP_WORKSPACE: "/synthetic/work" };
-const unavailable = "Observation turn identity unavailable. Maestro: continue the user task and its tools; pass this unavailable-identity condition to codex-obs. The observation WORKER must return OBS-RESULT: failed missing-turn-identity with no WORKER tool calls.";
+const unavailable = "Observation turn identity unavailable. Maestro: continue the user task and its tools; pass this unavailable-identity condition to codex-obs. The observation WORKER must return OBS-ATTEMPT: failed missing-turn-identity detail=none publication=not-attempted created=none with no WORKER tool calls.";
 const header = (sessionId: string, turnId: string) => JSON.stringify({ sessionId, turnId });
 
 test("native stdin supplies exact bounded main-turn identity for the Luna brief", () => {

@@ -114,11 +114,29 @@ resolved space and a trusted current-user identity before creation, completes re
 each create, creates one page per finding with required labels, verifies space/parent/body/labels/author,
 and performs only targeted verified stitching for created IDs. A durable journal prevents repeat,
 corrective or uncertain requests from creating replacement pages. Empty findings cause zero I/O.
-The worker returns exactly one strict `OBS-RESULT` receipt: wrote with count and comma-separated
-numeric IDs, empty no-admissible-findings, or failed with a safe code and any created IDs.
-A `SubagentStop` hook with matcher `codex-obs` checks the receipt, requests one malformed-handback
-correction with NO further publication or tool calls, and warns on a second malformed or invisible
-result. The Maestro independently validates every receipt and reads the target pages. It never
+The worker copies one strict canonical `OBS-RESULT` receipt verbatim: wrote with count and
+comma-separated numeric IDs, empty no-admissible-findings, or failed with a safe code and
+all created IDs. A valid canonical receipt takes priority even when `isError` is true;
+that flag alone never proves an outer refusal. The adapter validates publisher output;
+a throw or malformed receipt produces fixed JSON-RPC error `publication-outcome-unknown`,
+without an invented publication phase, inferred IDs or raw error details.
+
+When no canonical receipt exists, the worker returns one bounded non-adapter report:
+`OBS-ATTEMPT: failed <reason> detail=<detail> publication=<state> created=<ids-state>`.
+The finite tuples in `codex-obs` distinguish missing-turn-identity/tool-unavailable before
+invocation (detail none, publication not-attempted, created none) from visible tool-refused,
+tool-error, protocol-error, invalid-tool-response or evidence-unavailable after an attempt
+(publication unknown and created unknown). Only the exact visible standard risk rejection
+allows unacceptable-risk detail; no historical reason or ID state is guessed. Attempts
+are worker reports, never adapter receipts or journal records. No free-text errors, fallback
+account/broker or approval change is allowed.
+
+A `SubagentStop` hook with matcher `codex-obs` checks either strict handback, requests one
+malformed-handback correction with NO further publication or tool calls, and warns on a
+second malformed or invisible result. Missing original evidence on correction uses the
+fixed evidence-unavailable attempt, without recovery tools. Every attempt warns in the
+same turn, retaining UNKNOWN publication/created IDs where applicable. The Maestro
+independently validates every handback and reads targets for canonical created IDs. It never
 silently generates, publishes or repairs observations. `OBS-RESULT: failed` is reported in the
 same turn with created IDs as a failure, never as a valid empty result. Claude keeps its separate
 direct-publication workflow and existing status-line checks.
