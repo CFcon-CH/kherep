@@ -24,6 +24,8 @@ increments the minor version; every other release increments the patch version.
   `selectRelated`, the title-term write path and `stitch --dry-run`/`related --parent`
   are removed.
 
+- GitHub App issue broker source (Refs #732): fixed Claude/Codex entrypoints, strict public-repository operations, real local signing, scoped installation tokens, durable uncertain-outcome receipts and shared transactional packaging. Default disabled; native/live identity acceptance remains separate.
+
 - Codex routing-only updater (issue #707): exact predecessor/current byte checks,
   explicit public Intercom rendering, isolated backup receipts and verified
   rollback without full installation or model refresh. Routing assigns SOL

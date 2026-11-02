@@ -237,3 +237,19 @@ The Central Brain Confluence space is the supported shared knowledge base. Confi
 ## Knowledge-space maintenance
 
 The shared, manually invoked `brain-drainage` skill is projected from `claude/skills/brain-drainage` with its review guide and normal skill discovery. Both runtime service-account broker CLIs expose the same `drainage` command through the installed `confluence-drainage-*` modules and strict `confluence-pagination.mts` helper. The path is Maestro -> configured broker -> GET-only scanner -> bounded candidate report; changes return through operator-reviewed, version-guarded broker updates. No daemon, additional backend or autonomous publication path is installed. Both brokers also expose the read-only `evidence` command (`confluence-evidence.mts`, `confluence-evidence-report.mts`, `confluence-evidence-io.mts`, `confluence-evidence-cli.mts`) for the confirm path: it reads one page, applies the promotion gates offline and writes only local record and body files outside any work tree, never Confluence. With an operator-given `--repo-root`, `drainage` also runs read-only git on that checkout (`confluence-revision-staleness.mts`, `confluence-revision-staleness-git.mts`, grammar in `confluence-claim-text.mts`) to flag confirmed pages whose bound paths changed; it still writes nothing. Content classification and private local-route constraints precede invocation. See the [broker contract](../modules/atl-jira-brokers/README.md#brain-drainage).
+
+
+## GitHub App issue broker source
+
+The installer projects the same validated shared closure to
+`<workspace>/tools/github-broker/`, including `github-claude.mts` and
+`github-codex.mts`. Each entrypoint binds its runtime internally. The source copy
+uses the existing installation transaction, preserving rollback and idempotence;
+bootstrap drift checking compares every file in that closure. Both actual staged
+entrypoints are import-tested without configuration, key or network side effects.
+
+Installation creates no enabled policy, key, App registration, installation,
+permission grant or network probe. Operational setup and publication authority
+remain separate. See the [broker contract](../modules/github-broker/README.md)
+for its strict stdin interface, default-off policy, fixed GitHub.com public scope,
+secret handling, uncertain-outcome receipts and native/live acceptance gates.

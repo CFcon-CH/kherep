@@ -103,13 +103,20 @@ const globalHooksPath = (f: Fixture): string => {
 const sentinelTouched = (f: Fixture): string => (fs.existsSync(f.traceLog) ? fs.readFileSync(f.traceLog, "utf8") : "");
 const sameDir = (stored: string, dir: string): boolean => slash(stored) === slash(dir);
 
-test("a non-default CLAUDE_HOME without any switch leaves global Git config and the inherited credential alone", (t) => {
+test("a non-default CLAUDE_HOME without any switch leaves global Git config and the inherited credential alone", async (t) => {
   const f = fixture(t);
   const before = fs.readFileSync(f.global);
   const run = install(f, f.candidate);
   assert.deepEqual(fs.readFileSync(f.global), before, `global gitconfig rewritten\n${run.out}`);
   assert.equal(fs.existsSync(f.system), false, "a system gitconfig was created");
   assert.equal(sentinelTouched(f), "", `inherited credential file was touched\n${run.out}`);
+  for (const runtime of ["claude", "codex"]) {
+    const target = path.join(f.ws, "tools", "github-broker", `github-${runtime}.mts`);
+    const staged = await import(pathToFileURL(target).href);
+    assert.equal(typeof staged.run, "function");
+  }
+  assert.equal(fs.existsSync(path.join(f.home, ".kherep", "github-broker")), false,
+    "source installation must not provision GitHub policy, keys or receipts");
   // The managed files are still placed; only the account-wide steps are skipped, visibly and with the reason.
   assert.ok(fs.existsSync(path.join(f.candidate, "kherep", "githooks", "commit-msg")), run.out);
   assert.match(run.out, /^install: SKIP_GITCONFIG=1 \(by CLAUDE_HOME .*KHEREP_INSTALL_ALLOW_GITCONFIG=1.*\)$/m);

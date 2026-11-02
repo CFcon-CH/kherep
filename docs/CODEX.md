@@ -608,3 +608,19 @@ The daemon, wake/resume hooks, native Queue producer, busy hints and fork admiss
 The Worker and all consuming node/hook/staged-client artifacts must ship together before advanced capability is advertised. A queued downgrade is refused, and remembered local guarded lineage is deny-only when an older Worker omits metadata. Release is operator-only via the existing Access API, with version checks; it starts no session, sends no message and resets no local turn budget. Derived keyed fingerprints and durable content-free hold retention are documented in the [Control Plane reference](../modules/control-plane/README.md#pair-loop-brake-and-operator-release). Source verification does not establish installed or live behavior.
 
 Native MCP `reply` calls retain the same local downgrade denial as CLI/proxy sends: before intent publication, the trusted common hook records a bounded content-free deny-only marker from validated guarded inbox history. It is not a sent record or caller-controlled admission and authorizes no activity. Marker persistence/capacity/read failure fails closed; markers are not time-released or evicted. The explicit staged client graph includes the marker helper. Worker replay and queued push use the same complete stored-lineage validation as parent admission, and refuse partial or invalid proof without emitting loop context.
+
+
+## GitHub App issue broker source
+
+The installer projects the same validated shared closure to
+`<workspace>/tools/github-broker/`, including `github-claude.mts` and
+`github-codex.mts`. Each entrypoint binds its runtime internally. The source copy
+uses the existing installation transaction, preserving rollback and idempotence;
+bootstrap drift checking compares every file in that closure. Both actual staged
+entrypoints are import-tested without configuration, key or network side effects.
+
+Installation creates no enabled policy, key, App registration, installation,
+permission grant or network probe. Operational setup and publication authority
+remain separate. See the [broker contract](../modules/github-broker/README.md)
+for its strict stdin interface, default-off policy, fixed GitHub.com public scope,
+secret handling, uncertain-outcome receipts and native/live acceptance gates.

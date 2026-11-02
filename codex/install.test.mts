@@ -2063,3 +2063,25 @@ test("explicit selected workspace binds both context hooks and an unbound upgrad
   assert.equal(fs.readFileSync(stateFile, 'utf8'), '{"synthetic":"preserve"}');
   assert.ok(lines.some(line => /SessionStart context and UserPromptSubmit context entries/.test(line)));
 });
+
+
+test("GitHub broker projection stages both actual entrypoints without activation and restores prior bytes", async (t) => {
+  const { root, workspace, installOptions } = fixture();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  install(installOptions);
+  const directory = path.join(workspace, "tools", "github-broker");
+  const before = fs.readdirSync(directory).sort().map(name => [name, fs.readFileSync(path.join(directory, name), "utf8")]);
+  for (const runtime of ["claude", "codex"]) {
+    const staged = await import(pathToFileURL(path.join(directory, `github-${runtime}.mts`)).href);
+    assert.equal(typeof staged.run, "function");
+  }
+  const entrypoint = path.join(directory, "github-claude.mts");
+  fs.writeFileSync(entrypoint, "prior synthetic entrypoint");
+  const prior = fs.readdirSync(directory).sort().map(name => [name, fs.readFileSync(path.join(directory, name), "utf8")]);
+  assert.throws(() => install({ ...installOptions, afterWrite: () => {
+    if (fs.readFileSync(entrypoint, "utf8") !== "prior synthetic entrypoint") throw new Error("synthetic rollback");
+  } }), /synthetic rollback/);
+  assert.deepEqual(fs.readdirSync(directory).sort().map(name => [name, fs.readFileSync(path.join(directory, name), "utf8")]), prior);
+  install(installOptions);
+  assert.deepEqual(fs.readdirSync(directory).sort().map(name => [name, fs.readFileSync(path.join(directory, name), "utf8")]), before);
+});

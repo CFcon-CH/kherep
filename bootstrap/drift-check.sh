@@ -200,6 +200,12 @@ fi
 cmp_file "project/settings.local.json" "$EXPECTED_DIR/settings.local.json" "$WS/.claude/settings.local.json"
 cmp_block "project/CLAUDE.md" "$CLAUDE_SRC/CLAUDE.project.md" "$WS/CLAUDE.md"
 cmp_block "project/AGENTS.md" "$CLAUDE_SRC/AGENTS.project.md" "$WS/AGENTS.md"
+GITHUB_BROKER_FILES="$(node "$HERE/../lib/github-broker-projection.mts" "$HERE/..")" || exit 2
+for tool in $GITHUB_BROKER_FILES; do
+  cmp_file "project/tools/github-broker/$tool" \
+    "$HERE/../modules/github-broker/$tool" "$WS/tools/github-broker/$tool"
+done
+
 # OP-1432. The Confluence set ships with the observation agent and is installed
 # on every run, so it is compared on every run too.
 cmp_file "project/tools/atlassian-credentials.mts" \

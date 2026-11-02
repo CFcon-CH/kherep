@@ -18,6 +18,8 @@
     "claude/**/*.mts",
     "codex/**/*.mts",
     "modules/atl-jira-brokers/**/*.mts",
+    "modules/github-broker/**/*.mts",
+    "lib/github-broker-projection.mts",
     "modules/control-plane/*.mts",
     "modules/control-plane/node/**/*.mts",
     "modules/local-inference/**/*.mts",

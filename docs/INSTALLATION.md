@@ -646,3 +646,19 @@ Rolling the gate back takes more than reverting the template: a render of an old
 Neither check of `drift-check.sh` proves that the gate is unwired: `DANGLING-HOOK` reports a wired command only once its file is missing or retired, which is the unsafe order, and the expected `settings.json` is rendered from the live one, so it carries the same residual gate entry and compares clean. Only the inventory of steps 2 and 5 proves it.
 
 The Jira helpers in `<workspace>/tools/` (`atl-jira.mts`, `atl-jira-ccoder.mts` and the `jira-*.mts` modules they import) are optional. `drift-check.sh` compares them when `KHEREP_INSTALL_ATLASSIAN_TOOLS=1` is set or when any of these exact file names is present, so a stale copy left by an earlier installation with the switch is reported as `DRIFT`, and an incomplete set reports its absent members as `MISSING-LIVE`. Reinstall with `KHEREP_INSTALL_ATLASSIAN_TOOLS=1` to refresh them. Files that only resemble them, such as `atl-jira.mjs`, a `*.bak-*` copy or anything under `_deprecated/`, do not count. On a host with none of them and without the switch, `drift-check.sh` prints one line `NOT-INSTALLED project/tools/<Jira set>`, which is information and does not change the result.
+
+
+## GitHub App issue broker source
+
+The installer projects the same validated shared closure to
+`<workspace>/tools/github-broker/`, including `github-claude.mts` and
+`github-codex.mts`. Each entrypoint binds its runtime internally. The source copy
+uses the existing installation transaction, preserving rollback and idempotence;
+bootstrap drift checking compares every file in that closure. Both actual staged
+entrypoints are import-tested without configuration, key or network side effects.
+
+Installation creates no enabled policy, key, App registration, installation,
+permission grant or network probe. Operational setup and publication authority
+remain separate. See the [broker contract](../modules/github-broker/README.md)
+for its strict stdin interface, default-off policy, fixed GitHub.com public scope,
+secret handling, uncertain-outcome receipts and native/live acceptance gates.
