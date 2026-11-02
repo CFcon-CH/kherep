@@ -15,6 +15,8 @@ interface DispatchInput {
   subagent_type?: unknown;
   agent_type?: unknown;
   model?: unknown;
+  // Issue #737. Whether PreToolUse carries it is unverified; absent is fine.
+  effort?: unknown;
   description?: unknown;
   prompt?: unknown;
 }
@@ -62,6 +64,7 @@ function main(): void {
     kind: "dispatch",
     agent: input.subagent_type || input.agent_type,
     model: input.model,
+    effort: input.effort,
     prompt: [input.description, input.prompt].filter(Boolean).join("\n"),
     brief: input.prompt,
     cwd: payload.cwd,

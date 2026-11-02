@@ -1,7 +1,9 @@
-// OP-1156. Dispatch uses shipped generic model aliases and owned-role pins.
-// Local configuration can replace the allow-list and override individual pins;
-// empty, malformed or inconsistent overrides remain fail-closed.
+// OP-1156, issue #737. Every dispatch names an explicit model. The resolved
+// model policy (lib/model-policy.mts) decides which models are dispatchable and
+// which efforts exist; it never requires a model to equal a shipped default.
+// A missing, malformed or inconsistent policy fails closed.
 
+import { dispatchIssue, dispatchWarning, loadModelPolicy, ModelPolicyError, type ResolvedPolicy } from "./model-policy.mts";
 import { observationBriefIssue, observationBriefNotice } from "./obs-brief-policy.mts";
 import { referencesArtifact, referencesCredentials } from "./private-path-policy.mts";
 import { declaresRevision, workerBriefIssue, workerBriefNotice } from "./worker-brief-policy.mts";
@@ -15,6 +17,8 @@ export interface DispatchEvent {
   kind?: unknown;
   agent?: unknown;
   model?: unknown;
+  // Issue #737. Present only when the Agent/Task input carries it (unverified).
+  effort?: unknown;
   prompt?: unknown;
   // The Agent tool's prompt alone, without its description (issue #331).
   brief?: unknown;
@@ -42,78 +46,26 @@ export interface DispatchResult {
   // Issue #505. A report on an allowed dispatch, never a deny.
   notice?: string;
   // Issue #701. The rule the notice reports.
-  noticeRuleId?: "OBS_BRIEF_REVISION" | "WORKER_BRIEF_REVISION";
+  noticeRuleId?: "OBS_BRIEF_REVISION" | "WORKER_BRIEF_REVISION" | "DISPATCH_EFFORT_UNLISTED";
   metadata?: DispatchMetadata;
 }
-
-const DEFAULT_ALLOWED_MODELS = ["opus", "sonnet", "haiku", "fable"];
-const DEFAULT_AGENT_MODELS = new Map<string, CanonicalModel | CanonicalModel[]>([
-  ["kherep-builder", ["opus", "fable"]],
-  ["forge-deploy-validator", "sonnet"],
-  ["n8n-workflow-deploy-runner", "sonnet"],
-  ["dc-plugin-build-runner", "sonnet"],
-  ["win-agent", "haiku"],
-  ["mac-agent", "haiku"],
-  ["lmstudio-win-researcher", "haiku"],
-  ["lmstudio-mac-researcher", "haiku"],
-  ["claude-obs", "haiku"],
-  ["atlassian-broker", "haiku"],
-]);
 
 // Issue #701. Agents whose brief must always carry revision: and decided:
 // (worker-brief-policy.mts); codex/parity/capabilities.json marks the same
 // agents "codeBound". Fixed: no environment override.
 export const CODE_BOUND_AGENTS: ReadonlySet<string> = new Set(["kherep-builder", "dc-plugin-build-runner"]);
 
-const configuredAllowedModels = process.env.KHEREP_ALLOWED_MODELS;
-export const CANONICAL_MODELS: ReadonlySet<string> = new Set(
-  configuredAllowedModels === undefined
-    ? DEFAULT_ALLOWED_MODELS
-    : configuredAllowedModels.split(",").map((value) => value.trim()).filter(Boolean)
-);
-
-let agentModelPolicyInvalid = CANONICAL_MODELS.size === 0;
-function configuredAgentModels(): Map<string, CanonicalModel | CanonicalModel[]> {
-  const raw = process.env.KHEREP_AGENT_MODEL_POLICY;
-  const policy = new Map(DEFAULT_AGENT_MODELS);
-  try {
-    if (raw !== undefined) {
-      const value = JSON.parse(raw);
-      if (!value || typeof value !== "object" || Array.isArray(value) || Object.keys(value).length === 0) {
-        agentModelPolicyInvalid = true;
-        return new Map();
-      }
-      const entries = Object.entries(value);
-      const valid = entries.every(([agent, models]) => {
-        const configured = typeof models === "string" ? [models] : models;
-        return agent.length > 0
-          && agent === agent.trim()
-          && Array.isArray(configured)
-          && configured.length > 0
-          && configured.every((model) => typeof model === "string" && CANONICAL_MODELS.has(model));
-      });
-      if (!valid) {
-        agentModelPolicyInvalid = true;
-        return new Map();
-      }
-      for (const [agent, models] of entries) policy.set(agent, models as CanonicalModel | CanonicalModel[]);
-    }
-    const pinsValid = [...policy.values()].every((models) => {
-      const configured = typeof models === "string" ? [models] : models;
-      return configured.every((model) => CANONICAL_MODELS.has(model));
-    });
-    if (!pinsValid) agentModelPolicyInvalid = true;
-    return pinsValid ? policy : new Map();
-  } catch {
-    agentModelPolicyInvalid = true;
-    return new Map();
-  }
-}
-
-export const OWNED_AGENT_MODELS = configuredAgentModels();
-
 export const PRIVACY_PATTERN =
   /work-credentials|\b(?:host_vars|group_vars)\b|customer[ -]?internals?|forge service cred|<private>/i;
+
+// Loaded per evaluation, never at import: codex/ imports CODE_BOUND_AGENTS.
+function resolvedPolicy(): ResolvedPolicy | string {
+  try {
+    return loadModelPolicy();
+  } catch (error) {
+    return error instanceof ModelPolicyError ? error.message : "the model policy could not be resolved";
+  }
+}
 
 function deny(ruleId: string, reason: string, event: NormalizedDispatch): DispatchResult {
   return {
@@ -171,33 +123,15 @@ export function evaluateDispatch(event: DispatchEvent | null | undefined): Dispa
   if (!normalized.model) {
     return deny("DISPATCH_MODEL_REQUIRED", "Dispatch has no explicit model.", normalized);
   }
-  if (agentModelPolicyInvalid) {
-    return deny(
-      "DISPATCH_POLICY_INVALID",
-      "The dispatch model policy is empty, malformed, or inconsistent with its allowed-model list.",
-      normalized,
-    );
+  const policy = resolvedPolicy();
+  if (typeof policy === "string") {
+    return deny("DISPATCH_POLICY_INVALID", `The dispatch model policy is invalid: ${policy}.`, normalized);
   }
-  if (!CANONICAL_MODELS.has(normalized.model)) {
-    return deny(
-      "DISPATCH_MODEL_NONCANONICAL",
-      `Model '${normalized.model}' is not a canonical routing id.`,
-      normalized
-    );
-  }
-  const expected = OWNED_AGENT_MODELS.get(normalized.agent);
-  if (expected !== undefined) {
-    // Ein einwertiger Pin und eine Liste werden gleich behandelt, damit ein
-    // spaeterer Wechsel der Schreibweise nie still die Pruefung aushebelt.
-    const allowed: readonly string[] = Array.isArray(expected) ? expected : [expected];
-    if (!allowed.includes(normalized.model)) {
-      return deny(
-        "OWNED_AGENT_MODEL_MISMATCH",
-        `Owned agent '${normalized.agent}' requires ${allowed.map((m) => `'${m}'`).join(" or ")}, not '${normalized.model}'.`,
-        normalized
-      );
-    }
-  }
+  // Issue #737. No equality to a default: any dispatchable model and any
+  // effort of the vocabulary is the user's choice.
+  const issue = dispatchIssue(policy, normalized.model, event.effort);
+  if (issue) return deny(issue.ruleId, issue.reason, normalized);
+  const effortWarning = dispatchWarning(policy, normalized.model, event.effort);
   // Issue #331. Only the prompt is the brief: the description is a short label
   // that must neither supply a finding marker nor be read as part of one.
   let notice: string | null = null;
@@ -214,6 +148,15 @@ export function evaluateDispatch(event: DispatchEvent | null | undefined): Dispa
   } else {
     notice = workerBriefNotice(brief);
     noticeRuleId = "WORKER_BRIEF_REVISION";
+  }
+  if (effortWarning) {
+    // A brief notice keeps its rule prefix; the effort warning names its own.
+    if (notice) {
+      notice = `${notice}\n[dispatch-contract:DISPATCH_EFFORT_UNLISTED] ${effortWarning}`;
+    } else {
+      notice = effortWarning;
+      noticeRuleId = "DISPATCH_EFFORT_UNLISTED";
+    }
   }
   return {
     decision: "allow",

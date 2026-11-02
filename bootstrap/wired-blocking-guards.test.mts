@@ -22,6 +22,8 @@ function claudeCopy(name: string): string {
   const copy = path.join(TMP, name);
   fs.cpSync(path.join(repo, "claude", "hooks"), path.join(copy, "hooks"), { recursive: true });
   fs.cpSync(path.join(repo, "claude", "kherep", "hook-runtime"), path.join(copy, "kherep", "hook-runtime"), { recursive: true });
+  // Issue #737. The dispatch guard reads the installed shipped model policy.
+  fs.copyFileSync(path.join(repo, "claude", "kherep", "model-policy.json"), path.join(copy, "kherep", "model-policy.json"));
   return copy.replace(/\\/g, "/");
 }
 const claudeSource = claudeCopy("claude");

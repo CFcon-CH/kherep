@@ -57,6 +57,7 @@ hooks/research-stop.test.mts
 hooks/dispatch-contract-guard.mts
 hooks/dispatch-contract-guard.test.mts
 hooks/dispatch-contract-guard-worker.test.mts
+hooks/dispatch-contract-guard-policy.test.mts
 hooks/lib/dispatch-policy.mts
 hooks/lib/model-policy.mts
 hooks/lib/model-policy-validate.mts
