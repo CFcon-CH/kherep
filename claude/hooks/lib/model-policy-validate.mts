@@ -27,7 +27,7 @@ export class ModelPolicyError extends Error {
   readonly source: string;
   readonly key: string;
   constructor(source: string, key: string, problem: string) {
-    super(`model policy ${source}${key ? `, key ${key}` : ""}: ${problem}`);
+    super(`model policy ${source}${key ? `, key ${key}:` : ""} ${problem}`);
     this.name = "ModelPolicyError";
     this.source = source;
     this.key = key;

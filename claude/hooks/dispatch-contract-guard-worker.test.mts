@@ -14,7 +14,7 @@ let fail = 0;
 type Payload = Record<string, unknown>;
 type Expected = "silent" | "notice" | { deny: string };
 
-// The shipped default pins: the host's own policy settings must not decide these cases.
+// The shipped default policy: the host's own policy settings must not decide these cases.
 function run(payload: Payload): { status: number | null; stdout: string } {
   const env: Record<string, string | undefined> = { ...process.env };
   delete env.KHEREP_ALLOWED_MODELS;
@@ -59,7 +59,8 @@ expect("deny never quotes the brief", agent("kherep-builder", "opus", "revision:
 expect("builder with a full brief is silent", agent("kherep-builder", "fable", `Objective: x\n- revision: kherep@${SHA}-dirty\n- decided: keep the API`), "silent");
 expect("builder with a review range is silent", agent("kherep-builder", "opus", `revision: kherep@${SHA}..${HEAD}\ndecided:\n- a\n- b`), "silent");
 expect("the description never supplies a marker", agent("kherep-builder", "opus", "Build it.", WORKER), deny("WORKER_BRIEF_FORMAT"));
-expect("the pin is checked before the brief", agent("kherep-builder", "haiku", "Build it."), deny("OWNED_AGENT_MODEL_MISMATCH"));
+expect("an unknown model is checked before the brief", agent("kherep-builder", "operator-model", "Build it."), deny("DISPATCH_MODEL_UNKNOWN"));
+expect("no default-model pin: builder on haiku reaches the brief check", agent("kherep-builder", "haiku", "Build it."), deny("WORKER_BRIEF_FORMAT"));
 expect("a code-bound review brief gets no notice", agent("kherep-builder", "opus", `${WORKER}Review your own diff.`), "silent");
 
 // Any other dispatch: checked only when it declares revision:.

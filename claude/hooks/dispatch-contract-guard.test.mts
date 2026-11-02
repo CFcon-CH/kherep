@@ -11,20 +11,11 @@ type Payload = string | Record<string, unknown>;
 type EnvExtra = Record<string, string | null>;
 
 function run(payload: Payload, envExtra: EnvExtra = {}): { denied: boolean; reason: string; status: number | null; stdout: string } {
-  const env: Record<string, string | undefined> = {
-    ...process.env,
-    KHEREP_ALLOWED_MODELS: "opus,sonnet,haiku,fable",
-    KHEREP_AGENT_MODEL_POLICY: JSON.stringify({
-      "kherep-builder": ["opus", "fable"],
-      "forge-deploy-validator": "sonnet",
-      "n8n-workflow-deploy-runner": "sonnet",
-      "dc-plugin-build-runner": "sonnet",
-      "win-agent": "haiku",
-      "mac-agent": "haiku",
-      "lmstudio-win-researcher": "haiku",
-      "lmstudio-mac-researcher": "haiku",
-    }),
-  };
+  // The shipped default policy (claude/kherep/model-policy.json, no user file
+  // beside it): the host's own policy settings must not decide these cases.
+  const env: Record<string, string | undefined> = { ...process.env };
+  delete env.KHEREP_ALLOWED_MODELS;
+  delete env.KHEREP_AGENT_MODEL_POLICY;
   for (const [key, value] of Object.entries(envExtra)) {
     if (value === null) delete env[key];
     else env[key] = value;
@@ -66,7 +57,7 @@ function check(name: string, payload: Payload, expectedDenied: boolean, reasonNe
   );
 }
 
-// Issue #701: a well-formed worker brief, so a code-bound role reaches its pin checks.
+// Issue #701: a well-formed worker brief, so a code-bound role reaches its model checks.
 const WORKER_BRIEF = "revision: kherep@2733b35e2c102ac54295568509c68b18b6d92cab\ndecided: none\nBuild it.";
 const call = (agent: string, model?: string, toolName = "Agent", field = "subagent_type") => ({
   tool_name: toolName,
@@ -80,26 +71,22 @@ const ABSENT_MODEL_CONFIG = {
 check("Agent without model", call("kherep-builder"), true, "DISPATCH_MODEL_REQUIRED");
 check("legacy Task without model", call("kherep-builder", undefined, "Task"), true);
 check("missing agent role rejected", call("", "sonnet"), true, "DISPATCH_AGENT_REQUIRED");
-check("retired versioned model rejected", call("kherep-builder", "claude-opus-4-8"), true, "DISPATCH_MODEL_NONCANONICAL");
-check("inherit rejected", call("general-purpose", "inherit"), true, "DISPATCH_MODEL_NONCANONICAL");
+check("full model id is not an Agent-tool alias", call("kherep-builder", "claude-opus-4-8"), true, "DISPATCH_MODEL_UNKNOWN");
+check("inherit is not a dispatch model", call("general-purpose", "inherit"), true, "DISPATCH_MODEL_UNKNOWN");
+check("unknown model deny names the model", call("general-purpose", "operator-model"), true, "Model 'operator-model' is not a dispatchable model");
 check("unknown canonical agent allowed", call("general-purpose", "sonnet"), false);
 check("fable alias allowed", call("general-purpose", "fable"), false);
-check("owned builder correct pin", call("kherep-builder", "opus"), false);
-check("owned builder wrong pin", call("kherep-builder", "sonnet"), true, "OWNED_AGENT_MODEL_MISMATCH");
-// OP-874: kherep-builder traegt einen mehrwertigen Pin. Die Liste erlaubt genau
-// zwei Modelle und weitet den Guard sonst nirgends auf. Diese sechs Zeilen
-// pruefen beide Richtungen, denn ein Pin, der alles durchlaesst, ist kein Pin.
-check("owned builder second allowed pin", call("kherep-builder", "fable"), false);
-check("owned builder haiku still rejected", call("kherep-builder", "haiku"), true, "OWNED_AGENT_MODEL_MISMATCH");
-check("multi-pin names every allowed model", call("kherep-builder", "haiku"), true, "requires 'opus' or 'fable'");
-check("single pin unaffected by list support", call("forge-deploy-validator", "fable"), true, "OWNED_AGENT_MODEL_MISMATCH");
-check("single pin still allows its own model", call("forge-deploy-validator", "sonnet"), false);
-check("multi-pin does not admit a non-canonical model", call("kherep-builder", "claude-fable-5"), true, "DISPATCH_MODEL_NONCANONICAL");
-check("win local wrapper correct pin", call("win-agent", "haiku"), false);
-check("mac local wrapper wrong pin", call("mac-agent", "opus"), true, "OWNED_AGENT_MODEL_MISMATCH");
+// Issue #737: the shipped defaults are not pins. An owned agent runs on any
+// dispatchable model the user chooses; only an unknown model is denied.
+check("owned builder on its default", call("kherep-builder", "opus"), false);
+check("owned builder on another alias", call("kherep-builder", "sonnet"), false);
+check("owned builder on haiku", call("kherep-builder", "haiku"), false);
+check("owned support agent on fable", call("forge-deploy-validator", "fable"), false);
+check("owned agent still rejects an unknown model", call("kherep-builder", "claude-fable-5"), true, "DISPATCH_MODEL_UNKNOWN");
+check("mac local wrapper on opus", call("mac-agent", "opus"), false);
 check("agent_type field supported", call("mac-agent", "haiku", "Agent", "agent_type"), false);
-check("legacy local wrapper correct pin", call("lmstudio-mac-researcher", "haiku"), false);
-check("legacy local wrapper wrong pin", call("lmstudio-win-researcher", "sonnet"), true, "OWNED_AGENT_MODEL_MISMATCH");
+check("legacy local wrapper on sonnet", call("lmstudio-win-researcher", "sonnet"), false);
+check("no rule named OWNED_AGENT_MODEL_MISMATCH remains", call("lmstudio-mac-researcher", "fable"), false);
 check("privacy prompt to cloud denied", { tool_name: "Agent", tool_input: { subagent_type: "kherep-builder", model: "opus", prompt: "Inspect D:/Work-credentials/customer.env" } }, true, "PRIVACY_AGENT_FORBIDDEN");
 check("private tag to cloud denied", { tool_name: "Task", tool_input: { subagent_type: "general-purpose", model: "sonnet", prompt: "<private>customer internals</private>" } }, true, "PRIVACY_AGENT_FORBIDDEN");
 check("privacy prompt to local wrapper still denied", { tool_name: "Agent", tool_input: { subagent_type: "win-agent", model: "haiku", prompt: "Inspect host_vars safely" } }, true, "PRIVACY_AGENT_FORBIDDEN");
@@ -127,7 +114,8 @@ check("claude-obs deny states the format", obs("no markers"), true, "measured: `
 check("claude-obs well-formed brief allowed", obs(GOOD_BRIEF), false);
 check("claude-obs marker in the description does not count", obs("All green.", "relayed: operator"), true, "OBS_BRIEF_FORMAT");
 check("claude-obs description cannot break a good brief", obs(GOOD_BRIEF, "measured: tests"), false);
-check("claude-obs pin is checked before the brief", obs(GOOD_BRIEF, "Record observations", "opus"), true, "OWNED_AGENT_MODEL_MISMATCH");
+check("claude-obs runs on a user-chosen model", obs(GOOD_BRIEF, "Record observations", "sonnet"), false);
+check("claude-obs unknown model is checked before the brief", obs("no markers", "Record observations", "operator-model"), true, "DISPATCH_MODEL_UNKNOWN");
 check("other agent with a prose prompt unaffected", { tool_name: "Agent", tool_input: { subagent_type: "general-purpose", model: "sonnet", prompt: "MEASURED by hand." } }, false);
 // Issue #505. An incomplete code binding is a context notice on an allowed
 // dispatch: no permissionDecision, no systemMessage, no new deny.
@@ -150,68 +138,44 @@ noticeCheck("claude-obs bare code brief allowed with a notice", obs(BARE_CODE), 
 noticeCheck("claude-obs unmarked brief gets the conditional notice", obs(GOOD_BRIEF), "notice");
 noticeCheck("claude-obs complete binding is silent", obs(`- measured: code kherep@${SHA} -- x.test.mts \`node x.test.mts\` -> 12 pass`), "silent");
 noticeCheck("other agent with a bare code prompt gets no notice", { tool_name: "Agent", tool_input: { subagent_type: "kherep-builder", model: "opus", prompt: `${WORKER_BRIEF}\n${BARE_CODE}` } }, "silent");
-noticeCheck("claude-obs pin deny carries no notice", obs(BARE_CODE, "Record observations", "opus"), "deny");
-check("claude-obs pin deny keeps its rule", obs(BARE_CODE, "Record observations", "opus"), true, "OWNED_AGENT_MODEL_MISMATCH");
+noticeCheck("claude-obs on another model keeps its notice", obs(BARE_CODE, "Record observations", "opus"), "notice");
+noticeCheck("claude-obs unknown-model deny carries no notice", obs(BARE_CODE, "Record observations", "operator-model"), "deny");
+check("claude-obs unknown-model deny keeps its rule", obs(BARE_CODE, "Record observations", "operator-model"), true, "DISPATCH_MODEL_UNKNOWN");
 noticeCheck("claude-obs format deny carries no notice", obs("measured: code npm test -> green"), "deny");
 // Issue #701: the worker brief cases are in dispatch-contract-guard-worker.test.mts.
 check("non-dispatch tool ignored", { tool_name: "Bash", tool_input: { command: "echo ok" } }, false);
 check("malformed dispatch input fails closed", "not-json", true, "HOOK_INPUT_INVALID");
 check("missing tool_input fails closed", { tool_name: "Agent" }, true, "HOOK_SCHEMA_UNKNOWN");
-const defaultOwnedPins: [string, string[], string][] = [
-  ["kherep-builder", ["opus", "fable"], "sonnet"],
-  ["forge-deploy-validator", ["sonnet"], "fable"],
-  ["n8n-workflow-deploy-runner", ["sonnet"], "haiku"],
-  ["dc-plugin-build-runner", ["sonnet"], "opus"],
-  ["win-agent", ["haiku"], "sonnet"],
-  ["mac-agent", ["haiku"], "opus"],
-  ["lmstudio-win-researcher", ["haiku"], "sonnet"],
-  ["lmstudio-mac-researcher", ["haiku"], "fable"],
-];
-for (const [agent, allowedModels, deniedModel] of defaultOwnedPins) {
-  for (const model of allowedModels) {
+const OWNED_AGENTS = ["kherep-builder", "forge-deploy-validator", "n8n-workflow-deploy-runner", "dc-plugin-build-runner",
+  "win-agent", "mac-agent", "lmstudio-win-researcher", "lmstudio-mac-researcher", "claude-obs", "atlassian-broker"];
+for (const agent of OWNED_AGENTS.filter((name) => name !== "claude-obs")) {
+  for (const model of ["opus", "sonnet", "haiku", "fable"]) {
     check("absent model config allows " + agent + " on " + model, call(agent, model), false, "", ABSENT_MODEL_CONFIG);
   }
-  check("absent model config pins " + agent, call(agent, deniedModel), true, "OWNED_AGENT_MODEL_MISMATCH", ABSENT_MODEL_CONFIG);
 }
-for (const model of ["opus", "sonnet", "haiku", "fable"]) {
-  check("absent model config allows " + model + " alias", call("general-purpose", model), false, "", ABSENT_MODEL_CONFIG);
-}
-check("absent model config rejects unknown model", call("general-purpose", "operator-model"), true, "DISPATCH_MODEL_NONCANONICAL", ABSENT_MODEL_CONFIG);
-check("partial role override preserves untouched default pins", call("forge-deploy-validator", "fable"), true, "OWNED_AGENT_MODEL_MISMATCH", {
-  KHEREP_ALLOWED_MODELS: null,
-  KHEREP_AGENT_MODEL_POLICY: JSON.stringify({ "kherep-builder": "haiku" }),
-});
-check("partial role override replaces the named default pin", call("kherep-builder", "haiku"), false, "", {
-  KHEREP_ALLOWED_MODELS: null,
-  KHEREP_AGENT_MODEL_POLICY: JSON.stringify({ "kherep-builder": "haiku" }),
-});
-check("partial role override removes the named default pin", call("kherep-builder", "opus"), true, "OWNED_AGENT_MODEL_MISMATCH", {
-  KHEREP_ALLOWED_MODELS: null,
-  KHEREP_AGENT_MODEL_POLICY: JSON.stringify({ "kherep-builder": "haiku" }),
-});
-const customPolicy = JSON.stringify({
-  "kherep-builder": "operator-model",
-  "forge-deploy-validator": "operator-model",
-  "n8n-workflow-deploy-runner": "operator-model",
-  "dc-plugin-build-runner": "operator-model",
-  "win-agent": "operator-model",
-  "mac-agent": "operator-model",
-  "lmstudio-win-researcher": "operator-model",
-  "lmstudio-mac-researcher": "operator-model",
-  "claude-obs": "operator-model",
-  "atlassian-broker": "operator-model",
-});
-check("custom allow-list and complete pin override are valid", call("kherep-builder", "operator-model"), false, "", {
+check("absent model config rejects unknown model", call("general-purpose", "operator-model"), true, "DISPATCH_MODEL_UNKNOWN", ABSENT_MODEL_CONFIG);
+// The environment inputs are deprecated for one release (issue #737): an
+// agent entry sets a default below the user file, never a pin; the allow-list
+// adds dispatchable aliases. Set-but-empty or malformed input still fails closed.
+const LEGACY_PIN = { KHEREP_ALLOWED_MODELS: null, KHEREP_AGENT_MODEL_POLICY: JSON.stringify({ "kherep-builder": "haiku" }) };
+check("deprecated agent policy no longer pins the named agent", call("kherep-builder", "opus"), false, "", LEGACY_PIN);
+check("deprecated agent policy leaves other agents unpinned", call("forge-deploy-validator", "fable"), false, "", LEGACY_PIN);
+const customPolicy = JSON.stringify(Object.fromEntries(OWNED_AGENTS.map((agent) => [agent, "operator-model"])));
+check("deprecated allow-list adds an operator alias", call("kherep-builder", "operator-model"), false, "", {
   KHEREP_ALLOWED_MODELS: "operator-model",
   KHEREP_AGENT_MODEL_POLICY: customPolicy,
 });
-check("custom allow-list still rejects an unknown model", call("general-purpose", "another-model"), true, "DISPATCH_MODEL_NONCANONICAL", {
+check("deprecated allow-list still rejects an unknown model", call("general-purpose", "another-model"), true, "DISPATCH_MODEL_UNKNOWN", {
   KHEREP_ALLOWED_MODELS: "operator-model",
   KHEREP_AGENT_MODEL_POLICY: customPolicy,
 });
-check("narrowed allow-list with incomplete pin overrides fails closed", call("kherep-builder", "sonnet"), true, "DISPATCH_POLICY_INVALID", {
+check("deprecated allow-list is additive, the shipped aliases stay", call("kherep-builder", "opus"), false, "", {
   KHEREP_ALLOWED_MODELS: "sonnet",
   KHEREP_AGENT_MODEL_POLICY: JSON.stringify({ "kherep-builder": "sonnet" }),
+});
+check("deprecated agent policy naming an unknown model fails closed", call("kherep-builder", "opus"), true, "DISPATCH_POLICY_INVALID", {
+  KHEREP_ALLOWED_MODELS: null,
+  KHEREP_AGENT_MODEL_POLICY: JSON.stringify({ "kherep-builder": "operator-model" }),
 });
 check("explicitly empty allow-list fails closed", call("kherep-builder", "opus"), true, "DISPATCH_POLICY_INVALID", {
   KHEREP_ALLOWED_MODELS: "",
