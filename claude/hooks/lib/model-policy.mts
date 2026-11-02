@@ -140,6 +140,18 @@ export function loadModelPolicy(inputs: PolicyInputs = {}): ResolvedPolicy {
   return resolveLayers(shipped, overrides);
 }
 
+// The resolved default of each agent for the hook texts, e.g. "claude-obs haiku/medium".
+export function describeAgents(policy: ResolvedPolicy): string {
+  return [...policy.agents].map(([agent, c]) => `${agent} ${c.model ?? INHERIT}${c.effort ? `/${c.effort}` : ""}`).join(", ");
+}
+
+// The model a hook text tells the Maestro to dispatch an agent with: its
+// resolved default when the Agent tool can take it by name, otherwise null.
+export function dispatchModelFor(policy: ResolvedPolicy, agent: string): string | null {
+  const model = policy.agents.get(agent)?.model;
+  return model !== undefined && policy.models.get(model)?.dispatchable === true ? model : null;
+}
+
 export interface DispatchCheck { ruleId: "DISPATCH_MODEL_UNKNOWN" | "DISPATCH_EFFORT_UNSUPPORTED"; reason: string }
 
 function shown(value: unknown): string {

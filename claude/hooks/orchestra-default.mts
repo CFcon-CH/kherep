@@ -11,7 +11,19 @@
  */
 import fs from "node:fs";
 import path from "node:path";
+import { describeAgents, loadModelPolicy } from "./lib/model-policy.mts";
 import { isKherepScope, type ScopePayload } from "./lib/workspace-scope.mts";
+
+// Issue #737. Defaults from the resolved model policy, never a pin; an invalid
+// policy is named, because dispatch-contract-guard then denies every dispatch.
+function modelPolicyLine(): string {
+  try {
+    return `Agent model defaults (kherep/model-policy.json, overridden by kherep/model-policy.user.json): ${describeAgents(loadModelPolicy())}; ` +
+      `any dispatchable model of that policy may be chosen instead. `;
+  } catch (error) {
+    return `The model policy is invalid, so every Agent/Task call is denied until it is fixed: ${error instanceof Error ? error.message : "unknown error"}. `;
+  }
+}
 
 function main(): void {
   let input = "";
@@ -43,7 +55,7 @@ function main(): void {
     `KHEREP ORCHESTRA ACTIVE. Read ${routingPath} before substantive work.\n` +
     `First substantial reply banner: [Maestro on | routing loaded | evidence-first].\n` +
     `Ground current state before answering; live evidence outranks memory. Delegate only for material benefit. ` +
-    `Every Agent/Task call sets an explicit model permitted by the operator-configured routing policy. ` +
+    `Every Agent/Task call sets an explicit model. ` + modelPolicyLine() +
     `Privacy routes only through the direct local-inference runner; win-agent/mac-agent remain Claude wrappers and are non-private only. ` +
     `Behavior-changing builds use Agent by default and require objective verification plus an Evidence/Accept receipt. ` +
     `Trivial conversational turns skip orchestration ceremony.`;

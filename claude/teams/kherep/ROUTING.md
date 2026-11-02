@@ -73,8 +73,12 @@ replaces - a local wiki and a memory plugin with its own database - were dismant
 session, backups restore-tested rather than merely taken.
 
 After a completed turn, the Maestro dispatches the observation agent for its own runtime with an
-explicit pinned model: `claude-obs` on Claude, `codex-obs` on Codex. The pin is enforced at dispatch,
-not merely configured; a dispatch without a model, or with a different one, is denied. An observation
+explicit model: `claude-obs` on Claude, `codex-obs` on Codex. A dispatch without a model is denied.
+On Claude the model and effort are defaults of the resolved model policy, not pins: the shipped
+`kherep/model-policy.json` gives the observer `haiku` with effort `medium`, the operator's
+`kherep/model-policy.user.json` may override both, and `observation-stop` names the resolved model;
+any dispatchable model is accepted, an unknown one is denied. On Codex the installed policy decides
+as described in its own integration documentation. An observation
 run never dispatches another observation run. On Claude the dispatch is enforced by the Stop hook
 `observation-stop`, and a turn with nothing to file opts out by ending with `[obs: none – <reason>]`.
 
