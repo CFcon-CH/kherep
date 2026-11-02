@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "roles": {
+    "root": {},
+    "designer": { "model": "fable" },
+    "builder": { "model": "opus" },
+    "support": { "model": "sonnet" },
+    "researcher": { "model": "haiku" },
+    "observer": { "model": "haiku", "effort": "medium" },
+    "broker": { "model": "haiku" }
+  },
+  "agents": {
+    "kherep-builder": { "role": "builder" },
+    "forge-deploy-validator": { "role": "support" },
+    "n8n-workflow-deploy-runner": { "role": "support" },
+    "dc-plugin-build-runner": { "role": "support" },
+    "win-agent": { "role": "researcher" },
+    "mac-agent": { "role": "researcher" },
+    "lmstudio-win-researcher": { "role": "researcher" },
+    "lmstudio-mac-researcher": { "role": "researcher" },
+    "claude-obs": { "role": "observer" },
+    "atlassian-broker": { "role": "broker" }
+  },
+  "models": {
+    "opus": { "dispatchable": true },
+    "sonnet": { "dispatchable": true },
+    "haiku": { "dispatchable": true },
+    "fable": { "dispatchable": true }
+  }
+}
