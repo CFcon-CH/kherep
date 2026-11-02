@@ -58,6 +58,9 @@ hooks/dispatch-contract-guard.mts
 hooks/dispatch-contract-guard.test.mts
 hooks/dispatch-contract-guard-worker.test.mts
 hooks/lib/dispatch-policy.mts
+hooks/lib/model-policy.mts
+hooks/lib/model-policy-validate.mts
+hooks/lib/model-policy.test.mts
 hooks/lib/worker-brief-policy.mts
 hooks/lib/worker-brief-policy.test.mts
 hooks/lib/command-walk.mts
@@ -175,6 +178,7 @@ skills/brain-drainage
 skills/local-inference
 skills/forge-bulk-op-pattern
 skills/vite-base-forge
+kherep/model-policy.json
 kherep/githooks/commit-msg
 kherep/githooks/post-checkout
 kherep/githooks/pre-push
