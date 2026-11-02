@@ -44,6 +44,7 @@ hooks/maestro-banner-gate.mts
 hooks/maestro-banner-gate.test.mts
 hooks/observation-stop.mts
 hooks/observation-stop.test.mts
+hooks/model-policy-texts.test.mts
 hooks/obs-result-check.mts
 hooks/obs-result-check.test.mts
 hooks/obs-handback-record.mts

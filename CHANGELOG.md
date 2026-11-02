@@ -345,6 +345,22 @@ increments the minor version; every other release increments the patch version.
 
 ### Changed
 
+- Claude model and effort are user-overridable defaults, not pins (issue #737). The
+  shipped `kherep/model-policy.json` assigns each agent a role and each role a default
+  model; the observer default becomes `haiku` with effort `medium`. The operator's
+  `kherep/model-policy.user.json` overrides any role or agent per field, survives every
+  install and rollback byte for byte, and is never drift. `hooks/lib/model-policy.mts`
+  resolves both for the dispatch guard, the hook texts and the installer, which renders
+  agent frontmatter from `model: __KHEREP_MODEL__` / `effort: __KHEREP_EFFORT__` and
+  compares it rendered in `drift-check.sh`; `capture.sh` restores the placeholders.
+  `dispatch-contract-guard` drops `OWNED_AGENT_MODEL_MISMATCH`: any dispatchable model
+  is allowed, `DISPATCH_MODEL_UNKNOWN` replaces `DISPATCH_MODEL_NONCANONICAL`, and
+  `DISPATCH_EFFORT_UNSUPPORTED` checks a call's effort when present. A one-time migration
+  (`bootstrap/migrate-model-policy.mts`) captures explicit environment values and edited
+  frontmatter into the user file. `KHEREP_ALLOWED_MODELS` (now additive) and
+  `KHEREP_AGENT_MODEL_POLICY` (no longer a pin) are deprecated for one release. Claude
+  adapter limitation: no queryable model catalog, so a per-model effort list only warns.
+
 - Allow co-author trailers and AI attribution for every runtime and repository; preserve other commit policies and verify the CI hook with an isolated work-item canary (#722).
 
 - CI runs its Ubuntu jobs on `ubuntu-26.04` explicitly instead of
