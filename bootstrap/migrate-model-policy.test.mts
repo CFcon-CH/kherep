@@ -8,7 +8,7 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import test, { after } from "node:test";
 
-import { loadModelPolicy } from "../claude/hooks/lib/model-policy.mts";
+import { dispatchIssue, loadModelPolicy } from "../claude/hooks/lib/model-policy.mts";
 import { LEGACY_FRONTMATTER, migrate } from "./migrate-model-policy.mts";
 
 const REPO = path.resolve(import.meta.dirname, "..");
@@ -47,11 +47,24 @@ test("environment values are explicit and kept even when they equal the old defa
     KHEREP_AGENT_MODEL_POLICY: JSON.stringify({ "kherep-builder": ["opus", "fable"], "claude-obs": "haiku", "general-purpose": "opus" }),
   })!;
   assert.deepEqual(capture.policy.agents, { "kherep-builder": { model: "opus" }, "claude-obs": { model: "haiku" } });
-  assert.deepEqual(capture.policy.models, { opus: { dispatchable: true }, sonnet: { dispatchable: true }, "operator-model": { dispatchable: true } });
+  assert.deepEqual(capture.policy.models, {
+    opus: { dispatchable: true }, sonnet: { dispatchable: true }, "operator-model": { dispatchable: true },
+    haiku: { dispatchable: false }, fable: { dispatchable: false },
+  });
   const notes = capture.notes.join("\n");
   assert.match(notes, /captured agents\.kherep-builder\.model = opus from KHEREP_AGENT_MODEL_POLICY \(first of 2\)/);
   assert.match(notes, /not captured: KHEREP_AGENT_MODEL_POLICY names general-purpose/);
-  assert.match(notes, /left out haiku, fable; the policy only adds models/);
+  assert.match(notes, /captured models\.haiku \(not dispatchable\)/);
+  const user = path.join(TMP, `capture-${n++}.json`);
+  fs.writeFileSync(user, JSON.stringify(capture.policy));
+  const policy = loadModelPolicy({ files: { shipped: SHIPPED, user }, env: {} });
+  assert.equal(dispatchIssue(policy, "haiku", undefined)?.ruleId, "DISPATCH_MODEL_UNKNOWN", "the narrowed list survives without the environment");
+});
+
+test("an allow-list naming only inherit narrows nothing", () => {
+  const capture = migrate(legacyHome(), SHIPPED, { KHEREP_ALLOWED_MODELS: "inherit" })!;
+  assert.deepEqual(capture.policy.models, {});
+  assert.match(capture.notes.join("\n"), /not captured: KHEREP_ALLOWED_MODELS names no model/);
 });
 
 test("edited frontmatter is explicit, including a value equal to a default", () => {

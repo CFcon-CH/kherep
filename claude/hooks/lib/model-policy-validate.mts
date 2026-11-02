@@ -151,10 +151,12 @@ export function parseUser(source: string, value: unknown, shipped: ShippedLayer)
   return layer;
 }
 
-// Deprecated for one release (issue #737): KHEREP_ALLOWED_MODELS adds
-// dispatchable aliases, KHEREP_AGENT_MODEL_POLICY sets agent models below the
-// user file. Pins for agents the shipped policy does not know carry no meaning
-// any more and are ignored. Set-but-empty or malformed input still fails closed.
+// Deprecated for one release (issue #737). KHEREP_ALLOWED_MODELS is the
+// complete dispatchable list: named aliases become dispatchable, shipped
+// aliases it omits stop being dispatchable; the user file still wins per field.
+// KHEREP_AGENT_MODEL_POLICY sets agent models below the user file. Pins for
+// agents the shipped policy does not know carry no meaning any more and are
+// ignored. Set-but-empty or malformed input still fails closed.
 export function parseEnvironment(env: Record<string, string | undefined>, shipped: ShippedLayer): PolicyLayer | null {
   const allowed = env.KHEREP_ALLOWED_MODELS;
   const agentPolicy = env.KHEREP_AGENT_MODEL_POLICY;
@@ -168,6 +170,7 @@ export function parseEnvironment(env: Record<string, string | undefined>, shippe
       if (name === INHERIT) throw new ModelPolicyError(source, "", "cannot list inherit as a dispatch model");
       layer.models.set(name, { dispatchable: true });
     }
+    for (const id of shipped.models.keys()) if (!layer.models.has(id)) layer.models.set(id, { dispatchable: false });
   }
   if (agentPolicy !== undefined) {
     const source = "environment variable KHEREP_AGENT_MODEL_POLICY";

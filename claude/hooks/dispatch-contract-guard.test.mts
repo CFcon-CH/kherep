@@ -156,7 +156,7 @@ for (const agent of OWNED_AGENTS.filter((name) => name !== "claude-obs")) {
 check("absent model config rejects unknown model", call("general-purpose", "operator-model"), true, "DISPATCH_MODEL_UNKNOWN", ABSENT_MODEL_CONFIG);
 // The environment inputs are deprecated for one release (issue #737): an
 // agent entry sets a default below the user file, never a pin; the allow-list
-// adds dispatchable aliases. Set-but-empty or malformed input still fails closed.
+// is the complete dispatchable list. Set-but-empty or malformed input still fails closed.
 const LEGACY_PIN = { KHEREP_ALLOWED_MODELS: null, KHEREP_AGENT_MODEL_POLICY: JSON.stringify({ "kherep-builder": "haiku" }) };
 check("deprecated agent policy no longer pins the named agent", call("kherep-builder", "opus"), false, "", LEGACY_PIN);
 check("deprecated agent policy leaves other agents unpinned", call("forge-deploy-validator", "fable"), false, "", LEGACY_PIN);
@@ -169,7 +169,11 @@ check("deprecated allow-list still rejects an unknown model", call("general-purp
   KHEREP_ALLOWED_MODELS: "operator-model",
   KHEREP_AGENT_MODEL_POLICY: customPolicy,
 });
-check("deprecated allow-list is additive, the shipped aliases stay", call("kherep-builder", "opus"), false, "", {
+check("deprecated allow-list is complete: an omitted shipped alias is denied", call("kherep-builder", "opus"), true, "DISPATCH_MODEL_UNKNOWN", {
+  KHEREP_ALLOWED_MODELS: "sonnet",
+  KHEREP_AGENT_MODEL_POLICY: JSON.stringify({ "kherep-builder": "sonnet" }),
+});
+check("deprecated allow-list still admits an alias it names", call("kherep-builder", "sonnet"), false, "", {
   KHEREP_ALLOWED_MODELS: "sonnet",
   KHEREP_AGENT_MODEL_POLICY: JSON.stringify({ "kherep-builder": "sonnet" }),
 });

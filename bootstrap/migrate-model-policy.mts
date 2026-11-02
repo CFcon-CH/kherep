@@ -60,8 +60,15 @@ function captureEnvironment(capture: Capture, shipped: ShippedLayer, env: Record
       capture.policy.models[name] = { dispatchable: true };
       capture.notes.push(`captured models.${name} (dispatchable) from KHEREP_ALLOWED_MODELS`);
     }
-    const dropped = [...shipped.models.keys()].filter((name) => !names.includes(name));
-    if (dropped.length) capture.notes.push(`not captured: KHEREP_ALLOWED_MODELS left out ${dropped.join(", ")}; the policy only adds models`);
+    if (names.length === 0) {
+      capture.notes.push("not captured: KHEREP_ALLOWED_MODELS names no model");
+    } else {
+      for (const name of shipped.models.keys()) {
+        if (names.includes(name)) continue;
+        capture.policy.models[name] = { dispatchable: false };
+        capture.notes.push(`captured models.${name} (not dispatchable) from KHEREP_ALLOWED_MODELS`);
+      }
+    }
   }
   if (env.KHEREP_AGENT_MODEL_POLICY === undefined) return;
   let parsed: unknown;
