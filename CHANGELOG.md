@@ -357,8 +357,10 @@ increments the minor version; every other release increments the patch version.
   (`bootstrap/migrate-model-policy.mts`) captures explicit environment values and edited
   frontmatter into the user file. `KHEREP_ALLOWED_MODELS` (still the complete list,
   migrated as `dispatchable: false` for omitted aliases) and `KHEREP_AGENT_MODEL_POLICY`
-  (no longer a pin) are deprecated for one release. Claude adapter limitation: no
-  queryable model catalog, so a per-model effort list only warns.
+  (no longer a pin) are deprecated for one release; they affect dispatch and the hook
+  texts, while the installer and `drift-check.sh` render frontmatter from the two
+  policy files only. Claude adapter limitation: no queryable model catalog, so a
+  per-model effort list only warns.
 
 - Allow co-author trailers and AI attribution for every runtime and repository; preserve other commit policies and verify the CI hook with an isolated work-item canary (#722).
 

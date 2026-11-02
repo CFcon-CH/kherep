@@ -40,7 +40,8 @@ export interface ResolvedAgent extends ResolvedChoice {
   role: string;
   // True while the model is only the shipped role default. The installer then
   // leaves the frontmatter without a model line (native inherit); a model the
-  // shipped agent entry, the environment or the user names is rendered.
+  // shipped agent entry or the user names is rendered (the installer loads
+  // the policy without the deprecated environment).
   roleDefaultModel: boolean;
 }
 

@@ -15,7 +15,7 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), "model-policy-drift-"));
 after(() => fs.rmSync(TMP, { recursive: true, force: true }));
 
 // Runs drift-check.sh's own normalize_file, cmp_file and cmp_agent on one agent.
-function drift(home: string, agent: string): { status: number | null; stdout: string; stderr: string } {
+function drift(home: string, agent: string, extra: Record<string, string> = {}): { status: number | null; stdout: string; stderr: string } {
   const harness = path.join(TMP, "harness.sh");
   fs.writeFileSync(harness, `#!/usr/bin/env bash
 set -uo pipefail
@@ -30,6 +30,7 @@ exit "$drift"
   const env: Record<string, string | undefined> = { ...process.env, HERE, CLAUDE_SRC: SRC, CLAUDE_HOME: posix(home), AGENT: agent };
   delete env.KHEREP_ALLOWED_MODELS;
   delete env.KHEREP_AGENT_MODEL_POLICY;
+  Object.assign(env, extra);
   return spawnSync("bash", [posix(harness)], { encoding: "utf8", env, timeout: 30_000 });
 }
 
@@ -56,6 +57,12 @@ test("an overridden agent frontmatter is ok, not DRIFT", () => {
 test("the shipped default without a user file is ok", () => {
   const result = drift(home("default", undefined, rendered("haiku", "medium")), "claude-obs");
   assert.equal(result.status, 0, result.stdout + result.stderr);
+});
+
+test("a shell with the deprecated environment set still reports ok", () => {
+  const result = drift(home("env", undefined, rendered("haiku", "medium")), "claude-obs", { KHEREP_AGENT_MODEL_POLICY: JSON.stringify({ "claude-obs": "sonnet" }) });
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.match(result.stdout, /^ok +agents\/claude-obs\.md$/m);
 });
 
 test("a hand edit of the live frontmatter is DRIFT", () => {

@@ -526,9 +526,12 @@ test_model_policy() {
   grep -qx 'model: sonnet' "$C/agents/claude-obs.md" && grep -qx 'effort: medium' "$C/agents/claude-obs.md" ||
     fail "the user override and the observer default were not rendered on reinstall"
   ! grep -q '^model:' "$C/agents/kherep-builder.md" || fail "a role default left the builder off native inherit"
-  HOME="$H" CLAUDE_HOME="$C" KHEREP_PROFILE=win KHEREP_WORKSPACE="$W" KHEREP_CREDENTIALS_ROOT="$R" \
+  # The deprecated environment in the checking shell never reaches the rendered frontmatter.
+  KHEREP_AGENT_MODEL_POLICY='{"claude-obs":"opus","kherep-builder":"opus"}' \
+    HOME="$H" CLAUDE_HOME="$C" KHEREP_PROFILE=win KHEREP_WORKSPACE="$W" KHEREP_CREDENTIALS_ROOT="$R" \
     bash "$HERE/drift-check.sh" > "$ROOT/drift.log" 2>&1 || { cat "$ROOT/drift.log"; fail "drift-check failed with a user override"; }
   grep -q '^ok *agents/claude-obs.md$' "$ROOT/drift.log" || fail "the overridden agent is not reported ok"
+  grep -q '^ok *agents/kherep-builder.md$' "$ROOT/drift.log" || fail "the deprecated environment reached the drift render"
 
   set +e; KHEREP_BOOTSTRAP_TEST_FAIL_AFTER_LABEL='hooks/deploy-guard.mts' policy_install > "$ROOT/log3" 2>&1; rc=$?; set -e
   [ "$rc" -ne 0 ] && [ -f "$(latest "$H")/ROLLED-BACK" ] || fail "the injected failure was not rolled back"
