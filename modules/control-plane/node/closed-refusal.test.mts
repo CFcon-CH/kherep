@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { deliverToClosed } from "./closed-delivery.mts";
-import { closedNode, COPY, copyingExec, deliver, endedIntercom, SESSION } from "./closed-fixture.mts";
+import { closedNode, COPY, copyingExec, deliver, endedIntercom, missListings, SESSION } from "./closed-fixture.mts";
 import { writeLocalSessions } from "./exchange.mts";
 import { getMessage, refuseUndeliverable, UNDELIVERABLE_AFTER_MS } from "./inbox.mts";
 import { runMsg } from "./msg-cli.mts";
@@ -40,13 +40,15 @@ test("a readdressed message is judged from its handover, not from its arrival", 
   // It arrived more than an hour before the intercom session took it over.
   node.tick(UNDELIVERABLE_AFTER_MS);
   const handed = fake.deps.now!();
-  writeLocalSessions(node.paths, [], handed);
+  missListings(node, 1, handed);
   await deliverToClosed(fake.deps);
   assert.equal(getMessage(node.paths.inbox, id)?.toSession, COPY);
   assert.deepEqual(refuseUndeliverable(node.paths.inbox, [], handed + 60_000), []);
   assert.equal(getMessage(node.paths.inbox, id)?.state, "accepted");
   // Unanswered an hour after the handover, with its session gone: refused.
-  assert.deepEqual(refuseUndeliverable(node.paths.inbox, [], handed + UNDELIVERABLE_AFTER_MS + 60_000), [id]);
+  assert.deepEqual(refuseUndeliverable(node.paths.inbox, [], handed + UNDELIVERABLE_AFTER_MS + 60_000), [], "unknown still waits");
+  assert.deepEqual(refuseUndeliverable(node.paths.inbox, [], handed + UNDELIVERABLE_AFTER_MS + 60_000,
+    undefined, undefined, () => false, ref => ref === COPY), [id], "fresh positive closure is independently required");
 });
 
 test("a message for a session that is not running is still refused after an hour", async (t) => {
@@ -54,7 +56,9 @@ test("a message for a session that is not running is still refused after an hour
   const id = deliver(node, { toSession: "e0e0e0e0-0000-4000-8000-000000000000" });
   const received = Date.parse(getMessage(node.paths.inbox, id)!.receivedAt);
   assert.deepEqual(refuseUndeliverable(node.paths.inbox, [], received + UNDELIVERABLE_AFTER_MS), []);
-  assert.deepEqual(refuseUndeliverable(node.paths.inbox, [], received + UNDELIVERABLE_AFTER_MS + 1), [id]);
+  assert.deepEqual(refuseUndeliverable(node.paths.inbox, [], received + UNDELIVERABLE_AFTER_MS + 1), [], "age alone cannot refuse UNKNOWN");
+  assert.deepEqual(refuseUndeliverable(node.paths.inbox, [], received + UNDELIVERABLE_AFTER_MS + 1,
+    undefined, undefined, () => false, ref => ref === "e0e0e0e0-0000-4000-8000-000000000000"), [id]);
   assert.equal(getMessage(node.paths.inbox, id)?.reason, "target session not running");
 });
 

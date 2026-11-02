@@ -38,19 +38,21 @@ async function session(t: test.TestContext) {
   const [line] = await once(root.stdout!, "data") as [Buffer];
   const child = Number(line.toString().trim());
   assert.ok(Number.isInteger(child) && child > 0);
-  const childStart = await processStart(child);
-  assert.notEqual(childStart, null);
+  let childStart: string | null = null;
   // Only this test's processes: the root is the held child (Node resolves its
   // identity, kill() after its exit is a no-op), the detached child only while
   // it still has the start read at spawn.
   t.after(async () => {
     root.kill("SIGKILL");
     try {
-      if (await processStart(child) === childStart) process.kill(child, "SIGKILL");
+      if (childStart !== null && await processStart(child) === childStart) process.kill(child, "SIGKILL");
     } catch {
       // ended between the read and the kill, or ps failed: nothing to end
     }
   });
+  // Register cleanup before the first fallible identity read.
+  childStart = await processStart(child);
+  assert.notEqual(childStart, null);
   return { root: root.pid!, child, childStart };
 }
 
@@ -72,7 +74,9 @@ for (const spy of [false, true]) {
           ...(live ? { state: "working", pid: root, status: "busy" } : { state: "stopped" }) }]);
       };
       const signals: [number, NodeJS.Signals, SignalScope | undefined][] = [];
-      const codex: CodexDeps = { graceMs: 3_000, ...(spy ? { signal: (pid, signal, scope) => {
+      const codex: CodexDeps = { graceMs: 3_000,
+        // This fixture emits the entire relation set itself; never read a host inventory.
+        processRelations: () => [{ pid: root, ppid: process.pid }, { pid: child, ppid: root }], ...(spy ? { signal: (pid, signal, scope) => {
         signals.push([pid, signal, scope]);
         if (scope === "process") signalProcess(pid, signal);
         else signalGroup(pid, signal);

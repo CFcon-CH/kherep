@@ -119,6 +119,12 @@ test("messages left at the old id by a malformed listing are refused only under 
   await listing([old], since + UNDELIVERABLE_AFTER_MS + 1);
   assert.equal(getMessage(node.paths.inbox, id)?.state, "accepted", "young, failed or live: not refused");
   await listing([], since + UNDELIVERABLE_AFTER_MS + 1);
+  assert.equal(getMessage(node.paths.inbox, id)?.state, "accepted", "empty or malformed evidence remains UNKNOWN");
+  const { fixtureEvidence, syntheticListing } = await import("./session-authority-fixture.mts");
+  const at = since + UNDELIVERABLE_AFTER_MS + 1;
+  await recordingSessions(node.paths, async () => syntheticListing(node.livenessAuthority, [],
+    [fixtureEvidence({ runtime: old.runtime, sessionId: old.sessionId }, "closed", at)], at), () => {}, () => at,
+    undefined, undefined, node.livenessAuthority)();
   assert.deepEqual([getMessage(node.paths.inbox, id)?.state, getMessage(node.paths.inbox, id)?.reason],
     ["refused", "target session not running"]);
   assert.deepEqual(runs(node), ["--bg", "--resume"]);

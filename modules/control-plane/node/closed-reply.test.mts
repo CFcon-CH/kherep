@@ -126,7 +126,10 @@ test("a failed listing counts no miss; the next successful one does (issue #389)
   await deliverToClosed(node.deps());
   assert.equal(claudeRuns(node).length, 0);
   assertWaitingFor(node, reply);
-  await recordingSessions(node.paths, async () => [], () => {}, now)();
+  const { fixtureEvidence, syntheticListing } = await import("./session-authority-fixture.mts");
+  await recordingSessions(node.paths, async () => syntheticListing(node.livenessAuthority, [],
+    [fixtureEvidence({ runtime: "claude-code", sessionId: SESSION }, "closed", now())], now()),
+    () => {}, now, undefined, undefined, node.livenessAuthority)();
   await deliverToClosed(node.deps());
   assertHandedTo(node, reply, listTasks(node.paths)[0]);
 });

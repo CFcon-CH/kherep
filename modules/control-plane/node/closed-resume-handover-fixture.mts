@@ -15,6 +15,7 @@ import { recordLockFile, RECORD_LOCK_WAIT_MS, setRecordLockWait } from "./inbox-
 import { T0, taskId } from "./task-fixture.mts";
 import { listTasks, readTask, writeTask } from "./task-records.mts";
 import { watchTasks } from "./task-watch.mts";
+import { fixtureEvidence, syntheticListing } from "./session-authority-fixture.mts";
 
 // Synthetic only: closedNode injects fake exec, findClaude and service owner.
 // No runtime launch or private runtime/session read; the real fallback/hooks execute.
@@ -31,7 +32,11 @@ export async function resumedHandover(t: test.TestContext, d: Diagnostics, conte
     source: { binding: "external-run-receipt" }, task: readTask(node.paths, T), records: [...messages(), get(Q)],
     audits: audits(node), logs, receiving, counts: { launches: node.calls.filter((c) => c.args[0] !== "agents").length,
       hooks: receiving.length, receipts: [M1, M2, Q].filter((id) => getReceipt(node.paths.inbox, id)).length } });
-  const discover = recordingSessions(node.paths, async () => seen, log, () => now);
+  // This scenario models a complete, authoritative generated app/holder read.
+  const discover = recordingSessions(node.paths, async () => syntheticListing(node.livenessAuthority, [...seen],
+    [SESSION, S1, S2, S3].map(sessionId => fixtureEvidence({ runtime: "claude-code", sessionId },
+      seen.some(row => row.sessionId === sessionId) ? "running" : "closed", now)), now), log, () => now,
+    undefined, undefined, node.livenessAuthority);
   function view(sessionId: string, shortId = sessionId.slice(0, 8)) {
     node.rows.splice(0, node.rows.length, { id: shortId, sessionId, name: "synthetic-task-a", state: "working", kind: "background" });
     seen = [{ sessionId, name: "synthetic-task-a", runtime: "claude-code", state: "busy", cwd: node.workspace }];

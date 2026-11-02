@@ -129,7 +129,7 @@ describe("native MCP invocation modes (issue #193)", () => {
     }
   }, 20_000);
 
-  it("denies a chat that is no longer listed, at claim and at registration", async () => {
+  it("denies an UNKNOWN retained chat at claim and registration while keeping its addressable identity", async () => {
     const peer = await startPeer();
     const listed = sessionsOf(CHAT_A, CHAT_B);
     const node = await startNativeNode("modes-ended", listed);
@@ -138,7 +138,9 @@ describe("native MCP invocation modes (issue #193)", () => {
       const registered = await node.hook(CHAT_B, "toolu_ended_1", "send", input);
       listed.splice(listed.findIndex((session) => session.sessionId === CHAT_B), 1);
       await node.publishSessions();
-      await vi.waitFor(async () => expect(await listedOn(node, CHAT_B)).toBe(false), WAIT);
+      await vi.waitFor(async () => expect((await registry().directory()).sessions.find(
+        (session) => session.nodeId === node.nodeId && session.sessionId === CHAT_B)?.state).toBe("unknown"), WAIT);
+      expect(await listedOn(node, CHAT_B)).toBe(true);
       const late = await (await node.mcp()).callTool({ name: "send", arguments: registered, _meta: claudeMeta("toolu_ended_1") });
       expect(late.isError).toBe(true);
       expect(late.content).toEqual([{ type: "text", text: "native session is no longer registered" }]);

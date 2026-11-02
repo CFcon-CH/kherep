@@ -8,7 +8,7 @@ import test from "node:test";
 
 import { TURN_SPACING_MS } from "./autonomy.mts";
 import { deliverToClosed } from "./closed-delivery.mts";
-import { ACCEPT_ALL, closedSince, deliver } from "./closed-fixture.mts";
+import { ACCEPT_ALL, audits, closedSince, deliver } from "./closed-fixture.mts";
 import { fakeCodexBin, THREAD, waitFor } from "./codex-fixture.mts";
 import { readExit } from "./codex-output.mts";
 import { intercomMcpOverrides, resetMcpCache } from "./codex-mcp.mts";
@@ -21,6 +21,7 @@ import { recordCodexSession } from "./codex-sessions.mts";
 import { getMessage, markOffered } from "./inbox.mts";
 import { T0, taskId, taskNode, testServiceOwner } from "./task-fixture.mts";
 import { listTasks, readTask, writeTask, type TaskRecord } from "./task-records.mts";
+import { fixtureEvidence, publishSynthetic } from "./session-authority-fixture.mts";
 
 // Issue #119: a daemon-started Codex intercom run on Windows is not detached,
 // so it opens no console windows but ends with the daemon. Its messages must
@@ -135,7 +136,11 @@ function closedCodexNode(t: test.TestContext) {
   const repo = path.join(node.workspace, "repo");
   recordCodexSession(node.paths, CLOSED, repo, T0 - 13 * 3_600_000, "default");
   closedSince(node, { sessionId: CLOSED, runtime: "codex", state: "idle" });
-  const codexDeps: CodexDeps = { findCodex: () => codex.file, processStart: alive, startWaitMs: 5_000, graceMs: 300 };
+  const codexDeps: CodexDeps = { findCodex: () => codex.file, processStart: alive, startWaitMs: 5_000, graceMs: 300,
+    // Only fixture-owned PIDs are supplied; never enumerate the host's processes.
+    processTree: pid => { assert.ok(codex.runs().some(run => run.pid === pid));
+      return [pid, codex.child()].filter((id): id is number => id !== null)
+        .flatMap(id => alive(id) === null ? [] : [{ pid: id, start: "fake" }]); } };
   const deps = () => ({ ...node.deps(), codex: codexDeps });
   return { node, codex, deps };
 }
@@ -145,6 +150,7 @@ test("a new intercom run that a daemon restart ends leaves its message offered a
   // [fail] keeps the fake from answering, [sleep] keeps it running until killed.
   const id = deliver(node, { toSession: CLOSED, text: "status? [fail] [sleep]" });
   await deliverToClosed(deps());
+  assert.equal(listTasks(node.paths).length, 1, JSON.stringify(audits(node)));
   await waitFor(() => codex.runs().length === 1, "the intercom run");
   const [task] = listTasks(node.paths);
   assert.equal(task.local, "intercom");
@@ -168,6 +174,10 @@ test("a new intercom run that a daemon restart ends leaves its message offered a
   assert.deepEqual([retry.state, retry.retry], ["offered", true], "offered again, not delivered and not lost");
 
   node.tick(TURN_SPACING_MS * 2);
+  const now = node.deps().now!();
+  const target = { runtime: "codex", sessionId: THREAD };
+  publishSynthetic(node.paths, [fixtureEvidence(target, "idle-loaded", now)], now,
+    [{ ...target, state: "idle-loaded" }], node.livenessAuthority);
   await pollCodexInbound(deps());
   await waitFor(() => codex.runs().length === 2, "the resumed run");
   const resume = codex.runs()[1];
@@ -214,6 +224,7 @@ test("the deadline stops an attached intercom run with its whole process tree", 
   const { node, codex, deps } = closedCodexNode(t);
   const id = deliver(node, { toSession: CLOSED, text: "work [fail] [tree] [sleep]" });
   await deliverToClosed(deps());
+  assert.equal(listTasks(node.paths).length, 1, JSON.stringify(audits(node)));
   await waitFor(() => codex.child() !== null, "the child of the run");
   const [task] = listTasks(node.paths);
   node.tick(2 * 60 * 60_000);

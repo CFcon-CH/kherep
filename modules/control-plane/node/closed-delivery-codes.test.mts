@@ -6,7 +6,7 @@ import test from "node:test";
 import type { MessageProgressCode } from "../protocol-messages.mts";
 import { rememberMode, takeTurn, TURN_SPACING_MS, TURNS_PER_HOUR } from "./autonomy.mts";
 import { deliverToClosed } from "./closed-delivery.mts";
-import { audits, closedNode, closedSince, deliver, SESSION, type Node } from "./closed-fixture.mts";
+import { audits, closedNode, closedSince, deliver, missListings, SESSION, type Node } from "./closed-fixture.mts";
 import { writeLocalSessions } from "./exchange.mts";
 import { getMessage, getMessageProgress } from "./inbox.mts";
 import type { ExecOptions } from "./sessions.mts";
@@ -81,7 +81,7 @@ const limits: [string, Record<string, unknown>, TaskRecord["state"], (node: Node
   ["maxConcurrent", { maxConcurrent: 1 }, "running", (node) => writeTask(node.paths, { ...listTasks(node.paths)[0], state: "done" })],
   ["maxStartsPerDay", { maxStartsPerDay: 1 }, "done", (node) => {
     node.tick(24 * 3_600_000);
-    writeLocalSessions(node.paths, [], T0 + 24 * 3_600_000);
+    missListings(node, 1, T0 + 24 * 3_600_000);
   }],
 ];
 for (const [what, sessions, state, clear] of limits) {

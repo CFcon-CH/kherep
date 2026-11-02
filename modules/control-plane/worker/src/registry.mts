@@ -58,7 +58,9 @@ export class Registry extends DurableObject<Env> {
     this.tasks = new TaskStore(this.sql, (...args) => this.audit(...args));
     this.taskControl = new TaskControlRegistry(this.sql, this.messages, this.tasks, (...args) => this.audit(...args));
     this.mcp = new McpRegistry(this.sql, (nodeId) => this.capabilitiesOf(nodeId), (nodeId, sessionId) => {
-      const row = this.sql.exec("SELECT runtime FROM sessions WHERE node_id = ? AND session_id = ?", nodeId, sessionId).toArray()[0];
+      // Retained UNKNOWN identities remain addressable, but do not establish
+      // the native-session permission required for MCP registration or claim.
+      const row = this.sql.exec("SELECT runtime FROM sessions WHERE node_id = ? AND session_id = ? AND state NOT IN ('unknown', 'closed', 'archived', 'deleted')", nodeId, sessionId).toArray()[0];
       return row ? String(row.runtime) : null;
     });
   }

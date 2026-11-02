@@ -147,7 +147,7 @@ test("msg sessions shows the label as the session name, and a label addresses th
   writeDirectory(node.paths, DIRECTORY);
   const listed = await send(node, ["sessions"]);
   assert.equal(listed.code, 0);
-  assert.ok(listed.out.includes("    intercom: codex@isis  s-peer  working  claude-code  [background task]"), listed.out.join("\n"));
+  assert.ok(listed.out.includes("    intercom: codex@isis  s-peer  unknown  claude-code  [background task]"), listed.out.join("\n"));
   assert.equal((await send(node, ["send", "sekhmet/intercom: codex@isis", "--", "hello"])).code, 0);
 });
 

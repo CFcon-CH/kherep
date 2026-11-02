@@ -4,12 +4,14 @@ import path from "node:path";
 import test from "node:test";
 
 import { takeTurn, TURN_SPACING_MS, TURNS_PER_HOUR } from "./autonomy.mts";
-import { recordCodexSession } from "./codex-sessions.mts";
+import { listCodexTaskSessions, recordCodexSession } from "./codex-sessions.mts";
 import { codexNode, THREAD, waitFor } from "./codex-fixture.mts";
 import { readExit } from "./codex-output.mts";
 import { stopCodex } from "./codex-runner.mts";
 import { codexFiles } from "./codex-process.mts";
 import { pollCodexInbound } from "./codex-wake.mts";
+import { readLocalSessions } from "./exchange-sessions.mts";
+import { fixtureEvidence, publishSynthetic } from "./session-authority-fixture.mts";
 import { getOutbox } from "./exchange.mts";
 import { getMessage, messageIds, storeMessage } from "./inbox.mts";
 import { continueTask, startTask, stopTask } from "./session-runner.mts";
@@ -30,14 +32,28 @@ const messageId = (): string => `7e57${(++counter).toString(16).padStart(4, "0")
 
 type Node = ReturnType<typeof codexNode>;
 
+// An ended task alone never proves a loaded holder. Positive wake cases opt
+// into both the existing wake policy and independently generated source facts.
+function enableWake(node: Node): void {
+  const policy = JSON.parse(fs.readFileSync(node.paths.policy, "utf8"));
+  fs.writeFileSync(node.paths.policy, JSON.stringify({ ...policy, wake: { enabled: true, sessions: ["unrelated"] } }));
+}
+function loaded(node: Node): void {
+  const now = node.deps().now!();
+  publishSynthetic(node.paths, [fixtureEvidence({ runtime: "codex", sessionId: THREAD }, "idle-loaded", now)],
+    now, listCodexTaskSessions(node.paths, now).map(row => ({ ...row, state: "idle-loaded" })), node.livenessAuthority);
+}
+
 // A finished Codex task, its run ended and reported done.
-async function doneTask(t: test.TestContext, sessions: Record<string, unknown> = {}, cwd?: string): Promise<Node> {
+async function doneTask(t: test.TestContext, sessions: Record<string, unknown> = {}, cwd?: string, observed = true): Promise<Node> {
   const node = codexNode(t, sessions);
   await startTask(startArgs(TASK, { runtime: "codex", ...(cwd ? { cwd: path.join(node.workspace, cwd) } : {}) }), node.deps());
   await waitFor(() => readExit(codexFiles(node.paths, TASK)) !== null, "the first run");
   await watchTasks(node.deps());
   assert.equal(readTask(node.paths, TASK)?.state, "done");
   node.reports();
+  enableWake(node);
+  if (observed) loaded(node);
   return node;
 }
 
@@ -66,18 +82,26 @@ test("a Codex task session is listed from its task record, with the thread id an
   // The delivery hook may record the same thread; it is listed once, as the task.
   recordCodexSession(node.paths, THREAD, node.workspace, T0);
   const listed = (await listSessions({ paths: node.paths, findClaude: () => null, now: () => T0 })).filter((s) => s.sessionId === THREAD);
-  assert.deepEqual(listed, [{ sessionId: THREAD, runtime: "codex", state: "running", startedAt: new Date(T0).toISOString(), name: NAME,
+  assert.deepEqual(listed, [{ sessionId: THREAD, runtime: "codex", state: "unknown", startedAt: new Date(T0).toISOString(), name: NAME,
     cwd: fs.realpathSync.native(node.workspace), kind: "codex-task" }]);
   await stopTask({ taskId: TASK }, node.deps());
   const idle = await listSessions({ paths: node.paths, findClaude: () => null, now: () => T0 });
-  assert.equal(idle.find((s) => s.sessionId === THREAD)?.state, "idle");
+  assert.equal(idle.find((s) => s.sessionId === THREAD)?.state, "unknown", "task completion is not loaded-holder evidence");
+  loaded(node);
+  assert.equal(readLocalSessions(node.paths, T0).find(s => s.sessionId === THREAD)?.state, "idle-loaded");
   const later = await listSessions({ paths: node.paths, findClaude: () => null, now: () => T0 + 13 * 60 * 60_000 });
   assert.deepEqual(later.filter((s) => s.name === NAME), [], "an ended task is listed for 12 hours");
 });
 
 test("a peer message resumes an ended task with the framed message; the reply goes out through the msg CLI", posix, async (t) => {
-  const node = await doneTask(t);
+  const node = await doneTask(t, {}, undefined, false);
   const id = deliver(node, "please rerun the suite");
+  await pollCodexInbound(node.deps());
+  assert.equal(node.runs().length, 1, "UNKNOWN never resumes an ended task");
+  assert.equal(getMessage(node.paths.inbox, id)?.state, "accepted");
+  loaded(node);
+  // The generated hook identifies this named sender as Codex to the real msg CLI.
+  recordCodexSession(node.paths, THREAD, node.workspace, T0);
   await pollCodexInbound(node.deps());
   await runEnds(node, 2);
   const run = node.runs()[1];
@@ -171,6 +195,8 @@ test("a message run past the max runtime keeps the task's state and sends no rep
   await watchTasks(node.deps());
   assert.equal(readTask(node.paths, TASK)?.state, "failed");
   node.reports();
+  enableWake(node);
+  loaded(node);
   const id = deliver(node, "take your time [sleep]");
   await pollCodexInbound(node.deps());
   await waitFor(() => node.runs().length === 2, "the message run");
@@ -190,6 +216,7 @@ test("one run at a time; a system-stopped or failed run offers its messages agai
   await waitFor(() => node.runs().length === 2, "the message run");
   const waiting = deliver(node, "second");
   node.tick(TURN_SPACING_MS + 1);
+  loaded(node);
   await pollCodexInbound(node.deps());
   assert.equal(node.runs().length, 2, "no second run while one runs");
   assert.equal(getMessage(node.paths.inbox, waiting)?.state, "accepted");
@@ -201,6 +228,7 @@ test("one run at a time; a system-stopped or failed run offers its messages agai
 
   // Both go in the next run, which fails: they stay offered for a retry.
   node.tick(TURN_SPACING_MS + 1);
+  loaded(node);
   fs.rmSync(path.join(node.paths.inbox, `${slow}.json`));
   const failing = deliver(node, "this one fails [fail]");
   await pollCodexInbound(node.deps());
@@ -208,6 +236,7 @@ test("one run at a time; a system-stopped or failed run offers its messages agai
   await watchTasks(node.deps());
   for (const id of [waiting, failing]) assert.deepEqual([getMessage(node.paths.inbox, id)?.state, getMessage(node.paths.inbox, id)?.retry], ["offered", true]);
   node.tick(TURN_SPACING_MS + 1);
+  loaded(node);
   await pollCodexInbound(node.deps());
   await runEnds(node, 4);
   assert.equal(auditLines(node).at(-1)?.action, "stuck-offer");

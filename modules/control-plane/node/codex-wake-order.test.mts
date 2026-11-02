@@ -9,6 +9,7 @@ import { getMessage, getMessageProgress, storeMessage } from "./inbox.mts";
 import type { Readiness, Verdict } from "./runtime-readiness.mts";
 import { taskId, taskNode, T0 } from "./task-fixture.mts";
 import { writeTask } from "./task-records.mts";
+import { fixtureEvidence, publishSynthetic } from "./session-authority-fixture.mts";
 
 // Issue #473: the start-time read of an ended task's previous run is a child
 // process, so a round reads it only after the guards that need no process:
@@ -29,6 +30,9 @@ function setup(t: test.TestContext, sessions: Record<string, unknown> = {}, cwd?
     state: "done", permissionMode: "auto", cwd: cwd ? cwd(node) : node.workspace, pid: PID, pidStart: START,
     startedAt: new Date(T0).toISOString(), deadline: new Date(T0 + 60_000).toISOString(), updatedAt: new Date(T0).toISOString() }, T0);
   const messageId = crypto.randomUUID();
+  const target = { runtime: "codex", sessionId: SESSION };
+  publishSynthetic(node.paths, [fixtureEvidence(target, "idle-loaded", T0)], T0,
+    [{ ...target, state: "idle-loaded" }], node.livenessAuthority);
   storeMessage(node.paths.inbox, { messageId, from: PEER, toSession: record.name, text: "synthetic peer message",
     createdAt: new Date(T0).toISOString(), taskId: record.taskId }, T0, 0);
   const order: string[] = [];

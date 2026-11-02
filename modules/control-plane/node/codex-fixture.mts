@@ -34,7 +34,7 @@ if (argv.includes("mcp")) { process.stdout.write("[]\\n"); process.exit(0); }
 const stdin = fs.readFileSync(0, "utf8");
 const env = { KHEREP_CONFIG_DIR: process.env.KHEREP_CONFIG_DIR, KHEREP_SESSION_ID: process.env.KHEREP_SESSION_ID,
   CLAUDE_CODE_SESSION_ID: process.env.CLAUDE_CODE_SESSION_ID };
-fs.appendFileSync(${JSON.stringify(log)}, JSON.stringify({ argv, cwd: process.cwd(), stdin, pid: process.pid, env }) + "\\n");
+fs.appendFileSync(${JSON.stringify(log)}, JSON.stringify({ argv, cwd: process.cwd(), stdin, pid: process.pid, ppid: process.ppid, env }) + "\\n");
 // codex queue: a thread starting with fa11 has no app server, as when none owns it.
 if (argv[0] === "queue") {
   if (argv[2].startsWith("5eec")) { setTimeout(() => process.exit(0), 250); return; }
@@ -42,6 +42,7 @@ if (argv[0] === "queue") {
   if (argv[2].startsWith("0a9e")) {
     const child = require("node:child_process").spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: ["ignore", "ignore", "inherit"] });
     fs.writeFileSync(${JSON.stringify(log)} + ".child", String(child.pid));
+    fs.appendFileSync(${JSON.stringify(log)} + ".relations", JSON.stringify({ pid: child.pid, ppid: process.pid }) + "\\n");
     setInterval(() => {}, 1000);
     return;
   }
@@ -59,6 +60,7 @@ if (prompt.includes("[silent]")) process.exit(2);
 if (prompt.includes("[tree]")) {
   const child = require("node:child_process").spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
   fs.writeFileSync(${JSON.stringify(log)} + ".child", String(child.pid));
+  fs.appendFileSync(${JSON.stringify(log)} + ".relations", JSON.stringify({ pid: child.pid, ppid: process.pid }) + "\\n");
 }
 if (prompt.includes("[stderr]")) {
   process.stderr.write("warning: first line\\nNot inside a trusted directory; key sk-proj_AbC*12-3 refused\\u0007\\n\\n");
@@ -76,7 +78,7 @@ else if (prompt.includes("[fail]")) { emit({ type: "turn.failed", error: { messa
 else { fs.writeFileSync(out, ${JSON.stringify(LAST_MESSAGE)}); emit({ type: "turn.completed", usage: {} }); process.exit(0); }
 `;
 
-export interface FakeRun { argv: string[]; cwd: string; stdin: string; pid: number; env: { KHEREP_CONFIG_DIR?: string; KHEREP_SESSION_ID?: string } }
+export interface FakeRun { argv: string[]; cwd: string; stdin: string; pid: number; ppid?: number; env: { KHEREP_CONFIG_DIR?: string; KHEREP_SESSION_ID?: string } }
 
 export function codexNode(t: test.TestContext, sessions: Record<string, unknown> = {}, codex: CodexDeps = {}) {
   const node = taskNode(t, { runtimes: ["claude", "codex"], ...sessions });
@@ -103,8 +105,15 @@ export function codexNode(t: test.TestContext, sessions: Record<string, unknown>
     }
     fs.rmSync(bin, { recursive: true, force: true });
   });
+  // Only relations emitted by our generated processes, never a host inventory.
+  const relations = () => {
+    const childFile = `${log}.relations`;
+    const children = fs.existsSync(childFile) ? fs.readFileSync(childFile, "utf8").trim().split("\n")
+      .filter(Boolean).map(line => JSON.parse(line) as { pid: number; ppid: number }) : [];
+    return [...runs().flatMap(run => run.ppid === undefined ? [] : [{ pid: run.pid, ppid: run.ppid }]), ...children];
+  };
   const deps = (extra: CodexDeps = {}): RunnerDeps => ({
-    ...node.deps(), codex: { findCodex: () => fake, startWaitMs: 5_000, graceMs: 300, ...codex, ...extra },
+    ...node.deps(), codex: { findCodex: () => fake, startWaitMs: 5_000, graceMs: 300, processRelations: relations, ...codex, ...extra },
   });
   return { ...node, fake, runs, deps };
 }

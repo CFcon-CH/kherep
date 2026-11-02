@@ -1,11 +1,14 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import test from "node:test";
 
 import { isNodeMessageStatusBody } from "../protocol-messages.mts";
 import type { TaskRuntime } from "../protocol-tasks.mts";
 import { deliverToClosed } from "./closed-delivery.mts";
 import { audits, closedNode, deliver } from "./closed-fixture.mts";
-import { codexNode, waitFor } from "./codex-fixture.mts";
+import { THREAD, codexNode, waitFor } from "./codex-fixture.mts";
+import { listCodexTaskSessions } from "./codex-sessions.mts";
+import { fixtureEvidence, publishSynthetic } from "./session-authority-fixture.mts";
 import { readExit } from "./codex-output.mts";
 import { codexFiles } from "./codex-process.mts";
 import { pollCodexInbound } from "./codex-wake.mts";
@@ -98,6 +101,12 @@ test("a Codex task start and a Codex message resume are refused while codex cann
   storeMessage(node.paths.inbox, { messageId: id, from: { nodeId: "00000000-0000-4000-8000-0000000000bb", session: "peer-1" },
     toSession: "task-3f2a1b0c", text: "status?", createdAt: new Date(T0).toISOString(), taskId: TASK }, T0);
   await readiness.check("codex");
+  const policy = JSON.parse(fs.readFileSync(node.paths.policy, "utf8"));
+  fs.writeFileSync(node.paths.policy, JSON.stringify({ ...policy, wake: { enabled: true, sessions: ["unrelated"] } }));
+  await pollCodexInbound({ ...node.deps(), readiness });
+  assert.equal(getMessage(node.paths.inbox, id)?.state, "accepted", "UNKNOWN cannot authorize even an early runtime refusal");
+  publishSynthetic(node.paths, [fixtureEvidence({ runtime: "codex", sessionId: THREAD }, "idle-loaded", T0)],
+    T0, listCodexTaskSessions(node.paths, T0).map(row => ({ ...row, state: "idle-loaded" })), node.livenessAuthority);
   await pollCodexInbound({ ...node.deps(), readiness });
   assert.equal(node.runs().length, 1, "only the first run");
   assert.deepEqual([getMessage(node.paths.inbox, id)?.state, getMessage(node.paths.inbox, id)?.reason], ["refused", REASON("codex")]);

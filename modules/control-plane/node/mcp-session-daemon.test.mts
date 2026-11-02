@@ -19,6 +19,7 @@ import { beginServiceDrain } from "./service-drain.mts";
 
 const flush = (): Promise<void> => new Promise(resolve => setImmediate(resolve));
 const OLD: SessionInfo = { sessionId: "session-old", runtime: "codex", state: "idle" };
+const normalized = (rows: SessionInfo[]) => rows.map(row => ({ ...row, state: "unknown" }));
 const NEW: SessionInfo = { sessionId: "session-new", runtime: "codex", state: "working" };
 const decode = (frame: string) => {
   const parsed = parseEnvelope(frame);
@@ -117,7 +118,7 @@ test("the daemon publishes the one complete discovery result before the intent w
   enqueue(f); f.tick(); await flush();
   const frames = f.frames.map(decode);
   assert.deepEqual(frames.map(frame => frame.type), ["sessions.snapshot", "mcp.intent.register"]);
-  assert.deepEqual(frames[0]!.body, { sessions: [OLD, NEW] });
+  assert.deepEqual(frames[0]!.body, { sessions: normalized([OLD, NEW]) });
   assert.ok(frames[0]!.seq < frames[1]!.seq);
   assert.equal(f.reads(), 1);
 });
@@ -151,7 +152,7 @@ test("service drain defers command discovery and resumes the same command after 
   await flush();
   assert.equal(f.reads(), 1);
   const result = f.frames.map(decode).find(frame => frame.type === "command.result");
-  assert.deepEqual((result?.body as { result?: unknown }).result, [OLD, NEW]);
+  assert.deepEqual((result?.body as { result?: unknown }).result, normalized([OLD, NEW]));
 });
 
 test("timed out daemon discovery cannot publish or rewrite any session cache after late completion", async t => {
@@ -227,7 +228,7 @@ test("an ordinary session.list cancels an older periodic read before it can reco
   const cached = files.map(file => fs.readFileSync(file, "utf8"));
   release(); await flush();
   assert.deepEqual(beforeRelease.map(frame => frame.type), ["register", "command.ack", "command.result"]);
-  assert.deepEqual((beforeRelease[2]!.body as { result: unknown }).result, [OLD, NEW]);
+  assert.deepEqual((beforeRelease[2]!.body as { result: unknown }).result, normalized([OLD, NEW]));
   assert.equal(periodicSignal?.aborted, true);
   assert.equal(f.frames.length, beforeRelease.length);
   assert.deepEqual(files.map(file => fs.readFileSync(file, "utf8")), cached);
@@ -247,7 +248,7 @@ test("an ordinary session.list cancels a stale initial read before it can overwr
   await flush();
   const beforeRelease = f.frames.map(decode);
   assert.deepEqual(beforeRelease.map(frame => frame.type), ["register", "command.ack", "command.result"]);
-  assert.deepEqual((beforeRelease[2]!.body as { result: unknown }).result, [OLD, NEW]);
+  assert.deepEqual((beforeRelease[2]!.body as { result: unknown }).result, normalized([OLD, NEW]));
   assert.equal(initialSignal.aborted, true);
   const cached = fs.existsSync(f.paths.sessions) ? fs.readFileSync(f.paths.sessions, "utf8") : undefined;
 

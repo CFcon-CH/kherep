@@ -8,6 +8,7 @@ import { EXCHANGE_INTERVAL_MS } from "./exchange.mts";
 import { getMessage } from "./inbox.mts";
 import { taskId } from "./task-fixture.mts";
 import { writeTask } from "./task-records.mts";
+import { fixtureEvidence } from "./session-authority-fixture.mts";
 
 // Issue #473: a start-time read is an awaited child process. While one is
 // pending, here for ever, the daemon still stores and acknowledges a
@@ -16,7 +17,9 @@ import { writeTask } from "./task-records.mts";
 const TASK_SESSION = "0199a000-0000-7000-8000-0000000004a3";
 
 test("a delivery is stored while a process-identity read never returns", async (t) => {
-  const h = intakeHarness(t, { policy: { version: 1, allowedCommands: [],
+  const h = intakeHarness(t, { livenessSource: { observe: () => { const now = Date.now();
+    return { status: "value", value: [fixtureEvidence({ runtime: "codex", sessionId: TASK_SESSION }, "idle-loaded", now)],
+      source: "native-app", complete: true, observedAt: now, reasonCode: "observed" }; } }, policy: { version: 1, allowedCommands: [],
     sessions: { enabled: true, workspaceRoots: [os.tmpdir()], runtimes: ["codex"] }, messaging: { accept: [{ from: ["*"], session: "*" }] } } });
   const now = Date.now();
   writeTask(h.paths, { taskId: taskId(4731), name: "task-4731", sessionId: TASK_SESSION, runtime: "codex", state: "done",
@@ -27,6 +30,8 @@ test("a delivery is stored while a process-identity read never returns", async (
   await flush();
   const socket = h.socket();
   socket.message(AUTH_OK);
+  await flush();
+  h.release([{ runtime: "codex", sessionId: TASK_SESSION, state: "idle-loaded" }]);
   await flush();
   socket.message(deliver(1, TASK_SESSION));
   await flush();

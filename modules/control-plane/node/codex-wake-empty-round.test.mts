@@ -8,6 +8,7 @@ import { pollCodexInbound } from "./codex-wake.mts";
 import { getMessage, storeMessage, writeJsonAtomic, type InboxRecord } from "./inbox.mts";
 import { taskId, taskNode, T0 } from "./task-fixture.mts";
 import { writeTask, type TaskRecord } from "./task-records.mts";
+import { fixtureEvidence, publishSynthetic } from "./session-authority-fixture.mts";
 
 type Node = ReturnType<typeof taskNode>;
 const PEER = { nodeId: "00000000-0000-4000-8000-0000000000bb", session: "peer-1" };
@@ -20,10 +21,23 @@ function endedTasks(t: test.TestContext, count = 1) {
       runtime: "codex", state: "done", permissionMode: "auto", cwd: node.workspace,
       startedAt: new Date(T0).toISOString(), deadline: new Date(T0 + 60_000).toISOString(), updatedAt: new Date(T0).toISOString() }, T0);
   });
+  // Independent fresh holder/loaded evidence, not the ended task rows.
+  const rows = tasks.map(task => ({ runtime: "codex", sessionId: task.sessionId!, state: "idle-loaded" }));
+  publishSynthetic(node.paths, rows.map(row => fixtureEvidence(row, "idle-loaded", T0)), T0, rows, node.livenessAuthority);
   const attempts: string[] = [];
   const deps = () => ({ ...node.deps(), codex: { findCodex: () => { attempts.push("resume"); return null; } } });
   return { ...node, tasks, attempts, deps };
 }
+
+test("ended task metadata without fresh independent source evidence never resumes", async t => {
+  const node = endedTasks(t);
+  const target = { runtime: "codex", sessionId: node.tasks[0].sessionId! };
+  message(node, target.sessionId, "accepted", node.tasks[0]);
+  publishSynthetic(node.paths, [fixtureEvidence(target, "unknown", T0)], T0,
+    [{ ...target, state: "unknown" }], node.livenessAuthority);
+  await pollCodexInbound(node.deps());
+  assert.equal(node.attempts.length, 0);
+});
 
 function message(node: Node, toSession: string, state: InboxRecord["state"] = "accepted", task?: TaskRecord): InboxRecord {
   const record = storeMessage(node.paths.inbox, { messageId: crypto.randomUUID(), from: PEER, toSession,

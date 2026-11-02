@@ -13,6 +13,8 @@ import { NodeClient } from "../../node/client.mts";
 import { nodePaths, type NodePaths } from "../../node/config.mts";
 import { exchangeOptions, recordingSessions } from "../../node/exchange.mts";
 import { generateIdentity } from "../../node/identity.mts";
+import { createAdmissionAuthority } from "../../node/session-authority.mts";
+import { syntheticListing } from "../../node/session-authority-fixture.mts";
 import { storeMessage } from "../../node/inbox.mts";
 import { DEFAULT_POLICY, type NodePolicy } from "../../node/policy.mts";
 import { handleMcp } from "../src/mcp-http.mts";
@@ -97,7 +99,15 @@ export async function startNativeNode(name: string, sessions: SessionInfo[]): Pr
   const nodeId = await enroll({ publicKey: identity.publicKey, privateKey: undefined as unknown as CryptoKey }, name);
   const received: Envelope[] = [];
   const inboxReads: string[] = [];
-  const list = recordingSessions(paths, async () => sessions, () => {});
+  const authority = createAdmissionAuthority(paths);
+  const list = recordingSessions(paths, async () => {
+    const now = Date.now();
+    const rows = [...sessions];
+    return syntheticListing(authority, rows, rows.map(({ runtime, sessionId }) => ({ runtime, sessionId,
+      holder: { status: "value", value: { present: true, creationIdentity: "synthetic-holder" }, source: "native-holder", observedAt: now, complete: true, reasonCode: "observed" },
+      turn: { status: "value", value: "running", source: "native-turn", observedAt: now, complete: true, reasonCode: "observed" },
+    })), now);
+  }, () => {}, undefined, undefined, undefined, authority);
   let inflight = new Set<string>();
   let client: NodeClient;
   let ws: WebSocket;

@@ -26,7 +26,7 @@ export function progressRecords(paths: NodePaths, records: InboxRecord[], phase:
 function observeAccepted(deps: RunnerDeps, session: LocalSession, accepted: InboxRecord[], now: number,
   requests: () => RequestIndex): void {
   if (accepted.length === 0) return;
-  if (session.state !== "idle") {
+  if (session.state !== "idle-loaded") {
     progressRecords(deps.paths, accepted, "waiting", "target-busy", now);
     return;
   }
@@ -77,7 +77,7 @@ function observeAccepted(deps: RunnerDeps, session: LocalSession, accepted: Inbo
 export function observeClaudeDeliveryProgress(deps: RunnerDeps): void {
   const now = deps.now?.() ?? Date.now();
   const allSessions = new Map<string, LocalSession>();
-  for (const session of readLocalSessions(deps.paths)) allSessions.set(session.sessionId, session);
+  for (const session of readLocalSessions(deps.paths, now)) allSessions.set(session.sessionId, session);
   const claudeSessions = new Map([...allSessions].filter(([, session]) => session.runtime === "claude-code"));
   const byName = new Map<string, LocalSession[]>();
   for (const session of allSessions.values()) {

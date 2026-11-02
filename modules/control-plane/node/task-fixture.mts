@@ -10,6 +10,7 @@ import type { ServiceOwnerProbe } from "./service-drain.mts";
 import type { RunnerDeps } from "./session-runner.mts";
 import type { ExecOptions } from "./sessions.mts";
 import { readReport, removeReport, reportIds } from "./task-records.mts";
+import { createAdmissionAuthority } from "./session-authority.mts";
 
 // Shared fixture of the task tests (item 5): a throwaway node directory with a
 // workspace root, a policy with a sessions section, and a fake claude that
@@ -43,6 +44,7 @@ export function taskNode(t: test.TestContext, sessions: Record<string, unknown> 
   const workspace = path.join(root, "workspace");
   fs.mkdirSync(path.join(workspace, "repo"), { recursive: true });
   const paths = nodePaths(root);
+  const livenessAuthority = createAdmissionAuthority(paths);
   fs.mkdirSync(paths.dir, { recursive: true });
   writeConfig(paths.config, { version: 1, controlUrl: "https://control.example.invalid", nodeId: "00000000-0000-4000-8000-0000000000aa",
     name: "n", publicKey: "", privateKeyFile: "", policyFile: paths.policy, enrolledAt: new Date(T0).toISOString() });
@@ -83,7 +85,7 @@ export function taskNode(t: test.TestContext, sessions: Record<string, unknown> 
   };
   const deps = (): RunnerDeps => ({
     paths, policy: loadPolicy(paths.policy), exec, findClaude: () => "/opt/bin/claude", platform: "linux", now: () => clock, cli: "kherep-node",
-    serviceOwner: testServiceOwner,
+    serviceOwner: testServiceOwner, livenessAuthority,
   });
   // Reports queued since the last call, oldest file order not guaranteed.
   const reports = (): Record<string, unknown>[] => reportIds(paths).map((id) => {
@@ -92,7 +94,7 @@ export function taskNode(t: test.TestContext, sessions: Record<string, unknown> 
     return body;
   });
   return {
-    root, workspace, paths, calls, rows, deps, reports,
+    root, workspace, paths, calls, rows, deps, reports, livenessAuthority,
     tick: (ms: number) => { clock += ms; },
     failNext: (message: string | null) => { failWith = message; },
     livePids: (first: number | null) => { livePid = first; },

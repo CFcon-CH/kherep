@@ -20,12 +20,12 @@ export function writeLocalSessions(paths: NodePaths, sessions: SessionInfo[], no
   writeJsonAtomic(paths.sessions, { generation, sessions: local, unseen: [...unlistedRuntimes(sessions)], updatedAt: new Date(now).toISOString() });
 }
 
-export function readLocalSessions(paths: NodePaths): LocalSession[] {
+export function readLocalSessions(paths: NodePaths, now: number = Date.now()): LocalSession[] {
   const value = readJson<{ sessions?: unknown; generation?: unknown }>(paths.sessions);
   const snapshot = readLivenessSnapshot(paths);
   if (!Array.isArray(value?.sessions)) return [];
   return (value.sessions as LocalSession[]).map(s => ({ ...s, state: snapshot && snapshot.generation === value.generation
-    ? sessionVerdict(paths, { runtime: s.runtime ?? "unknown", sessionId: s.sessionId }, Date.now()).state : "unknown" }));
+    ? sessionVerdict(paths, { runtime: s.runtime ?? "unknown", sessionId: s.sessionId }, now).state : "unknown" }));
 }
 
 // Adds a session this node just resumed (issue #102), so the delivery hook of

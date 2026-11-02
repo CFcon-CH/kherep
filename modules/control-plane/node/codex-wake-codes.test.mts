@@ -8,6 +8,7 @@ import { pollCodexInbound } from "./codex-wake.mts";
 import { getMessage, getMessageProgress, storeMessage } from "./inbox.mts";
 import { taskId, taskNode, T0 } from "./task-fixture.mts";
 import { writeTask, type TaskRecord } from "./task-records.mts";
+import { fixtureEvidence, publishSynthetic } from "./session-authority-fixture.mts";
 
 // Issue #239: a working directory the policy refuses holds the resume of an
 // ended Codex task as a policy decision, with the code closed-session delivery
@@ -34,6 +35,9 @@ function message(node: Node, record: TaskRecord): string {
 
 async function poll(node: Node, cwd: (node: Node) => string): Promise<{ id: string; lines: string[] }> {
   const id = message(node, endedTask(node, cwd(node)));
+  const target = { runtime: "codex", sessionId: SESSION };
+  publishSynthetic(node.paths, [fixtureEvidence(target, "idle-loaded", T0)], T0,
+    [{ ...target, state: "idle-loaded" }], node.livenessAuthority);
   const lines: string[] = [];
   // No codex binary: a resume that got past every guard fails to start.
   await pollCodexInbound({ ...node.deps(), codex: { findCodex: () => null } }, (line) => lines.push(line));

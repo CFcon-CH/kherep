@@ -12,6 +12,7 @@ import { observeCodexTaskProgress } from "./delivery-progress.mts";
 import { getMessage, getMessageProgress, markClosedAttempt, setMessageProgress, storeMessage } from "./inbox.mts";
 import { taskId, taskNode, T0 } from "./task-fixture.mts";
 import { writeTask, type TaskRecord } from "./task-records.mts";
+import { fixtureEvidence, publishSynthetic } from "./session-authority-fixture.mts";
 
 // Issue #197: a message for a Codex task session never waits without a
 // reason. Busy, operator-stopped, guarded, failed and running targets each
@@ -77,6 +78,11 @@ test("a busy or operator-stopped Codex task explains its waiting messages withou
 test("each wake guard of an ended Codex task leaves a reason on its waiting messages", async (t) => {
   const node = taskNode(t, { runtimes: ["codex"] });
   const ended = task(node);
+  const target = { runtime: "codex", sessionId: ended.sessionId! };
+  const refresh = () => { const now = node.deps().now!();
+    publishSynthetic(node.paths, [fixtureEvidence(target, "idle-loaded", now)], now,
+      [{ ...target, state: "idle-loaded" }], node.livenessAuthority); };
+  refresh();
   const deps = () => ({ ...node.deps(), codex: { findCodex: () => null } });
   const unlisted = message(node, ended.name);
   const deep = message(node, ended.name, { taskId: ended.taskId, depth: 6 });
@@ -92,6 +98,7 @@ test("each wake guard of an ended Codex task leaves a reason on its waiting mess
   await pollCodexInbound(deps());
   assert.equal(code(node, granted), "budget-exhausted");
   node.tick(2 * 60 * 60_000);
+  refresh();
 
   // The resume cannot start a process: failed, and offered again later.
   await pollCodexInbound(deps());
@@ -106,6 +113,9 @@ test("a resumed Codex task run reads as running until its turn confirms delivery
     permissionMode: "auto", cwd: node.workspace, startedAt: new Date(T0).toISOString(), deadline: new Date(T0 + 60_000).toISOString(),
     updatedAt: new Date(T0).toISOString() }, T0);
   const carried = message(node, ended.name, { taskId: ended.taskId });
+  const target = { runtime: "codex", sessionId: THREAD };
+  publishSynthetic(node.paths, [fixtureEvidence(target, "idle-loaded", T0)], T0,
+    [{ ...target, state: "idle-loaded" }], node.livenessAuthority);
   // [sleep] keeps the fake run alive, so a second message finds the task busy.
   fs.writeFileSync(path.join(node.paths.inbox, `${carried}.json`), JSON.stringify({
     ...getMessage(node.paths.inbox, carried), text: "take your time [sleep]" }));

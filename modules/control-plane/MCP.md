@@ -24,7 +24,7 @@ sequenceDiagram
         MCP->>Registry: Bearer + actual tool-use ID claim
         Registry->>Registry: Resolve session from prior hook intent
     end
-    Registry->>Registry: Recheck node, credential and session
+    Registry->>Registry: Recheck node, credential and session, deny UNKNOWN/terminal
     MCP->>Registry: Existing messaging operation
     Registry->>Peer: Existing typed message routing
 ```

@@ -49,6 +49,12 @@ A complete metadata envelope does not certify each runtime listing: unseen/cappe
 runtimes and per-target UNKNOWN retain prior addressable identity, separately
 from terminal visibility. Legacy remote Codex task/intercom `idle` means an ended
 run and displays UNKNOWN; explicit normalized `idle-loaded` is preserved.
+The Claude delivery-progress observer uses this normalized loaded-idle state
+and the caller's observation clock. Legacy `idle` files without coherent
+evidence remain UNKNOWN. Registry MCP registration and HTTP claim retain their
+existing exact-session/runtime checks and additionally deny UNKNOWN, closed,
+archived and deleted directory rows; retaining an addressable identity never
+supplies native-call permission.
 Generation is rechecked after existing process awaits and before
 an attempt; no previously ineligible fallback becomes eligible.
 Positive disk rows never grant autonomous authority. Each daemon constructs one

@@ -17,6 +17,9 @@ active Codex app; background task state does not prove a loaded desktop chat.
 Archive/delete identity remains in a local tombstone after directory exclusion.
 A stale hook or reused name cannot restore it. Unknown targets keep waiting
 after one hour, and cannot enable autonomous queue, wake or legacy fallback.
+An addressable UNKNOWN or terminal row also supplies no native MCP registration
+or claim permission. Fresh `idle-loaded` evidence drives Claude delivery progress;
+an old `idle` field without matching evidence remains uncertain.
 Fresh complete closure metadata can only narrow the existing closed fallback;
 all its original miss/minimum-age, listing, policy and permission gates remain.
 

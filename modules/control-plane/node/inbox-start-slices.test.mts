@@ -10,6 +10,7 @@ import { getMessage, getReceipt } from "./inbox.mts";
 import { fakeSocket, fixture, id, PEER, seconds, until } from "./inbox-start-fixture.mts";
 // A namespace import, so a run against code without the export fails per test, not at link time.
 import * as inboxStart from "./inbox-start.mts";
+import { fixtureEvidence } from "./session-authority-fixture.mts";
 
 // Issue #581: the start maintenance runs in slices off the frame lanes after
 // the first authenticated connection. Between slices the daemon handles
@@ -92,7 +93,9 @@ test("T6: a record refused during the pass is kept for the next start, not remov
       if (first) await until(() => getMessage(node.paths.inbox, waiting)?.state === "refused", logs);
       first = false;
     },
-  });
+  }, { observe: () => { const now = Date.now();
+    return { status: "value", source: "native-app", observedAt: now, complete: true, reasonCode: "observed",
+      value: [fixtureEvidence({ runtime: "claude-code", sessionId: "gone" }, "closed", now)] }; } });
   t.after(() => handle.stop());
   socket.open();
   socket.feed("event", { name: "auth.ok" }, 0);

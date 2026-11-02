@@ -16,6 +16,7 @@ import { CLOSED_AFTER_MISSES, CLOSED_MIN_AGE_MS, closedSession, knownSessionsFil
 import { T0, taskId } from "./task-fixture.mts";
 import { listTasks, readTask, writeTask } from "./task-records.mts";
 import { watchTasks } from "./task-watch.mts";
+import { fixtureEvidence, syntheticListing } from "./session-authority-fixture.mts";
 
 export type Provenance = "D-known" | "F-known";
 export type Scenario = "interrupted-successive" | "normal-successive" | "same-target-retry";
@@ -38,7 +39,7 @@ export async function diagnostic(t: test.TestContext, d: Diagnostics, provenance
   const readKnown = (): Record<string, unknown>[] => JSON.parse(fs.readFileSync(knownSessionsFile(node.paths), "utf8")).sessions;
   function observe(stage: string, extra: Record<string, unknown> = {}) {
     d.observe(stage, { case: caseName, source, now, task: readTask(node.paths, T), discovery: seen.map((s) => s.sessionId),
-      knownS2: readKnown().find((s) => s.sessionId === S2) ?? null, closedS2: closedSession(node.paths, S2),
+      knownS2: readKnown().find((s) => s.sessionId === S2) ?? null, closedS2: closedSession(node.paths, S2, now),
       records: ids.map((id) => fields(record(id))), receiving, audits: audits(node), localTaskCount: listTasks(node.paths).length,
       logs, counts: { launches: runs().length, hooks: receiving.length,
         receipts: ids.filter((id) => getReceipt(node.paths.inbox, id)).length }, ...extra });
@@ -51,7 +52,11 @@ export async function diagnostic(t: test.TestContext, d: Diagnostics, provenance
     seen = [{ sessionId, name: "synthetic-task-a", runtime: "claude-code", state: "busy", cwd: node.workspace },
       { sessionId: SX, name: "synthetic-task-b", runtime: "claude-code", state: "busy", cwd: node.workspace }];
   }
-  const discover = recordingSessions(node.paths, async () => seen, (line) => logs.push(line), () => now);
+  // Positive handover cases explicitly model complete generated native facts.
+  const discover = recordingSessions(node.paths, async () => syntheticListing(node.livenessAuthority, [...seen],
+    [SESSION, S1, S2, S3, SX].map(sessionId => fixtureEvidence({ runtime: "claude-code", sessionId },
+      seen.some(row => row.sessionId === sessionId) ? "running" : "closed", now)), now), (line) => logs.push(line), () => now,
+    undefined, undefined, node.livenessAuthority);
   const watch = () => watchTasks(node.deps(), (line) => logs.push(line));
   const fallback = () => deliverToClosed(node.deps(), (line) => logs.push(line));
   async function round(label: string) {
@@ -138,7 +143,7 @@ export async function diagnostic(t: test.TestContext, d: Diagnostics, provenance
       const known = readKnown().find((s) => s.sessionId === S2)!;
       assert.ok(Number(known.misses) >= CLOSED_AFTER_MISSES);
       assert.ok(Date.parse(String(known.missedAt)) - Date.parse(String(known.missedSince)) >= CLOSED_MIN_AGE_MS);
-      assert.ok(closedSession(node.paths, S2));
+      assert.ok(closedSession(node.paths, S2, now));
     } else {
       store(P, SESSION, now - 1); await round("eligible-rescue");
     }

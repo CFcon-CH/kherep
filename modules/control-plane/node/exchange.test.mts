@@ -15,6 +15,8 @@ import {
 import { generateIdentity } from "./identity.mts";
 import { getMessage, getReceipt, markDelivered, markOffered, markRefused, setMessageProgress, storeMessage, UNDELIVERABLE_AFTER_MS, writeJsonAtomic } from "./inbox.mts";
 import { DEFAULT_POLICY } from "./policy.mts";
+import { createAdmissionAuthority } from "./session-authority.mts";
+import { fixtureEvidence, syntheticListing } from "./session-authority-fixture.mts";
 
 const SELF = "00000000-0000-4000-8000-0000000000aa";
 const PEER = "00000000-0000-4000-8000-0000000000cc";
@@ -283,11 +285,15 @@ test("a successful listing refuses messages for sessions that stopped running; a
   markOffered(paths.inbox, ID_D);
   let now = received + UNDELIVERABLE_AFTER_MS;
   let fail = false;
+  let authoritative = false;
+  const authority = createAdmissionAuthority(paths);
   const logs: string[] = [];
   const list = recordingSessions(paths, async () => {
     if (fail) throw new Error("claude agents failed");
-    return [{ sessionId: "s-1", runtime: "claude-code", state: "idle", name: "review" }, { sessionId: "s-2", runtime: "claude-code", state: "idle" }];
-  }, (line) => logs.push(line), () => now);
+    const rows = [{ sessionId: "s-1", runtime: "claude-code", state: "idle", name: "review" }, { sessionId: "s-2", runtime: "claude-code", state: "idle" }];
+    return authoritative ? syntheticListing(authority, rows,
+      ["gone", "gone-too"].map(sessionId => fixtureEvidence({ runtime: "claude-code", sessionId }, "closed", now)), now) : rows;
+  }, (line) => logs.push(line), () => now, undefined, undefined, authority);
   await list();
   assert.equal(getMessage(paths.inbox, ID_A)?.state, "accepted", "not yet past the window");
   fail = true;
@@ -295,6 +301,9 @@ test("a successful listing refuses messages for sessions that stopped running; a
   await assert.rejects(list());
   assert.equal(getMessage(paths.inbox, ID_A)?.state, "accepted", "a failed listing is not an empty node");
   fail = false;
+  await list();
+  assert.equal(getMessage(paths.inbox, ID_A)?.state, "accepted", "a complete raw listing without positive closure still leaves UNKNOWN waiting");
+  authoritative = true;
   await list();
   assert.deepEqual([ID_A, ID_B, ID_C, ID_D].map((id) => [getMessage(paths.inbox, id)?.state, getMessage(paths.inbox, id)?.reason]), [
     ["refused", "target session not running"], ["accepted", undefined], ["accepted", undefined], ["refused", "target session not running"]]);
@@ -320,8 +329,8 @@ test("records every successful session listing in sessions.json and keeps it on 
   }, () => {});
   await list();
   assert.deepEqual(readLocalSessions(paths), [
-    { sessionId: "s-1", name: "review", runtime: "claude-code", state: "idle" },
-    { sessionId: "s-2", runtime: "claude-code", state: "idle" },
+    { sessionId: "s-1", name: "review", runtime: "claude-code", state: "unknown" },
+    { sessionId: "s-2", runtime: "claude-code", state: "unknown" },
   ]);
   fail = true;
   await assert.rejects(list());

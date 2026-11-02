@@ -3,7 +3,7 @@ import test from "node:test";
 
 import { takeTurn, TURN_SPACING_MS, TURNS_PER_HOUR } from "./autonomy.mts";
 import { deliverToClosed } from "./closed-delivery.mts";
-import { audits, closedNode, deliver, PEER, SESSION, turnDone, type Node } from "./closed-fixture.mts";
+import { audits, closedNode, deliver, missListings, PEER, SESSION, turnDone, type Node } from "./closed-fixture.mts";
 import { deliveryContext } from "./deliver-core.mts";
 import { writeLocalSessions } from "./exchange.mts";
 import { getMessage } from "./inbox.mts";
@@ -32,7 +32,7 @@ async function firstIntercom(node: Node): Promise<TaskRecord> {
 // A later round with a fresh listing that shows none of the sessions.
 function later(node: Node): void {
   node.tick(TURN_SPACING_MS * 2);
-  writeLocalSessions(node.paths, [], T0 + TURN_SPACING_MS * 2);
+  missListings(node, 1, node.deps().now!());
 }
 
 test("a second message from the same sender goes to its running intercom session: no second session", async (t) => {

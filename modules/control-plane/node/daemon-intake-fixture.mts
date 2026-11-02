@@ -16,6 +16,7 @@ import { startDaemon } from "./daemon.mts";
 import { generateIdentity, writePrivateKey } from "./identity.mts";
 import type { ProbeResult } from "./runtime-probe.mts";
 import { defaultServiceOwnerProbe } from "./service-drain.mts";
+import type { LivenessSource } from "./liveness-pass.mts";
 
 export const NODE = "00000000-0000-4000-8000-0000000000aa";
 export const PEER = "00000000-0000-4000-8000-0000000000bb";
@@ -39,6 +40,7 @@ export interface HarnessOptions {
   policy?: Record<string, unknown>;
   probe?: (runtime: TaskRuntime) => Promise<ProbeResult>;
   daemonOptions?: { slowLaneMs?: number; intakeSlowMs?: number };
+  livenessSource?: LivenessSource;
 }
 
 export function intakeHarness(t: TestContext, options: HarnessOptions = {}) {
@@ -92,7 +94,7 @@ export function intakeHarness(t: TestContext, options: HarnessOptions = {}) {
   let listing = new Promise<SessionInfo[]>((resolve) => { releaseListing = resolve; });
   let listings = 0;
   const handle = startDaemon(config, paths, (line) => logs.push(line), async () => { listings++; return listing; },
-    options.probe ?? (async () => ({ ok: true })), undefined, options.daemonOptions);
+    options.probe ?? (async () => ({ ok: true })), undefined, options.daemonOptions, undefined, options.livenessSource);
   t.after(() => {
     assert.deepEqual(invalid, [], "every frame on the wire parses with seq >= 0");
     releaseListing([]);

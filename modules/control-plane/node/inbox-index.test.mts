@@ -173,6 +173,8 @@ test("external readers keep reading the files directly", (t) => {
   const reads = countReads(t, dir);
   assert.equal(listInbox(dir).length, 8);
   assert.equal(reads.records().length, 8, "listInbox (hooks, CLI) is unchanged");
-  assert.deepEqual(refuseUndeliverable(dir, [], T0 + 2 * 60 * 60_000).length, 8, "refuseUndeliverable reads and writes the files");
+  assert.equal(refuseUndeliverable(dir, [], T0 + 2 * 60 * 60_000).length, 0, "absence alone cannot refuse");
+  assert.equal(refuseUndeliverable(dir, [], T0 + 2 * 60 * 60_000, undefined, undefined,
+    () => false, () => true).length, 8, "fresh positive closed evidence permits the existing file-level refusal");
   assert.ok(reads.records().length >= 16);
 });

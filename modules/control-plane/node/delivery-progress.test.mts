@@ -6,16 +6,25 @@ import { codexNode } from "./codex-fixture.mts";
 import { pollCodexQueue } from "./codex-queue.mts";
 import { codexSessionName, recordCodexSession } from "./codex-sessions.mts";
 import { observeClaudeDeliveryProgress } from "./delivery-progress.mts";
-import { recordSent, writeLocalSessions, writeOutbox } from "./exchange.mts";
+import { recordSent, writeOutbox } from "./exchange.mts";
 import { getMessageProgress, markOffered, markReported, storeMessage, unreportedStatuses, writeJsonAtomic } from "./inbox.mts";
 import { T0, taskNode, TASK } from "./task-fixture.mts";
 import { ensureDir } from "./config.mts";
+import { fixtureEvidence, publishSynthetic } from "./session-authority-fixture.mts";
+import type { SessionInfo } from "../protocol.mts";
+import type { NodePaths } from "./config.mts";
 import { writeRequest, writeTask } from "./task-records.mts";
 
 const SESSION = "8e1f0000-0000-4000-8000-000000000001";
 const SESSION_TWO = "8e1f0000-0000-4000-8000-000000000002";
 const PEER = { nodeId: "00000000-0000-4000-8000-0000000000bb", session: "peer" };
 let sequence = 0;
+// Positive progress cases explicitly supply fresh generated source facts.
+function writeLocalSessions(paths: NodePaths, rows: SessionInfo[], now: number): void {
+  const normalized = rows.map(row => ({ ...row, state: row.state === "idle" ? "idle-loaded" : row.state === "working" ? "running" : row.state }));
+  publishSynthetic(paths, normalized.map(row => fixtureEvidence(row,
+    row.state === "idle-loaded" || row.state === "running" ? row.state : "unknown", now)), now, normalized);
+}
 const id = (): string => `d138${(++sequence).toString(16).padStart(4, "0")}-0000-4000-8000-000000000000`;
 
 function deliver(node: ReturnType<typeof taskNode>, state = "idle", taskId?: string): string {
@@ -28,6 +37,23 @@ function deliver(node: ReturnType<typeof taskNode>, state = "idle", taskId?: str
 
 const code = (node: ReturnType<typeof taskNode>, messageId: string): string | undefined =>
   getMessageProgress(node.paths.inbox, messageId)?.code;
+
+test("normalized loaded-idle progress preserves policy vetoes; UNKNOWN never reports a wake", (t) => {
+  t.mock.method(Date, "now", () => T0);
+  const node = taskNode(t, {}, { wake: { enabled: true, sessions: ["another-session"] } });
+  const messageId = deliver(node);
+  const target = { sessionId: SESSION, runtime: "claude-code" };
+  publishSynthetic(node.paths, [{ ...target,
+    holder: { status: "value", value: { present: true, creationIdentity: "synthetic-owner" }, source: "native-holder", complete: true, observedAt: T0, reasonCode: "observed" },
+    loaded: { status: "value", value: true, source: "native-app", complete: true, observedAt: T0, reasonCode: "observed" },
+    turn: { status: "value", value: "idle", source: "native-turn", complete: true, observedAt: T0, reasonCode: "observed" },
+  }], T0, [{ ...target, name: "review", state: "idle-loaded" }]);
+  observeClaudeDeliveryProgress(node.deps());
+  assert.equal(code(node, messageId), "wake-not-authorized");
+  publishSynthetic(node.paths, [target], T0, [{ ...target, name: "review", state: "unknown" }]);
+  observeClaudeDeliveryProgress(node.deps());
+  assert.notEqual(code(node, messageId), "wake-pending");
+});
 
 test("an idle listed Claude session excluded by wake policy reports the next user turn", (t) => {
   const node = taskNode(t, {}, { wake: { enabled: true, sessions: ["another-session"] } });
