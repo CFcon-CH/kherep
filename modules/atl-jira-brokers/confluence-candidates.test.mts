@@ -8,11 +8,14 @@ import {
   areaOf,
   candidateRow,
   checkDecisions,
+  checkRelatedLinks,
   parseDecisions,
   parseReceipt,
   RECEIPT_KIND,
+  RELATED_RECEIPT_KIND,
   selectCandidates,
-  type Receipt,
+  type RelatedReceipt,
+  type StitchReceipt,
 } from "./confluence-candidates.mts";
 import type { IndexedPage, SpaceIndex } from "./confluence-related.mts";
 
@@ -77,7 +80,7 @@ test("a candidate row is five tab-separated single-line fields", () => {
 });
 
 const NOW = Date.parse("2026-11-02T10:00:00Z");
-const RECEIPT: Receipt = {
+const RECEIPT: StitchReceipt = {
   kind: RECEIPT_KIND, source: "10", spaceKey: "KB", query: "Logon task workaround. A topic.",
   searchedAt: "2026-11-02T09:30:00Z",
   candidates: [
@@ -108,7 +111,7 @@ test("valid decisions against a fresh matching receipt raise no problem", () => 
 });
 
 test("every receipt-level refusal is named against the source page", () => {
-  const cases: [Receipt | null, string][] = [
+  const cases: [StitchReceipt | null, string][] = [
     [null, "the candidates file is not a stitch receipt"],
     [{ ...RECEIPT, kind: "other" as typeof RECEIPT_KIND }, "the candidates file is not a stitch receipt"],
     [{ ...RECEIPT, spaceKey: "OTHER" }, "the receipt is for another space"],
@@ -121,6 +124,31 @@ test("every receipt-level refusal is named against the source page", () => {
     assert.deepEqual(checkDecisions(receipt, [], EXPECTED), [{ id: "10", why }], why);
   }
   assert.deepEqual(checkDecisions({ ...RECEIPT, spaceKey: "kb" }, [], EXPECTED), [], "space keys compare case-blind");
+});
+
+const RELATED: RelatedReceipt = {
+  kind: RELATED_RECEIPT_KIND, source: { title: "Logon task workaround" }, sessionId: "s1", turnId: "t1",
+  spaceKey: "KB", query: "q", searchedAt: RECEIPT.searchedAt, candidates: RECEIPT.candidates,
+};
+const TURN = { title: "Logon task workaround", spaceKey: "KB", sessionId: "s1", turnId: "t1", now: NOW };
+
+test("the shared schema also reads the Codex related-candidates form", () => {
+  assert.deepEqual(parseReceipt(JSON.stringify(RELATED)), RELATED);
+  assert.equal(parseReceipt(JSON.stringify({ ...RELATED, source: "10" })), null, "a related receipt names its source by title");
+  assert.equal(parseReceipt(JSON.stringify({ ...RELATED, turnId: undefined })), null);
+  assert.deepEqual(checkRelatedLinks(RELATED, [{ id: "13", reason: REASON }], TURN), []);
+  assert.deepEqual(checkDecisions(RELATED, [], EXPECTED), [{ id: "10", why: "the candidates file is not a stitch receipt" }]);
+  assert.deepEqual(checkRelatedLinks(RECEIPT, [], TURN), [{ id: "-", why: "the token names no related-candidates receipt" }]);
+});
+
+test("a related receipt is bound to its turn, title, space and age", () => {
+  assert.deepEqual(checkRelatedLinks({ ...RELATED, turnId: "t2" }, [], TURN), [{ id: "-", why: "the receipt is for another turn" }]);
+  assert.deepEqual(checkRelatedLinks({ ...RELATED, source: { title: "Other" } }, [], TURN), [{ id: "-", why: "the receipt is for another title" }]);
+  assert.deepEqual(checkRelatedLinks({ ...RELATED, spaceKey: "X" }, [], TURN), [{ id: "-", why: "the receipt is for another space" }]);
+  assert.deepEqual(checkRelatedLinks({ ...RELATED, searchedAt: "2026-11-02T07:00:00Z" }, [], TURN),
+    [{ id: "-", why: "the receipt is older than 2 h" }]);
+  assert.deepEqual(checkRelatedLinks(RELATED, [{ id: "11", reason: "Same task\u0007 and trigger." }], TURN),
+    [{ id: "11", why: "reason has non-printable characters" }]);
 });
 
 test("every decision-level refusal is named per id, all at once", () => {

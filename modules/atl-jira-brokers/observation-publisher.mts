@@ -1,6 +1,7 @@
 import { lookupFailure } from './observation-lookup.mts';
 import { observationRequest, failed, pageId, type Finding } from './observation-policy.mts';
 import { contentDigest, receiptKey, type ReceiptStore } from './observation-receipt.mts';
+import type { Linked } from './observation-linking.mts';
 export interface Authority {
     observationPublishingAuthorized?: unknown;
     spaceKey?: unknown;
@@ -24,11 +25,14 @@ export interface ObservationBroker {
     } | null>;
     identity(): Promise<string | null>;
     parent(spaceId: string, nodeId: string, app: string): Promise<string>;
-    related(spaceId: string, key: string, finding: Finding, parent: string): Promise<string>;
+    // Issue #736: the approved links, checked against the candidates receipt
+    // before any write. Throws links-refused; nothing is written then.
+    links(spaceKey: string, turn: { sessionId: string; turnId: string }, finding: Finding): Promise<Linked>;
+    related(spaceId: string, key: string, finding: Finding, parent: string, linked: Linked): Promise<string>;
     create(spaceId: string, finding: Finding, parent: string, body: string): Promise<string>;
     labels(id: string, labels: string[]): Promise<void>;
     read(id: string): Promise<Target>;
-    stitch(id: string, spaceId: string, key: string): Promise<void>;
+    stitch(id: string, spaceId: string, key: string, linked: Linked): Promise<void>;
     runtimeLabel: string;
 }
 export async function publishObservations(input: unknown, broker: ObservationBroker, store: ReceiptStore): Promise<string> {
@@ -72,7 +76,12 @@ export async function publishObservations(input: unknown, broker: ObservationBro
         const author = await broker.identity();
         if (!author)
             throw new Error();
-        for (const finding of request.observations) {
+        // Every finding's links are checked before the first page is created.
+        phase = 'links-refused';
+        const linked: Linked[] = [];
+        for (const finding of request.observations)
+            linked.push(await broker.links(space.key, request, finding));
+        for (const [index, finding] of request.observations.entries()) {
             phase = 'placement-unresolved';
             const node = request.namedNode ?? finding.placement.project;
             const mapped = authority.nodes?.[node];
@@ -87,7 +96,7 @@ export async function publishObservations(input: unknown, broker: ObservationBro
                 throw new Error();
             phase = 'related-unavailable';
             const publication = `<p>Publication: ${new Date().toISOString()}; session ${request.sessionId}; turn ${request.turnId}; ${broker.runtimeLabel}</p>`;
-            const body = await broker.related(space.id, space.key, { ...finding, bodyStorage: finding.bodyStorage + publication }, parent);
+            const body = await broker.related(space.id, space.key, { ...finding, bodyStorage: finding.bodyStorage + publication }, parent, linked[index]);
             phase = 'create-unverified';
             receipt.result = failed(phase, receipt.ids);
             held.save();
@@ -108,7 +117,7 @@ export async function publishObservations(input: unknown, broker: ObservationBro
                 || target.labels.filter(label => label.startsWith('runtime-')).join() !== broker.runtimeLabel)
                 throw new Error();
             phase = 'stitch-unverified';
-            await broker.stitch(id, space.id, space.key);
+            await broker.stitch(id, space.id, space.key, linked[index]);
         }
         receipt.result = `OBS-RESULT: wrote ${receipt.ids.length} ${receipt.ids.join(',')}`;
         held.save();

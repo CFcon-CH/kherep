@@ -10,11 +10,30 @@ import { publishObservations } from './observation-publisher.mts';
 import { receiptStore, receiptKey } from './observation-receipt.mts';
 import type { ConfluenceContext } from './confluence-session.mts';
 const finding = { title: 'Synthetic journal transport', bodyStorage: '<p>Origin: measured test -> passed</p>', evidence: 'assumed',
-    labels: ['type-observation', 'evidence-assumed', 'status-author-model'], placement: { project: 'Kherep', app: '-' } };
+    labels: ['type-observation', 'evidence-assumed', 'status-author-model'], placement: { project: 'Kherep', app: '-' },
+    links: { candidates: 'a'.repeat(64), approved: [] as { id: string; reason: string }[] } };
 const request = () => ({ sessionId: 'synthetic', turnId: 'turn', observations: [structuredClone(finding)] });
+const TOPIC = 'The synthetic journal transport replays a receipt without I/O.';
+const REASON = 'Same journal transport; this page is its measured baseline.';
+type Fixture = ReturnType<typeof fixture>;
+// Issue #736: the candidates call before publication. Each finding gets the
+// token of its own receipt and, when asked, the approved ids with a reason.
+async function linked(f: Fixture, r = request(), approve: string[] = []) {
+    for (const o of r.observations) {
+        const out = await f.broker.candidates({ sessionId: r.sessionId, turnId: r.turnId, title: o.title, topic: TOPIC });
+        const token = /^OBS-CANDIDATES: ok ([a-f0-9]{64}) /.exec(out.text)?.[1];
+        if (!token) throw new Error(out.text);
+        o.links = { candidates: token, approved: approve.map(id => ({ id, reason: REASON })) };
+    }
+    return r;
+}
 function fixture(t: {
     after(fn: () => void): void;
-}, options: { serialize?: (body: string, method: 'POST' | 'PUT') => string; peerTitle?: string; peerBody?: string } = {}) {
+}, options: { serialize?: (body: string, method: 'POST' | 'PUT') => string; peerTitle?: string; peerBody?: string;
+    // Further pages of the space and the search ranking over them (issue #736 replay).
+    pages?: { id: string; title: string }[]; ranking?: string[] } = {}) {
+    const others = new Map((options.pages ?? []).map(p => [p.id, { ...p, spaceId: '10', parentId: '20', status: 'current', version: { number: 1 },
+        body: { storage: { value: `<p>${p.title}</p>` } } }]));
     const home = fs.mkdtempSync(path.join(os.tmpdir(), 'observation-adapter-'));
     t.after(() => fs.rmSync(home, { recursive: true, force: true }));
     fs.mkdirSync(path.join(home, 'kherep'));
@@ -49,7 +68,7 @@ function fixture(t: {
             else if (route.startsWith('/wiki/api/v2/spaces?'))
                 json = { results: [{ id: '10', key: 'SYNTHETIC', name: 'Synthetic' }] };
             else if (route.startsWith('/wiki/api/v2/spaces/10/pages?'))
-                json = { results: [{ id: '20', title: 'Kherep' }, ...(mode.startsWith('stitch') ? [peer] : []), ...(page ? [page] : [])] };
+                json = { results: [{ id: '20', title: 'Kherep' }, ...(mode.startsWith('stitch') ? [peer] : []), ...others.values(), ...(page ? [page] : [])] };
             else if (route.startsWith('/wiki/rest/api/search?')) {
                 json = mode === 'partial-related' ? { results: [{}] } : { results: [] };
                 if (mode === 'related-http') {
@@ -84,6 +103,13 @@ function fixture(t: {
                     peer = { ...peer, version: { number: 2 }, body: { storage: { value: '<p>HUMAN_EDIT</p>' + peer.body.storage.value } } };
                 json = peer;
             }
+            else if (/^\/wiki\/api\/v2\/pages\/\d+$/.test(route) && method === 'PUT' && others.has(route.split('/').pop()!)) {
+                const id = route.split('/').pop()!;
+                others.set(id, { ...others.get(id)!, version: body.version, body: { storage: { value: body.body.value } } });
+                json = others.get(id);
+            }
+            else if (others.has(/^\/wiki\/api\/v2\/pages\/(\d+)/.exec(route)?.[1] ?? ''))
+                json = others.get(/^\/wiki\/api\/v2\/pages\/(\d+)/.exec(route)![1]);
             else if (route.startsWith('/wiki/api/v2/pages/100/labels?'))
                 json = { results: labels.map(name => ({ name })) };
             else if (route === '/wiki/rest/api/content/100/label' && method === 'POST') {
@@ -96,8 +122,14 @@ function fixture(t: {
                 throw new Error(`Unexpected synthetic route: ${method} ${route}`);
             return { status, ok: status === 200, json: async () => json, text: async () => JSON.stringify(json) };
         } };
-    const broker = observationBroker(home, context, { semantic: async () => mode === 'semantic-error' ? { titles: [], error: 'CANARY_PROVIDER' } : { titles: mode.startsWith('stitch') ? [peer.title] : [] } });
-    return { home, calls, broker, context, store: receiptStore(path.join(home, 'receipts')), mode: (value: string) => { mode = value; } };
+    const semantic = async () => {
+        if (mode === 'semantic-error') return { titles: [], error: 'CANARY_PROVIDER' };
+        const ranked = (options.ranking ?? []).map(id => ({ id, title: others.get(id)!.title, snippet: `<p>${others.get(id)!.title} snippet</p>` }));
+        const items = [...(mode.startsWith('stitch') ? [{ id: '30', title: peer.title, snippet: 'Synthetic peer' }] : []), ...ranked];
+        return { titles: items.map(item => item.title), items };
+    };
+    const broker = observationBroker(home, context, { semantic });
+    return { home, calls, broker, context, others, store: receiptStore(path.join(home, 'receipts')), mode: (value: string) => { mode = value; } };
 }
 test('synthetic transport refuses lookalike Atlassian hostname', async (t) => {
     const f = fixture(t);
@@ -105,23 +137,24 @@ test('synthetic transport refuses lookalike Atlassian hostname', async (t) => {
 });
 test('actual broker publishes with mandatory successful-empty related section, runtime labels and author verification', async (t) => {
     const f = fixture(t);
-    assert.equal(await publishObservations(request(), f.broker, f.store), 'OBS-RESULT: wrote 1 100');
+    assert.equal(await publishObservations(await linked(f), f.broker, f.store), 'OBS-RESULT: wrote 1 100');
     const create = f.calls.find(c => c.method === 'POST' && c.route === '/wiki/api/v2/pages')!;
-    assert.match(create.body.body.value, /No related page found/);
+    assert.match(create.body.body.value, /No related page on this topic \(0 candidates reviewed\)\./);
     assert.match(create.body.body.value, /Publication: .*session synthetic; turn turn; runtime-codex-mac/);
     assert.ok(f.calls.some(c => c.route === '/wiki/rest/api/content/100/label'));
     const local = fs.readdirSync(path.join(f.home, 'receipts')).map(n => fs.readFileSync(path.join(f.home, 'receipts', n), 'utf8')).join();
     assert.doesNotMatch(local, /CANARY/);
 });
 for (const mode of ['success', 'denial', 'partial']) test(`RPC preserves real publisher ${mode} and terminal zero-I/O replay`, async t => {
-    const f = fixture(t), r = request();
+    const f = fixture(t);
+    if (mode === 'partial') f.mode('stitch-missing-link');
+    const r = mode === 'denial' ? request() : await linked(f, request(), mode === 'partial' ? ['30'] : []);
     if (mode === 'denial') {
         const file = path.join(f.home, 'kherep', 'confluence.json');
         const authority = JSON.parse(fs.readFileSync(file, 'utf8'));
         authority.observationPublishingAuthorized = false;
         fs.writeFileSync(file, JSON.stringify(authority));
     }
-    if (mode === 'partial') f.mode('stitch-missing-link');
     const call = { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'publish_observations', arguments: r } };
     const publish = (args: unknown) => publishObservations(args, f.broker, f.store);
     const result = await observationRpc(call, publish) as any;
@@ -146,15 +179,24 @@ test('RPC empty publication performs zero broker and journal I/O', async t => {
 for (const mode of ['missing-author', 'wrong-author', 'partial-related', 'related-http', 'semantic-error'])
     test(`actual broker fails safely for ${mode}`, async (t) => {
         const f = fixture(t);
+        const searchFails = mode !== 'missing-author' && mode !== 'wrong-author';
+        const r = searchFails ? request() : await linked(f);
         f.mode(mode);
-        const result = await publishObservations(request(), f.broker, f.store);
+        if (searchFails) {
+            // A failed candidate search is UNKNOWN: no receipt, so the publish is refused.
+            const out = await f.broker.candidates({ sessionId: 'synthetic', turnId: 'turn', title: finding.title, topic: TOPIC });
+            assert.deepEqual(out, { text: 'OBS-CANDIDATES: failed related-unavailable', isError: true });
+            assert.equal(fs.existsSync(path.join(f.home, '.cache', 'observation-publisher', 'candidates')), false);
+        }
+        const result = await publishObservations(r, f.broker, f.store);
+        if (searchFails) assert.equal(result, 'OBS-RESULT: failed links-refused');
         assert.match(result, /^OBS-RESULT: failed /);
         assert.doesNotMatch(result, /CANARY/);
         assert.equal(f.calls.filter(c => c.method === 'POST' && c.route === '/wiki/api/v2/pages').length, mode === 'wrong-author' ? 1 : 0);
     });
 test('a listed app that moved to another parent is refused', async (t) => {
     const f = fixture(t);
-    const r = request();
+    const r = await linked(f);
     r.observations[0].placement = { project: 'Development/Forge Apps', app: 'SyntheticApp' };
     assert.equal(await publishObservations(r, f.broker, f.store), 'OBS-RESULT: failed placement-unresolved');
 });
@@ -169,11 +211,12 @@ test('corrupted receipt and symlink receipt never echo a canary', async (t) => {
     assert.equal(await publishObservations(request(), f.broker, f.store), 'OBS-RESULT: failed receipt-unavailable');
     assert.equal(f.calls.length, 0);
 });
-test('stdio exposes exactly one tool and invalid mutating messages cause zero publication calls', async () => {
+test('stdio exposes exactly two tools and invalid mutating messages cause zero publication calls', async () => {
     let calls = 0;
     const publish = async () => { calls++; return 'OBS-RESULT: empty no-admissible-findings'; };
     const list = await observationRpc({ jsonrpc: '2.0', id: 1, method: 'tools/list' }, publish) as any;
-    assert.deepEqual(list.result.tools.map((tool: any) => tool.name), ['publish_observations']);
+    assert.deepEqual(list.result.tools.map((tool: any) => tool.name), ['publish_observations', 'related_candidates']);
+    assert.equal(list.result.tools[1].annotations.readOnlyHint, true);
     for (const payload of [{ jsonrpc: '2.0', method: 'tools/call', params: { name: 'publish_observations', arguments: {} } },
         { jsonrpc: '2.0', id: { bad: 'id' }, method: 'tools/call', params: { name: 'publish_observations', arguments: {} } },
         { jsonrpc: '2.0', id: 1, method: 'tools/call', params: [] }, { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'publish_observations' } },
@@ -197,11 +240,12 @@ test('real stdio empty findings succeed without configuration, credentials or va
 test('targeted stitching adds and independently verifies the new page link on its related neighbour', async (t) => {
     const f = fixture(t);
     f.mode('stitch-ok');
-    assert.equal(await publishObservations(request(), f.broker, f.store), 'OBS-RESULT: wrote 1 100');
+    assert.equal(await publishObservations(await linked(f, request(), ['30']), f.broker, f.store), 'OBS-RESULT: wrote 1 100');
     const writes = f.calls.filter(call => call.method === 'PUT');
     assert.equal(writes.length, 1);
     assert.equal(writes[0].route, '/wiki/api/v2/pages/30');
     assert.match(writes[0].body.body.value, /pages\/100/);
+    assert.equal(writes[0].body.version.message, `observation link: ${REASON}`);
     assert.ok(f.calls.some(call => call.method === 'GET' && call.route === '/wiki/api/v2/pages/30?body-format=storage'));
 });
 // Issue #730: model storage serialization after the actual POST or guarded PUT,
@@ -219,6 +263,7 @@ for (const phase of ['POST', 'PUT'] as const) for (const transform of ['paragrap
         f.mode('stitch-ok');
         const r = request();
         r.observations[0].title = "Synthetic journal transport isn't repeated";
+        await linked(f, r, ['30']);
         const result = await publishObservations(r, f.broker, f.store);
         const count = f.calls.length;
         assert.equal(await publishObservations(r, f.broker, f.store), result);
@@ -254,7 +299,7 @@ for (const corruption of ['text', 'tag', 'link', 'version', 'space', 'title', 's
             }
             return { ...response, json: async () => data, text: async () => JSON.stringify(data) };
         };
-        const r = request(), expected = 'OBS-RESULT: failed stitch-unverified created=100';
+        const r = await linked(f, request(), ['30']), expected = 'OBS-RESULT: failed stitch-unverified created=100';
         assert.equal(await publishObservations(r, f.broker, f.store), expected);
         const count = f.calls.length;
         assert.equal(await publishObservations(r, f.broker, f.store), expected);
@@ -265,7 +310,7 @@ for (const corruption of ['text', 'tag', 'link', 'version', 'space', 'title', 's
 test('a stitch write whose link cannot be read back fails with the created ID', async (t) => {
     const f = fixture(t);
     f.mode('stitch-missing-link');
-    assert.equal(await publishObservations(request(), f.broker, f.store), 'OBS-RESULT: failed stitch-unverified created=100');
+    assert.equal(await publishObservations(await linked(f, request(), ['30']), f.broker, f.store), 'OBS-RESULT: failed stitch-unverified created=100');
 });
 test('independent backlink read rejects a link lost after successful guarded readback', async t => {
     const f = fixture(t);
@@ -282,7 +327,7 @@ test('independent backlink read rejects a link lost after successful guarded rea
         }
         return response;
     };
-    const r = request(), expected = 'OBS-RESULT: failed stitch-unverified created=100';
+    const r = await linked(f, request(), ['30']), expected = 'OBS-RESULT: failed stitch-unverified created=100';
     assert.equal(await publishObservations(r, f.broker, f.store), expected);
     assert.equal(reads, 2, 'guarded readback passed before the independent read failed');
     const count = f.calls.length;
@@ -292,7 +337,7 @@ test('independent backlink read rejects a link lost after successful guarded rea
 test('stitch fresh-version merge preserves an intervening human body edit', async (t) => {
     const f = fixture(t);
     f.mode('stitch-race');
-    assert.equal(await publishObservations(request(), f.broker, f.store), 'OBS-RESULT: wrote 1 100');
+    assert.equal(await publishObservations(await linked(f, request(), ['30']), f.broker, f.store), 'OBS-RESULT: wrote 1 100');
     const write = f.calls.find(call => call.method === 'PUT')!;
     assert.match(write.body.body.value, /HUMAN_EDIT/);
     assert.match(write.body.body.value, /pages\/100/);
@@ -302,7 +347,8 @@ test('stitch fresh-version merge preserves an intervening human body edit', asyn
 for (const id of ['', ' ', 'abc'])
     test(`targeted stitch refuses page id ${JSON.stringify(id)} before any request`, async (t) => {
         const f = fixture(t);
-        await assert.rejects(() => f.broker.stitch(id, '10', 'SYNTHETIC'), /^Error: stitch-unverified$/);
+        const approved = [{ id: '30', reason: REASON, area: 'Kherep', title: 'Synthetic peer' }];
+        await assert.rejects(() => f.broker.stitch(id, '10', 'SYNTHETIC', { approved, reviewed: 1 }), /^Error: stitch-unverified$/);
         assert.deepEqual(f.calls, []);
     });
 test('native tools/call accepts _meta progressToken:number and threadId without forwarding metadata', async () => {
@@ -352,7 +398,7 @@ for (const [body, expected] of [
     ['<pre><code>Origin: measured command -&gt; passed &amp; recorded</code></pre>', '<pre><code>Origin: measured command -&gt; passed &amp; recorded</code></pre>'],
 ]) test(`Confluence prose greater-than encoding preserves exact readback: ${body.includes('->') ? 'literal arrow' : 'existing entity'}`, async t => {
     const f = fixture(t);
-    const r = request();
+    const r = await linked(f);
     r.observations[0].bodyStorage = body;
     assert.equal(await publishObservations(r, f.broker, f.store), 'OBS-RESULT: wrote 1 100');
     const create = f.calls.find(call => call.method === 'POST' && call.route === '/wiki/api/v2/pages')!;
@@ -366,7 +412,7 @@ for (const [body, expected] of [
     [String.raw`<pre><code>Origin: measured C:\synthetic\"quote\" -> 'passed' &amp; &lt; &gt; &quot; &#34; &#x22;</code></pre>`,
         String.raw`<pre><code>Origin: measured C:\synthetic\&quot;quote\&quot; -&gt; 'passed' &amp; &lt; &gt; &quot; &#34; &#x22;</code></pre>`],
 ]) test(`default broker POST and GET agree on prose quotes: ${body.startsWith('<p>') ? 'literal' : 'backslashes and entities'}`, async t => {
-    const f = fixture(t), r = request();
+    const f = fixture(t), r = await linked(f);
     r.observations[0].bodyStorage = body;
     assert.equal(await publishObservations(r, f.broker, f.store), 'OBS-RESULT: wrote 1 100');
     const creates = f.calls.filter(call => call.method === 'POST' && call.route === '/wiki/api/v2/pages');
@@ -384,8 +430,9 @@ test('caller tag attributes are rejected before broker or journal I/O', async t 
     assert.equal(fs.existsSync(path.join(f.home, 'receipts')), false);
 });
 for (const corruption of ['text', 'backslash', 'tag', 'link']) test(`exact readback rejects stored ${corruption} corruption without retry or stitching`, async t => {
-    const f = fixture(t), r = request();
+    const f = fixture(t);
     f.mode(`stitch-corrupt-${corruption}`);
+    const r = await linked(f, request(), ['30']);
     r.observations[0].bodyStorage = String.raw`<p>Origin: measured "value"</p><pre><code>C:\synthetic</code></pre>`;
     assert.equal(await publishObservations(r, f.broker, f.store), 'OBS-RESULT: failed readback-unverified created=100');
     const count = f.calls.length;

@@ -6,7 +6,7 @@ import path from 'node:path';
 import { publishObservations, type ObservationBroker, type Target } from './observation-publisher.mts';
 import { receiptStore } from './observation-receipt.mts';
 const finding = { title: 'Synthetic transport measurement', bodyStorage: '<p>Origin: measured synthetic test -> pass</p>',
-    evidence: 'assumed', labels: ['type-observation', 'evidence-assumed', 'status-author-model'], placement: { project: 'Kherep', app: '-' } };
+    evidence: 'assumed', labels: ['type-observation', 'evidence-assumed', 'status-author-model'], placement: { project: 'Kherep', app: '-' }, links: { candidates: 'a'.repeat(64), approved: [] as { id: string; reason: string }[] } };
 const request = () => ({ sessionId: 'synthetic-session', turnId: 'turn-1', observations: [structuredClone(finding)] });
 function fixture(t: {
     after(fn: () => void): void;
@@ -20,6 +20,7 @@ function fixture(t: {
         authority: async () => { calls.push('authority'); return { observationPublishingAuthorized: true, spaceKey: 'SYNTHETIC', spaceId: '10', nodes: { Kherep: '20' } }; },
         space: async () => { calls.push('space'); return { id: '10', key: 'SYNTHETIC' }; },
         identity: async () => { calls.push('identity'); return 'service-synthetic'; },
+        links: async () => { calls.push('links'); return { approved: [], reviewed: 0 }; },
         parent: async (_space, node) => { calls.push('parent'); return node; },
         related: async (_space, _key, f) => { calls.push('related'); return f.bodyStorage; },
         create: async (space, f, parent, body) => {
@@ -44,7 +45,7 @@ test('publishes once, readbacks before stitch, repeated and corrected requests n
     const f = fixture(t);
     const r = request();
     assert.equal(await publishObservations(r, f.broker, f.store), 'OBS-RESULT: wrote 1 101');
-    assert.deepEqual(f.calls, ['authority', 'space', 'identity', 'parent', 'related', 'create', 'labels', 'read', 'stitch']);
+    assert.deepEqual(f.calls, ['authority', 'space', 'identity', 'links', 'parent', 'related', 'create', 'labels', 'read', 'stitch']);
     const calls = [...f.calls];
     assert.equal(await publishObservations(r, f.broker, f.store), 'OBS-RESULT: wrote 1 101');
     assert.deepEqual(f.calls, calls);
@@ -140,4 +141,17 @@ for (const key of ['synthetic', ' SYNTHETIC ']) test(`canonical space key normal
     f.broker.authority = async () => ({ ...await authority(), spaceKey: key });
     assert.equal(await publishObservations(request(), f.broker, f.store), 'OBS-RESULT: wrote 1 101');
     assert.equal(f.calls.filter(c => c === 'create').length, 1);
+});
+// Issue #736: links are checked for every finding before the first create. A
+// refusal is terminal and writes nothing; its replay performs no broker I/O.
+test('a refused link decision fails links-refused before any create', async (t) => {
+    const f = fixture(t);
+    const r = request();
+    r.observations.push({ ...structuredClone(finding), title: 'Second' });
+    let checked = 0;
+    f.broker.links = async () => { f.calls.push('links'); if (++checked === 2) throw new Error('links-refused'); return { approved: [], reviewed: 0 }; };
+    assert.equal(await publishObservations(r, f.broker, f.store), 'OBS-RESULT: failed links-refused');
+    assert.deepEqual(f.calls, ['authority', 'space', 'identity', 'links', 'links']);
+    assert.equal(await publishObservations(r, f.broker, f.store), 'OBS-RESULT: failed links-refused');
+    assert.equal(f.calls.length, 5);
 });

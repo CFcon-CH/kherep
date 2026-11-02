@@ -57,10 +57,11 @@ export async function neighbourDeps(ctx: NeighbourCliContext, args: NeighbourArg
 export async function cmdRelated(ctx: NeighbourCliContext, args: NeighbourArgs): Promise<number> {
   const title = (args.title ?? "").trim();
   if (!title) throw new ConfluenceError("--title is missing.");
+  if ("topic" in args && !(args.topic ?? "").trim()) throw new ConfluenceError("--topic is empty.");
   return await reportRelated(await neighbourDeps(ctx, args), {
     title,
+    topic: args.topic,
     id: args.id,
-    parentId: args.parent,
     limit: positive(args.limit, "--limit") ?? 3,
   });
 }

@@ -19,8 +19,8 @@ import { contentTerms } from "./confluence-related.mts";
 
 // The content words of a title, split once more so that contentTerms' inner
 // . + - (node.js, vite-plugin) cannot reach Lucene. Order of first appearance,
-// no duplicates. Only these words can let selectRelated accept a neighbour, so
-// searching on exactly them loses no accepted result.
+// no duplicates: the content words of the title, the same words the candidate
+// terms hint is computed from (confluence-candidates.mts).
 export function textTerms(title: string): string[] {
   const out = new Set<string>();
   for (const term of contentTerms(title)) {
@@ -84,7 +84,7 @@ export async function textSearch(
 }
 
 // A title is readable when it is a string with non-whitespace content. Judged
-// on trim(), returned as-is: selectRelated trims for lookup, nothing else needs
+// on trim(), returned as-is: selectCandidates trims for lookup, nothing else needs
 // normalising.
 function readable(value: unknown): string | null {
   return typeof value === "string" && value.trim() !== "" ? value : null;

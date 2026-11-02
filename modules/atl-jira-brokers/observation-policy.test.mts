@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { ordinaryXhtml, observationRequest } from './observation-policy.mts';
 import { publishObservations, type ObservationBroker } from './observation-publisher.mts';
 const finding = {title:'Synthetic finding',bodyStorage:'<p>Synthetic prose</p>',evidence:'assumed',
-  labels:['type-observation','evidence-assumed','status-author-model'],placement:{project:'Kherep',app:'-'}};
+  labels:['type-observation','evidence-assumed','status-author-model'],placement:{project:'Kherep',app:'-'},links: { candidates: 'a'.repeat(64), approved: [] as { id: string; reason: string }[] }};
 const request=(bodyStorage:string)=>({sessionId:'synthetic',turnId:'turn',observations:[{...finding,bodyStorage}]});
 for (const key of ['sessionId', 'turnId']) test(`${key}: invalid identity rejects before receipt or broker access`, async () => {
   for (const value of [undefined, null, 42, {}, [], '', ' ', ' bad', 'bad ', 'bad\nvalue', '<markup>', 'UPPER', 'a'.repeat(81)]) {
@@ -59,4 +59,19 @@ test('product label must be a string and duplicate/base label rules remain enfor
     assert.equal(observationRequest({...request(finding.bodyStorage),observations:[{...finding,labels}]}),null);
   }
   assert.ok(observationRequest({...request(finding.bodyStorage),observations:[{...finding,labels:[...finding.labels,'product-jira']}]}));
+});
+// Issue #736: links are the adapter's sixth key, required and checked by shape.
+test('links are required and checked by shape before any I/O', () => {
+    const ok = request('<p>Synthetic prose</p>');
+    assert.ok(observationRequest(ok));
+    const variants: unknown[] = [undefined, {}, { candidates: 'A'.repeat(64), approved: [] }, { candidates: 'a'.repeat(64) },
+        { candidates: 'a'.repeat(64), approved: [{ id: 'x', reason: 'r'.repeat(20) }] },
+        { candidates: 'a'.repeat(64), approved: [{ id: '1', reason: 'r'.repeat(20), extra: 1 }] },
+        { candidates: 'a'.repeat(64), approved: Array.from({ length: 11 }, (_, i) => ({ id: String(i + 1), reason: 'r'.repeat(20) })) },
+        { candidates: 'a'.repeat(64), approved: [], extra: true }];
+    for (const links of variants) {
+        const r = request('<p>Synthetic prose</p>') as { observations: Record<string, unknown>[] };
+        if (links === undefined) delete r.observations[0].links; else r.observations[0].links = links;
+        assert.equal(observationRequest(r), null, JSON.stringify(links));
+    }
 });
