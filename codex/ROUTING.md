@@ -106,13 +106,15 @@ missing or differs; the reason names the pinned model. It also denies hook input
 attribute to a tool, and every dispatch while its pin source is unreadable. Agents without
 `enforcePin` keep the allowed model the Maestro selects, or inherit one. An observation run never dispatches another observation run.
 
-The Codex worker owns extraction and publication through the exact narrow local tool
+The Codex worker owns extraction and publication through the exact narrow local tools
+`mcp__kherep_observations__related_candidates` (read-only) and
 `mcp__kherep_observations__publish_observations`, backed by the existing Codex service-account broker.
 Its filesystem sandbox stays read-only. The adapter keeps credentials and canonical configuration
 inside its process, validates candidates before publication, checks literal authority bound to the
-resolved space and a trusted current-user identity before creation, completes related lookup before
-each create, creates one page per finding with required labels, verifies space/parent/body/labels/author,
-and performs only targeted verified stitching for created IDs. A durable journal prevents repeat,
+resolved space and a trusted current-user identity before creation, checks every approved link against
+the worker's candidates receipt before the first create, creates one page per finding with required labels,
+verifies space/parent/body/labels/author, and writes only the links the worker approved after judging each
+candidate on topic, in both directions. Shared title words never decide a link. A durable journal prevents repeat,
 corrective or uncertain requests from creating replacement pages. Empty findings cause zero I/O.
 The worker copies one strict canonical `OBS-RESULT` receipt verbatim: wrote with count and
 comma-separated numeric IDs, empty no-admissible-findings, or failed with a safe code and
