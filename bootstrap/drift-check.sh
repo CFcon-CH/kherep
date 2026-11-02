@@ -153,7 +153,7 @@ cmp_agent() {
     "$CLAUDE_SRC/kherep/model-policy.json" "$CLAUDE_HOME/kherep/model-policy.user.json" 2>"$rendered_dir/error"; then
     cmp_file "$rel" "$rendered_dir/expected" "$live"
   else
-    echo "RENDER-FAIL   $rel ($(head -n 1 "$rendered_dir/error"))"; drift=1
+    echo "RENDER-FAIL   $rel ($(grep -m 1 '^FATAL: ' "$rendered_dir/error" || head -n 1 "$rendered_dir/error"))"; drift=1
   fi
   rm -rf "$rendered_dir"
 }
