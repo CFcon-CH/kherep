@@ -130,8 +130,10 @@ export function observationLinking(ctx: LinkingContext) {
             if (problems.length || !receipt)
                 throw new Error('links-refused');
             const offered = new Map(receipt.candidates.map(candidate => [candidate.id, candidate]));
-            return { reviewed: receipt.candidates.length, approved: finding.links.approved.map(decision => ({
-                    id: decision.id, reason: decision.reason, area: offered.get(decision.id)!.area, title: offered.get(decision.id)!.title })) };
+            return { reviewed: receipt.candidates.length, approved: finding.links.approved.map(({ id, reason }) => {
+                    const { area, title } = offered.get(id)!;
+                    return { id, reason, area, title };
+                }) };
         },
         async related(key: string, finding: Finding, linked: Linked): Promise<string> {
             // Encode literal > and " in accepted attribute-free prose; preserve

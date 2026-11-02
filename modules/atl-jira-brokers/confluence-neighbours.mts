@@ -2,7 +2,7 @@
 // belong next to, what sits around an existing page, and which pages does
 // nothing point at. Argument parsing stays in the CLI; what happens once the
 // arguments are understood happens here.
-import { candidateRow, selectCandidates, type Candidate } from "./confluence-candidates.mts";
+import { candidateRow, proposalItems, selectCandidates, type Candidate } from "./confluence-candidates.mts";
 import type { ConfluenceSession } from "./confluence-contract.mts";
 import {
   neighbourhood,
@@ -59,8 +59,7 @@ export async function findRelated(deps: NeighbourDeps, request: RelatedRequest):
   const query = topicQuery(request.title, request.topic);
   const proposed = await deps.semantic(query, undefined, { spaceKey: deps.spaceKey });
   const exact = await textSearch(deps.session, deps.spaceKey, request.title);
-  const items = proposed.items ?? proposed.titles.map((title) => ({ id: "", title, snippet: "" }));
-  const candidates = selectCandidates(index, { id: request.id, title: request.title }, items, exact.titles, request.limit ?? 3);
+  const candidates = selectCandidates(index, { id: request.id, title: request.title }, proposalItems(proposed), exact.titles, request.limit ?? 3);
   const failed: string[] = [];
   if (proposed.error) failed.push(proposed.error);
   if (exact.failure) failed.push(textFailureLine(exact));

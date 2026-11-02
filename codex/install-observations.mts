@@ -81,7 +81,7 @@ function prepareObservationPublisher(options: ObservationInstallOptions) {
     const agentOptions = { model: agent.model, reasoning: 'low', sandbox: 'read-only' };
     const agentFile = path.join(home, 'agents', `${agentName}.toml`), beforeAgent = read(agentFile);
     const newAgent = renderAgent(agentName, source('codex/agents/codex-obs.md'), agentOptions);
-    if (beforeAgent !== newAgent && ![predecessor, scopedPredecessor, identityPredecessor, pilotPredecessor, handbackPredecessor, linkingPredecessor].some(known => known['codex/agents/codex-obs.md'] !== undefined && beforeAgent === renderAgent(agentName, known['codex/agents/codex-obs.md'], agentOptions)))
+    if (beforeAgent !== newAgent && ![predecessor, scopedPredecessor, identityPredecessor, pilotPredecessor, handbackPredecessor, linkingPredecessor].some(known => beforeAgent === renderAgent(agentName, known['codex/agents/codex-obs.md'], agentOptions)))
         throw new Error('observation-agent-drift');
     const changes = new Map<string, string>();
     changes.set(agentFile, newAgent);
@@ -108,11 +108,11 @@ function prepareObservationPublisher(options: ObservationInstallOptions) {
     }
     const agentsFile = path.join(home, 'AGENTS.md');
     const line = (text: string) => text.split('\n').find(row => row.startsWith('- After a completed turn,'))!;
-    const oldAgents = [predecessor, handbackPredecessor, linkingPredecessor].map(known => known['codex/AGENTS.maestro.md']).filter(Boolean)
+    const oldAgents = [predecessor, handbackPredecessor, linkingPredecessor].map(known => known['codex/AGENTS.maestro.md'])
         .find(known => read(agentsFile).includes(line(known))) ?? predecessor['codex/AGENTS.maestro.md'];
     changes.set(agentsFile, replaceKnown(read(agentsFile), line(oldAgents), line(source('codex/AGENTS.maestro.md'))));
     const routingFile = path.join(home, 'orchestra', 'ROUTING.md'), routing = read(routingFile);
-    const oldRouting = [predecessor, scopedPredecessor, handbackPredecessor, linkingPredecessor].filter(known => known['codex/ROUTING.md']).map(known => section(known['codex/ROUTING.md'])).find(old => routing.includes(old)) ?? section(predecessor['codex/ROUTING.md']);
+    const oldRouting = [predecessor, scopedPredecessor, handbackPredecessor, linkingPredecessor].map(known => section(known['codex/ROUTING.md'])).find(old => routing.includes(old)) ?? section(predecessor['codex/ROUTING.md']);
     changes.set(routingFile, replaceKnown(routing, oldRouting, section(source('codex/ROUTING.md'))));
     const table = renderObservationPublisher({ entry: path.join(workspace, 'tools', 'observation-stdio.mts'), home }, wiring.node);
     let config = beforeConfig;

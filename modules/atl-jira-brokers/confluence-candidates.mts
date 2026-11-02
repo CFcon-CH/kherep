@@ -8,7 +8,7 @@
 // candidate, never a reason to link it - on 2026-11-01 "account" and "state"
 // linked a logon-task page to an owner-probe page and a Codex idle-state page.
 import { contentTerms, rareTerms, type IndexedPage, type SpaceIndex } from "./confluence-related.mts";
-import type { ProposalItem } from "./confluence-semantic.mts";
+import type { ProposalItem, Proposals } from "./confluence-semantic.mts";
 import { snippetLine } from "./confluence-topic-query.mts";
 
 export interface Candidate {
@@ -75,6 +75,14 @@ export function areaOf(index: SpaceIndex, page: IndexedPage): string {
   return titles.join(" > ");
 }
 
+// A hit known by title only: no id and no snippet, so the title decides.
+const titleItem = (title: string): ProposalItem => ({ id: "", title, snippet: "" });
+
+// The semantic hits with id and snippet when the search returned them, by title otherwise.
+export function proposalItems(proposed: Proposals): ProposalItem[] {
+  return proposed.items ?? proposed.titles.map(titleItem);
+}
+
 // Search order is the only ranking the search gives, so it is kept. A hit is
 // matched by its page id when it carried one and by its exact title otherwise.
 // Dropped: the page itself, pages outside the space, shelves and duplicates.
@@ -87,7 +95,7 @@ export function selectCandidates(
 ): Candidate[] {
   const rare = rareTerms(index);
   const sourceTerms = contentTerms(source.title);
-  const hits = [...items, ...titles.map((title) => ({ id: "", title, snippet: "" }))];
+  const hits = [...items, ...titles.map(titleItem)];
   const out: Candidate[] = [];
   const seen = new Set<string>();
   for (const hit of hits) {
