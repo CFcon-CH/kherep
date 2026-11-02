@@ -11,6 +11,19 @@ increments the minor version; every other release increments the patch version.
 
 ### Added
 
+- Topic-judged linking (issue #736): `related` and `stitch` search with the title plus
+  the finding sentence (`--topic`) inside the space (`twg rovo search --space`, twg
+  1.3.8 or later) and print area, a shared-words hint and a snippet per candidate. The
+  broker no longer decides a link: `stitch --id --topic --out` lists candidates and
+  writes a receipt, the observation agent judges each one, and `stitch --id --candidates
+  --decisions` writes only the approved targets, each with a reason in the trace and
+  the version message, and refuses ids outside a fresh receipt for that page. The
+  full-space sweep only lists. The Codex adapter gains the read-only
+  `related_candidates` tool and a required `links` key per finding; it links only the
+  ids codex-obs approved and fails `links-refused` before creating anything otherwise.
+  `selectRelated`, the title-term write path and `stitch --dry-run`/`related --parent`
+  are removed.
+
 - Codex routing-only updater (issue #707): exact predecessor/current byte checks,
   explicit public Intercom rendering, isolated backup receipts and verified
   rollback without full installation or model refresh. Routing assigns SOL

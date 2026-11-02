@@ -181,32 +181,36 @@ contradiction and names the page it contradicts. Resolving it belongs to the wor
 
 A page nothing points at is findable only by search, and search is what a reader falls back to when
 context failed. So the space is searched BEFORE a page is written, not after: the broker's `related`
-verb answers which existing pages the new one belongs next to, and the answer decides what the page
-links to. This is an instruction, not a suggestion - a run that writes without having searched has
+verb answers which existing pages the new one might belong next to, and the agent that writes the page
+decides on topic what it links to. This is an instruction, not a suggestion - a run that writes without having searched has
 produced another page that has to be found again later by someone who does not know it exists.
 
-The verb proposes with the semantic search and disposes mechanically. A candidate has to be a page in
-this space, a leaf rather than a hierarchy node, and it has to share a content word with the new
-title or sit under the same node. Both halves were measured before the rule was written: the full
-text search does not rank and the semantic search has no space filter and no score, so neither alone
-is allowed to decide.
+The verb searches with the title plus the finding sentence (`--topic`) in this space and filters by
+structure only: a candidate is a page in this space and a leaf rather than a hierarchy node. Each row
+carries where the page sits, a snippet of its text and the title words it shares as a hint. Shared
+words never decide a link: they let wrong-topic pages through on words like "account" or "state"
+(issue #736). The agent judges every candidate on topic and links only the ones it can justify in a
+sentence. No link is better than a wrong link.
 
 An empty answer is a valid answer and is written as one: no link and an explicit sentence saying no
 matching page was found. A failed search is NOT an empty answer. If the semantic half could not run,
 the result is UNKNOWN, the verb exits non-zero and the run says so instead of reporting zero
 neighbours. A link to a page that was not read back is never written.
 
-After writing, the new page is stitched in the other direction: `stitch --space <key> --id <id>` puts a link
-to it on the pages it belongs next to. Outgoing links do not help the new page - by definition nobody
-names it yet - so the write lands on the neighbour. Without this step every observation adds one more
-page nothing points at, and the problem grows with every session.
+After writing, the new page is stitched in the other direction, in three steps. `stitch --space <key> --id
+<id> --topic <sentence> --out <receipt>` lists candidates and writes a receipt, nothing else. The agent
+judges each candidate. `stitch --space <key> --id <id> --candidates <receipt> --decisions <file>` then
+writes a link to the new page on exactly the approved pages, each with its reason in the trace and the
+version message, and refuses anything the receipt does not hold, a receipt for another page or one
+older than 2 h. An empty decisions file is recorded as `nolink`. Outgoing links do not help the new
+page - by definition nobody names it yet - so the write lands on the neighbour.
 
-The same sweep runs over the whole space without `--id`, for the pages that were carried over before
-this rule existed. Only the count has a self-trigger: on Claude, a SessionStart check counts the pages
+Without `--id`, `stitch` sweeps the whole space read-only: it lists candidates per orphan, with the
+opening of the orphan's own body as its topic, and writes nothing. Only the count has a self-trigger: on Claude, a SessionStart check counts the pages
 nothing links to, read-only, refreshes itself in the background when its report is older than a day,
 and reports a count it could not take as unknown, never as zero; a check that only runs when somebody
-remembers it is not a check (golden rule 16). The sweep itself writes into a live space, so it runs
-when the operator decides, not when a session starts. Codex has no such check yet.
+remembers it is not a check (golden rule 16). Linking an orphan takes a targeted call with
+judged decisions, so it happens when someone decides, not when a session starts. Codex has no such check yet.
 
 One observation is one page. An attempt that went wrong is not left behind in silence: the
 observation agent neither writes a second page beside it nor deletes it, because deleting is outside

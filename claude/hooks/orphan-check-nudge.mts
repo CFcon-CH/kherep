@@ -143,8 +143,8 @@ function main(): void {
     + `${stale ? ` (report ${age} old, STALE)` : ""}:`);
   for (const title of titles) emit(title);
   if (count > titles.length) emit(`  ... and ${count - titles.length} more`);
-  emit("Each of them is findable only by search. `<confluence broker> stitch --space <key>` puts a link"
-    + " on the pages they belong next to; it WRITES, so it stays a decision, not a hook."
+  emit("Each of them is findable only by search. `<confluence broker> stitch --space <key>` lists link"
+    + " candidates per orphan and writes nothing; a link is written only by stitch --id with judged decisions."
     + (started ? " A fresh read-only count was started in the background." : ""));
 }
 
