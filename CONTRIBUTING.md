@@ -26,6 +26,8 @@ Read [AGENTS.md](AGENTS.md) and the instructions in the component you change. Ne
 
 Windows CI runs the bootstrap suites in parallel shards defined in `bootstrap/ci-shard.mts`. A new install test that runs for minutes on Windows gets its own named shard there and in the `unit-windows` suite list of `.github/workflows/ci.yml`; `bootstrap/ci-shard.test.mts` fails until both agree. Locally, `npm run test:bootstrap` stays the command. The same matrix also runs `npm run test:codex` as the `codex` shard, outside the bootstrap shard map, so the required check `unit (windows-latest)` covers the Codex suites as well.
 
+The Ubuntu `unit` job fetches full history to audit every available legacy whole-file project template, including the public v0.1.0 release. Shallow checkouts and source exports explicitly skip that history audit; deterministic template and archive-ref regressions still run everywhere. For the same audit locally, use a full clone (or run `git fetch --unshallow --tags` in a shallow clone), then `node --test bootstrap/project-rules-block.test.mts`. Templates from v0.1.1 onward were installed inside managed blocks and do not belong in the legacy whole-file allowlist.
+
 On Windows, select Git for Windows Bash in the test process's `PATH` before WSL Bash. Do not change global shell configuration for a test run.
 
 Keep production configuration out of tests. Tests that need an unavailable platform capability can skip; report skips separately from passing checks.

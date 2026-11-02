@@ -10,8 +10,11 @@
 // pre-public history that main no longer carries:
 //   git rev-list --objects --all --until=2026-09-24T00:00:00Z -- \
 //     claude/CLAUDE.project.md claude/AGENTS.project.md
-// The set is frozen: later template versions are installed inside the markers and
-// never need a hash here. project-rules-block.test.mts re-derives it from git.
+// The set also includes public v0.1.0 (226c6d3), which installed whole files after
+// that cutoff. v0.1.1 (2c9d519) already installed marked blocks, so its reference
+// templates need no hashes. The coverage test first selects pre-cutoff commits,
+// adds the v0.1.0 commit, then walks only their objects: --objects --all alone can
+// include non-commit refs such as archived trees despite --until. The set is frozen.
 export const KNOWN_TEMPLATE_SHA256: readonly string[] = Object.freeze([
   "0c0db7e72330d7d9a14569593f44572fecf7ba380b110241ef541a6ae7e08e41", // 306 lines
   "0cf293aaafa44a4331b73f4cf92c6c7e0f4591534acf8c705c0db72089982e66", // 332 lines
