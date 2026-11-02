@@ -3,7 +3,8 @@
 // resolved model policy into its frontmatter. The source in claude/agents/
 // carries `model: __KHEREP_MODEL__` and `effort: __KHEREP_EFFORT__` as the last
 // frontmatter lines; install.sh and drift-check.sh render them the same way, so
-// a user override is installed and is not drift.
+// a user override is installed and is not drift. Rendered from the two files
+// only; the deprecated environment variables apply to dispatch, never to rendering.
 //
 //   model-policy-render.mts agents <source-dir> <out-dir> <shipped.json> <user.json>
 //   model-policy-render.mts agent <source.md> <out.md> <shipped.json> <user.json>
@@ -74,7 +75,7 @@ function agentFiles(dir: string): string[] {
 }
 
 function load(shipped: string, user: string): ResolvedPolicy {
-  return loadModelPolicy({ files: { shipped, user } });
+  return loadModelPolicy({ files: { shipped, user }, env: {} });
 }
 
 function main(argv: string[]): number {
@@ -83,6 +84,10 @@ function main(argv: string[]): number {
     const [sourceDir, outDir, shipped, user] = args;
     const policy = load(shipped, user);
     for (const warning of policy.warnings) console.error(`model policy: WARNING ${warning}`);
+    if (process.env.KHEREP_ALLOWED_MODELS !== undefined || process.env.KHEREP_AGENT_MODEL_POLICY !== undefined) {
+      console.error("model policy: NOTE deprecated KHEREP_ALLOWED_MODELS/KHEREP_AGENT_MODEL_POLICY are ignored when rendering agents; "
+        + "they still apply to dispatch until removed or moved into model-policy.user.json");
+    }
     for (const name of agentFiles(sourceDir)) {
       renderAgentFile(path.join(sourceDir, name), path.join(outDir, name), policy);
     }

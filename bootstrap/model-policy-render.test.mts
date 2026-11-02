@@ -88,3 +88,13 @@ test("the CLI renders every agent and fails closed on a malformed override witho
   assert.ok(!failed.stderr.includes("SECRET-CANARY"));
   assert.ok(!fs.existsSync(path.join(TMP, "bad")), "nothing is rendered from an invalid policy");
 });
+
+test("the environment never reaches the rendered frontmatter", () => {
+  const out = path.join(TMP, `env-${n++}`);
+  const env = { ...process.env, KHEREP_AGENT_MODEL_POLICY: JSON.stringify({ "kherep-builder": "sonnet" }), KHEREP_ALLOWED_MODELS: "" };
+  const result = spawnSync(process.execPath, [CLI, "agents", AGENTS, out, SHIPPED, userFile()], { encoding: "utf8", env });
+  assert.equal(result.status, 0, result.stderr);
+  assert.doesNotMatch(frontmatter(fs.readFileSync(path.join(out, "kherep-builder.md"), "utf8")), /\nmodel:/);
+  assert.match(result.stderr, /NOTE deprecated/);
+  assert.doesNotMatch(result.stderr, /FATAL/);
+});
