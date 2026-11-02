@@ -6,11 +6,15 @@ export interface ObservationProjection {
     entry: string;
     home: string;
 }
-export function renderObservationPublisher(projection: ObservationProjection, node: string): string {
+// Issue #736: the read-only candidate search beside the publication tool. The
+// one-tool table is the known predecessor the observation installer replaces.
+export const OBSERVATION_TOOLS = ['publish_observations', 'related_candidates'] as const;
+export const PREDECESSOR_OBSERVATION_TOOLS = ['publish_observations'] as const;
+export function renderObservationPublisher(projection: ObservationProjection, node: string, tools: readonly string[] = OBSERVATION_TOOLS): string {
     return [`[mcp_servers.${OBSERVATION_SERVER}]`, 'enabled = true', 'required = false',
         `command = ${JSON.stringify(node)}`, `args = [${JSON.stringify(projection.entry)}]`,
         `env = { CODEX_HOME = ${JSON.stringify(projection.home)} }`, 'startup_timeout_sec = 30.0', 'tool_timeout_sec = 600.0',
-        'enabled_tools = ["publish_observations"]',
+        `enabled_tools = [${tools.map(tool => JSON.stringify(tool)).join(',')}]`,
         'env_vars = ["KHEREP_ATL_CRED_FILE_CODEX", "KHEREP_ATL_SITE", "KHEREP_PROFILE", "KHEREP_TWG_BIN", "NODE_EXTRA_CA_CERTS"]'].join('\n');
 }
 /** Flat broker import closure, excluding tests and with no dependency on Claude setup. */

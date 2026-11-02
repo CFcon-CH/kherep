@@ -1187,7 +1187,7 @@ test("default install projects observation delivery without optional Jira toolin
   assert.match(observationAgent, /title.*bodyStorage.*evidence.*labels.*placement/s);
   assert.doesNotMatch(observationAgent, /trusted Maestro main thread is the Codex publisher/);
   assert.ok(fs.existsSync(path.join(workspace, "tools", "observation-stdio.mts")));
-  assert.match(fs.readFileSync(path.join(codexHome, "config.toml"), "utf8"), /enabled_tools = \["publish_observations"\]/);
+  assert.match(fs.readFileSync(path.join(codexHome, "config.toml"), "utf8"), /enabled_tools = \["publish_observations","related_candidates"\]/);
   assert.equal(result.receipt.pluginMcpServers.some((entry) => entry.name === ATLASSIAN_MCP_SERVER), false);
   assert.equal(fs.readFileSync(path.join(codexHome, "config.toml"), "utf8").includes("[mcp_servers.atlassian]"), false);
   assert.deepEqual(codexCalls.filter(({ args }) => args[1] === "add").map(({ args }) => args), [["plugin", "add", LOCAL_PLUGIN_ID]]);

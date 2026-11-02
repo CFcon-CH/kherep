@@ -161,7 +161,7 @@ test('scoped upgrade preserves opaque config, trust, pin and shared pointer and 
     assert.equal(result.receipt.sandbox, 'read-only');
     assert.equal(result.receipt.nativeToolDiscovery, 'UNKNOWN');
     const config = fs.readFileSync(f.configFile, 'utf8');
-    assert.match(config, /enabled_tools = \["publish_observations"\]/);
+    assert.match(config, /enabled_tools = \["publish_observations","related_candidates"\]/);
     assert.match(config, /env_vars = \["KHEREP_ATL_CRED_FILE_CODEX"/);
     assert.match(config, /operator_fixture/);
     const after = snapshot(f.root);
