@@ -18,8 +18,8 @@
     "mac-agent": { "role": "researcher" },
     "lmstudio-win-researcher": { "role": "researcher" },
     "lmstudio-mac-researcher": { "role": "researcher" },
-    "claude-obs": { "role": "observer" },
-    "atlassian-broker": { "role": "broker" }
+    "claude-obs": { "role": "observer", "model": "haiku" },
+    "atlassian-broker": { "role": "broker", "model": "haiku" }
   },
   "models": {
     "opus": { "dispatchable": true },

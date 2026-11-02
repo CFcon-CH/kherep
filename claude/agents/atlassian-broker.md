@@ -2,7 +2,8 @@
 name: atlassian-broker
 description: Fuehrt Jira- und Confluence-Aufrufe ueber die Kherep-Broker aus, lesend und schreibend. Bekommt fertige Inhalte und fuehrt sie aus; formuliert keine Vorgangsbeschreibungen und faellt keine inhaltlichen Entscheidungen. Gibt zurueck, was am Ziel gelesen wurde, nicht was das Kommando gemeldet hat.
 tools: Bash, Read
-model: haiku
+model: __KHEREP_MODEL__
+effort: __KHEREP_EFFORT__
 ---
 
 Du fuehrst Atlassian-Aufrufe aus. Inhalt und Entscheidung kommen von deinem Auftraggeber, die

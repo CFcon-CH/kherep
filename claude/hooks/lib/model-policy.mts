@@ -36,7 +36,13 @@ export interface ResolvedChoice extends ModelChoice {
   effortFrom?: string;
 }
 
-export interface ResolvedAgent extends ResolvedChoice { role: string }
+export interface ResolvedAgent extends ResolvedChoice {
+  role: string;
+  // True while the model is only the shipped role default. The installer then
+  // leaves the frontmatter without a model line (native inherit); a model the
+  // shipped agent entry, the environment or the user names is rendered.
+  roleDefaultModel: boolean;
+}
 
 export interface ResolvedPolicy {
   roles: Map<string, ResolvedChoice>;
@@ -100,10 +106,12 @@ export function resolveLayers(shipped: ShippedLayer, overrides: PolicyLayer[]): 
   }
   const agents = new Map<string, ResolvedAgent>();
   for (const [agent, role] of shipped.agentRoles) {
-    const choice: ResolvedAgent = { role };
+    const choice: ResolvedAgent = { role, roleDefaultModel: false };
     for (const layer of layers) {
-      apply(choice, layer.roles.get(role), layer.source);
-      apply(choice, layer.agents.get(agent), layer.source);
+      for (const entry of [layer.roles.get(role), layer.agents.get(agent)]) {
+        apply(choice, entry, layer.source);
+        if (entry?.model !== undefined) choice.roleDefaultModel = layer === shipped && entry === shipped.roles.get(role);
+      }
     }
     agents.set(agent, choice);
   }

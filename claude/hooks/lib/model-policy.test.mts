@@ -109,6 +109,21 @@ test("an unknown model fails closed with the key that named it", () => {
   rejects({ agents: { "win-agent": { model: "claude-opus-4-8" } } }, /^agents\.win-agent\.model$/);
 });
 
+test("a model name is one token, so no override can inject frontmatter", () => {
+  rejects({ agents: { "claude-obs": { model: "haiku\ntools: Bash, Write" } } }, /^agents\.claude-obs\.model$/);
+  rejects({ models: { "x: y": {} } }, /^models\.x: y$/);
+  rejects(undefined, null, { KHEREP_AGENT_MODEL_POLICY: JSON.stringify({ "claude-obs": "haiku\neffort: max" }) });
+});
+
+test("only a shipped role default leaves an agent on native inherit", () => {
+  const policy = load();
+  assert.equal(policy.agents.get("kherep-builder")!.roleDefaultModel, true);
+  assert.equal(policy.agents.get("claude-obs")!.roleDefaultModel, false, "the shipped agent entry declares its model");
+  assert.equal(load({ roles: { builder: { model: "sonnet" } } }).agents.get("kherep-builder")!.roleDefaultModel, false);
+  assert.equal(load({ agents: { "kherep-builder": { effort: "high" } } }).agents.get("kherep-builder")!.roleDefaultModel, true);
+  assert.equal(load({ roles: { observer: { model: "sonnet" } } }).agents.get("claude-obs")!.model, "sonnet", "user role beats the shipped agent");
+});
+
 test("an effort outside the vocabulary fails closed", () => {
   rejects({ roles: { observer: { effort: "ultra" } } }, /^roles\.observer\.effort$/);
   rejects({ agents: { "claude-obs": { effort: 3 } } }, /^agents\.claude-obs\.effort$/);
