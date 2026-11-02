@@ -272,3 +272,10 @@ test("an empty topic and an id outside the space are refused before any search",
   assert.deepEqual(f.errors, ["--topic is empty. A title alone is not a topic; nothing was searched.",
     "That id is not a page in this space."]);
 });
+
+test("the receipt path is printed with forward slashes for the Bash call that reuses it", async () => {
+  const f = fixture();
+  assert.equal(await candidates(f, "C:\\tmp\\x\\receipt.json"), 0);
+  assert.ok(f.log.includes("receipt\tC:/tmp/x/receipt.json"));
+  assert.ok(f.files.has("C:\\tmp\\x\\receipt.json"), "the file itself is written where it was asked");
+});

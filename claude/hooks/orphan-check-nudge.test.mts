@@ -68,7 +68,10 @@ test("names the orphans and does not offer to write them itself", () => {
   const out = run(withHome(DIRTY, 1));
   assert.match(out, /2 page\(s\) .* have no incoming link/);
   assert.match(out, /A Lonely Page/);
-  assert.match(out, /it WRITES, so it stays a decision, not a hook/);
+  // Issue #736: the sweep only lists; writing needs targeted, judged decisions.
+  assert.match(out, /lists link candidates per orphan and writes nothing/);
+  assert.match(out, /written only by stitch --id with judged decisions/);
+  assert.doesNotMatch(out, /WRITES/);
 });
 
 test("a report that could not measure is UNKNOWN, never zero", () => {

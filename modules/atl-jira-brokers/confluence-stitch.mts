@@ -74,7 +74,9 @@ export async function stitchCandidates(
     return 1;
   }
   for (const candidate of found.candidates) deps.log(`candidate\t${candidateRow(candidate)}`);
-  deps.log(`receipt\t${options.out}`);
+  // Forward slashes: the agent types this path into a Bash call, where a
+  // Windows backslash would be eaten (issue #280).
+  deps.log(`receipt\t${options.out.split("\\").join("/")}`);
   deps.log(`count: ${found.candidates.length}`);
   return 0;
 }
