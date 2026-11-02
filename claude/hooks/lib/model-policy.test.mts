@@ -167,8 +167,11 @@ test("the deprecated environment inputs sit below the user file and still fail c
   const policy = load(undefined, env);
   assert.equal(policy.agents.get("kherep-builder")!.model, "operator-model");
   assert.equal(dispatchIssue(policy, "operator-model", undefined), null);
-  assert.equal(dispatchIssue(policy, "opus", undefined), null, "the shipped aliases stay dispatchable");
+  assert.equal(dispatchIssue(policy, "opus", undefined)?.ruleId, "DISPATCH_MODEL_UNKNOWN", "the allow-list stays complete");
   assert.equal(load({ agents: { "kherep-builder": { model: "sonnet" } } }, env).agents.get("kherep-builder")!.model, "sonnet");
+  assert.equal(dispatchIssue(load({ models: { opus: { dispatchable: true } } }, env), "opus", undefined), null, "the user file wins per field");
+  assert.equal(dispatchIssue(load({ models: { fable: { dispatchable: false } } }), "fable", undefined)?.ruleId, "DISPATCH_MODEL_UNKNOWN");
+  assert.ok(load(undefined, { KHEREP_ALLOWED_MODELS: "haiku,sonnet" }).warnings.some((w) => /agents\.kherep-builder: model opus is not dispatchable/.test(w)));
   rejects(undefined, null, { KHEREP_ALLOWED_MODELS: "" });
   rejects(undefined, null, { KHEREP_AGENT_MODEL_POLICY: "" });
   rejects(undefined, null, { KHEREP_AGENT_MODEL_POLICY: "{}" });

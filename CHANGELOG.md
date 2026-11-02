@@ -355,9 +355,10 @@ increments the minor version; every other release increments the patch version.
   is allowed, `DISPATCH_MODEL_UNKNOWN` replaces `DISPATCH_MODEL_NONCANONICAL`, and
   `DISPATCH_EFFORT_UNSUPPORTED` checks a call's effort when present. A one-time migration
   (`bootstrap/migrate-model-policy.mts`) captures explicit environment values and edited
-  frontmatter into the user file. `KHEREP_ALLOWED_MODELS` (now additive) and
-  `KHEREP_AGENT_MODEL_POLICY` (no longer a pin) are deprecated for one release. Claude
-  adapter limitation: no queryable model catalog, so a per-model effort list only warns.
+  frontmatter into the user file. `KHEREP_ALLOWED_MODELS` (still the complete list,
+  migrated as `dispatchable: false` for omitted aliases) and `KHEREP_AGENT_MODEL_POLICY`
+  (no longer a pin) are deprecated for one release. Claude adapter limitation: no
+  queryable model catalog, so a per-model effort list only warns.
 
 - Allow co-author trailers and AI attribution for every runtime and repository; preserve other commit policies and verify the CI hook with an isolated work-item canary (#722).
 

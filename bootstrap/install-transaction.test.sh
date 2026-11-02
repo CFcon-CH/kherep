@@ -499,15 +499,19 @@ test_model_policy() {
       KHEREP_INSTALL_SKIP_GITCONFIG=1 KHEREP_INSTALL_SKIP_KNOWLEDGE_SPACE=1 KHEREP_INSTALL_SKIP_ATL_CREDENTIAL=1 \
       SKIP_SECRETS=1 SKIP_DEPS=1 bash "$HERE/install.sh"
   }
-  set +e; KHEREP_AGENT_MODEL_POLICY='{"kherep-builder":"opus"}' policy_install > "$ROOT/log" 2>&1; rc=$?; set -e
+  set +e; KHEREP_ALLOWED_MODELS=haiku,sonnet,opus KHEREP_AGENT_MODEL_POLICY='{"kherep-builder":"opus"}' policy_install > "$ROOT/log" 2>&1
+  rc=$?; set -e
   [ "$rc" -eq 0 ] || { cat "$ROOT/log"; fail "model policy migration install failed (rc=$rc)"; }
   grep -q 'model policy: captured agents.claude-obs.effort = low from the edited agents/claude-obs.md' "$ROOT/log" ||
     fail "the edited frontmatter effort was not captured"
   grep -q 'model policy: captured agents.kherep-builder.model = opus from KHEREP_AGENT_MODEL_POLICY' "$ROOT/log" ||
     fail "an environment pin equal to the old default was not kept as explicit"
+  grep -q 'model policy: captured models.fable (not dispatchable) from KHEREP_ALLOWED_MODELS' "$ROOT/log" ||
+    fail "the narrowed allow-list was not migrated"
   node -e '
     const j = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
-    const want = { schema_version: 1, agents: { "kherep-builder": { model: "opus" }, "claude-obs": { effort: "low" } } };
+    const want = { schema_version: 1, agents: { "kherep-builder": { model: "opus" }, "claude-obs": { effort: "low" } },
+      models: { haiku: { dispatchable: true }, sonnet: { dispatchable: true }, opus: { dispatchable: true }, fable: { dispatchable: false } } };
     if (JSON.stringify(j) !== JSON.stringify(want)) process.exit(1);
   ' "$user" || fail "the migrated user override is not what was captured"
   grep -qx 'effort: low' "$C/agents/claude-obs.md" || fail "the migrated effort was not rendered"

@@ -86,6 +86,9 @@ function check(choice: ResolvedChoice, key: string, models: Map<string, ModelEnt
     throw new ModelPolicyError(choice.modelFrom ?? "", `${key}.model`,
       "names a model that is not in the catalog; add it under models or choose a listed one");
   }
+  if (model !== undefined && models.get(model)?.dispatchable === false) {
+    warnings.push(`${key}: model ${model} is not dispatchable; the Maestro cannot dispatch this agent with its default`);
+  }
   const listed = model === undefined ? undefined : models.get(model)?.efforts;
   if (effort !== undefined && listed && !listed.includes(effort)) {
     warnings.push(`${key}: effort ${effort} is not listed for model ${model} in the static per-model table (warning only, unverified)`);
