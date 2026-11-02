@@ -3,7 +3,6 @@
 // pin the five merge cases, idempotence, the drift view of the block, and the
 // coexistence with the Codex installer's own AGENTS markers.
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
@@ -17,10 +16,15 @@ import {
   PROJECT_RULES_START,
 } from "./project-rules-block.mts";
 import { KNOWN_TEMPLATE_SHA256 } from "./project-rules-history.mts";
+import {
+  git, historyFixture, LAST_WHOLE_FILE_COMMIT, LEGACY_CUTOFF, LEGACY_TEMPLATE,
+  TEMPLATE_PATHS, wholeFileTemplateBlobs,
+} from "./project-rules-history-fixture.mts";
 
 const TEMPLATE = "# Kherep working rules\n\n- rule one\n- rule two\n";
 const BLOCK = `${PROJECT_RULES_START}\n# Kherep working rules\n\n- rule one\n- rule two\n${PROJECT_RULES_END}`;
 const OPERATOR = "# Example Org rules\n\n- keep the synthetic rule\n";
+const REPO = path.join(import.meta.dirname, "..");
 
 test("(a) a missing file becomes just the block", () => {
   assert.equal(mergeProjectRules(null, TEMPLATE), `${BLOCK}\n`);
@@ -33,13 +37,18 @@ test("(b) an existing block is replaced and nothing around it moves", () => {
 });
 
 test("(c) an unedited historical template is replaced by the block", () => {
-  // The body of claude/CLAUDE.project.md at 6aa222a, the last whole-file install.
-  const historical = git(["show", "6aa222a:claude/CLAUDE.project.md"]);
-  if (historical === null) return; // no git history in a public export
-  assert.ok(isKnownTemplate(historical));
-  assert.ok(isKnownTemplate(historical.replace(/\n/g, "\r\n")), "a CRLF checkout is the same template");
-  const merged = mergeProjectRules(historical, TEMPLATE);
-  assert.equal(merged, `${BLOCK}\n`);
+  for (const historical of [LEGACY_TEMPLATE, LEGACY_TEMPLATE.replace(/\n/g, "\r\n")]) {
+    assert.ok(isKnownTemplate(historical), "the shipped v0.1.0 whole-file template is known");
+    assert.equal(mergeProjectRules(historical, TEMPLATE).replace(/\r\n/g, "\n"), `${BLOCK}\n`);
+  }
+});
+
+test("edited legacy templates and later reference templates remain operator content", () => {
+  const reference = fs.readFileSync(path.join(REPO, "claude", "AGENTS.project.md"), "utf8");
+  for (const text of [`${LEGACY_TEMPLATE}\n- synthetic operator addition\n`, reference]) {
+    assert.equal(isKnownTemplate(text), false);
+    assert.equal(mergeProjectRules(text, TEMPLATE), `${text}\n${BLOCK}\n`);
+  }
 });
 
 test("(d) operator content keeps its bytes and gets the block appended", () => {
@@ -115,25 +124,51 @@ test("the project templates are references to the user-level rules", () => {
   assert.match(read("codex", "AGENTS.user.md"), /^## Authority and scope$/m);
 });
 
-// Every template committed before OP-1425 on any ref was installed whole by some
-// installer. The public history starts after the cut-off, so a clone of it holds
-// none of those blobs and the check has nothing to compare; the hash list is then
-// the only record. The cut-off keeps the test stable: later template edits are
-// installed inside the markers and need no new hash.
-test("the known template set covers every whole-file template blob", () => {
+// Check available pre-public history and the public v0.1.0 whole-file release.
+// v0.1.1 already installs marked blocks: its reference templates are excluded.
+test("the known template set covers every whole-file template blob", (t) => {
   assert.ok(KNOWN_TEMPLATE_SHA256.every((hash) => /^[0-9a-f]{64}$/.test(hash)));
-  const listing = git(["rev-list", "--objects", "--all", "--until=2026-09-24T00:00:00Z", "--",
-    "claude/CLAUDE.project.md", "claude/AGENTS.project.md"]);
-  if (listing === null) return;
-  const blobs = listing.split(/\r?\n/).filter((line) => / claude\/(CLAUDE|AGENTS)\.project\.md$/.test(line));
-  // A clone without the pre-public refs sees fewer blobs, or none; the check holds for those it sees.
+  if (!fs.existsSync(path.join(REPO, ".git"))) {
+    t.skip("source export has no Git history; deterministic template regressions still run");
+    return;
+  }
+  if (git(REPO, ["rev-parse", "--is-shallow-repository"]).trim() === "true") {
+    t.skip("shallow checkout; full template history is checked by Ubuntu unit CI");
+    return;
+  }
+  assert.equal(git(REPO, ["show", `${LAST_WHOLE_FILE_COMMIT}:${TEMPLATE_PATHS[1]}`]), LEGACY_TEMPLATE);
+  const blobs = wholeFileTemplateBlobs(REPO);
+  assert.ok(blobs.length > 0, "the public whole-file release must be audited");
   for (const line of blobs) {
-    const text = git(["cat-file", "blob", line.split(" ")[0]]);
-    assert.ok(text !== null && isKnownTemplate(text), `unknown blob ${line}`);
+    assert.ok(isKnownTemplate(git(REPO, ["cat-file", "blob", line.split(" ")[0]])), `unknown blob ${line}`);
   }
 });
 
-function git(args: string[]): string | null {
-  const result = spawnSync("git", args, { cwd: path.join(import.meta.dirname, ".."), encoding: "utf8" });
-  return result.status === 0 ? result.stdout : null;
-}
+test("history selection includes legacy releases and excludes archived post-migration trees", (t) => {
+  const f = historyFixture(t);
+  const boundary = f.commit(LEGACY_TEMPLATE, "2026-09-24T11:07:45Z");
+  f.commit("post-migration reference\n", "2026-09-24T15:46:33Z");
+  git(f.repo, ["-c", "tag.gpgsign=false", "tag", "-a", "v-next", "-m", "Synthetic annotated tag"]);
+  const boundaryBlob = git(f.repo, ["rev-parse", `${boundary}:${TEMPLATE_PATHS[1]}`]).trim();
+  const laterBlob = git(f.repo, ["rev-parse", `HEAD:${TEMPLATE_PATHS[1]}`]).trim();
+  const tagWalk = git(f.repo, ["rev-list", "--objects", "--all", `--until=${LEGACY_CUTOFF}`, "--", ...TEMPLATE_PATHS]);
+  assert.ok(!tagWalk.includes(laterBlob), "an annotated tag alone does not leak the later blob");
+  git(f.repo, ["update-ref", "refs/archive/template-tree", git(f.repo, ["rev-parse", "HEAD^{tree}"]).trim()]);
+  const oldWalk = git(f.repo, ["rev-list", "--objects", "--all", `--until=${LEGACY_CUTOFF}`, "--", ...TEMPLATE_PATHS]);
+  assert.ok(oldWalk.includes(laterBlob), "the old walk includes a post-migration archive tree");
+  const blobs = wholeFileTemplateBlobs(f.repo, boundary);
+  assert.deepEqual(blobs, [`${boundaryBlob} ${TEMPLATE_PATHS[1]}`]);
+  assert.throws(() => wholeFileTemplateBlobs(f.repo, "0".repeat(40)), /git rev-parse/);
+  assert.throws(() => git(f.repo, ["cat-file", "blob", "0".repeat(40)]), /git cat-file/);
+});
+
+test("available pre-public templates remain audited and unknown ones fail recognition", (t) => {
+  const f = historyFixture(t);
+  const older = f.commit("pre-public whole-file template\n", "2026-09-23T12:00:00Z");
+  const boundary = f.commit(LEGACY_TEMPLATE, "2026-09-24T11:07:45Z");
+  const olderBlob = git(f.repo, ["rev-parse", `${older}:${TEMPLATE_PATHS[1]}`]).trim();
+  const boundaryBlob = git(f.repo, ["rev-parse", `${boundary}:${TEMPLATE_PATHS[1]}`]).trim();
+  const blobs = wholeFileTemplateBlobs(f.repo, boundary);
+  assert.deepEqual(new Set(blobs.map((line) => line.split(" ")[0])), new Set([olderBlob, boundaryBlob]));
+  assert.equal(isKnownTemplate(git(f.repo, ["cat-file", "blob", olderBlob])), false);
+});

@@ -64,6 +64,9 @@ jobs:
     runs-on: ${{ matrix.os == 'ubuntu-latest' && 'ubuntu-26.04' || matrix.os }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          # Audit legacy template blobs once with full public history (#728).
+          fetch-depth: ${{ matrix.os == 'ubuntu-latest' && '0' || '1' }}
       - uses: actions/setup-node@v7
         with:
           node-version: lts/*
