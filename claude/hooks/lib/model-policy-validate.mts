@@ -36,6 +36,7 @@ export class ModelPolicyError extends Error {
 
 type Json = Record<string, unknown>;
 const TOP_KEYS = new Set(["schema_version", "roles", "agents", "models"]);
+const NO_EXTRA_KEYS: ReadonlySet<string> = new Set();
 
 function isObject(value: unknown): value is Json {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -105,10 +106,8 @@ function checkTop(source: string, object: Json, required: boolean): void {
   for (const key of Object.keys(object)) {
     if (!TOP_KEYS.has(key)) throw new ModelPolicyError(source, key, "is not a known key");
   }
-  if (required || "schema_version" in object) {
-    if (object.schema_version !== SCHEMA_VERSION) {
-      throw new ModelPolicyError(source, "schema_version", `must be ${SCHEMA_VERSION}`);
-    }
+  if ((required || "schema_version" in object) && object.schema_version !== SCHEMA_VERSION) {
+    throw new ModelPolicyError(source, "schema_version", `must be ${SCHEMA_VERSION}`);
   }
 }
 
@@ -118,7 +117,7 @@ export function parseShipped(source: string, value: unknown): ShippedLayer {
   const roles = new Map<string, ModelChoice>();
   for (const [role, raw] of Object.entries(objectAt(source, "roles", object.roles))) {
     if (!isName(role)) throw new ModelPolicyError(source, `roles.${role}`, "is not a usable role name");
-    roles.set(role, parseChoice(source, `roles.${role}`, raw, new Set()));
+    roles.set(role, parseChoice(source, `roles.${role}`, raw, NO_EXTRA_KEYS));
   }
   const agents = new Map<string, ModelChoice>();
   const agentRoles = new Map<string, string>();
@@ -145,7 +144,7 @@ export function parseUser(source: string, value: unknown, shipped: ShippedLayer)
     for (const [name, raw] of Object.entries(objectAt(source, section, object[section]))) {
       const key = `${section}.${name}`;
       if (!known.has(name)) throw new ModelPolicyError(source, key, `is not a ${section === "roles" ? "role" : "agent"} of the shipped policy`);
-      layer[section].set(name, parseChoice(source, key, raw, new Set()));
+      layer[section].set(name, parseChoice(source, key, raw, NO_EXTRA_KEYS));
     }
   }
   if ("models" in object) layer.models = parseModels(source, object.models);

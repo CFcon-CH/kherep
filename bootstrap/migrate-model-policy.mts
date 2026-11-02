@@ -48,8 +48,11 @@ function entry(capture: Capture, agent: string): Entry {
   return (capture.policy.agents[agent] ??= {});
 }
 
+function inCatalog(capture: Capture, shipped: ShippedLayer, model: string): boolean {
+  return shipped.models.has(model) || model in capture.policy.models;
+}
+
 function captureEnvironment(capture: Capture, shipped: ShippedLayer, env: Record<string, string | undefined>): void {
-  const known = (model: string) => shipped.models.has(model) || model in capture.policy.models;
   if (env.KHEREP_ALLOWED_MODELS !== undefined) {
     const names = env.KHEREP_ALLOWED_MODELS.split(",").map((name) => name.trim()).filter((name) => name && name !== INHERIT);
     for (const name of names) {
@@ -71,7 +74,7 @@ function captureEnvironment(capture: Capture, shipped: ShippedLayer, env: Record
     const models = typeof raw === "string" ? [raw] : Array.isArray(raw) ? raw : [];
     const model = models[0];
     if (!shipped.agentRoles.has(agent)) { capture.notes.push(`not captured: KHEREP_AGENT_MODEL_POLICY names ${agent}, which is not a Kherep agent`); continue; }
-    if (typeof model !== "string" || !known(model)) { capture.notes.push(`not captured: KHEREP_AGENT_MODEL_POLICY gives ${agent} a model outside the catalog`); continue; }
+    if (typeof model !== "string" || !inCatalog(capture, shipped, model)) { capture.notes.push(`not captured: KHEREP_AGENT_MODEL_POLICY gives ${agent} a model outside the catalog`); continue; }
     entry(capture, agent).model = model;
     capture.notes.push(`captured agents.${agent}.model = ${model} from KHEREP_AGENT_MODEL_POLICY${models.length > 1 ? ` (first of ${models.length})` : ""}`);
   }
@@ -90,7 +93,7 @@ function captureFrontmatter(capture: Capture, shipped: ShippedLayer, agentsDir: 
       } else if (capture.policy.agents[agent]?.model !== undefined) {
         capture.notes.push(`not captured: agents/${agent}.md model; KHEREP_AGENT_MODEL_POLICY, which dispatch enforced, is kept`);
       } else {
-        if (model !== INHERIT && !shipped.models.has(model) && !(model in capture.policy.models)) capture.policy.models[model] = {};
+        if (model !== INHERIT && !inCatalog(capture, shipped, model)) capture.policy.models[model] = {};
         entry(capture, agent).model = model;
         capture.notes.push(`captured agents.${agent}.model = ${model} from the edited agents/${agent}.md`);
       }
@@ -128,11 +131,12 @@ function main(argv: string[]): number {
     return 0;
   }
   for (const note of capture.notes) console.log(`model policy: ${note}`);
-  if (Object.keys(capture.policy.agents).length === 0 && Object.keys(capture.policy.models).length === 0) {
+  const noModels = Object.keys(capture.policy.models).length === 0;
+  if (Object.keys(capture.policy.agents).length === 0 && noModels) {
     console.log("model policy: nothing to migrate");
     return 0;
   }
-  if (Object.keys(capture.policy.models).length === 0) delete (capture.policy as Partial<Capture["policy"]>).models;
+  if (noModels) delete (capture.policy as Partial<Capture["policy"]>).models;
   fs.writeFileSync(out, `${JSON.stringify(capture.policy, null, 2)}\n`);
   // The result must load exactly as the guard will load it.
   loadModelPolicy({ files: { shipped: shippedFile, user: out }, env: {} });

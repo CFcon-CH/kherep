@@ -129,8 +129,8 @@ export function evaluateDispatch(event: DispatchEvent | null | undefined): Dispa
   }
   // Issue #737. No equality to a default: any dispatchable model and any
   // effort of the vocabulary is the user's choice.
-  const issue = dispatchIssue(policy, normalized.model, event.effort);
-  if (issue) return deny(issue.ruleId, issue.reason, normalized);
+  const modelIssue = dispatchIssue(policy, normalized.model, event.effort);
+  if (modelIssue) return deny(modelIssue.ruleId, modelIssue.reason, normalized);
   const effortWarning = dispatchWarning(policy, normalized.model, event.effort);
   // Issue #331. Only the prompt is the brief: the description is a short label
   // that must neither supply a finding marker nor be read as part of one.
