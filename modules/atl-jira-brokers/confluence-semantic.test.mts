@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { resolveTwg, semanticProposals, type ExecLike } from "./confluence-semantic.mts";
+import { itemsFrom, resolveTwg, semanticProposals, titlesFrom, type ExecLike } from "./confluence-semantic.mts";
 
 function existing(...entries: string[]): (candidate: string) => boolean {
   const values = new Set(entries);
@@ -84,7 +84,7 @@ test("the resolved path is what gets spawned", async () => {
     outFile: "/tmp/out.json",
   });
   assert.deepEqual(calls, ["/Users/test/.local/bin/twg"]);
-  assert.deepEqual(result, { titles: ["A"] });
+  assert.deepEqual(result, { titles: ["A"], items: [{ id: "", title: "A", snippet: "" }] });
 });
 
 test("a missing CLI is a search that did not run, never an empty result", async () => {
@@ -98,4 +98,53 @@ test("a missing CLI is a search that did not run, never an empty result", async 
   assert.equal(calls, 0);
   assert.deepEqual(result.titles, []);
   assert.match(String(result.error), /^semantic search did not run: twg not found/);
+});
+
+// Issue #736: the hit's id and content excerpt survive, so a candidate can be
+// matched by id and judged on what the page says, not on its title alone.
+test("itemsFrom keeps id, title and snippet, with text as the snippet fallback", () => {
+  const payload = { data: { results: [
+    { id: "101", title: "Logon task", snippet: "A scheduled task runs at logon." },
+    { id: "ari:cloud:confluence:site:page/202", title: "Owner probe", text: "Retries the owner probe." },
+    { url: "https://wiki.example.com/wiki/spaces/KB/pages/303/Title", title: "Idle state", snippet: "", text: "Codex idles." },
+    { id: "not-a-page-id", title: "No id", snippet: 7 },
+    { id: "404", title: "   " },
+    "junk",
+  ] } };
+  assert.deepEqual(itemsFrom(payload), [
+    { id: "101", title: "Logon task", snippet: "A scheduled task runs at logon." },
+    { id: "202", title: "Owner probe", snippet: "Retries the owner probe." },
+    { id: "303", title: "Idle state", snippet: "Codex idles." },
+    { id: "", title: "No id", snippet: "7" },
+  ]);
+  assert.deepEqual(titlesFrom(payload), ["Logon task", "Owner probe", "Idle state", "No id"]);
+});
+
+function recorder() {
+  const argv: string[][] = [];
+  const exec: ExecLike = async (_file, args) => { argv.push(args); return { stdout: "", stderr: "" }; };
+  const read = async () => JSON.stringify({ results: [{ id: "1", title: "T", text: "x" }] });
+  return { argv, deps: { cli: "/bin/twg", exec, read, remove: async () => {}, outFile: "/tmp/out.json" } };
+}
+
+test("the space key narrows the search and the joined query follows the -- separator", async () => {
+  const { argv, deps } = recorder();
+  const result = await semanticProposals("Logon task. A scheduled task runs at logon.", 25, { ...deps, spaceKey: "KB" });
+  assert.deepEqual(argv, [["rovo", "search", "--app", "confluence", "--space", "KB", "--limit", "25", "-o", "json",
+    "--output-file", "/tmp/out.json", "--", "Logon task. A scheduled task runs at logon."]]);
+  assert.deepEqual(result.items, [{ id: "1", title: "T", snippet: "x" }]);
+});
+
+test("without a space key no --space is sent", async () => {
+  const { argv, deps } = recorder();
+  await semanticProposals("Logon task", 25, deps);
+  assert.ok(!argv[0].includes("--space"));
+});
+
+test("a query that starts with a dash is refused before anything runs", async () => {
+  const { argv, deps } = recorder();
+  const result = await semanticProposals("--space OTHER. topic", 25, { ...deps, spaceKey: "KB" });
+  assert.deepEqual(argv, []);
+  assert.deepEqual(result.items, []);
+  assert.match(String(result.error), /refused a query that starts with a dash/);
 });

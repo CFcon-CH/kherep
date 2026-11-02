@@ -12,8 +12,20 @@ import { readFile, rm } from "node:fs/promises";
 import { homedir as osHomedir, tmpdir } from "node:os";
 import { join, posix, win32 } from "node:path";
 
+// One search hit as the search returned it. The id is the Confluence page id
+// when the hit carried a readable one, else empty and the title decides; the
+// snippet is the content excerpt the search returned (issue #736).
+export interface ProposalItem {
+  id: string;
+  title: string;
+  snippet: string;
+}
+
 export interface Proposals {
   titles: string[];
+  // The same hits with id and snippet, in the same order. Optional so that an
+  // injected search returning titles only still type-checks.
+  items?: ProposalItem[];
   // Set when the search could not run. Absent means the search ran; an empty
   // titles list is then a measured result rather than a missing one.
   error?: string;
@@ -33,15 +45,40 @@ const execFileAsync: ExecLike = (file, args, options) =>
     });
   });
 
-export function titlesFrom(payload: unknown): string[] {
+function rowsFrom(payload: unknown): unknown[] {
   const data = (payload as { data?: unknown })?.data ?? payload;
   const rows = (data as { results?: unknown; items?: unknown })?.results
     ?? (data as { items?: unknown })?.items
     ?? data;
-  if (!Array.isArray(rows)) return [];
-  return rows
-    .map((row) => String((row as { title?: unknown })?.title ?? "").trim())
-    .filter(Boolean);
+  return Array.isArray(rows) ? rows : [];
+}
+
+const str = (value: unknown): string => (typeof value === "string" || typeof value === "number" ? String(value) : "");
+
+// A page id in any of the shapes a hit may carry it: the bare digits, a page
+// ARI (".../page/123") or a page URL ("/pages/123"). Anything else is no id,
+// and the title decides instead - never a guessed one.
+function pageIdOf(row: Record<string, unknown>): string {
+  for (const value of [row.id, row.ari, row.url]) {
+    const text = str(value).trim();
+    if (/^\d+$/.test(text)) return text;
+    const match = /[/:]pages?\/(\d+)(?:[/?#]|$)/.exec(text);
+    if (match) return match[1];
+  }
+  return "";
+}
+
+export function itemsFrom(payload: unknown): ProposalItem[] {
+  return rowsFrom(payload)
+    .map((raw) => {
+      const row = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+      return { id: pageIdOf(row), title: str(row.title).trim(), snippet: str(row.snippet) || str(row.text) };
+    })
+    .filter((item) => item.title);
+}
+
+export function titlesFrom(payload: unknown): string[] {
+  return itemsFrom(payload).map((item) => item.title);
 }
 
 // Where an installed twg is looked for, injected so a test needs no binary.
@@ -96,6 +133,9 @@ export interface SemanticDeps extends TwgLookup {
   // Injected so the file name is deterministic in a test.
   outFile?: string;
   cli?: string;
+  // Narrows the search to one space (twg 1.3.8 and later). The space index
+  // still filters afterwards: an older twg without --space fails closed.
+  spaceKey?: string;
 }
 
 // The site-wide limit is deliberately generous: the space filter happens
@@ -111,33 +151,35 @@ export async function semanticProposals(
   const remove = deps.remove ?? ((path: string) => rm(path, { force: true }));
   const out = deps.outFile ?? join(tmpdir(), `kherep-related-${process.pid}.json`);
 
-  // The query is a page title, and a title that starts with a dash would be
+  // The query starts with a page title, and a title that starts with a dash would be
   // read by the CLI as a flag rather than as a search term. The end-of-options
   // separator settles it, and the explicit refusal covers a CLI that does not
   // honour one - a title is data and must never decide which flags run.
   if (query.startsWith("-")) {
-    return { titles: [], error: "semantic search refused a query that starts with a dash" };
+    return { titles: [], items: [], error: "semantic search refused a query that starts with a dash" };
   }
 
   try {
     const cli = deps.cli ?? resolveTwg(deps);
+    const space = deps.spaceKey ? ["--space", deps.spaceKey] : [];
     await exec(cli, [
       "rovo", "search",
       "--app", "confluence",
+      ...space,
       "--limit", String(limit),
       "-o", "json",
       "--output-file", out,
       "--", query,
     ], { timeout: 90_000 });
   } catch (error) {
-    return { titles: [], error: `semantic search did not run: ${(error as Error).message}` };
+    return { titles: [], items: [], error: `semantic search did not run: ${(error as Error).message}` };
   }
 
   try {
-    const titles = titlesFrom(JSON.parse(await read(out)));
-    return { titles };
+    const items = itemsFrom(JSON.parse(await read(out)));
+    return { titles: items.map((item) => item.title), items };
   } catch (error) {
-    return { titles: [], error: `semantic search wrote no readable result: ${(error as Error).message}` };
+    return { titles: [], items: [], error: `semantic search wrote no readable result: ${(error as Error).message}` };
   } finally {
     await remove(out).catch(() => {});
   }
