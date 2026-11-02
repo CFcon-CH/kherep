@@ -161,6 +161,8 @@ test('a failed candidate search writes no receipt and publishes nothing', async 
     const { out } = await candidates(f);
     assert.deepEqual(out, { text: 'OBS-CANDIDATES: failed related-unavailable', isError: true });
     assert.equal(fs.existsSync(f.dir) && fs.readdirSync(f.dir).length > 0, false);
+    // codex-obs then publishes once with the all-zero token: UNKNOWN, nothing created.
+    assert.equal(await publish(f, { candidates: '0'.repeat(64), approved: [] }), 'OBS-RESULT: failed related-unavailable');
     assert.deepEqual(f.writes(), []);
 });
 

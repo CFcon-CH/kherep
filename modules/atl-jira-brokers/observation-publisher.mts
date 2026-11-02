@@ -77,6 +77,11 @@ export async function publishObservations(input: unknown, broker: ObservationBro
         if (!author)
             throw new Error();
         // Every finding's links are checked before the first page is created.
+        // 64 zeros is codex-obs saying its candidate search failed: UNKNOWN,
+        // so nothing is created, as before the search moved out (issue #736).
+        phase = 'related-unavailable';
+        if (request.observations.some(finding => /^0{64}$/.test(finding.links.candidates)))
+            throw new Error();
         phase = 'links-refused';
         const linked: Linked[] = [];
         for (const finding of request.observations)

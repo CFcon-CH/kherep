@@ -27,7 +27,7 @@ export function observationPrompt(workspace = SELECTED_WORKSPACE, platform = pro
   "A finding about repository code starts with code after measured: and names each repository as <name>@<full commit sha> before the command, each followed by -- and the repo-relative paths the finding rests on.",
     "Luna owns extraction and publication through mcp__kherep_observations__publish_observations only, using the supplied session/turn IDs and named node.",
     "Require one strict OBS-RESULT receipt, or a bounded OBS-ATTEMPT worker report when no canonical receipt exists, as defined in the worker contract. Preserve canonical receipts and all created IDs even when isError is true; isError alone does not prove an outer refusal.",
-    "The adapter validates candidates, literal canonical authority bound to the resolved space, placement, related lookup, labels, trusted author readback and targeted stitch.",
+    "The adapter validates candidates, literal canonical authority bound to the resolved space, placement, the approved links against their related_candidates receipt, labels and trusted author readback, and writes only the links codex-obs approved after judging each candidate on topic.",
     "Independently validate the handback and read canonical created targets. Report failed receipts and non-adapter attempts in the same turn; attempted calls without a receipt leave publication and IDs UNKNOWN. Never silently publish or repair.",
     "A malformed-handback correction allows NO further publication, retry, tool call or replacement page. Empty findings cause zero I/O.",
   "Follow orchestra/ROUTING.md. If codex-obs was already dispatched for this turn, do not dispatch it again; an observation run never dispatches another observation run.",
