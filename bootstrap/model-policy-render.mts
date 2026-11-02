@@ -63,14 +63,14 @@ export function portableAgentText(text: string, label: string): string {
   return ["---" + eol, ...front, `model: ${MODEL_PLACEHOLDER}${eol}`, `effort: ${EFFORT_PLACEHOLDER}${eol}`, ...lines.slice(end)].join("\n");
 }
 
-function agentName(file: string): string {
-  return path.basename(file, ".md");
-}
-
 export function renderAgentFile(source: string, out: string, policy: ResolvedPolicy): void {
   const text = fs.readFileSync(source, "utf8");
   fs.mkdirSync(path.dirname(out), { recursive: true });
-  fs.writeFileSync(out, renderAgentText(text, policy.agents.get(agentName(source)), `agents/${path.basename(source)}`));
+  fs.writeFileSync(out, renderAgentText(text, policy.agents.get(path.basename(source, ".md")), `agents/${path.basename(source)}`));
+}
+
+function agentFiles(dir: string): string[] {
+  return fs.readdirSync(dir).filter((file) => file.endsWith(".md")).sort();
 }
 
 function load(shipped: string, user: string): ResolvedPolicy {
@@ -83,7 +83,7 @@ function main(argv: string[]): number {
     const [sourceDir, outDir, shipped, user] = args;
     const policy = load(shipped, user);
     for (const warning of policy.warnings) console.error(`model policy: WARNING ${warning}`);
-    for (const name of fs.readdirSync(sourceDir).filter((file) => file.endsWith(".md")).sort()) {
+    for (const name of agentFiles(sourceDir)) {
       renderAgentFile(path.join(sourceDir, name), path.join(outDir, name), policy);
     }
     return 0;
@@ -94,7 +94,7 @@ function main(argv: string[]): number {
     return 0;
   }
   if (command === "portable" && args.length === 1) {
-    for (const name of fs.readdirSync(args[0]).filter((file) => file.endsWith(".md")).sort()) {
+    for (const name of agentFiles(args[0])) {
       const file = path.join(args[0], name);
       fs.writeFileSync(file, portableAgentText(fs.readFileSync(file, "utf8"), `agents/${name}`));
     }
