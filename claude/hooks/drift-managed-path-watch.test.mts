@@ -137,6 +137,15 @@ test("a file install.sh renders says the edit belongs in its source", () => {
   assert.doesNotMatch(contextOf(run(path.join(HOME, "hooks", "commit-guard.mts"))) ?? "", /BUILT/);
 });
 
+// Issue #737. install.sh renders model and effort into the installed agents
+// from the policy files, so those two lines belong in the user policy file.
+test("an installed agent names the user policy file for model and effort", () => {
+  const context = contextOf(run(path.join(HOME, "agents", "claude-obs.md"))) ?? "";
+  assert.ok(context.includes("kherep/claude/agents/claude-obs.md\n"), context);
+  assert.match(context, /model-policy\.user\.json/);
+  assert.doesNotMatch(context, /Carry this change into the repo source/);
+});
+
 test("backslashes, upper case and a . segment still match", () => {
   const shouted = path.join(HOME, "HOOKS", "Commit-Guard.mts").replace(/\//g, "\\").toUpperCase();
   assert.ok(names(shouted, "claude/hooks/"), "a shouted Windows path is not recognised");
@@ -186,7 +195,7 @@ function argsOf(line: string): string[] {
 function invocationsOf(script: string): Invocation[] {
   const found: Invocation[] = [];
   for (const line of script.replace(/\\\r?\n\s*/g, " ").split(/\r?\n/)) {
-    const m = /^\s*(cmp_file|cmp_tree|cmp_block|cmp_rendered)\s+(.+)$/.exec(line);
+    const m = /^\s*(cmp_file|cmp_tree|cmp_block|cmp_rendered|cmp_agent)\s+(.+)$/.exec(line);
     if (!m) continue;
     const args = argsOf(m[2]);
     if (args.length < 3) continue; // function definition / malformed - not a call

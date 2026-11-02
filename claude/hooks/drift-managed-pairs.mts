@@ -12,7 +12,7 @@
  *     maps to claude/<rel>; directory entries cover their whole subtree, because
  *     the script walks them with cmp_tree
  *   - settings.json, CLAUDE.md and teams/kherep/ROUTING.md are special-cased
- *     there and here: install.sh builds them from their sources
+ *     there and here, agents/*.md are rendered: install.sh builds them all
  *   - the runtime and project pairs the script compares outside the manifest loop
  * drift-managed-path-watch.test.mts parses the cmp_file/cmp_tree invocations out
  * of the script and asserts this map covers every live target they name, so the
@@ -243,5 +243,5 @@ export function manifestPairs(home: string, workspace: string): ManagedPair[] {
     // These are special-cased in fixedPairs with their real sources, exactly as
     // drift-check.sh special-cases them inside the same loop.
     .filter((rel) => !RENDERED_ENTRIES.has(rel))
-    .map((rel) => ({ live: joinPathLike(home, rel), source: `claude/${rel}` }));
+    .map((rel) => ({ live: joinPathLike(home, rel), source: `claude/${rel}`, rendered: /^agents\/[^/]+\.md$/.test(rel) || undefined }));
 }

@@ -76,6 +76,11 @@ function carryHint(match: Match): string {
     return `Only the <!-- kherep-project-rules --> block is managed; text outside it is operator content and never drift. `
       + `If the edit is inside the block, carry it into the source in the SAME working step.`;
   }
+  if (/^claude\/agents\/[^/]+\.md$/.test(match.source)) {
+    return "The live frontmatter model: and effort: are rendered from kherep/model-policy.json plus "
+      + "<CLAUDE_HOME>/kherep/model-policy.user.json; change model or effort in the user file, anything else in the source. "
+      + "A live-only edit is overwritten on the next install.";
+  }
   if (match.rendered) {
     return `The live file is BUILT from that source by install.sh, so the edit belongs in the source - `
       + `a live-only change is overwritten on the next install.`;
