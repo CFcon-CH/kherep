@@ -228,6 +228,14 @@ cmp_file "project/tools/confluence-neighbours.mts" \
   "$HERE/../modules/atl-jira-brokers/confluence-neighbours.mts" "$WS/tools/confluence-neighbours.mts"
 cmp_file "project/tools/confluence-neighbour-cli.mts" \
   "$HERE/../modules/atl-jira-brokers/confluence-neighbour-cli.mts" "$WS/tools/confluence-neighbour-cli.mts"
+cmp_file "project/tools/confluence-topic-query.mts" \
+  "$HERE/../modules/atl-jira-brokers/confluence-topic-query.mts" "$WS/tools/confluence-topic-query.mts"
+cmp_file "project/tools/confluence-candidates.mts" \
+  "$HERE/../modules/atl-jira-brokers/confluence-candidates.mts" "$WS/tools/confluence-candidates.mts"
+cmp_file "project/tools/confluence-stitch.mts" \
+  "$HERE/../modules/atl-jira-brokers/confluence-stitch.mts" "$WS/tools/confluence-stitch.mts"
+cmp_file "project/tools/confluence-list-cli.mts" \
+  "$HERE/../modules/atl-jira-brokers/confluence-list-cli.mts" "$WS/tools/confluence-list-cli.mts"
 cmp_file "project/tools/confluence-runtime-label.mts" \
   "$HERE/../modules/atl-jira-brokers/confluence-runtime-label.mts" "$WS/tools/confluence-runtime-label.mts"
 cmp_file "project/tools/confluence-label-cli.mts" \

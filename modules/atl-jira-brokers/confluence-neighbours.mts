@@ -21,7 +21,7 @@ export interface NeighbourDeps {
   spaceKey: string;
   log: (line: string) => void;
   logError: (line: string) => void;
-  semantic: (query: string, limit?: number) => Promise<Proposals>;
+  semantic: (query: string, limit?: number, options?: { spaceKey?: string }) => Promise<Proposals>;
   // Only the stitching call writes. It is injected rather than imported so the
   // read-only calls cannot reach a write path at all.
   update: (id: string, storage: string, message: string) => Promise<void>;

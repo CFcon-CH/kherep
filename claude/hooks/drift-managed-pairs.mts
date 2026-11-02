@@ -152,6 +152,22 @@ export function fixedPairs(home: string, workspace: string): ManagedPair[] {
       source: "modules/atl-jira-brokers/confluence-neighbour-cli.mts",
     },
     {
+      live: joinPathLike(workspace, "tools/confluence-topic-query.mts"),
+      source: "modules/atl-jira-brokers/confluence-topic-query.mts",
+    },
+    {
+      live: joinPathLike(workspace, "tools/confluence-candidates.mts"),
+      source: "modules/atl-jira-brokers/confluence-candidates.mts",
+    },
+    {
+      live: joinPathLike(workspace, "tools/confluence-stitch.mts"),
+      source: "modules/atl-jira-brokers/confluence-stitch.mts",
+    },
+    {
+      live: joinPathLike(workspace, "tools/confluence-list-cli.mts"),
+      source: "modules/atl-jira-brokers/confluence-list-cli.mts",
+    },
+    {
       live: joinPathLike(workspace, "tools/confluence-runtime-label.mts"),
       source: "modules/atl-jira-brokers/confluence-runtime-label.mts",
     },
