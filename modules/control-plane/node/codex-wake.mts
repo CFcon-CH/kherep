@@ -1,3 +1,4 @@
+import { automaticReplyDecision } from "./reply-admission.mts";
 import fs from "node:fs";
 import { livenessAdmission } from "./session-lifecycle.mts";
 
@@ -9,7 +10,7 @@ import type { NodePaths } from "./config.mts";
 import { deliveryContext, MAX_OFFERS, offerEnded, sessionInbox } from "./deliver-core.mts";
 import { inboxOf, progressRecords } from "./delivery-progress.mts";
 import { exhaustedOfferReason, permanentFallbackFailure } from "./delivery-failure.mts";
-import { getMessage, markRefused as refuseRecord, markRetry, MAX_REPLY_DEPTH, messageIds, type InboxRecord } from "./inbox.mts";
+import { getMessage, markRefused as refuseRecord, markRetry, messageIds, type InboxRecord } from "./inbox.mts";
 import { wakeAllowed, wakeBudget } from "./policy.mts";
 import { notReadyNow } from "./runtime-readiness.mts";
 import type { RunnerDeps } from "./session-runner.mts";
@@ -28,12 +29,12 @@ import { killSwitch, STUCK_TEXT, wakeText } from "./wake-hook.mts";
 // offered again within the offer limits.
 // The guards are the Claude wake's (wake-hook.mts, autonomy.mts): the kill
 // switch, the wake allowlist or the task grant (messages of the session's own
-// task), never bypassPermissions, reply depth below MAX_REPLY_DEPTH, and the
+// task), never bypassPermissions, reply depth below and the
 // per-session budget of autonomous turns. Since a resume starts a process, it
 // also needs sessions enabled with codex listed, and a free slot under
 // maxConcurrent. One run per task: messages arriving meanwhile wait for it to end.
 
-const atReplyLimit = (record: InboxRecord): boolean => (record.depth ?? 0) >= MAX_REPLY_DEPTH;
+const atReplyLimit = (record: InboxRecord): boolean => !automaticReplyDecision(record).allowed;
 const ids = (records: InboxRecord[]): string[] => records.map((r) => r.messageId);
 
 // Each message is audited once per action, not at every 2-second round.

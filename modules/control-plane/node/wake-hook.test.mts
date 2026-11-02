@@ -296,3 +296,16 @@ test("hooks behind a fresh bash each take the run mode kept under CLAUDE_PID (is
     assert.deepEqual(auditLines(paths).map((l) => l.action), ["headless", "headless"]);
     assert.deepEqual(fs.readdirSync(path.join(paths.dir, "run-modes")), [`${SELF}.4242.json`]);
   });
+
+test("guarded20 wakes through pending/listener while malformed admission stays blocked", async (t) => {
+  for (const valid of [true, false]) {
+    const { paths } = setup(t);
+    const id = arrive(paths, 1, T0 + 5_000, "review", 20);
+    const record = getMessage(paths.inbox, id)!;
+    writeJsonAtomic(path.join(paths.inbox, `${id}.json`), { ...record,
+      loop: { version: valid ? 1 : 2, threadId: id, depth: 20, generation: 0, ordinal: 21 } });
+    const outcome = await listen(paths, { maxWaitMs: 20_000 });
+    assert.deepEqual(outcome, { code: 2, text: valid ? wakeText(1) : REARM_TEXT });
+    assert.equal(auditLines(paths).some((r) => r.action === "wake"), valid);
+  }
+});

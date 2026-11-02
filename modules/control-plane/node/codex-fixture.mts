@@ -68,7 +68,7 @@ if (prompt.includes("[stderr]")) {
 }
 const peer = /^Message id: (\\S+)$/m.exec(prompt);
 if (peer && !prompt.includes("[fail]") && !prompt.includes("[no-reply]")) require("node:child_process").spawnSync(process.execPath, [${JSON.stringify(CLI)}, "msg", "send", "--reply-to", peer[1], "--", "ack"],
-  { stdio: "ignore" });
+  { stdio: "ignore", env: { ...process.env, CODEX_THREAD_ID: thread } });
 emit({ type: "thread.started", thread_id: thread });
 emit({ type: "turn.started" });
 if (prompt.includes("[ignore-term]")) process.on("SIGTERM", () => {});

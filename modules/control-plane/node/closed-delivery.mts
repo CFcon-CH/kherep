@@ -1,3 +1,4 @@
+import { automaticReplyDecision } from "./reply-admission.mts";
 import fs from "node:fs";
 import { closedFallbackGeneration } from "./session-lifecycle.mts";
 
@@ -11,7 +12,7 @@ import { ensureDir, type NodePaths } from "./config.mts";
 import { attachDelivery } from "./delivery-identity.mts";
 import { progressRecords } from "./delivery-progress.mts";
 import { readLocalSessions } from "./exchange.mts";
-import { listInbox, markClosedAttempt, markRefused, MAX_REPLY_DEPTH, readJson, type InboxRecord } from "./inbox.mts";
+import { listInbox, markClosedAttempt, markRefused, readJson, type InboxRecord } from "./inbox.mts";
 import { RecordLockBusy } from "./inbox-record-lock.mts";
 import { closedSession, findKnown, trackSession } from "./known-sessions.mts";
 import { acceptsMessage, wakeBudget } from "./policy.mts";
@@ -155,7 +156,7 @@ async function deliver(deps: RunnerDeps, found: Target, all: InboxRecord[], now:
   const local = readLocalSessions(paths);
   const accepted = all.filter((r) => acceptsMessage(policy, r.toSession, r.from.nodeId, local));
   if (accepted.length < all.length) refuse("not accepted by node policy", "wake-not-authorized", all.filter((r) => !accepted.includes(r)));
-  const deep = accepted.filter((r) => (r.depth ?? 0) >= MAX_REPLY_DEPTH);
+  const deep = accepted.filter((r) => !automaticReplyDecision(r).allowed);
   if (deep.length > 0) refuse("reply depth limit", "reply-limit", deep);
   let records = accepted.filter((r) => !deep.includes(r));
   if (records.length === 0) return false;

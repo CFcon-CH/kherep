@@ -1,3 +1,4 @@
+import { automaticReplyDecision } from "./reply-admission.mts";
 import fs from "node:fs";
 
 import { bypassesPermissions, isPlainSessionId, type AutonomyAction, type WakeGrant } from "./autonomy.mts";
@@ -12,7 +13,7 @@ import { note, pruneNoted } from "./codex-wake.mts";
 export { guardQueue, QUEUE_TIMEOUT_MS, queueArgs } from "./codex-queue-run.mts";
 import { inboxOf, progressRecords } from "./delivery-progress.mts";
 import { REOFFER_AFTER_MS } from "./deliver-core.mts";
-import { getMessageProgress, MAX_REPLY_DEPTH, type InboxRecord } from "./inbox.mts";
+import { getMessageProgress, type InboxRecord } from "./inbox.mts";
 import { explicitlyListed, wakeAllowed } from "./policy.mts";
 import type { RunnerDeps } from "./session-runner.mts";
 import { listTasks } from "./task-records.mts";
@@ -150,12 +151,12 @@ function queueFor(deps: RunnerDeps, sessionId: string, live: string[], selectInb
     progressRecords(paths, fresh, "waiting", "permission-restricted", now);
     return decide(fresh, "permission-mode-unknown");
   }
-  const deep = fresh.filter((r) => (r.depth ?? 0) >= MAX_REPLY_DEPTH);
+  const deep = fresh.filter((r) => !automaticReplyDecision(r).allowed);
   if (deep.length > 0) {
     progressRecords(paths, deep, "waiting", "reply-limit", now);
     decide(deep, "depth-limit");
   }
-  const due = fresh.filter((r) => (r.depth ?? 0) < MAX_REPLY_DEPTH);
+  const due = fresh.filter((r) => automaticReplyDecision(r).allowed);
   if (due.length === 0) return;
   const tuiReachable = reachable(sessionId);
   // Full policy authorization does not require the owner's loaded-thread

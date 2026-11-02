@@ -1,3 +1,5 @@
+import { wasGuardedMcpReply } from "./guarded-replies.mts";
+import { isLoopAdmissionV1 } from "../protocol-loop-brake.mts";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -32,7 +34,7 @@ export { SEND_RETRY_MS } from "./send-schedule.mts";
 // depth: the reply depth (inbox.mts InboxRecord.depth); fromSessionId: the
 // sender session's id where fromSession is its name (the reply grant,
 // wake-reply.mts). Both stay local: toSendBody builds the frame without them.
-export interface OutboxRecord extends MessageSendBody { createdAt: string; depth?: number; fromSessionId?: string }
+export interface OutboxRecord extends MessageSendBody { createdAt: string; depth?: number; fromSessionId?: string; guarded?: true }
 // A malformed outbox file leaves a sent record with only messageId and state error.
 // noticedAt: when the delivery hook told the sending session that the message
 // failed or was received (sent-notices.mts); a record is told at most once.
@@ -124,7 +126,16 @@ export function replyDepth(paths: NodePaths, inReplyTo: string | undefined): num
 // A delivered reply or proxy answer (issue #408) is one hop deeper than the
 // message of this node it answers.
 export function deliveryDepth(paths: NodePaths, body: MessageDeliverBody): number {
-  return replyDepth(paths, body.proxyOf ?? body.inReplyTo);
+  if (Object.hasOwn(body, "loop")) {
+    if (!isLoopAdmissionV1(body.loop)) throw new Error("invalid loop admission");
+    return body.loop.depth;
+  }
+  const parent = body.proxyOf ?? body.inReplyTo;
+  if (parent && wasGuardedMcpReply(paths, parent)) throw new Error("loop-lineage-unavailable");
+  let sent: SentRecord | null = null;
+  try { sent = parent ? getSent(paths, parent) : null; } catch { /* legacy fail-soft reconstruction remains below */ }
+  if (sent?.guarded) throw new Error("loop-lineage-unavailable");
+  return replyDepth(paths, parent);
 }
 
 export function markNoticed(paths: NodePaths, messageId: string, now: number = Date.now()): void {

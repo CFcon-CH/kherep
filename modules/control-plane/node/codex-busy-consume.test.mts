@@ -103,3 +103,14 @@ test("no eligible reference leaves the generation unclaimed", (t) => {
   assert.equal(deliverForCodex(node.input, node.hookDeps), "");
   assert.equal(JSON.parse(fs.readFileSync(node.ticket, "utf8")).claimed, false);
 });
+
+test("guarded20 counts in exact-owner hint consumption; malformed admission never consumes", (t) => {
+  for (const valid of [true, false]) {
+    const node = busyFixture(t), id = node.ids[0];
+    const file = path.join(node.paths.inbox, `${id}.json`);
+    fs.writeFileSync(file, JSON.stringify({ ...getMessage(node.paths.inbox, id)!, depth: 20,
+      loop: { version: valid ? 1 : 2, threadId: id, depth: 20, generation: 0, ordinal: 21 } }));
+    assert.equal(deliverForCodex(node.input, node.hookDeps).includes("New peer messages"), valid);
+    assert.equal(JSON.parse(fs.readFileSync(node.ticket, "utf8")).claimed, valid);
+  }
+});

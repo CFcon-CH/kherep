@@ -135,7 +135,7 @@ function relayAttempt(deps: RelayDeps, owner: string, attempt: ForkAttempt, now:
   if (!getOutbox(paths, relay)) {
     // to is the inbox record's sender, never model output.
     writeOutbox(paths, { messageId: relay, fromSession: owner, fromSessionId: owner, to: { nodeId: record.from.nodeId, session: record.from.session },
-      text: proxyText(owner, a.forkId!, a.messageId, a.answer!), proxyOf: a.messageId, depth: (record.depth ?? 0) + 1, createdAt: iso(now) });
+      text: proxyText(owner, a.forkId!, a.messageId, a.answer!), proxyOf: a.messageId, depth: (record.depth ?? 0) + 1, ...(record.loop ? { guarded: true as const } : {}), createdAt: iso(now) });
     written.add(relay);
   }
   deps.codex?.beforeOutbox?.();

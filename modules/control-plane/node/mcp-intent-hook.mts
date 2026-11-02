@@ -6,6 +6,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { MCP_TOOLS, digestMcpArguments, type McpRuntime, type McpTool } from "../protocol-mcp.mts";
 import { nodePaths, readConfig, type NodePaths } from "./config.mts";
 import { consumeMcpIntentReceipt, enqueueMcpIntent } from "./mcp-local.mts";
+import { rememberGuardedMcpReply } from "./guarded-replies.mts";
 import { loadPolicy, mcpRuntimeEnabled } from "./policy.mts";
 
 const PREFIX = "mcp__kherep_messaging__";
@@ -86,6 +87,7 @@ export async function processMcpIntentHook(input: Record<string, unknown>, root:
     return output;
   };
   try {
+    if (tool === "reply") rememberGuardedMcpReply(paths, requestId, input.tool_input.inReplyTo);
     enqueueMcpIntent(paths, { requestId, runtime, sessionId: input.session_id, callId: input.tool_use_id,
       tool, argumentsDigest: await digestMcpArguments(input.tool_input) });
     enqueued = performance.now();

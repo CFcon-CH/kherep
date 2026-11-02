@@ -322,3 +322,16 @@ test("a terminal generation published during the existing process await vetoes f
   assert.equal(getMessage(node.paths.inbox, id)?.closedAttempt, undefined);
   assert.equal(takeTurn(node.paths, SESSION, T0), "ok");
 });
+
+test("guarded20 reaches closed fallback; malformed admission preserves the waiting inbox", async (t) => {
+  for (const valid of [true, false]) {
+    const node = closedNode(t);
+    rememberMode(node.paths, SESSION, "auto");
+    const id = deliver(node, { depth: 20 });
+    fs.writeFileSync(path.join(node.paths.inbox, `${id}.json`), JSON.stringify({ ...getMessage(node.paths.inbox, id)!,
+      loop: { version: valid ? 1 : 2, threadId: id, depth: 20, generation: 0, ordinal: 21 } }));
+    await deliverToClosed(node.deps());
+    assert.equal(claudeRuns(node).length, valid ? 1 : 0);
+    if (!valid) assert.equal(getMessage(node.paths.inbox, id)?.state, "accepted");
+  }
+});

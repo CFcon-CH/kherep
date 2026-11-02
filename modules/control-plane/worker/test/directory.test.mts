@@ -48,7 +48,7 @@ describe("directory frames", () => {
     expect(body.sessions.some((s) => s.nodeId === cId)).toBe(false);
     expect(body.truncated).toBeUndefined();
     // Issue #408, PR 4: a node relays a proxy answer only to a Worker that names this.
-    expect(body.worker).toEqual({ capabilities: [MESSAGING_PROXY_CAPABILITY] });
+    expect(body.worker).toEqual({ capabilities: [MESSAGING_PROXY_CAPABILITY, "messaging.loop-brake.v1"] });
 
     socket.send(makeEnvelope("directory.get", { everything: true }, 2, 0));
     expect(await socket.next()).toMatchObject({ type: "error", body: { error: "invalid directory.get body" } });

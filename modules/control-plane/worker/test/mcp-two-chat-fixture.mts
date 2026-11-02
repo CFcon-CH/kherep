@@ -77,6 +77,22 @@ export interface NativeNode {
   close(): Promise<void>;
 }
 
+// One shared test-only shim supports multiple synthetic nodes without nesting a spy on itself.
+const ownedRoots = new Set<string>();
+let restoreRename: (() => void) | undefined;
+function trackSyntheticRoot(root: string): () => void {
+  if (ownedRoots.size === 0) {
+    const rename = fs.renameSync;
+    const spy = vi.spyOn(fs, "renameSync").mockImplementation((from, to) => {
+      rename(from, to);
+      if ([...ownedRoots].some((r) => String(to).startsWith(r + path.sep))) fs.utimesSync(to, new Date(), new Date());
+    });
+    restoreRename = () => spy.mockRestore();
+  }
+  ownedRoots.add(root);
+  return () => { ownedRoots.delete(root); if (ownedRoots.size === 0) { restoreRename?.(); restoreRename = undefined; } };
+}
+
 // `sessions` is read on every listing, so a caller may change it in place.
 export async function startNativeNode(name: string, sessions: SessionInfo[]): Promise<NativeNode> {
   const { processMcpIntentHook } = await runtimeOnly("mcp-intent-hook") as HookModule;
@@ -87,11 +103,7 @@ export async function startNativeNode(name: string, sessions: SessionInfo[]): Pr
   // exchange reads mtime as publication time, so 0 makes a fresh intent look
   // expired and lets one hook prune another's pending file. Stamp the current
   // time on each atomic publication under this root, as a real file system does.
-  const rename = fs.renameSync;
-  const renameSpy = vi.spyOn(fs, "renameSync").mockImplementation((from, to) => {
-    rename(from, to);
-    if (String(to).startsWith(root)) fs.utimesSync(to, new Date(), new Date());
-  });
+  const releaseRename = trackSyntheticRoot(root);
   const paths = nodePaths(root);
   fs.mkdirSync(paths.dir, { recursive: true });
   fs.writeFileSync(paths.policy, JSON.stringify(POLICY));
@@ -142,7 +154,8 @@ export async function startNativeNode(name: string, sessions: SessionInfo[]): Pr
       });
     });
     socket.accept();
-    await vi.waitFor(() => expect(connected.authenticated && hasMcpCredential(paths)).toBe(true), WAIT);
+    try { await vi.waitFor(() => expect(connected.authenticated && hasMcpCredential(paths)).toBe(true), WAIT); }
+    catch (cause) { throw new Error(`synthetic connection failed: authenticated=${connected.authenticated}; frameTypes=${received.map((f) => f.type).join(",")}`, { cause }); }
   };
   await connect();
   const token = (): string => (JSON.parse(fs.readFileSync(paths.mcpCredential, "utf8")) as { token: string }).token;
@@ -188,7 +201,7 @@ export async function startNativeNode(name: string, sessions: SessionInfo[]): Pr
       for (const instance of clients) await instance.close();
       await chain;
       ws.close(1000, "done");
-      renameSpy.mockRestore();
+      releaseRename();
       fs.rmSync(root, { recursive: true, force: true });
     },
   };

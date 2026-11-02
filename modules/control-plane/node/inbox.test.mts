@@ -45,6 +45,22 @@ test("a redelivered message keeps the stored file", (t) => {
   assert.equal(getMessage(dir, ID_A)?.receivedAt, new Date(NOW).toISOString());
 });
 
+test("stores validated Worker admission depth and keeps it unchanged on redelivery", (t) => {
+  const dir = tempInbox(t);
+  const loop = { version: 1 as const, threadId: ID_A, depth: 20, generation: 1, ordinal: 24 };
+  const first = storeMessage(dir, { ...deliver(ID_A), loop }, NOW, 0);
+  assert.equal(first.depth, 20);
+  assert.deepEqual(first.loop, loop);
+  assert.deepEqual(storeMessage(dir, deliver(ID_A), NOW + 1, 0), first);
+});
+
+test("rejects malformed present admission before creating or accepting an inbox record", (t) => {
+  const dir = tempInbox(t);
+  const bad = { ...deliver(ID_A), loop: null } as unknown as MessageDeliverBody;
+  assert.throws(() => storeMessage(dir, bad, NOW), /invalid loop admission/);
+  assert.equal(getMessage(dir, ID_A), null);
+});
+
 test("lists by session, oldest first, and rejects ids that are not message ids", (t) => {
   const dir = tempInbox(t);
   assert.deepEqual(listInbox(dir), []);

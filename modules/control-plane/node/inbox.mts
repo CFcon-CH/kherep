@@ -9,6 +9,7 @@ import {
 } from "../protocol-messages.mts";
 export { MAX_REPLY_DEPTH } from "../protocol-messages.mts";
 import { ensureDir } from "./config.mts";
+import { isLoopAdmissionV1, type LoopAdmissionV1 } from "../protocol-loop-brake.mts";
 import { RecordLockBusy, withRecordLock } from "./inbox-record-lock.mts";
 
 // The node inbox (issue #31, step 2): one JSON file per accepted message,
@@ -55,6 +56,7 @@ export interface InboxRecord {
   // Reply hops: 0 for a new message, one more than the depth of this node's
   // sent message it answers (exchange.mts replyDepth). Missing means 0.
   depth?: number;
+  loop?: LoopAdmissionV1;
   // Set by closed-delivery.mts (issues #102, #105) when the message was handed
   // to an intercom session of its sender, reused or new: once per message.
   closedAttempt?: string;
@@ -141,6 +143,7 @@ export function writeJsonAtomic(file: string, value: unknown, deps: RenameDeps =
 // Stores a delivered message. Idempotent: a redelivery of a stored id keeps
 // the existing file. Throws when the record cannot be written.
 export function storeMessage(dir: string, body: MessageDeliverBody, now: number = Date.now(), depth = 0): InboxRecord {
+  if (Object.hasOwn(body, "loop") && !isLoopAdmissionV1(body.loop)) throw new Error("invalid loop admission");
   const existing = getMessage(dir, body.messageId);
   if (existing) return existing;
   ensureDir(dir);
@@ -149,7 +152,8 @@ export function storeMessage(dir: string, body: MessageDeliverBody, now: number 
     text: body.text, ...(body.inReplyTo ? { inReplyTo: body.inReplyTo } : {}),
     ...(body.proxyOf ? { proxyOf: body.proxyOf } : {}), ...(body.taskId ? { taskId: body.taskId } : {}),
     createdAt: body.createdAt,
-    receivedAt: new Date(now).toISOString(), state: "accepted", depth,
+    receivedAt: new Date(now).toISOString(), state: "accepted", depth: body.loop?.depth ?? depth,
+    ...(body.loop ? { loop: { ...body.loop } } : {}),
   };
   writeJsonAtomic(fileOf(dir, body.messageId), record);
   return record;

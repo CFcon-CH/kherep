@@ -1,3 +1,4 @@
+import { automaticReplyDecision } from "./reply-admission.mts";
 import fs from "node:fs";
 import { livenessAdmission } from "./session-lifecycle.mts";
 import path from "node:path";
@@ -14,7 +15,7 @@ import { reserveNativeOwner, releaseNativeOwner } from "./codex-native-pending.m
 import { reconcileNativeQueues } from "./codex-native-reconcile.mts";
 import { CODEX_ACTIVE_MS, listCodexSessions, readCodexSession } from "./codex-sessions.mts";
 import { ensureDir, readConfig } from "./config.mts";
-import { getMessage, MAX_REPLY_DEPTH, writeJsonAtomic } from "./inbox.mts";
+import { getMessage, writeJsonAtomic } from "./inbox.mts";
 import { explicitlyListed, readPolicy, wakeAllowed, wakeBudget } from "./policy.mts";
 import type { RunnerDeps } from "./session-runner.mts";
 import { waitForServiceAdmission, type ServiceAdmission } from "./service-drain.mts";
@@ -91,9 +92,8 @@ function admitted(deps: RunnerDeps, owner: string, messageIds: string[], fingerp
   }
   const ids = messageIds.filter((id) => {
     const record = getMessage(deps.paths.inbox, id);
-    const depth = record?.depth ?? 0;
     return record?.messageId === id && record.toSession === owner && record.state === "accepted"
-      && Number.isSafeInteger(depth) && depth >= 0 && depth < MAX_REPLY_DEPTH;
+      && automaticReplyDecision(record).allowed;
   });
   return ids.length ? { ids: [...new Set(ids)], budget: wakeBudget(policy) } : null;
 }

@@ -76,7 +76,7 @@ flowchart LR
   confluence[("Confluence space<br/>Central Brain")]
   model["Local model server"]
   mcp["Configured MCP services"]
-  worker["Control Plane Worker<br/>Cloudflare"]
+  worker["Control Plane Worker<br/>Cloudflare, pair loop admission"]
   peers["Other enrolled nodes"]
 
   operator --> runtimes

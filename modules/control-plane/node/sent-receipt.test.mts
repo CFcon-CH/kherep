@@ -226,3 +226,18 @@ test("a mid-turn call rereads only the records its one sent/ scan found, and dro
   const fresh = stillUnnoticed(paths, found);
   assert.deepEqual([fresh.receipts.map((r) => r.messageId), fresh.failures.map((r) => r.messageId)], [[due], [failure]]);
 });
+
+test("a loop hold is shown once without an outgoing message, wake or autonomous turn", async (t) => {
+  const paths = setup(t);
+  const reason = `loop-held: ack-or-repeat; hold=${id(91)}; operator release required`;
+  const messageId = sent(paths, 90, "refused", "review", reason);
+  const first = hook(paths, "UserPromptSubmit");
+  assert.ok(first.includes(reason));
+  assert.equal(hook(paths, "UserPromptSubmit"), "");
+  assert.ok(getSent(paths, messageId)?.noticedAt);
+  assert.deepEqual(fs.readdirSync(paths.outbox), []);
+  noTurnTaken(paths);
+  const out: string[] = [];
+  const code = await runMsg(["status", messageId], { paths, env: {}, now: () => NOW, out: (s) => out.push(s), err: assert.fail, sleep: async () => {} });
+  assert.equal(code, 0); assert.ok(out.join("\n").includes(reason));
+});

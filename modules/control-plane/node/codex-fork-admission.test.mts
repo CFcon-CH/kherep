@@ -238,3 +238,13 @@ test("relayRefusal returns its codes in order and never an admission-only code",
   assert.deepEqual(turns(f), before, "no turn is spent");
   assert.equal(relayRefusal(deps, OWNER, { ...attempt, answer: "x".repeat(8_193) }, NOW), "policy-changed", "the answer bound");
 });
+
+test("guarded20 passes fork admission without changing owner, permissions or budget guards", (t) => {
+  const f = fixture(t);
+  patchMessage(f, { depth: 20, loop: { version: 1, threadId: MSG, depth: 20, generation: 0, ordinal: 21 } });
+  assert.equal(admit(f).ok, true);
+  const bad = fixture(t);
+  patchMessage(bad, { depth: 20, loop: { version: 2, threadId: MSG, depth: 20, generation: 0, ordinal: 21 } });
+  assert.deepEqual(admit(bad), { ok: false, reason: "depth-limit" });
+  assert.equal(turns(bad), null);
+});

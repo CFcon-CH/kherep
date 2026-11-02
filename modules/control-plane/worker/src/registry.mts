@@ -1,3 +1,5 @@
+import type { LoopSigner } from "./message-loop-signals.mts";
+import { LOOP_STALE } from "../../protocol-loop-brake.mts";
 import { DurableObject } from "cloudflare:workers";
 
 import type { NodeFacts, RuntimeInfo, SessionInfo } from "../../protocol.mts";
@@ -42,6 +44,7 @@ export class Registry extends DurableObject<Env> {
   private readonly tasks: TaskStore;
   private readonly taskControl: TaskControlRegistry;
   private readonly mcp: McpRegistry;
+  private readonly loopSigner: Promise<LoopSigner>;
   // Directory rows, read again after any write to nodes, runtimes or sessions
   // (issue #308) and, for the queue heads, after any message transaction
   // (issue #441): every node asks every minute and on each `msg` call.
@@ -52,6 +55,24 @@ export class Registry extends DurableObject<Env> {
     super(ctx, env);
     this.meter = new SqlMeter(ctx.storage.sql);
     this.sql = this.meter.sql;
+    this.loopSigner = ctx.blockConcurrencyWhile(async () => {
+      let secret = await ctx.storage.get<Uint8Array>("loop-hmac-v1");
+      if (secret === undefined) {
+        const retained = this.sql.exec(`SELECT 1 FROM message_loop_pairs LIMIT 1`).toArray().length
+          || this.sql.exec("SELECT 1 FROM messages WHERE loop_pair IS NOT NULL LIMIT 1").toArray().length
+          || this.sql.exec("SELECT 1 FROM message_tombstones WHERE loop_pair IS NOT NULL LIMIT 1").toArray().length;
+        if (retained) throw new Error("loop-crypto-unavailable");
+        secret = crypto.getRandomValues(new Uint8Array(32));
+        await ctx.storage.put("loop-hmac-v1", secret);
+      }
+      if (!(secret instanceof Uint8Array) || secret.length !== 32) throw new Error("loop-crypto-unavailable");
+      const key = await crypto.subtle.importKey("raw", secret, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+      return async (domain: string, value: string) => {
+        const input = domain === "kherep-loop-pair-v1" ? value : JSON.stringify([domain, value]);
+        const bytes = new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(input)));
+        return [...bytes].map((x) => x.toString(16).padStart(2, "0")).join("");
+      };
+    });
     this.sql.exec(REGISTRY_SCHEMA);
     migrateRegistry(this.sql);
     this.messages = new MessageStore(this.sql, (...args) => this.audit(...args), (nodeId) => this.capabilitiesOf(nodeId));
@@ -247,6 +268,7 @@ export class Registry extends DurableObject<Env> {
       this.sql.exec("DELETE FROM runtimes WHERE node_id = ?", nodeId);
       this.sql.exec("DELETE FROM sessions WHERE node_id = ?", nodeId);
       this.mcp.removeNode(nodeId);
+      this.messages.loops.revoke(nodeId);
       this.audit(actor, "node.revoke", nodeId);
       this.messages.retention.senderRevoked(nodeId, now);
       return this.messages.refuseQueuedFor(nodeId, "target node revoked", actor, now);
@@ -272,13 +294,34 @@ export class Registry extends DurableObject<Env> {
     return this.tx("claimMcpIntent", () => this.mcp.claim(intent, now));
   }
 
+  private async recoverMcpMessage(intent: McpIntentClaim) {
+    if (!this.messages.replay(intent.requestId, intent.nodeId)) return null;
+    return this.messageTx("recoverMcpMessage", () => {
+      const claim = this.mcp.claim(intent, Date.now());
+      if (!claim.ok) return { ...claim, denied: true as const };
+      const effects = this.messages.expireDue(Date.now());
+      const sent = this.messages.replay(intent.requestId, intent.nodeId);
+      return sent?.ok ? { ...sent, effects, claim } : sent;
+    });
+  }
+
   // A failed claim is an authorization denial; its fixed error is visible to the caller.
   async sendMcpMessage(intent: McpIntentClaim, to: { nodeId: string; session: string }, text: string, inReplyTo?: string) {
+    this.directoryRows = null;
+    const replay = await this.recoverMcpMessage(intent);
+    if (replay) return replay;
+    const peek = this.mcp.peekClaimSession(intent, Date.now());
+    if (!peek.ok) return { ...peek, denied: true as const };
+    const message: NewMessage = { messageId: intent.requestId, from: { nodeId: intent.nodeId, session: peek.sessionId }, to, text, inReplyTo };
+    const prepared = await this.messages.prepare(message, await this.loopSigner);
     return this.messageTx("sendMcpMessage", () => {
+      const current = this.mcp.peekClaimSession(intent, Date.now());
+      if (!current.ok) return { ...current, denied: true as const };
+      if (current.sessionId !== peek.sessionId || !this.messages.contextMatches(message, prepared)) return { ok: false as const, error: prepared.error ?? LOOP_STALE };
       const claim = this.mcp.claim(intent, Date.now());
       if (!claim.ok) return { ...claim, denied: true as const };
       const sent = this.messages.send({ messageId: claim.effectId,
-        from: { nodeId: intent.nodeId, session: claim.sessionId }, to, text, inReplyTo }, `mcp:${intent.nodeId}`, Date.now());
+        from: { nodeId: intent.nodeId, session: claim.sessionId }, to, text, inReplyTo }, `mcp:${intent.nodeId}`, Date.now(), prepared);
       this.mcp.recordOutcome(intent.nodeId, intent.requestId, sent.ok ? "succeeded" : "failed");
       return sent.ok ? { ...sent, claim } : sent;
     });
@@ -293,15 +336,24 @@ export class Registry extends DurableObject<Env> {
   // calls again with it (null when the node did not return it). The second
   // call recovers the same claim.
   async replyMcpMessage(intent: McpIntentClaim, inReplyTo: string, text: string, item?: McpInboxItem | null) {
+    this.directoryRows = null;
+    const replay = await this.recoverMcpMessage(intent);
+    if (replay) return replay;
+    const peek = this.mcp.peekClaimSession(intent, Date.now());
+    if (!peek.ok) return { ...peek, denied: true as const };
+    const target = this.messages.replyTarget(inReplyTo, intent.nodeId, peek.sessionId);
+    if (target === "missing" && item === undefined) return { ok: false as const, lookup: peek.sessionId };
+    const to = target === "missing" ? this.messages.retention.inboxReplyTarget({ nodeId: intent.nodeId, session: peek.sessionId }, inReplyTo, item ?? null) : target;
+    if (!to) return { ok: false as const, error: "reply relationship or depth is not allowed" };
+    const message: NewMessage = { messageId: intent.requestId, from: { nodeId: intent.nodeId, session: peek.sessionId }, to, text, inReplyTo };
+    const prepared = await this.messages.prepare(message, await this.loopSigner);
     return this.messageTx("replyMcpMessage", () => {
+      const current = this.mcp.peekClaimSession(intent, Date.now());
+      if (!current.ok) return { ...current, denied: true as const };
+      if (current.sessionId !== peek.sessionId || !this.messages.contextMatches(message, prepared)) return { ok: false as const, error: prepared.error ?? LOOP_STALE };
       const claim = this.mcp.claim(intent, Date.now());
       if (!claim.ok) return { ...claim, denied: true as const };
-      const target = this.messages.replyTarget(inReplyTo, intent.nodeId, claim.sessionId);
-      if (target === "missing" && item === undefined) return { ok: false as const, lookup: claim.sessionId };
-      const to = target === "missing" ? this.messages.retention.inboxReplyTarget(intent.nodeId, inReplyTo, item ?? null) : target;
-      if (!to) return { ok: false as const, error: "reply relationship or depth is not allowed" };
-      const sent = this.messages.send({ messageId: claim.effectId,
-        from: { nodeId: intent.nodeId, session: claim.sessionId }, to, text, inReplyTo }, `mcp:${intent.nodeId}`, Date.now());
+      const sent = this.messages.send(message, `mcp:${intent.nodeId}`, Date.now(), prepared);
       this.mcp.recordOutcome(intent.nodeId, intent.requestId, sent.ok ? "succeeded" : "failed");
       return sent.ok ? { ...sent, claim } : sent;
     });
@@ -310,11 +362,12 @@ export class Registry extends DurableObject<Env> {
   // ---- Messages (issue #31). The caller pushes the returned effects. -------
 
   async sendMessage(message: NewMessage, actor: string): Promise<SendResult> {
+    const prepared = await this.messages.prepare(message, await this.loopSigner);
     return this.messageTx("sendMessage", (): SendResult => {
       if (message.taskId !== undefined && !this.tasks.taskOnEitherNode(message.taskId, message.from.nodeId, message.to.nodeId)) {
         return { ok: false, error: "unknown task for this message" };
       }
-      return this.messages.send(message, actor, Date.now());
+      return this.messages.send(message, actor, Date.now(), prepared);
     });
   }
 
@@ -336,6 +389,20 @@ export class Registry extends DurableObject<Env> {
   // Issue #408 (design r3 section 4.3): the push boundary of a proxy delivery re-reads its row.
   messageQueued(messageId: string): boolean {
     return this.metered("messageQueued", () => this.messages.isQueued(messageId));
+  }
+
+  async messageDeliveryReady(messageId: string): Promise<boolean> {
+    const result = await this.messageTx("messageDeliveryReady", () => this.messages.deliveryReady(messageId, Date.now()));
+    if (result.effects.statuses.length) await routeEffects(this.env, result.effects);
+    return result.ready;
+  }
+  listMessageHolds(limit: number) { return this.metered("listMessageHolds", () => this.messages.loops.listHolds(limit)); }
+  async releaseMessageHold(id: string, version: number, actor: string) {
+    return this.messageTx("releaseMessageHold", () => {
+      const result = this.messages.loops.release(id, version, Date.now());
+      if (result.status === 200 && result.changed) this.audit(actor, "message.loop.release", null, { holdId: id, generation: result.generation, version: result.version });
+      return result;
+    });
   }
 
   pendingMessagesFor(nodeId: string): MessageEffects {
@@ -441,7 +508,9 @@ export class Registry extends DurableObject<Env> {
       const now = Date.now();
       const effects = this.messages.expireDue(now);
       const swept = this.messages.retention.sweepDue(now);
-      return { effects, more: this.messages.retention.pruneTombstones(now) || swept };
+      const pruned = this.messages.retention.pruneTombstones(now);
+      const loops = this.messages.loops.cleanup(now);
+      return { effects, more: pruned || swept || loops };
     });
     if (more) await this.ctx.storage.setAlarm(Date.now() + 1000);
     await routeEffects(this.env, effects);
@@ -462,7 +531,7 @@ export class Registry extends DurableObject<Env> {
     this.directoryRows = null;
     const { result, next } = this.metered(path, () => {
       const result = this.ctx.storage.transactionSync(run);
-      return { result, next: earliest(this.messages.nextExpiry(), this.messages.retention.nextDue()) };
+      return { result, next: earliest(this.messages.nextExpiry(), this.messages.retention.nextDue(), this.messages.loops.nextExpiry()) };
     });
     if (next !== null) {
       const current = await this.ctx.storage.getAlarm();

@@ -1,3 +1,4 @@
+import { automaticReplyDecision } from "./reply-admission.mts";
 import fs from "node:fs";
 
 import { bypassesPermissions, listenerDir } from "./autonomy.mts";
@@ -6,7 +7,7 @@ import { busyPolicyFingerprint, busyWakeDisabled } from "./codex-busy-policy.mts
 import { claimBusyHint } from "./codex-busy-ticket.mts";
 import { readCodexSession, refreshCodexEvent } from "./codex-sessions.mts";
 import { contextOutput, type HookDeps } from "./deliver-core.mts";
-import { getMessage, MAX_REPLY_DEPTH } from "./inbox.mts";
+import { getMessage } from "./inbox.mts";
 import { explicitlyListed, readPolicy } from "./policy.mts";
 
 // Issue #408: set in the environment of a Codex fork helper and inherited by its
@@ -47,9 +48,8 @@ export function consumeBusyHint(input: unknown, deps: HookDeps): string {
       let count = 0;
       for (const admitted of ticket.messages) {
         const record = getMessage(deps.paths.inbox, admitted.messageId);
-        const depth = record?.depth ?? 0;
-        if (record?.messageId === admitted.messageId && record.toSession === admitted.toSession && record.state === "accepted"
-          && Number.isSafeInteger(depth) && depth >= 0 && depth < MAX_REPLY_DEPTH) count++;
+            if (record?.messageId === admitted.messageId && record.toSession === admitted.toSession && record.state === "accepted"
+          && automaticReplyDecision(record).allowed) count++;
       }
       return count;
     });

@@ -89,9 +89,9 @@ test("stages and verifies the complete closed public graph", (t) => {
   const { outputRoot, clientRoot, configRoot } = fixture(t);
   const result = stageClaudeClient({ outputRoot, clientRoot, configRoot, nodeCommand: process.execPath });
   assert.deepEqual(CLAUDE_CLIENT_GRAPH, [
-    "protocol.mts", "protocol-mcp.mts", "protocol-messages.mts", "protocol-task-control.mts",
+    "protocol.mts", "protocol-mcp.mts", "protocol-messages.mts", "protocol-loop-brake.mts", "protocol-task-control.mts",
     "protocol-tasks.mts", "node/config.mts", "node/inbox.mts", "node/inbox-record-lock.mts", "node/mcp-local.mts",
-    "node/mcp-credential-file.mts", "node/session-publication.mts", "node/policy.mts",
+    "node/mcp-credential-file.mts", "node/guarded-replies.mts", "node/session-publication.mts", "node/policy.mts",
     "node/session-policy.mts", "node/mcp-intent-hook.mts", "node/mcp-stdio-bridge.mts",
   ]);
   for (const relative of CLAUDE_CLIENT_GRAPH) {
@@ -199,6 +199,11 @@ test("the staged bridge forwards actual Claude metadata unchanged", async (t) =>
   stageClaudeClient({ outputRoot, clientRoot, configRoot, nodeCommand: process.execPath });
   const installed = path.join(outputRoot, "control-plane", "node");
   const config = await import(pathToFileURL(path.join(installed, "config.mts")).href);
+  const loop = await import(pathToFileURL(path.join(outputRoot, "control-plane/protocol-loop-brake.mts")).href);
+  assert.equal(loop.MESSAGING_LOOP_BRAKE_CAPABILITY, "messaging.loop-brake.v1");
+  const guardedReplies = await import(pathToFileURL(path.join(installed, "guarded-replies.mts")).href);
+  assert.equal(typeof guardedReplies.rememberGuardedMcpReply, "function");
+  assert.equal(typeof guardedReplies.wasGuardedMcpReply, "function");
   const local = await import(pathToFileURL(path.join(installed, "mcp-local.mts")).href);
   const paths = config.nodePaths(configRoot);
   fs.mkdirSync(paths.dir, { recursive: true });
