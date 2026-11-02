@@ -27,7 +27,6 @@ import {
   cmdChildren,
   cmdContext,
   cmdGetBody,
-  cmdList,
   cmdMove,
   cmdOrphans,
   cmdRelated,
@@ -37,6 +36,7 @@ import {
   type NeighbourCliContext,
 } from "./confluence-neighbour-cli.mts";
 import { cmdLabels, ensureRuntimeLabel } from "./confluence-label-cli.mts";
+import { cmdList } from "./confluence-list-cli.mts";
 import { requireResolvableAnchors } from "./confluence-related.mts";
 import { semanticProposals } from "./confluence-semantic.mts";
 import {
@@ -102,7 +102,7 @@ export const FLAGS = {
   list: { required: { space: "<key>" }, optional: { "title-contains": "<text>", label: "<name>", limit: "<n>" } },
   context: { required: { space: "<key>", id: "<id>" } },
   orphans: { required: { space: "<key>" } },
-  stitch: { required: { space: "<key>" }, optional: { id: "<id>", limit: "<n>", "per-orphan": "<n>" }, valueless: ["dry-run"] },
+  stitch: { required: { space: "<key>" }, optional: { id: "<id>", topic: "<text>", out: "<receipt>", candidates: "<receipt>", decisions: "<file>", limit: "<n>", "per-orphan": "<n>" } },
   drainage: { required: { space: "<key>" }, optional: { ids: "<id,id>", "exclude-ids": "<id,id>", "repo-root": "<path>", ref: "<ref>" }, valueless: ["metadata-approved"] },
   evidence: { required: { mode: "<prepare|decide|verify|report|record>" }, optional: { id: "<id>", space: "<key>", out: "<path>", record: "<path>", measurement: "<path>", "out-body": "<path>", "body-file": "<path>",
     records: "<path,path>", "repo-root": "<path>", "superseded-by": "<id>", kind: "<code|tracker|live|doc>", excluded: "<private|unavailable>", reason: "<slug>", "max-age-days": "<n>" }, valueless: ["body-approved"] },

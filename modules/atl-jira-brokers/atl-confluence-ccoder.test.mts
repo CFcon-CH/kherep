@@ -194,7 +194,8 @@ test(`${BROKER} help lists every verb with its flags and exits 0 in all three sp
     assert.deepEqual(calls, []);
     for (const verb of VERBS) assert.ok(out.some((line) => line.startsWith(`  ${verb}`)), `${spelling} lacks ${verb}`);
     assert.ok(out.includes("  get --id <id> [--format <storage|adf>] [--body-only]"), out.join("\n"));
-    assert.ok(out.includes("  stitch --space <key> [--id <id>] [--limit <n>] [--per-orphan <n>] [--dry-run]"));
+    assert.ok(out.includes("  stitch --space <key> [--id <id>] [--topic <text>] [--out <receipt>] [--candidates <receipt>]"
+      + " [--decisions <file>] [--limit <n>] [--per-orphan <n>]"), out.join("\n"));
     assert.ok(out.some((line) => line.startsWith("  evidence --mode <prepare|decide|verify|report|record> [")), out.join("\n"));
   }
 });
@@ -238,16 +239,36 @@ test(`${BROKER} selftest takes no arguments`, async () => {
   assert.deepEqual(calls, []);
 });
 
-test(`${BROKER} stitch --dry-run before --id keeps the id`, async () => {
-  const { err, calls, injected } = harness({
-    api: (call) => call.url.includes("/spaces?keys=") ? response(200, SPACE) : response(200, { results: [] }),
+// Issue #736. Three flag combinations and nothing in between: candidates
+// (--id --topic --out), write (--id --candidates --decisions) and the read-only
+// sweep (no --id). A mixed or partial call is refused before any request.
+for (const argv of [
+  ["--dry-run", "--id", "404"],
+  ["--id", "404"],
+  ["--id", "404", "--topic", "A topic sentence"],
+  ["--id", "404", "--topic", "A topic sentence", "--out", "r.json", "--decisions", "d.txt"],
+  ["--id", "404", "--candidates", "r.json"],
+  ["--id", "404", "--candidates", "r.json", "--decisions", "d.txt", "--per-orphan", "2"],
+  ["--id", "404", "--topic", "A topic sentence", "--out", "r.json", "--limit", "3"],
+  ["--topic", "A topic sentence", "--out", "r.json"],
+  ["--limit", "3", "--decisions", "d.txt"],
+]) {
+  test(`${BROKER} stitch ${argv.join(" ")} is refused before any request`, async () => {
+    const { out, err, calls, injected } = harness({ api: defaultApi });
+    injected.semantic = async () => { throw new Error("stitch must not search"); };
+    assert.equal(await runCli(["stitch", "--space", "KB", ...argv], injected), 1);
+    assert.deepEqual(out, []);
+    assert.equal(err.length, 1);
+    assert.match(err[0], argv[0] === "--dry-run" ? /^stitch does not take --dry-run\./ : /^stitch takes one of three forms: /);
+    assert.deepEqual(calls, [], "not even the space lookup runs");
   });
-  injected.semantic = async () => ({ titles: [], error: "no semantic search in tests" });
-  assert.equal(await runCli(["stitch", "--space", "KB", "--dry-run", "--id", "404"], injected), 1);
-  // Only the single-page path checks the id against the space; the sweep that
-  // runs when --dry-run swallows --id never says this.
-  assert.deepEqual(err, ["That id is not a page in this space."]);
-  assert.equal(calls.filter((call) => call.options?.method === "PUT").length, 0, "a dry run writes nothing");
+}
+
+test(`${BROKER} stitch refuses an empty --topic before any request`, async () => {
+  const { err, calls, injected } = harness({ api: defaultApi });
+  assert.equal(await runCli(["stitch", "--space", "KB", "--id", "404", "--topic", "  ", "--out", "r.json"], injected), 1);
+  assert.deepEqual(err, ["--topic is empty. A title alone is not a topic; nothing was searched."]);
+  assert.deepEqual(calls, []);
 });
 
 // Issue #710. On 2026-10-31 an observation run passed an empty --id; the falsy
