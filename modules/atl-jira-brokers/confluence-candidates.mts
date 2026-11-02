@@ -28,14 +28,30 @@ const CLOCK_SKEW_MS = 5 * 60 * 1000;
 export const REASON_MIN = 10;
 export const REASON_MAX = 300;
 
-export interface Receipt {
-  kind: typeof RECEIPT_KIND;
-  source: string;
+// The Codex adapter searches before its page exists, so its receipt names the
+// source by title and binds the session turn instead of a page id.
+export const RELATED_RECEIPT_KIND = "related-candidates";
+
+interface ReceiptBase {
   spaceKey: string;
   query: string;
   searchedAt: string;
   candidates: Candidate[];
 }
+
+export interface StitchReceipt extends ReceiptBase {
+  kind: typeof RECEIPT_KIND;
+  source: string;
+}
+
+export interface RelatedReceipt extends ReceiptBase {
+  kind: typeof RELATED_RECEIPT_KIND;
+  source: { title: string };
+  sessionId: string;
+  turnId: string;
+}
+
+export type Receipt = StitchReceipt | RelatedReceipt;
 
 export interface Decision {
   id: string;
@@ -100,15 +116,17 @@ function isCandidate(value: unknown): value is Candidate {
     && isText(row.area) && Array.isArray(row.terms) && row.terms.every(isText) && isText(row.snippet);
 }
 
-// A receipt that is not exactly the shape this module writes is no receipt.
+// A receipt that is not exactly one of the two shapes written here is no receipt.
 export function parseReceipt(text: string): Receipt | null {
   let json: unknown;
   try { json = JSON.parse(text); } catch { return null; }
   const receipt = json as Receipt;
-  if (!receipt || typeof receipt !== "object" || !isText(receipt.kind) || !isText(receipt.source)
-    || !isText(receipt.spaceKey) || !isText(receipt.query) || !isText(receipt.searchedAt)
-    || !Array.isArray(receipt.candidates) || !receipt.candidates.every(isCandidate)) return null;
-  return receipt;
+  if (!receipt || typeof receipt !== "object" || !isText(receipt.spaceKey) || !isText(receipt.query)
+    || !isText(receipt.searchedAt) || !Array.isArray(receipt.candidates) || !receipt.candidates.every(isCandidate)) return null;
+  if (receipt.kind === RECEIPT_KIND && isText(receipt.source)) return receipt;
+  if (receipt.kind === RELATED_RECEIPT_KIND && receipt.source && typeof receipt.source === "object"
+    && isText(receipt.source.title) && isText(receipt.sessionId) && isText(receipt.turnId)) return receipt;
+  return null;
 }
 
 // One approved target per line: `<id><TAB><reason>`. Blank lines are skipped,
@@ -122,25 +140,15 @@ export function parseDecisions(text: string): Decision[] {
   });
 }
 
-// Every problem, not the first: a refused write names all of them at once.
-export function checkDecisions(
-  receipt: Receipt | null,
-  decisions: readonly Decision[],
-  expected: { source: string; spaceKey: string; now: number },
-): Problem[] {
+// The checks both receipt kinds share: space, age, and every decision.
+function sharedProblems(receipt: Receipt, decisions: readonly Decision[], spaceKey: string, now: number, source: string): Problem[] {
   const problems: Problem[] = [];
-  const whole = (why: string) => problems.push({ id: expected.source, why });
-  if (!receipt) {
-    whole("the candidates file is not a stitch receipt");
-    return problems;
-  }
-  if (receipt.kind !== RECEIPT_KIND) whole("the candidates file is not a stitch receipt");
-  if (receipt.spaceKey.toUpperCase() !== expected.spaceKey.toUpperCase()) whole("the receipt is for another space");
-  if (receipt.source !== expected.source) whole("the receipt is for another page");
+  const whole = (why: string) => problems.push({ id: source, why });
+  if (receipt.spaceKey.toUpperCase() !== spaceKey.toUpperCase()) whole("the receipt is for another space");
   const at = Date.parse(receipt.searchedAt);
   if (!Number.isFinite(at)) whole("the receipt has no readable search time");
-  else if (expected.now - at > RECEIPT_MAX_AGE_MS) whole("the receipt is older than 2 h");
-  else if (at - expected.now > CLOCK_SKEW_MS) whole("the receipt is dated in the future");
+  else if (now - at > RECEIPT_MAX_AGE_MS) whole("the receipt is older than 2 h");
+  else if (at - now > CLOCK_SKEW_MS) whole("the receipt is dated in the future");
 
   const offered = new Set(receipt.candidates.map((candidate) => candidate.id));
   const decided = new Set<string>();
@@ -149,9 +157,36 @@ export function checkDecisions(
     else if (!offered.has(id)) problems.push({ id, why: "not a candidate in the receipt" });
     if (decided.has(id)) problems.push({ id, why: "decided more than once" });
     decided.add(id);
+    // The reason lands in a trace line and in Confluence version history.
     if (!reason) problems.push({ id, why: "no reason given" });
+    else if (/[\x00-\x1f\x7f-\x9f]/.test(reason)) problems.push({ id, why: "reason has non-printable characters" });
     else if (reason.length < REASON_MIN) problems.push({ id, why: `reason shorter than ${REASON_MIN} characters` });
     else if (reason.length > REASON_MAX) problems.push({ id, why: `reason longer than ${REASON_MAX} characters` });
   }
   return problems;
+}
+
+// Every problem, not the first: a refused write names all of them at once.
+export function checkDecisions(
+  receipt: Receipt | null,
+  decisions: readonly Decision[],
+  expected: { source: string; spaceKey: string; now: number },
+): Problem[] {
+  if (!receipt || receipt.kind !== RECEIPT_KIND) return [{ id: expected.source, why: "the candidates file is not a stitch receipt" }];
+  const problems = receipt.source === expected.source ? [] : [{ id: expected.source, why: "the receipt is for another page" }];
+  return [...problems, ...sharedProblems(receipt, decisions, expected.spaceKey, expected.now, expected.source)];
+}
+
+// The Codex adapter's form: the receipt must belong to this turn and title.
+export function checkRelatedLinks(
+  receipt: Receipt | null,
+  decisions: readonly Decision[],
+  expected: { title: string; spaceKey: string; sessionId: string; turnId: string; now: number },
+): Problem[] {
+  const whole = (why: string): Problem => ({ id: "-", why });
+  if (!receipt || receipt.kind !== RELATED_RECEIPT_KIND) return [whole("the token names no related-candidates receipt")];
+  const problems: Problem[] = [];
+  if (receipt.sessionId !== expected.sessionId || receipt.turnId !== expected.turnId) problems.push(whole("the receipt is for another turn"));
+  if (receipt.source.title !== expected.title) problems.push(whole("the receipt is for another title"));
+  return [...problems, ...sharedProblems(receipt, decisions, expected.spaceKey, expected.now, "-")];
 }

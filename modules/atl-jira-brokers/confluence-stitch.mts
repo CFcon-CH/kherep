@@ -12,7 +12,7 @@
 // shared words were still the wrong topic often enough to be a recurring bug
 // (#86, #736), so that path is gone rather than switched off.
 import { checkDecisions, candidateRow, parseDecisions, parseReceipt, RECEIPT_KIND, selectCandidates,
-  type Candidate, type Receipt } from "./confluence-candidates.mts";
+  type Candidate, type StitchReceipt } from "./confluence-candidates.mts";
 import { existingRelated, findOrphans, relatedSection, withRelated, type NeighbourDeps } from "./confluence-neighbours.mts";
 import { pageStorage, spaceIndex, type IndexedPage, type SpaceIndex } from "./confluence-related.mts";
 import { textFailureLine, textSearch } from "./confluence-text-search.mts";
@@ -62,7 +62,7 @@ export async function stitchCandidates(
     deps.logError("The search did not run completely. The candidates are UNKNOWN; no receipt was written.");
     return 1;
   }
-  const receipt: Receipt = {
+  const receipt: StitchReceipt = {
     kind: RECEIPT_KIND, source: page.id, spaceKey: deps.spaceKey, query,
     searchedAt: new Date(deps.now()).toISOString(), candidates: found.candidates,
   };
@@ -99,32 +99,52 @@ export async function stitchDecisions(
   const decisions = parseDecisions(decisionsText);
   const problems = checkDecisions(receipt, decisions, { source: options.id, spaceKey: deps.spaceKey, now: deps.now() });
   if (problems.length || !receipt) return refuse(problems);
-  if (!decisions.length) {
-    deps.log(`nolink\t${options.id}\tno candidate on topic`);
+  const approved = decisions.map((decision) => ({
+    ...decision, area: receipt.candidates.find((candidate) => candidate.id === decision.id)?.area ?? "",
+  }));
+  return await writeApproved(deps, options.id, approved, (decision) => `Related pages: link ${options.id}. ${decision.reason}`);
+}
+
+export interface Approved {
+  id: string;
+  reason: string;
+  area: string;
+}
+
+// The write half, for decisions that were already checked against a receipt:
+// the CLI's decisions file, or the Codex adapter's approved list in memory.
+export async function writeApproved(
+  deps: NeighbourDeps, source: string, approved: readonly Approved[], message: (decision: Approved) => string,
+): Promise<number> {
+  if (!approved.length) {
+    deps.log(`nolink\t${source}\tno candidate on topic`);
     return 0;
   }
-
   // The space as it is now, checked for every target before the first PUT.
   const index = await spaceIndex(deps.session, deps.spaceId);
-  const late = [options.id, ...decisions.map((decision) => decision.id)]
-    .filter((id) => !index.byId.has(id) || (id !== options.id && index.parents.has(id)))
+  const late = [source, ...approved.map((decision) => decision.id)]
+    .filter((id) => !index.byId.has(id) || (id !== source && index.parents.has(id)))
     .map((id) => ({ id, why: index.byId.has(id) ? "the page has become a shelf" : "not a page in this space" }));
-  if (late.length) return refuse(late);
+  if (late.length) {
+    for (const problem of late) deps.log(`refused\t${problem.id}\t${problem.why}`);
+    deps.logError("Nothing was written.");
+    return 1;
+  }
 
   let written = 0;
   let unchanged = 0;
-  for (const { id: target, reason } of decisions) {
-    const area = receipt.candidates.find((candidate) => candidate.id === target)?.area ?? "";
+  for (const decision of approved) {
+    const target = decision.id;
     // One trace line per approved link: the reason travels with the link, so a
     // wrong one can be traced to the judgment that let it through.
-    deps.log(`link\t${target}\t${options.id}\treason=${reason}\tarea=${area}`);
+    deps.log(`link\t${target}\t${source}\treason=${decision.reason}\tarea=${decision.area}`);
     const storage = await pageStorage(deps.session, target);
     const linked = existingRelated(storage);
-    const merged = [...new Set([...linked, options.id])].filter((id) => id !== target && index.byId.has(id));
+    const merged = [...new Set([...linked, source])].filter((id) => id !== target && index.byId.has(id));
     // Issue #479: Confluence may hand our block back re-serialized; the ids decide.
     if (merged.length === linked.length && merged.every((id) => linked.includes(id))) { unchanged += 1; continue; }
     const next = withRelated(storage, relatedSection(deps.spaceKey, merged.map((id) => index.byId.get(id)!)));
-    await deps.update(target, next, `Related pages: link ${options.id}. ${reason}`);
+    await deps.update(target, next, message(decision));
     written += 1;
     deps.log(`stitch\t${target}\t${index.byId.get(target)?.title ?? ""}\t+1`);
   }

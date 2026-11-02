@@ -1,12 +1,11 @@
-// Tests for the stitching run as a whole: what it links, and what it says about
-// why. No network: the session answers from fixtures, and the run is a dry run.
+// Tests for the related report: what it lists and how it reports a half that did
+// not run. No network: the session answers from fixtures. The stitch modes are
+// tested in confluence-stitch.test.mts (issue #736).
 import assert from "node:assert/strict";
 import test from "node:test";
 
 import { requestError, SCOPES, type ConfluenceSession } from "./confluence-contract.mts";
-import { reportRelated, reportStitch, type NeighbourDeps } from "./confluence-neighbours.mts";
-
-const ISSUE_TITLE = "Four files import the confluence-evidence modules (grep over modules, bootstrap, claude, codex)";
+import { reportRelated, type NeighbourDeps } from "./confluence-neighbours.mts";
 
 const PAGES = [
   { id: "900", title: "Acme", parentId: null },
@@ -16,93 +15,6 @@ const PAGES = [
   { id: "3", title: "Acme color palette tokens", parentId: "900" },
   { id: "4", title: "Acme installer backup rotation", parentId: "900" },
 ];
-
-function deps(log: string[]): NeighbourDeps {
-  const session: ConfluenceSession = {
-    async request(spec) {
-      if (spec.path.includes("/spaces/")) return { status: 200, json: { results: PAGES, _links: {} } };
-      if (spec.path.includes("/search")) return { status: 200, json: { results: [] } };
-      return { status: 200, json: { body: { storage: { value: "<p>body</p>" } } } };
-    },
-  };
-  return {
-    session,
-    spaceId: "42",
-    spaceKey: "KB",
-    log: (line) => log.push(line),
-    logError: (line) => log.push(`error: ${line}`),
-    semantic: async () => ({ titles: PAGES.slice(1).map((p) => p.title) }),
-    update: async () => { throw new Error("a dry run must not write"); },
-  };
-}
-
-test("reportStitch links only on a distinctive word and logs the reason per link", async () => {
-  const log: string[] = [];
-  const code = await reportStitch(deps(log), { only: "901", perOrphan: 3, dryRun: true });
-  assert.equal(code, 0);
-  const links = log.filter((line) => line.startsWith("link\t"));
-  assert.deepEqual(links, ["link\t3\t901\tterm=color,palette\tsibling"],
-    "the sibling with no shared word and the page sharing only the product name are not linked");
-  assert.ok(log.includes("pages that would be written: 1"));
-});
-
-// Issue #479. Two real runs against one in-memory page store. The store hands
-// a written body back the way Confluence may re-serialize it (here: a list item
-// wrapped in a paragraph), so the bytes read back are not the bytes written.
-// "Already linked" has to survive that, for a sibling neighbour as for any.
-const SIBLINGS = [
-  { id: "900", title: "Acme", parentId: null },
-  { id: "101", title: "Broker output differs between hosts", parentId: "900" },
-  { id: "102", title: "Why the runtime label differs", parentId: "900" },
-  { id: "103", title: "Release checklist", parentId: null },
-];
-
-function store(reserialize: (storage: string) => string) {
-  const bodies = new Map([["101", "<p>o</p>"], ["102", "<p>n</p>"], ["103", "<p>m</p>"]]);
-  const writes: string[] = [];
-  const session: ConfluenceSession = {
-    async request(spec) {
-      if (spec.path.includes("/spaces/")) return { status: 200, json: { results: SIBLINGS, _links: {} } };
-      if (spec.path.includes("/search")) return { status: 200, json: { results: [] } };
-      const id = /\/pages\/([^/?]+)/.exec(spec.path)?.[1] ?? "";
-      return { status: 200, json: { body: { storage: { value: bodies.get(id) ?? "" } } } };
-    },
-  };
-  const log: string[] = [];
-  const run: NeighbourDeps = {
-    session, spaceId: "42", spaceKey: "KB",
-    log: (line) => log.push(line),
-    logError: (line) => log.push(`error: ${line}`),
-    semantic: async () => ({ titles: SIBLINGS.map((p) => p.title) }),
-    update: async (id, storage) => { writes.push(id); bodies.set(id, reserialize(storage)); },
-  };
-  return { run, writes, log, bodies };
-}
-
-const wrapItems = (storage: string) => storage.replace(/<li>(<a\b[^>]*>.*?<\/a>)<\/li>/g, "<li><p>$1</p></li>");
-
-for (const [name, reserialize] of [["verbatim", (s: string) => s], ["re-serialized", wrapItems]] as const) {
-  test(`a second stitch of the same orphan writes nothing (${name} store, sibling neighbour)`, async () => {
-    const { run, writes, log } = store(reserialize);
-    assert.equal(await reportStitch(run, { only: "101", perOrphan: 3 }), 0);
-    assert.ok(log.includes("link\t102\t101\tterm=differs\tsibling"), "the neighbour is a sibling");
-    assert.deepEqual(writes, ["102"]);
-
-    log.length = 0;
-    assert.equal(await reportStitch(run, { only: "101", perOrphan: 3 }), 0);
-    assert.deepEqual(writes, ["102"], "the second run must not write the link again");
-    assert.ok(log.includes("pages written: 0"));
-    assert.ok(log.includes("unchanged: 1"));
-  });
-}
-
-test("a block that already exists still takes a new orphan", async () => {
-  const { run, writes, bodies } = store(wrapItems);
-  bodies.set("102", '<p>n</p><h2>Related pages</h2><ul><li><p><a href="/wiki/spaces/KB/pages/103">Release checklist</a></p></li></ul>');
-  await reportStitch(run, { only: "101", perOrphan: 3 });
-  assert.deepEqual(writes, ["102"]);
-  assert.match(bodies.get("102") ?? "", /pages\/103".*pages\/101"/, "the earlier link is kept and the orphan added");
-});
 
 // Issue #651. A refused text search is an UNKNOWN half, not "no neighbours",
 // and it neither aborts the run nor reads as a missing scope.
@@ -186,49 +98,6 @@ test("related: both halves failed names both and reports UNKNOWN", async () => {
   assert.equal(err[2], "Nothing was searched, so nothing was found. This result is UNKNOWN, not zero.");
 });
 
-const TWO_ORPHANS = [
-  { id: "900", title: "Acme", parentId: null },
-  { id: "10", title: "Alpha palette design", parentId: "900" },
-  { id: "11", title: "Beta palette tokens", parentId: "900" },
-  { id: "12", title: "Gamma rotation", parentId: "900" },
-];
-
-test("stitch: a refused text search skips that orphan, counts it, and finishes the run", async () => {
-  const log: string[] = [];
-  const code = await reportStitch(halves(log, {
-    pages: TWO_ORPHANS,
-    bodies: { "10": '<p><a href="/wiki/spaces/KB/pages/12">g</a></p>' },
-    search: (cql) => (cql.endsWith('"alpha palette design"') ? 403 : null),
-  }), { dryRun: true, perOrphan: 3 });
-  assert.equal(code, 1);
-  const err = errors(log);
-  assert.match(err[0], /^unsearched\t10\texact-term search: HTTP 403\. /);
-  assert.ok(err[0].endsWith('cql: space="KB" and type=page and text ~ "alpha palette design"'));
-  assert.deepEqual(log.filter((line) => line.startsWith("link\t")), ["link\t10\t11\tterm=palette\tsibling"],
-    "the second orphan is still searched; the first gets no link");
-  assert.ok(log.includes("orphans: 2"));
-  assert.ok(log.includes("pages that would be written: 1"));
-  assert.ok(log.includes("isolated: 0"));
-  assert.equal(err.at(-1), "1 orphan(s) were never searched. Their neighbours are UNKNOWN.");
-});
-
-test("stitch sends the sanitised CQL for the issue's title", async () => {
-  const log: string[] = [];
-  const cqls: string[] = [];
-  const pages = [...PAGES, { id: "77", title: ISSUE_TITLE, parentId: "900" }];
-  await reportStitch(halves(log, { pages, cqls }), { only: "77", dryRun: true });
-  assert.deepEqual(cqls, ['space="KB" and type=page and text ~ "four files import confluence evidence modules grep bootstrap claude codex"']);
-});
-
-test("stitch: a semantic error names the orphan it left unsearched", async () => {
-  const log: string[] = [];
-  const code = await reportStitch(halves(log, { semantic: { titles: [], error: "semantic search failed" } }),
-    { only: "901", dryRun: true });
-  assert.equal(code, 1);
-  assert.deepEqual(errors(log), ["unsearched\t901\tsemantic search failed",
-    "1 orphan(s) were never searched. Their neighbours are UNKNOWN."]);
-});
-
 // Issue #656. A /search row without a readable title is an incompletely read
 // exact half: UNKNOWN, never an ordinary "count: 0" with exit 0 and never
 // "isolated". It travels in the same failure field as a refused request.
@@ -305,80 +174,25 @@ test("related: readable rows that match nothing beside an unreadable one stay UN
   assert.equal(err[1], PARTIAL_NONE);
 });
 
-// stitch --only with a real update callback: the eligible exact title beside
-// an unreadable row must not be written; the same title fully readable must.
-async function stitchOnly10(results: unknown[]) {
+// Issue #736: related asks with title plus topic in the space, and every row
+// carries area, a terms hint and a snippet. Shared words no longer drop a row:
+// the page with no shared word is listed, and the reader decides.
+test("related rows carry area, terms and snippet, and the term rule drops nothing", async () => {
   const log: string[] = [];
-  const writes: string[] = [];
-  const run = { ...halves(log, { pages: TWO_ORPHANS, semantic: { titles: [] }, results: () => results }),
-    update: async (id: string) => { writes.push(id); } };
-  const code = await reportStitch(run, { only: "10", perOrphan: 3 });
-  return { code, log, writes };
-}
-
-test("stitch --only: an incompletely read exact half writes nothing and counts the orphan unsearched", async () => {
-  const { code, log, writes } = await stitchOnly10([{ title: "Beta palette tokens" }, {}]);
-  assert.equal(code, 1);
-  assert.deepEqual(writes, []);
-  assert.ok(!log.some((line) => line.startsWith("link\t")));
-  assert.ok(log.includes("isolated: 0"));
-  assert.ok(log.includes("pages written: 0"));
-  const err = errors(log);
-  assert.match(err[0],
-    /^unsearched\t10\texact-term search: 1 of 2 result row\(s\) had no readable title\. Hits from this half are incomplete and UNKNOWN\. cql: /);
-  assert.ok(err[0].endsWith('text ~ "alpha palette design"'));
-  assert.equal(err.at(-1), "1 orphan(s) were never searched. Their neighbours are UNKNOWN.");
-});
-
-test("stitch --only control: the same exact title fully readable links and writes", async () => {
-  const { code, log, writes } = await stitchOnly10([{ title: "Beta palette tokens" }]);
+  const asked: { query: string; spaceKey?: string }[] = [];
+  const run: NeighbourDeps = { ...halves(log, {}), semantic: async (query, _limit, options) => {
+    asked.push({ query, spaceKey: options?.spaceKey });
+    return { titles: [], items: [
+      { id: "1", title: PAGES[2].title, snippet: "<p>launchd\tagent</p>" },
+      { id: "3", title: PAGES[4].title, snippet: "Palette tokens." },
+    ] };
+  } };
+  const code = await reportRelated(run, { title: PAGES[1].title, topic: "Which colours the banner uses.", id: "901" });
   assert.equal(code, 0);
-  assert.ok(log.includes("link\t11\t10\tterm=palette\tsibling"));
-  assert.deepEqual(writes, ["11"]);
-  assert.ok(!errors(log).some((line) => line.startsWith("unsearched")));
+  assert.deepEqual(asked, [{ query: `${PAGES[1].title}. Which colours the banner uses.`, spaceKey: "KB" }]);
+  assert.deepEqual(log.filter((line) => line.startsWith("related\t")), [
+    `related\t1\t${PAGES[2].title}\tAcme\t\tlaunchd agent`,
+    `related\t3\t${PAGES[4].title}\tAcme\tcolor,palette\tPalette tokens.`,
+  ]);
+  assert.ok(log.includes("count: 2"));
 });
-
-test("stitch sweep: an unreadable orphan is unsearched, not isolated; the other is still linked", async () => {
-  const log: string[] = [];
-  const code = await reportStitch(halves(log, {
-    pages: TWO_ORPHANS,
-    bodies: { "10": '<p><a href="/wiki/spaces/KB/pages/12">g</a></p>' },
-    results: (cql) => (cql.endsWith('"alpha palette design"') ? [{}] : []),
-  }), { dryRun: true, perOrphan: 3 });
-  assert.equal(code, 1);
-  const err = errors(log);
-  assert.match(err[0], /^unsearched\t10\texact-term search: 1 of 1 result row\(s\)/);
-  assert.deepEqual(log.filter((line) => line.startsWith("link\t")), ["link\t10\t11\tterm=palette\tsibling"]);
-  assert.ok(log.includes("orphans: 2"));
-  assert.ok(log.includes("pages that would be written: 1"));
-  assert.ok(log.includes("isolated: 0"));
-  assert.equal(err.at(-1), "1 orphan(s) were never searched. Their neighbours are UNKNOWN.");
-});
-
-test("stitch --only: a non-string title row is unsearched, not isolated", async () => {
-  const log: string[] = [];
-  const code = await reportStitch(halves(log, { results: () => [{ title: 7 }] }), { only: "901", dryRun: true });
-  assert.equal(code, 1);
-  assert.ok(log.includes("isolated: 0"));
-  assert.ok(!log.some((line) => line.startsWith("link\t")));
-  const err = errors(log);
-  assert.equal(err.length, 2);
-  assert.ok(err[0].startsWith("unsearched\t901\t"));
-  assert.match(err[0].slice("unsearched\t901\t".length), ROWS_LINE);
-  assert.equal(err[1], "1 orphan(s) were never searched. Their neighbours are UNKNOWN.");
-});
-
-// Issue #710. A supplied id selects the targeted mode, even an empty one: the
-// falsy "" used to fall through to the sweep and write across the space.
-for (const only of ["", "   ", "abc"]) {
-  test(`stitch only=${JSON.stringify(only)} refuses before any request instead of sweeping`, async () => {
-    const log: string[] = [];
-    const run: NeighbourDeps = {
-      ...deps(log),
-      session: { async request() { throw new Error("no request may run"); } },
-      semantic: async () => { throw new Error("no search may run"); },
-    };
-    assert.equal(await reportStitch(run, { only }), 1);
-    assert.deepEqual(log, ["error: --id must be a numeric Confluence page id. Nothing was searched or written."]);
-  });
-}

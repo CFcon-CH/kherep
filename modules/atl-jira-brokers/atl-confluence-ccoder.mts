@@ -97,7 +97,7 @@ export const FLAGS = {
   move: { required: { id: "<id>", parent: "<id>" } },
   space: { required: { space: "<key>" } },
   children: { required: { id: "<id>" } },
-  related: { required: { space: "<key>", title: "<title>" }, optional: { id: "<id>", parent: "<id>", limit: "<n>" } },
+  related: { required: { space: "<key>", title: "<title>" }, optional: { topic: "<text>", id: "<id>", limit: "<n>" } },
   search: { required: { space: "<key>", query: "<terms>" }, optional: { limit: "<n>" } },
   list: { required: { space: "<key>" }, optional: { "title-contains": "<text>", label: "<name>", limit: "<n>" } },
   context: { required: { space: "<key>", id: "<id>" } },

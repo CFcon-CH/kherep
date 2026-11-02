@@ -12,7 +12,6 @@ import {
   outgoingIds,
   rareTerms,
   requireResolvableAnchors,
-  selectRelated,
   spaceIndex,
   type SpaceIndex,
 } from "./confluence-related.mts";
@@ -62,36 +61,7 @@ test("contentTerms drops stop words but keeps dotted and hyphenated identifiers"
   assert.ok(!terms.has("for"));
 });
 
-test("selectRelated keeps a proposal that shares a word and reports why", () => {
-  const index = indexOf(page("node", "Development", null), page("1", "Forge Queue Payload Limit"));
-  const out = selectRelated(index, { title: "Forge Bulk Operation Pattern" }, ["Forge Queue Payload Limit"]);
-  assert.equal(out.length, 1);
-  assert.equal(out[0].id, "1");
-  assert.deepEqual(out[0].terms, ["forge"], "the result names the word that let it through");
-  assert.equal(out[0].sibling, false);
-});
-
-test("selectRelated drops a proposal that is not a page in this space", () => {
-  const index = indexOf(page("1", "Forge Queue Payload Limit"));
-  const out = selectRelated(index, { title: "Forge Bulk Operation Pattern" }, ["Some Page On Another Site"]);
-  assert.deepEqual(out, [], "the index IS the space filter - the semantic side has none");
-});
-
-test("selectRelated drops a structure node even when the words match", () => {
-  // "Development" is somebody's parent, so it is a shelf. It shares no word here;
-  // the page that does share one is the shelf itself in the second case.
-  const index = indexOf(page("node", "Forge Apps", null), page("1", "Forge Bridge Errors", "node"));
-  const out = selectRelated(index, { title: "Forge Bulk Operation Pattern" }, ["Forge Apps", "Forge Bridge Errors"]);
-  assert.deepEqual(out.map((p) => p.id), ["1"]);
-});
-
-test("selectRelated never returns the source page itself", () => {
-  const index = indexOf(page("node", "General", null), page("7", "Forge Bulk Operation Pattern"));
-  const out = selectRelated(index, { title: "Forge Bulk Operation Pattern", id: "7" }, ["Forge Bulk Operation Pattern"]);
-  assert.deepEqual(out, []);
-});
-
-// --- issue #86: a sibling alone and a label word alone are not evidence ------
+// --- issue #86: which title words are rare enough to be a hint (#736) ---------
 // Synthetic titles in the shape of the real case: "Acme" stands for the product
 // name that most titles in the space carry.
 
@@ -113,44 +83,6 @@ function acmeSpace(): SpaceIndex {
 
 const ACME_SOURCE = { title: "Acme brand banner: visual identity and color palette", id: "src", parentId: "node" };
 
-test("selectRelated rejects a same-parent page that shares no word", () => {
-  const out = selectRelated(acmeSpace(), ACME_SOURCE, ["macOS product-node daemon launchd agent configuration"]);
-  assert.deepEqual(out, [], "a sibling under a broad node says nothing about topic");
-});
-
-test("selectRelated rejects a page that shares only a word most titles carry", () => {
-  const out = selectRelated(acmeSpace(), ACME_SOURCE, ["Acme architecture: governance layer, not agent harness"]);
-  assert.deepEqual(out, [], "the product name is a label, not evidence");
-});
-
-test("selectRelated accepts a page sharing a distinctive word and says which", () => {
-  const out = selectRelated(acmeSpace(), ACME_SOURCE, [
-    "macOS product-node daemon launchd agent configuration",
-    "Acme architecture: governance layer, not agent harness",
-    "Acme color palette tokens",
-  ]);
-  assert.deepEqual(out.map((p) => p.id), ["3"]);
-  assert.deepEqual(out[0].terms, ["color", "palette"], "the common word is not part of the reason");
-  assert.equal(out[0].sibling, true);
-});
-
-test("selectRelated rejects a page that shares only a generic word", () => {
-  const index = indexOf(
-    page("node", "Tools", null),
-    page("1", "Queue retry instead of polling"),
-    page("2", "Broker test harness for exit codes"),
-    page("3", "Label sync instead of rename"),
-    page("4", "Hook test fixtures"),
-  );
-  const out = selectRelated(
-    index,
-    { title: "Queue retry instead of polling", id: "1" },
-    ["Label sync instead of rename", "Hook test fixtures"],
-  );
-  assert.deepEqual(out, [], "instead is grammar, not a topic, however rare it is in titles");
-  assert.ok(!contentTerms("Broker test harness").has("test"));
-});
-
 // The product name in 5 of 60 titles: under the old one-in-five cutoff, yet
 // still far too frequent to say two pages are about the same thing.
 function productSpace(): SpaceIndex {
@@ -159,11 +91,9 @@ function productSpace(): SpaceIndex {
   return indexOf(page("node", "Space", null), page("src", "Acme banner palette"), ...acme, ...rest);
 }
 
-test("selectRelated rejects a page sharing only the product name, even under one in five", () => {
-  const index = productSpace();
-  assert.equal(index.byId.size, 60);
-  const out = selectRelated(index, { title: "Acme banner palette", id: "src" }, ["Acme module alpha"]);
-  assert.deepEqual(out, [], "5 of 60 titles is a label, not evidence");
+test("contentTerms drops a generic word however rare it is in titles", () => {
+  assert.ok(!contentTerms("Broker test harness").has("test"));
+  assert.ok(!contentTerms("Use the hook instead").has("instead"));
 });
 
 test("rareTerms keeps a word only when few titles carry it", () => {
@@ -172,39 +102,6 @@ test("rareTerms keeps a word only when few titles carry it", () => {
   assert.ok(!rareTerms(productSpace()).has("acme"));
   const small = indexOf(page("1", "Forge Queue Payload Limit", null), page("2", "Forge Bridge Errors", null));
   assert.ok(rareTerms(small).has("forge"), "two titles sharing a word is a pairing, not a label");
-});
-
-test("selectRelated rejects an unrelated page under a different node", () => {
-  const index = indexOf(page("a", "Operations", null), page("b", "Kherep", null), page("9", "Kubernetes Inode Exhaustion", "a"));
-  const out = selectRelated(index, { title: "Pinokio Runtime Control Reference", parentId: "b" }, ["Kubernetes Inode Exhaustion"]);
-  assert.deepEqual(out, [], "this is exactly the repeat stranger the semantic side keeps offering");
-});
-
-test("selectRelated preserves proposal order, deduplicates and honours the cap", () => {
-  // The unrelated pages keep "jira" under the rare-word limit: four Jira titles
-  // in a space of 205 is a topic, not a label.
-  const others = Array.from({ length: 200 }, (_, i) => page(`x${i}`, `Unrelated ${i}`));
-  const index = indexOf(
-    page("root", "Atlassian", null),
-    page("1", "Jira REST API Patterns"),
-    page("2", "Jira Issue Picker Field"),
-    page("3", "Jira Search JQL Token"),
-    page("4", "Jira Field Metadata"),
-    ...others,
-  );
-  const out = selectRelated(
-    index,
-    { title: "Jira Cloud v3 Textarea Custom Field" },
-    ["Jira REST API Patterns", "Jira Issue Picker Field", "Jira REST API Patterns", "Jira Search JQL Token", "Jira Field Metadata"],
-    3,
-  );
-  assert.deepEqual(out.map((p) => p.id), ["1", "2", "3"]);
-});
-
-test("selectRelated returns an empty list rather than a filler for an isolated page", () => {
-  const index = indexOf(page("root", "Operations", null), page("1", "KVM Guest Shutdown Host Usage"));
-  const out = selectRelated(index, { title: "Social Media Content Knowledge Base" }, ["KVM Guest Shutdown Host Usage"]);
-  assert.deepEqual(out, [], "no neighbour is a result; an invented one is a lie");
 });
 
 test("spaceIndex follows the cursor and collects the parent set", async () => {

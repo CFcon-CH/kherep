@@ -23,11 +23,12 @@ export function plainText(value: string): string {
       const lower = name.toLowerCase();
       if (lower.startsWith("#")) {
         const code = lower.startsWith("#x") ? parseInt(lower.slice(2), 16) : parseInt(lower.slice(1), 10);
-        const printable = code > 31 && code <= 0x10ffff && (code < 0xd800 || code > 0xdfff);
+        const printable = code > 31 && code <= 0x10ffff && (code < 0x7f || code > 0x9f) && (code < 0xd800 || code > 0xdfff);
         return printable ? String.fromCodePoint(code) : " ";
       }
       return NAMED[lower] ?? " ";
     })
+    .replace(/[\x00-\x1f\x7f-\x9f]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
 }

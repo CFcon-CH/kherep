@@ -2,16 +2,16 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { createSession, currentUser, type ConfluenceContext } from './confluence-session.mts';
-import { createPage, findSpace, getPage, listChildren, listLabels, updatePage } from './confluence-content.mts';
+import { createPage, findSpace, getPage, listChildren, listLabels } from './confluence-content.mts';
 import { ensureRuntimeLabel } from './confluence-label-cli.mts';
 import { runtimeLabel } from './confluence-runtime-label.mts';
-import { reportRelated, reportStitch, relatedSection, withRelated, existingRelated } from './confluence-neighbours.mts';
-import { outgoingIds, requireResolvableAnchors } from './confluence-related.mts';
+import { requireResolvableAnchors } from './confluence-related.mts';
 import { semanticProposals } from './confluence-semantic.mts';
 import { SCOPES, v2, type ConfluenceSession } from './confluence-contract.mts';
 import type { ObservationBroker, Authority } from './observation-publisher.mts';
 import { ObservationLookupError } from './observation-lookup.mts';
 import { pageId } from './observation-policy.mts';
+import { observationLinking } from './observation-linking.mts';
 const CREDENTIAL = 'KHEREP_ATL_CRED_FILE_CODEX';
 // A broken collection must not become an empty successful search or child list.
 export function checkedSession(session: ConfluenceSession): ConfluenceSession {
@@ -46,52 +46,19 @@ export function checkedSession(session: ConfluenceSession): ConfluenceSession {
 }
 export function observationBroker(home: string, context?: ConfluenceContext, options: {
     semantic?: typeof semanticProposals;
-} = {}): ObservationBroker {
+} = {}): ObservationBroker & { candidates(input: unknown): Promise<{ text: string; isError: boolean }> } {
     const ctx = context ?? { env: process.env, credEnv: CREDENTIAL, readFile: fs.readFile, fetch: boundedFetch, now: Date.now, session: {} };
     if (ctx.credEnv !== CREDENTIAL)
         throw new Error('broker-unavailable');
     const session = checkedSession(createSession(ctx));
-    const semantic = (title: string) => (options.semantic ?? semanticProposals)(title, 25, { env: ctx.env });
     let authorityText = '';
     const assertAuthorityUnchanged = async () => {
         if (await fs.readFile(path.join(home, 'kherep', 'confluence.json'), 'utf8') !== authorityText)
             throw new Error('authority-unavailable');
     };
-    const deps = (spaceId: string, spaceKey: string, errors: string[], log: (line: string) => void, createdId?: string) => ({ session, spaceId, spaceKey, semantic,
-        log, logError: (line: string) => errors.push(line), update: async (id: string, value: string, message: string) => {
-            await assertAuthorityUnchanged();
-            if (!createdId || !existingRelated(value).includes(createdId))
-                throw new Error('stitch-unverified');
-            // Bind content and version to the same fresh read. Merge only the
-            // owned Related block; reportStitch's earlier ordinary body is stale.
-            const { json } = await session.request({ method: 'GET', path: v2(`/pages/${id}?body-format=storage`), scope: SCOPES.get });
-            const current = json as {
-                id?: string;
-                spaceId?: string;
-                status?: string;
-                version?: {
-                    number?: number;
-                };
-                body?: {
-                    storage?: {
-                        value?: string;
-                    };
-                };
-            };
-            const storage = current.body?.storage?.value, version = current.version?.number;
-            if (current.id !== id || current.spaceId !== spaceId || current.status !== 'current' || typeof storage !== 'string'
-                || !Number.isSafeInteger(version) || !version || version < 1)
-                throw new Error('stitch-unverified');
-            const merged = [...new Set([...existingRelated(storage), createdId])].filter(target => target !== id);
-            if (merged.length > 100)
-                throw new Error('stitch-unverified');
-            const pages = await Promise.all(merged.map(target => getPage(session, target)));
-            if (pages.some(page => page.spaceId !== spaceId || page.status !== 'current'))
-                throw new Error('stitch-unverified');
-            const next = withRelated(storage, relatedSection(spaceKey, pages));
-            await requireResolvableAnchors(session, next, spaceId);
-            await updatePage(session, { id, value: next, representation: 'storage', message, expectedVersion: version });
-        } });
+    const linking = observationLinking({ session, home, semantic: options.semantic ?? semanticProposals, env: ctx.env,
+        authority: async () => JSON.parse(await fs.readFile(path.join(home, 'kherep', 'confluence.json'), 'utf8')) as Authority,
+        assertAuthorityUnchanged });
     return {
         runtimeLabel: runtimeLabel(CREDENTIAL, ctx.env),
         async authority() {
@@ -123,27 +90,9 @@ export function observationBroker(home: string, context?: ConfluenceContext, opt
                 throw new Error('placement-unresolved');
             return child.id;
         },
-        async related(spaceId, key, finding, parent) {
-            const rows: {
-                id: string;
-                title: string;
-            }[] = [];
-            const errors: string[] = [];
-            const result = await reportRelated(deps(spaceId, key, errors, line => {
-                if (line.startsWith('related\t')) {
-                    const [, id, ...title] = line.split('\t');
-                    if (!pageId(id))
-                        throw new Error();
-                    rows.push({ id, title: title.join('\t') });
-                }
-            }), { title: finding.title, parentId: parent });
-            if (result !== 0 || errors.length)
-                throw new Error('related-unavailable');
-            // Encode literal > and " in accepted attribute-free prose; preserve
-            // tags, entities and backslashes. Related anchors are appended below.
-            const prose = finding.bodyStorage.replace(/(<[^>]*>)|[>"]/g, (match, tag: string | undefined) => tag ?? (match === '>' ? '&gt;' : '&quot;'));
-            return withRelated(prose, rows.length ? relatedSection(key, rows) : '<h2>Related pages</h2><p>No related page found in a complete lookup.</p>');
-        },
+        candidates: linking.candidates,
+        links: linking.links,
+        related: async (_spaceId, key, finding, _parent, linked) => linking.related(key, finding, linked),
         async create(spaceId, finding, parent, body) {
             await assertAuthorityUnchanged();
             await requireResolvableAnchors(session, body, spaceId);
@@ -167,39 +116,7 @@ export function observationBroker(home: string, context?: ConfluenceContext, opt
             return { id: raw.id, title: raw.title, spaceId: raw.spaceId, parentId: raw.parentId, authorId: raw.authorId,
                 body: raw.body?.storage?.value ?? '', labels: await listLabels(session, id) };
         },
-        async stitch(id, spaceId, key) {
-            // Issue #710: this adapter stitches one page and nothing else.
-            if (!pageId(id))
-                throw new Error('stitch-unverified');
-            const errors: string[] = [];
-            const links: {
-                from: string;
-                to: string;
-            }[] = [];
-            const result = await reportStitch(deps(spaceId, key, errors, line => {
-                if (line.startsWith('link\t')) {
-                    const [, from, to] = line.split('\t');
-                    if (!pageId(from) || to !== id)
-                        throw new Error();
-                    links.push({ from, to });
-                }
-            }, id), { only: id });
-            if (result !== 0 || errors.length)
-                throw new Error('stitch-unverified');
-            for (const link of links) {
-                const page = await getPage(session, link.from);
-                const { json } = await session.request({ method: 'GET', path: v2(`/pages/${link.from}?body-format=storage`), scope: SCOPES.get });
-                const body = (json as {
-                    body?: {
-                        storage?: {
-                            value?: unknown;
-                        };
-                    };
-                })?.body?.storage?.value;
-                if (page.spaceId !== spaceId || typeof body !== 'string' || !outgoingIds(body).includes(id))
-                    throw new Error('stitch-unverified');
-            }
-        },
+        stitch: linking.stitch,
     };
 }
 // Bound provider bodies and timeouts without returning raw provider failures.

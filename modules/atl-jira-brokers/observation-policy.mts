@@ -8,6 +8,12 @@ export type Finding = {
         project: string;
         app: string;
     };
+    // Issue #736: the related_candidates token and the ids codex-obs approved.
+    links: FindingLinks;
+};
+export type FindingLinks = {
+    candidates: string;
+    approved: { id: string; reason: string }[];
 };
 export type ObservationRequest = {
     sessionId: string;
@@ -42,6 +48,13 @@ export function ordinaryXhtml(storage: string): boolean {
     }
     return open.length === 0;
 }
+const exactKeys = (value: unknown, keys: string[]): value is Record<string, unknown> => Boolean(value) && typeof value === 'object'
+    && !Array.isArray(value) && Object.keys(value as object).sort().join() === keys.join();
+function linksShape(links: unknown): links is FindingLinks {
+    return exactKeys(links, ['approved', 'candidates']) && typeof links.candidates === 'string' && /^[a-f0-9]{64}$/.test(links.candidates)
+        && Array.isArray(links.approved) && links.approved.length <= 10 && links.approved.every(item => exactKeys(item, ['id', 'reason'])
+        && pageId(item.id) && typeof item.reason === 'string' && item.reason.length <= 1000);
+}
 export function observationRequest(value: unknown): ObservationRequest | null {
     if (!value || typeof value !== 'object' || Array.isArray(value))
         return null;
@@ -50,7 +63,11 @@ export function observationRequest(value: unknown): ObservationRequest | null {
         || !safeId(r.sessionId) || !safeId(r.turnId) || !Array.isArray(r.observations) || r.observations.length > 20
         || (r.namedNode !== undefined && !NODES.has(r.namedNode)))
         return null;
-    if ('problem' in checkObsCandidate(JSON.stringify({ observations: r.observations })))
+    // The shared candidate check knows the five content keys; links are the
+    // adapter's own sixth key and are checked here, by shape only. Whether the
+    // decisions fit the receipt is the publisher's links-refused phase.
+    const plain = r.observations.map(f => f && typeof f === 'object' && !Array.isArray(f) ? Object.fromEntries(Object.entries(f).filter(([key]) => key !== 'links')) : f);
+    if ('problem' in checkObsCandidate(JSON.stringify({ observations: plain })) || !r.observations.every(f => linksShape(f.links)))
         return null;
     for (const f of r.observations) {
         if (f.title.length > 200 || f.bodyStorage.length > 24000

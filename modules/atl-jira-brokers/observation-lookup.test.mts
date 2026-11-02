@@ -10,7 +10,7 @@ import { publishObservations } from './observation-publisher.mts';
 import { receiptStore } from './observation-receipt.mts';
 import type { ConfluenceContext } from './confluence-session.mts';
 const request = () => ({ sessionId: 'synthetic', turnId: 'turn', observations: [{ title: 'Synthetic lookup', bodyStorage: '<p>Synthetic lookup</p>',
-    evidence: 'assumed', labels: ['type-observation', 'evidence-assumed', 'status-author-model'], placement: { project: 'Kherep', app: '-' } }] });
+    evidence: 'assumed', labels: ['type-observation', 'evidence-assumed', 'status-author-model'], placement: { project: 'Kherep', app: '-' }, links: { candidates: 'a'.repeat(64), approved: [] as { id: string; reason: string }[] } }] });
 function fixture(t: { after(fn: () => void): void }) {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), 'observation-lookup-'));
     t.after(() => fs.rmSync(home, { recursive: true, force: true }));
@@ -166,6 +166,12 @@ function defaultLookup(t: { after(fn: () => void): void }, spaces: unknown, link
         const second = await publishObservations(input, broker, store);
         process.stdout.write(JSON.stringify({ first, second, calls, beforeRepeat, writes }));
     `;
+    // Issue #736: the request's links name this related-candidates receipt.
+    const candidates = path.join(f.home, '.cache', 'observation-publisher', 'candidates');
+    fs.mkdirSync(candidates, { recursive: true });
+    fs.writeFileSync(path.join(candidates, `${'a'.repeat(64)}.json`), JSON.stringify({ kind: 'related-candidates',
+        source: { title: 'Synthetic lookup' }, sessionId: 'synthetic', turnId: 'turn', spaceKey: 'SYNTHETIC', query: 'Synthetic lookup',
+        searchedAt: new Date().toISOString(), candidates: [] }));
     const result = spawnSync(process.execPath, ['--input-type=module', '-e', script], {
         encoding: 'utf8', env: { KHEREP_ATL_SITE: 'https://synthetic.invalid', KHEREP_ATL_CRED_FILE_CODEX: credential, KHEREP_PROFILE: 'mac' },
     });

@@ -14,12 +14,12 @@
 //     space filter, it returns no score, and it offers structure nodes and the
 //     same handful of strangers over and over.
 //
-// So the semantic side proposes and a mechanical side disposes. A proposal has
-// to be a page in THIS space, it has to be a leaf rather than a shelf, and it
-// has to share a rare content word with the source title. Sitting under the
-// same node is not enough on its own, and neither is a word many titles in the
-// space carry, such as the product name (issue #86). An unrankable signal plus an exact one beats
-// either alone.
+// So the semantic side proposes and the structure filters: a candidate has to
+// be a page in THIS space and a leaf rather than a shelf. Shared title words
+// used to decide as well (issue #86), and still let wrong-topic pages through
+// on a word like "account" or "state" (issue #736). They are now only a hint
+// printed beside a candidate; whoever wrote the page judges each one on topic
+// (confluence-candidates.mts).
 import { ConfluenceError, SCOPES, v2, type ConfluenceSession } from "./confluence-contract.mts";
 
 import { strictRows, nextPath, ReadFailure, readFailure } from './confluence-pagination.mts';
@@ -125,28 +125,9 @@ export function contentTerms(source: string): Set<string> {
   return out;
 }
 
-export interface RelatedSource {
-  title: string;
-  // Present when the source page already exists. It is never its own neighbour.
-  id?: string;
-  // Present when the source already hangs somewhere. Reported on the result so
-  // a link can be traced, but never a reason to accept one: the hierarchy is
-  // deliberately flat, so a sibling under a broad node says nothing about topic.
-  parentId?: string | null;
-}
-
-export interface Related extends IndexedPage {
-  // Why this one survived: the distinctive words it shares with the source.
-  // Carried with the result, not only logged, so a wrong link can be traced to
-  // the word that let it through.
-  terms: string[];
-  // Also under the same parent. Context for the trace, never evidence.
-  sibling: boolean;
-}
-
-// Only a rare word is evidence: one that at most this share of the space's
-// titles carry. A shared rare word says two pages are about the same thing; a
-// frequent one says only that they belong to the same product. Measured on the
+// Only a rare word is worth a hint: one that at most this share of the space's
+// titles carry. A shared rare word suggests two pages are about the same thing;
+// a frequent one says only that they belong to the same product. Measured on the
 // live space (620 titles) on 2026-09-27: the product name sat in 47 titles
 // (7.6%) and a platform name in 83 (13%), both under the earlier one-in-five
 // cutoff, while the specific words (tool and platform names) sat in 2 to 10.
@@ -157,7 +138,7 @@ const RARE_TERM_SHARE = 0.03;
 // word is exactly the pairing this filter exists to find.
 const RARE_TERM_MIN_TITLES = 3;
 
-// The words that count as evidence. Counted over the titles the index already
+// The words that count as a hint. Counted over the titles the index already
 // holds, so the cutoff costs no request and follows the space as it grows.
 export function rareTerms(index: SpaceIndex): Set<string> {
   const counts = new Map<string, number>();
@@ -170,37 +151,6 @@ export function rareTerms(index: SpaceIndex): Set<string> {
     if (n <= limit) rare.add(term);
   }
   return rare;
-}
-
-// Keeps the proposal order - that order is the only ranking the semantic side
-// gives us - and drops everything the mechanical side cannot justify.
-export function selectRelated(
-  index: SpaceIndex,
-  source: RelatedSource,
-  proposals: string[],
-  limit = 3,
-): Related[] {
-  const rare = rareTerms(index);
-  const sourceTerms = contentTerms(source.title);
-  const seen = new Set<string>();
-  const out: Related[] = [];
-
-  for (const proposal of proposals) {
-    if (out.length >= limit) break;
-    const hit = index.byTitle.get(String(proposal).trim().toLowerCase());
-    if (!hit) continue;                       // not in this space
-    if (hit.id === source.id) continue;       // not itself
-    if (seen.has(hit.id)) continue;
-    if (index.parents.has(hit.id)) continue;  // a shelf, not a book
-
-    const terms = [...contentTerms(hit.title)].filter((term) => sourceTerms.has(term) && rare.has(term));
-    if (!terms.length) continue;
-
-    seen.add(hit.id);
-    const sibling = Boolean(source.parentId) && hit.parentId === source.parentId;
-    out.push({ ...hit, terms, sibling });
-  }
-  return out;
 }
 
 // The storage body, which getPage deliberately does not carry: a verb that
