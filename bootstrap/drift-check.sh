@@ -141,6 +141,23 @@ cmp_rendered() {
   rm -rf "$rendered_dir"
 }
 
+# Issue #737. An agent's frontmatter carries the resolved model policy: the
+# repo's shipped default plus the live user override, rendered as install.sh
+# does, so an overridden model or effort is ok and a hand edit is drift. The
+# user override itself belongs to the operator and is never compared.
+cmp_agent() {
+  local rel="$1" repo="$2" live="$3" rendered_dir
+  if [ ! -f "$repo" ]; then printf 'MISSING-REPO  %s (%q)\n' "$rel" "$repo"; drift=1; return; fi
+  rendered_dir="$(mktemp -d "$EXPECTED_DIR/agent.XXXXXX")" || { echo "RENDER-FAIL   $rel"; drift=1; return; }
+  if node "$HERE/model-policy-render.mts" agent "$repo" "$rendered_dir/expected" \
+    "$CLAUDE_SRC/kherep/model-policy.json" "$CLAUDE_HOME/kherep/model-policy.user.json" 2>"$rendered_dir/error"; then
+    cmp_file "$rel" "$rendered_dir/expected" "$live"
+  else
+    echo "RENDER-FAIL   $rel ($(head -n 1 "$rendered_dir/error"))"; drift=1
+  fi
+  rm -rf "$rendered_dir"
+}
+
 cmp_tree() {
   local label="$1" repo_dir="$2" live_dir="$3" f sub
   if [ ! -d "$repo_dir" ]; then echo "MISSING-REPO  $label"; drift=1; return; fi
@@ -176,6 +193,7 @@ if [ "$DRIFT_SCOPE" = "all" ]; then
       continue
     fi
     repo="$CLAUDE_SRC/$rel"; live="$CLAUDE_HOME/$rel"
+    case "$rel" in agents/*.md) cmp_agent "$rel" "$repo" "$live"; continue ;; esac
     if [ -d "$repo" ]; then
       cmp_tree "$rel" "$repo" "$live"
     else

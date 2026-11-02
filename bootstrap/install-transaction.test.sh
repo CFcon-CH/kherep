@@ -482,6 +482,64 @@ test_default_confluence_brokers() {
     { cat "$ROOT/drift.log"; fail "drift-check failed after a default install"; }
 }
 
+# Issue #737. The model policy user override belongs to the operator. On a host
+# the policy installer never reached, explicit values are migrated once (an
+# edited agent frontmatter, a deprecated environment pin equal to the old
+# default). Afterwards the file stays byte-identical through a reinstall, a
+# rolled-back install and a refused one, and its values reach the frontmatter
+# without drift.
+test_model_policy() {
+  local rc user backups
+  fixture model-policy; user="$C/kherep/model-policy.user.json"
+  mkdir -p "$C/agents"
+  printf '%s\n' '---' 'name: claude-obs' 'description: x' 'tools: Bash, Read' 'model: haiku' 'effort: low' '---' 'Body.' \
+    > "$C/agents/claude-obs.md"
+  policy_install() {
+    HOME="$H" CLAUDE_HOME="$C" KHEREP_PROFILE=win KHEREP_WORKSPACE="$W" KHEREP_CREDENTIALS_ROOT="$R" \
+      KHEREP_INSTALL_SKIP_GITCONFIG=1 KHEREP_INSTALL_SKIP_KNOWLEDGE_SPACE=1 KHEREP_INSTALL_SKIP_ATL_CREDENTIAL=1 \
+      SKIP_SECRETS=1 SKIP_DEPS=1 bash "$HERE/install.sh"
+  }
+  set +e; KHEREP_AGENT_MODEL_POLICY='{"kherep-builder":"opus"}' policy_install > "$ROOT/log" 2>&1; rc=$?; set -e
+  [ "$rc" -eq 0 ] || { cat "$ROOT/log"; fail "model policy migration install failed (rc=$rc)"; }
+  grep -q 'model policy: captured agents.claude-obs.effort = low from the edited agents/claude-obs.md' "$ROOT/log" ||
+    fail "the edited frontmatter effort was not captured"
+  grep -q 'model policy: captured agents.kherep-builder.model = opus from KHEREP_AGENT_MODEL_POLICY' "$ROOT/log" ||
+    fail "an environment pin equal to the old default was not kept as explicit"
+  node -e '
+    const j = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+    const want = { schema_version: 1, agents: { "kherep-builder": { model: "opus" }, "claude-obs": { effort: "low" } } };
+    if (JSON.stringify(j) !== JSON.stringify(want)) process.exit(1);
+  ' "$user" || fail "the migrated user override is not what was captured"
+  grep -qx 'effort: low' "$C/agents/claude-obs.md" || fail "the migrated effort was not rendered"
+  grep -qx 'model: opus' "$C/agents/kherep-builder.md" || fail "the migrated model was not rendered"
+  same "$C/kherep/model-policy.json" "$HERE/../claude/kherep/model-policy.json"
+
+  printf '%s\n' '{ "agents": { "claude-obs": { "model": "sonnet" } } }' > "$user"; cp "$user" "$ROOT/user.before"
+  set +e; policy_install > "$ROOT/log2" 2>&1; rc=$?; set -e
+  [ "$rc" -eq 0 ] || { cat "$ROOT/log2"; fail "reinstall with a user override failed (rc=$rc)"; }
+  same "$user" "$ROOT/user.before"
+  ! grep -q 'model policy: captured' "$ROOT/log2" || fail "the migration ran a second time"
+  grep -qx 'model: sonnet' "$C/agents/claude-obs.md" && grep -qx 'effort: medium' "$C/agents/claude-obs.md" ||
+    fail "the user override and the observer default were not rendered on reinstall"
+  ! grep -q '^model:' "$C/agents/kherep-builder.md" || fail "a role default left the builder off native inherit"
+  HOME="$H" CLAUDE_HOME="$C" KHEREP_PROFILE=win KHEREP_WORKSPACE="$W" KHEREP_CREDENTIALS_ROOT="$R" \
+    bash "$HERE/drift-check.sh" > "$ROOT/drift.log" 2>&1 || { cat "$ROOT/drift.log"; fail "drift-check failed with a user override"; }
+  grep -q '^ok *agents/claude-obs.md$' "$ROOT/drift.log" || fail "the overridden agent is not reported ok"
+
+  set +e; KHEREP_BOOTSTRAP_TEST_FAIL_AFTER_LABEL='hooks/deploy-guard.mts' policy_install > "$ROOT/log3" 2>&1; rc=$?; set -e
+  [ "$rc" -ne 0 ] && [ -f "$(latest "$H")/ROLLED-BACK" ] || fail "the injected failure was not rolled back"
+  same "$user" "$ROOT/user.before"
+
+  printf '{ "agents": { "claude-obs": { "tools": "Bash" } } }\n' > "$user"; cp "$user" "$ROOT/user.before"
+  backups="$(ls -d "$C"/backups/bootstrap/install-* | wc -l)"
+  set +e; policy_install > "$ROOT/log4" 2>&1; rc=$?; set -e
+  [ "$rc" -ne 0 ] || fail "an install with an invalid user override succeeded"
+  grep -q 'FATAL: model policy .*model-policy.user.json, key agents.claude-obs.tools:' "$ROOT/log4" ||
+    { cat "$ROOT/log4"; fail "the refusal does not name the file and key"; }
+  same "$user" "$ROOT/user.before"
+  [ "$(ls -d "$C"/backups/bootstrap/install-* | wc -l)" = "$backups" ] || fail "an invalid override reached the transaction"
+}
+
 # Kherep no longer ships the MPAC tools (#25). Hosts that installed them earlier
 # get <workspace>/tools/mpac/ retired through retired.txt (#33). The workspace
 # entries are hash-gated (#45): an upgrade over an operator's own mpac.ps1 keeps
@@ -939,7 +997,7 @@ JS
 # like a hang. Name each test on stderr as it starts.
 for tx_test in test_library test_retire test_retire_declared test_lock test_preflights test_path_guards \
   test_partial test_term test_commit_signal test_secrets test_deps_term_releases_probe_lock test_deps_failure test_default_confluence_brokers \
-  test_upgrade_retires_mpac test_upgrade_retires_js_hooks test_upgrade_unwires_legacy_hooks \
+  test_model_policy test_upgrade_retires_mpac test_upgrade_retires_js_hooks test_upgrade_unwires_legacy_hooks \
   test_upgrade_moves_clq_to_stop test_upgrade_retires_guard_js_hooks; do
   echo "transaction test: $tx_test (${SECONDS}s)" >&2
   "$tx_test"

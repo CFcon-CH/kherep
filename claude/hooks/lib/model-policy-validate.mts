@@ -50,12 +50,19 @@ function isName(value: unknown): value is string {
   return typeof value === "string" && value !== "" && value === value.trim();
 }
 
+// A model name is rendered into agent frontmatter, so it is one token: an
+// alias, `inherit` or a full id, never a line break or a YAML construct.
+const MODEL_NAME = /^[A-Za-z0-9][A-Za-z0-9._:@/[\]-]*$/;
+export function isModelName(value: unknown): value is string {
+  return typeof value === "string" && value.length <= 200 && MODEL_NAME.test(value);
+}
+
 function parseChoice(source: string, key: string, value: unknown, extraKeys: ReadonlySet<string>): ModelChoice {
   const object = objectAt(source, key, value);
   const choice: ModelChoice = {};
   for (const [field, entry] of Object.entries(object)) {
     if (field === "model") {
-      if (!isName(entry)) throw new ModelPolicyError(source, `${key}.model`, "must be a non-empty model name");
+      if (!isModelName(entry)) throw new ModelPolicyError(source, `${key}.model`, "must be one model name token");
       choice.model = entry;
     } else if (field === "effort") {
       if (typeof entry !== "string" || !EFFORTS.includes(entry)) {
@@ -73,7 +80,7 @@ function parseModels(source: string, value: unknown): Map<string, ModelEntry> {
   const models = new Map<string, ModelEntry>();
   for (const [id, raw] of Object.entries(objectAt(source, "models", value))) {
     const key = `models.${id}`;
-    if (!isName(id) || id === INHERIT) throw new ModelPolicyError(source, key, "is not a usable model name");
+    if (!isModelName(id) || id === INHERIT) throw new ModelPolicyError(source, key, "is not a usable model name");
     const entry: ModelEntry = {};
     for (const [field, item] of Object.entries(objectAt(source, key, raw))) {
       if (field === "dispatchable") {
@@ -171,7 +178,7 @@ export function parseEnvironment(env: Record<string, string | undefined>, shippe
     if (Object.keys(object).length === 0) throw new ModelPolicyError(source, "", "is an empty object");
     for (const [agent, raw] of Object.entries(object)) {
       const models = typeof raw === "string" ? [raw] : raw;
-      if (!isName(agent) || !Array.isArray(models) || models.length === 0 || !models.every(isName)) {
+      if (!isName(agent) || !Array.isArray(models) || models.length === 0 || !models.every(isModelName)) {
         throw new ModelPolicyError(source, agent, "must map an agent name to a model or a non-empty model list");
       }
       if (shipped.agentRoles.has(agent)) layer.agents.set(agent, { model: models[0] as string });

@@ -312,7 +312,10 @@ check_profile() {
     note_fail "LOCAL-INFERENCE profile rendering failed [$profile]";
   }
   for alias in lmstudio-win-researcher.md lmstudio-mac-researcher.md; do
-    cmp -s "$TMP/repo/claude/agents/$alias" "$CLAUDE_HOME/agents/$alias" || { note_fail "COMPAT alias source mismatch [$profile]: $alias"; }
+    # Issue #737: installed agents are the source rendered from the model policy.
+    node "$TMP/repo/bootstrap/model-policy-render.mts" agent "$TMP/repo/claude/agents/$alias" "$host_home/rendered-$alias" \
+      "$TMP/repo/claude/kherep/model-policy.json" "$CLAUDE_HOME/kherep/model-policy.user.json" &&
+      cmp -s "$host_home/rendered-$alias" "$CLAUDE_HOME/agents/$alias" || { note_fail "COMPAT alias source mismatch [$profile]: $alias"; }
     grep -Eq 'http://192\.168\.|curl ' "$CLAUDE_HOME/agents/$alias" && { note_fail "COMPAT alias leaked direct LAN/curl [$profile]: $alias"; }
   done
   cmp "$CLAUDE_HOME/.mcp.json" "$host_home/mcp.before" >/dev/null || { note_fail "MCP secret overwritten [$profile]"; }

@@ -147,6 +147,7 @@ transaction_validate_path_under_root "TWG runtime" "$CLAUDE_HOME/kherep/twg" "$C
 transaction_validate_path_under_root "commit policy" "$CLAUDE_HOME/kherep/githooks/commit-policy" "$CLAUDE_HOME" 0 || exit $?
 transaction_validate_path_under_root "Confluence configuration" "$CLAUDE_HOME/kherep/confluence.json" "$CLAUDE_HOME" 0 || exit $?
 transaction_validate_path_under_root "control-plane pointer" "$CLAUDE_HOME/kherep/control-plane/source.json" "$CLAUDE_HOME" 0 || exit $?
+transaction_validate_path_under_root "model policy user override" "$CLAUDE_HOME/kherep/model-policy.user.json" "$CLAUDE_HOME" 0 || exit $?
 if [ "$SKIP_SECRETS" = "0" ]; then
   for target in \
     "$CLAUDE_HOME/.mcp.json"; do
@@ -202,6 +203,19 @@ node "$REPO_ROOT/bootstrap/control-plane-pointer.mts" render "$REPO_ROOT" "$PREF
 node "$REPO_ROOT/bootstrap/render-profile.mts" intercom "$CLAUDE_SRC/CLAUDE.user.md" "$PREFLIGHT_DIR/CLAUDE.md"
 node "$REPO_ROOT/bootstrap/render-profile.mts" intercom \
   "$CLAUDE_SRC/teams/kherep/ROUTING.md" "$PREFLIGHT_DIR/teams/kherep/ROUTING.md"
+# Issue #737. Agent frontmatter carries the resolved model policy: the shipped
+# default plus <claude-home>/kherep/model-policy.user.json, which belongs to the
+# operator and is never rewritten here. Only on a host this installer never
+# reached before does a one-time migration capture explicit values (deprecated
+# environment inputs, edited agent frontmatter) into a new user file, installed
+# with this transaction. An invalid policy or an unresolved placeholder stops
+# the run before the first live mutation.
+USER_MODEL_POLICY="$CLAUDE_HOME/kherep/model-policy.user.json"
+node "$REPO_ROOT/bootstrap/migrate-model-policy.mts" \
+  "$CLAUDE_HOME" "$CLAUDE_SRC/kherep/model-policy.json" "$PREFLIGHT_DIR/model-policy.user.json"
+[ ! -f "$PREFLIGHT_DIR/model-policy.user.json" ] || USER_MODEL_POLICY="$PREFLIGHT_DIR/model-policy.user.json"
+node "$REPO_ROOT/bootstrap/model-policy-render.mts" agents \
+  "$CLAUDE_SRC/agents" "$PREFLIGHT_DIR/agents" "$CLAUDE_SRC/kherep/model-policy.json" "$USER_MODEL_POLICY"
 
 # Decrypt and validate the complete bundle before the first live mutation.
 # Decrypted YAML stays in the sops->node pipe; decoded staging files are mode
@@ -220,12 +234,19 @@ while IFS= read -r rel || [ -n "$rel" ]; do
   [ -z "$rel" ] && continue
   case "$rel" in settings.json|CLAUDE.md) continue;; esac
   # Issue #436. Rendered in the preflight, installed from there.
-  if [ "$rel" = "teams/kherep/ROUTING.md" ]; then
-    install_entry "$rel" "$PREFLIGHT_DIR" "$CLAUDE_HOME" "$INSTALL_BACKUP"
-    continue
-  fi
+  # Issue #737: agents too, rendered from the model policy.
+  case "$rel" in
+    teams/kherep/ROUTING.md|agents/*.md)
+      install_entry "$rel" "$PREFLIGHT_DIR" "$CLAUDE_HOME" "$INSTALL_BACKUP"
+      continue ;;
+  esac
   install_entry "$rel" "$CLAUDE_SRC" "$CLAUDE_HOME" "$INSTALL_BACKUP"
 done < "$REPO_ROOT/bootstrap/manifest/files.txt"
+if [ -f "$PREFLIGHT_DIR/model-policy.user.json" ]; then
+  install_path "kherep/model-policy.user.json" "$PREFLIGHT_DIR/model-policy.user.json" \
+    "$CLAUDE_HOME/kherep/model-policy.user.json" "$INSTALL_BACKUP/kherep/model-policy.user.json"
+  echo "install: model policy user override migrated -> $CLAUDE_HOME/kherep/model-policy.user.json"
+fi
 install_path "kherep/githooks/commit-policy" "$PREFLIGHT_DIR/commit-policy" \
   "$CLAUDE_HOME/kherep/githooks/commit-policy" "$INSTALL_BACKUP/kherep/githooks/commit-policy"
 echo "install: commit policy -> $(grep '^work_item_required=' "$PREFLIGHT_DIR/commit-policy") ($CLAUDE_HOME/kherep/githooks/commit-policy)"

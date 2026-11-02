@@ -36,6 +36,9 @@ cp -a "$CLAUDE_HOME/CLAUDE.md"     "$CLAUDE_SRC/CLAUDE.user.md"
 # Issue #436. Both name this host's intercom command; the source keeps the placeholders.
 portable_intercom "$CLAUDE_SRC/CLAUDE.user.md"
 portable_intercom "$CLAUDE_SRC/teams/kherep/ROUTING.md"
+# Issue #737. Installed agents carry the resolved model policy; the source keeps
+# the model and effort placeholders. Overrides belong in model-policy.user.json.
+node "$REPO_ROOT/bootstrap/model-policy-render.mts" portable "$CLAUDE_SRC/agents"
 # project-scoped settings + CLAUDE live in the Work workspace
 WS="$(kherep_shell_path "$(kherep_env WORKSPACE "$(kherep_default_workspace)")")"
 kherep_validate_shell_path KHEREP_WORKSPACE "$WS" || exit $?
