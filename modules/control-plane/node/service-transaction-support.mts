@@ -42,7 +42,8 @@ export async function assertSettled(input: LifecycleDependencies, binding: Servi
   if (snapshot.running !== true) throw new Error("managed service is not running after activation");
   if (daemon) {
     const recorded = lifecycleDefaults(input).readState(input.paths);
-    if ((snapshot.pid !== undefined && snapshot.pid !== daemon.pid) || recorded?.pid !== daemon.pid || recorded.disconnectedAt) {
+    if ((snapshot.pid !== undefined && snapshot.pid !== daemon.pid) || recorded?.pid !== daemon.pid
+      || recorded.startedAt !== daemon.startedAt || recorded.disconnectedAt) {
       throw new Error("managed service process does not match the recorded daemon");
     }
   }
@@ -105,5 +106,14 @@ export function recordedPriorBackup(paths: NodePaths, pending: ServiceCandidate,
     ? prior.backup.definitionDigest === receipt.definitionDigest && prior.backup.securityDigest === receipt.securityDigest
       && canonical(prior.backup.priorReceipt) === canonical(receipt)
     : prior.backup.priorReceipt === undefined;
+  if (pending.version === 2 && pending.recoveryBackupId) {
+    if (!receipt || canonical(pending.receiptAnchor) !== canonical(receipt)
+      || !pending.recoveryBinding || !sameBinding(pending.recoveryBinding, receipt.binding)) return null;
+    try {
+      const safety = readServiceBackup(paths, pending.recoveryBackupId).backup;
+      if (canonical(safety.priorReceipt) !== canonical(receipt)
+        || canonical(safety.priorSource) !== canonical(pending.recoveryBinding.source)) return null;
+    } catch { return null; }
+  }
   return bound ? prior : null;
 }

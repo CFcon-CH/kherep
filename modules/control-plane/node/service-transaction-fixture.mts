@@ -8,6 +8,7 @@ import { nodePaths } from "./config.mts";
 import type { DaemonState } from "./daemon-state.mts";
 import { snapshotDigests, writeServiceReceipt } from "./service-records.mts";
 import { claimServiceLaunchPermit } from "./service-launch-permit.mts";
+import type { ServiceFileOwner, ServiceOwnerProbe } from "./service-owner-probe.mts";
 import {
   FAILED_WRITE_SNAPSHOT, STOP_NOT_ISSUED, type NativeServiceSnapshot, type ServiceAdapter, type ServiceBinding, type ServiceStopContext,
 } from "./service-types.mts";
@@ -201,9 +202,20 @@ export function setup(t: test.TestContext) {
   for (const pin of [old.source.root, candidate.source.root]) fs.mkdirSync(pin, { recursive: true });
   const adapter = new FakeAdapter(old, candidate);
   let sourceValid = true;
+  let generation = 0;
+  let controller: ServiceFileOwner = { version: 1, pid: 4242, startedAt: "2026-10-14T09:00:00.000Z", owner: "synthetic-controller" };
+  const ownerKey = (o: ServiceFileOwner) => JSON.stringify([o.pid, o.startedAt, o.owner]);
+  const owners = new Map<string, boolean | "unknown">([[ownerKey(controller), true]]);
+  const ownerProbe: ServiceOwnerProbe = { current: () => controller, active: o => owners.get(ownerKey(o)) ?? "unknown" };
   const deps = { paths, adapter, readDaemonState: () => adapter.state,
     pidAlive: (pid: unknown) => (pid === adapter.candidatePid && adapter.candidatePidAlive) || (pid === 41 && adapter.oldPidAlive),
     sleep: async () => {}, timeoutMs: 50,
-    verifySource: () => sourceValid };
-  return { paths, old, candidate, adapter, deps, setSourceValid: (value: boolean) => { sourceValid = value; } };
+    ownerProbe, verifySource: () => sourceValid };
+  return { paths, old, candidate, adapter, deps, setSourceValid: (value: boolean) => { sourceValid = value; },
+    setControllerState: (value: boolean | "unknown") => { owners.set(ownerKey(controller), value); },
+    advanceController: () => {
+      owners.set(ownerKey(controller), false);
+      controller = { ...controller, startedAt: new Date(Date.parse("2026-10-14T09:00:00.000Z") + ++generation).toISOString() };
+      owners.set(ownerKey(controller), true);
+    } };
 }

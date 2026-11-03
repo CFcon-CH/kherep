@@ -1,5 +1,22 @@
 # Kherep Control Plane
 
+Managed service recovery (#746) keeps one write-ahead candidate through native
+replacement, start, health and receipt verification. `prepared` binds proposed
+bytes and the receipt-backed restore point; `attested` binds actual readback
+without claiming health. PID plus start identity and existing ownership checks
+distinguish generations. Windows consumes a one-use native stop proof after the
+retained supervisor/daemon handles exit and the selected task family is absent.
+Uncertainty retains drain/recovery evidence.
+
+Windows `service rollback --recover --backup <backup-id> --source
+<candidate-clean-checkout>` repairs an older orphaned activation only after exact
+receipt/backup/source/task/security/process checks under the existing lock. It
+does not adopt general drift. Use the fixed checkout's CLI in the same node context
+when the stable launcher still selects an older CLI. See [failed activation
+recovery](../../docs/INSTALLATION.md#failed-managed-service-activation-746) for
+prerequisites and separate live Windows acceptance. A source reproduction does
+not establish the historical host cause.
+
 A Cloudflare Worker that Kherep nodes connect to over an outbound WebSocket, plus the `kherep-node` daemon and CLI that runs on each node. It provides:
 
 - **Nodes:** enrollment, node identity, registration, liveness and a registry of each node's runtimes and sessions. The operator API dispatches only three read-only commands (`node.status`, `runtime.list`, `session.list`); nothing runs arbitrary commands on a node (see [Commands](#commands)).

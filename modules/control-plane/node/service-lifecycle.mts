@@ -1,10 +1,11 @@
 import type { NodePaths } from "./config.mts";
+import type { CandidateWriter } from "./service-candidate-record.mts";
 import { pidAlive as defaultPidAlive, readDaemonState as defaultReadDaemonState, type DaemonState } from "./daemon-state.mts";
 import { captureSourceIdentity, compareSourceIdentity, type SourceIdentity } from "./daemon-source.mts";
-import { serviceAdmissionsIdle } from "./service-drain.mts";
+import { serviceAdmissionsIdle, type ServiceOwnerProbe } from "./service-drain.mts";
 import { issueServiceLaunchPermit } from "./service-launch-permit.mts";
 import {
-  stopCode, type NativeServiceSnapshot, type ServiceAdapter, type ServiceBinding, type ServiceClock, type ServiceStopContext,
+  isStopCode, stopCode, type NativeServiceSnapshot, type ServiceAdapter, type ServiceBinding, type ServiceClock, type ServiceStopContext,
   type ServiceStopProof, type StopCode,
 } from "./service-types.mts";
 
@@ -20,6 +21,9 @@ export interface LifecycleDependencies {
   now?: () => string;
   verifySource?: (identity: SourceIdentity) => boolean;
   reportAdmissionWait?: (message: string) => void;
+  writeCandidate?: CandidateWriter;
+  ownerProbe?: ServiceOwnerProbe;
+  captureSource?: typeof captureSourceIdentity;
 }
 
 // launchd ExitTimeOut (60 s) plus a margin: a daemon may wait ~50 s for a probe before it exits (#472).
@@ -90,7 +94,7 @@ export async function prepareStop(
   const deps = lifecycleDefaults(input);
   let lastBlocker: string | undefined;
   const report = input.reportAdmissionWait ?? console.error;
-  await poll(deps.timeout, deps.sleep, async () => serviceAdmissionsIdle(input.paths, undefined, blocker => {
+  await poll(deps.timeout, deps.sleep, async () => serviceAdmissionsIdle(input.paths, input.ownerProbe, blocker => {
     const descriptor = `lease=${blocker.leaseId} pid=${blocker.pid} processStartedAt=${blocker.startedAt}`;
     if (descriptor !== lastBlocker) {
       lastBlocker = descriptor;
@@ -149,12 +153,12 @@ export async function removeFresh(binding: ServiceBinding, input: LifecycleDepen
   if (await input.adapter.read(binding)) throw new Error("new service removal could not be verified");
 }
 
-export async function healthy(binding: ServiceBinding, oldPid: number | undefined, input: LifecycleDependencies,
+export async function healthy(binding: ServiceBinding, previous: ServiceStopContext | undefined, input: LifecycleDependencies,
   allowLegacyMarker = false): Promise<DaemonState> {
   const deps = lifecycleDefaults(input);
   return poll(deps.timeout, deps.sleep, async () => {
     const state = deps.readState(input.paths);
-    if (!state || state.pid === oldPid || !deps.alive(state.pid) || !state.connectedAt || state.disconnectedAt
+    if (!state || (state.pid === previous?.pid && state.startedAt === previous.startedAt) || !deps.alive(state.pid) || !state.connectedAt || state.disconnectedAt
       || !sourceMatches(binding.source, state.source)) return null;
     if (!allowLegacyMarker && (state.service?.name !== binding.serviceName || state.service.platform !== binding.platform
       || state.service.taskPath !== binding.taskPath)) return null;
@@ -177,6 +181,8 @@ export interface RecoveryInput {
   previous: NativeServiceSnapshot;
   previousBinding?: ServiceBinding;
   previousPid?: number;
+  previousIdentity?: ServiceStopContext;
+  priorStopProven?: boolean;
   deps: LifecycleDependencies;
   candidate?: NativeServiceSnapshot;
   priorStopIssued?: boolean;
@@ -197,7 +203,8 @@ export async function restorePrior(input: RecoveryInput): Promise<void> {
     overwritesLoaded = !priorBytes;
     if (!candidateBytes && !priorBytes) throw recoveryError("RECOVERY_SERVICE_CHANGED", "selected service changed during recovery");
     if (native.running === true && priorBytes && !candidateBytes && !input.priorStopIssued && candidateState
-      && candidateState.pid === input.previousPid && runtime.alive(candidateState.pid)
+      && candidateState.pid === input.previousPid
+      && (!input.previousIdentity || candidateState.startedAt === input.previousIdentity.startedAt) && runtime.alive(candidateState.pid)
       && await input.deps.adapter.processOwned(candidateState.pid, input.previousBinding ?? input.binding, candidateState.startedAt)) {
       await verifyExact(input.deps.adapter, input.binding, input.previous); // prior is live and untouched (#472)
       return;
@@ -205,7 +212,8 @@ export async function restorePrior(input: RecoveryInput): Promise<void> {
     const stoppedBinding = candidateBytes ? input.binding : (input.previousBinding ?? input.binding);
     if (candidateBytes && native.running !== false) {
       try {
-        const context = candidateState && candidateState.pid !== input.previousPid
+        const context = candidateState && (candidateState.pid !== input.previousPid
+          || (input.priorStopProven && input.previousIdentity && candidateState.startedAt !== input.previousIdentity.startedAt))
           ? { pid: candidateState.pid, startedAt: candidateState.startedAt } : undefined;
         await input.deps.adapter.preflightStop(input.binding, context);
         await input.deps.adapter.stop(input.binding, context);
@@ -223,8 +231,11 @@ export async function restorePrior(input: RecoveryInput): Promise<void> {
     }
   }
   // #677: nothing is written or started while the previous daemon, or a family member it left, may still run.
-  if (input.familyUnproven || (input.previousPid !== undefined && runtime.alive(input.previousPid))) {
-    throw recoveryError("RECOVERY_ABSENCE_UNPROVEN", "previous daemon may still run; recovery refused");
+  const unproven = stopFailure as { code?: unknown; familyUnproven?: unknown } | undefined;
+  if (input.familyUnproven || (isStopCode(unproven?.code) && unproven?.familyUnproven === true)
+    || (!input.priorStopProven && input.previousPid !== undefined && runtime.alive(input.previousPid))) {
+    throw Object.assign(recoveryError("RECOVERY_ABSENCE_UNPROVEN", "previous daemon or candidate family may still run; recovery refused"),
+      { stopCode: stopCode(stopFailure) });
   }
   // #582: the prior bytes are written only over nothing, over themselves, or over a candidate proven absent.
   if (overwritesLoaded && !absenceProven) {

@@ -17,11 +17,12 @@ export const SERVICE_USAGE = `  kherep-node service install --workspace <absolut
   kherep-node service upgrade [--source <clean checkout>]
   kherep-node service status
   kherep-node service rollback
+  kherep-node service rollback --recover --backup <backup-id> --source <candidate-clean-checkout>
   macOS --adopt uses the configured on-disk plist, not a complete snapshot of the loaded launchd cache.`;
 
 export type ServiceCommand = { action: "install"; workspace: string; source?: string; serviceName?: string; taskPath?: string;
   adopt: boolean; explicitServiceName: boolean } | { action: "upgrade"; source?: string }
-  | { action: "status" } | { action: "rollback" };
+  | { action: "status" } | { action: "rollback"; recover?: true; backup?: string; source?: string };
 
 export function defaultServiceName(platform: ServiceBinding["platform"]): string {
   return platform === "win32" ? "KherepNode" : "org.kherep.node";
@@ -57,7 +58,8 @@ export function parseServiceCommand(argv: string[]): ServiceCommand {
   let parsed: ReturnType<typeof parseArgs>;
   try {
     parsed = parseArgs({ args: argv.slice(1), strict: true, options: { workspace: { type: "string" }, source: { type: "string" },
-      "service-name": { type: "string" }, "task-path": { type: "string" }, adopt: { type: "boolean" } } });
+      "service-name": { type: "string" }, "task-path": { type: "string" }, adopt: { type: "boolean" },
+      recover: { type: "boolean" }, backup: { type: "string" } } });
   } catch { throw new Error(`usage:\n${SERVICE_USAGE}`); }
   const stringOption = (value: unknown): string | undefined => {
     if (value === undefined || typeof value === "string") return value;
@@ -70,6 +72,15 @@ export function parseServiceCommand(argv: string[]): ServiceCommand {
   const rawAdopt = parsed.values.adopt;
   if (rawAdopt !== undefined && typeof rawAdopt !== "boolean") throw new Error(`usage:\n${SERVICE_USAGE}`);
   const adopt = rawAdopt === true;
+  const recover = parsed.values.recover, backup = stringOption(parsed.values.backup);
+  if (recover !== undefined || backup !== undefined) {
+    if (action !== "rollback" || recover !== true || !backup || !source || !path.isAbsolute(source)
+      || workspace !== undefined || serviceName !== undefined || taskPath !== undefined || rawAdopt !== undefined
+      || argv.filter(x => x === "--recover").length !== 1
+      || argv.filter(x => x === "--backup" || x.startsWith("--backup=")).length !== 1
+      || argv.filter(x => x === "--source" || x.startsWith("--source=")).length !== 1) throw new Error(`usage:\n${SERVICE_USAGE}`);
+    return { action, recover: true, backup, source: path.resolve(source) };
+  }
   if (action === "install") {
     if (typeof workspace !== "string" || !path.isAbsolute(workspace)) throw new Error("service install requires an absolute --workspace");
     if (source && !path.isAbsolute(source)) throw new Error("--source must be absolute");
@@ -145,6 +156,7 @@ export async function runService(argv: string[], dependencies: ServiceCliDepende
     const result = await activateManagedService({ mode: "upgrade", binding, sourceRoot }, { ...dependencies.lifecycle, paths, adapter });
     return report(result, "upgrade");
   }
-  const result = await rollbackManagedService({ binding: receipt.binding }, { ...dependencies.lifecycle, paths, adapter });
+  const result = await rollbackManagedService({ binding: receipt.binding,
+    ...(command.recover ? { recover: { backup: command.backup!, source: command.source! } } : {}) }, { ...dependencies.lifecycle, paths, adapter });
   return report(result, "rollback");
 }

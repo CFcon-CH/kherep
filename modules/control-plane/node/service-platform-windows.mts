@@ -12,7 +12,7 @@ import {
 } from "./service-windows-quiescence.mts";
 import {
   FAILED_WRITE_SNAPSHOT, type FailedServiceWrite, type NativeServiceSnapshot, type ServiceAction, type ServiceAdapter, type ServiceBinding,
-  type ServiceStopContext, type WindowsServiceSummary,
+  type ServiceStopContext, type ServiceStopProof, type WindowsServiceSummary,
 } from "./service-types.mts";
 
 const PRELUDE = "$ErrorActionPreference='Stop';$payload=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($env:KHEREP_SERVICE_PAYLOAD))|ConvertFrom-Json;";
@@ -125,6 +125,20 @@ export const WINDOWS_WRITE_SCRIPT = "Import-Module ScheduledTasks;$xml=[Text.Enc
 export class WindowsServiceAdapter implements ServiceAdapter {
   readonly platform = "win32" as const;
   #user?: Promise<string>;
+  #stopInvoke: typeof invoke;
+  #stopped?: string;
+  constructor(stopInvoke: typeof invoke = invoke) { this.#stopInvoke = stopInvoke; }
+  #proofKey(binding: ServiceBinding, expected: ServiceStopContext): string {
+    return JSON.stringify([binding.platform, binding.serviceName, binding.taskPath, binding.workspace, binding.configRoot,
+      binding.nodeExecutable, binding.logFile, binding.source.root, binding.source.commit, binding.source.digest, binding.source.kind, binding.source.verified,
+      binding.supervisorGeneration, expected.pid, expected.startedAt, expected.sourceRoot]);
+  }
+  async proveStopped(binding: ServiceBinding, expected: ServiceStopContext, _proof: ServiceStopProof): Promise<void> {
+    const proof = this.#stopped;
+    this.#stopped = undefined;
+    if (proof !== this.#proofKey(binding, expected)) throw Object.assign(new Error("Windows stop proof is missing or belongs to another instance"),
+      { code: "STOP_IDENTITY_MISMATCH", familyUnproven: true });
+  }
   async currentUser(): Promise<string> {
     this.#user ??= Promise.resolve().then(() => {
       const sid = invoke("[Security.Principal.WindowsIdentity]::GetCurrent().User.Value", {});
@@ -231,7 +245,10 @@ export class WindowsServiceAdapter implements ServiceAdapter {
   }
   async remove(binding: ServiceBinding): Promise<void> { invoke("Import-Module ScheduledTasks;Unregister-ScheduledTask -TaskName $payload.serviceName -TaskPath $payload.taskPath -Confirm:$false", selector(binding)); }
   async stop(binding: ServiceBinding, expected: ServiceStopContext | undefined): Promise<void> {
-    await this.#stop(binding, expected, false);
+    this.#stopped = undefined;
+    try { await this.#stop(binding, expected, false); }
+    catch (error) { throw Object.assign(error instanceof Error ? error : new Error("Windows stop proof is unavailable"),
+      { code: "STOP_UNKNOWN_DESCENDANTS", familyUnproven: true }); }
   }
   async #stop(binding: ServiceBinding, expected: ServiceStopContext | undefined, checkOnly: boolean): Promise<void> {
     if (checkOnly && expected) {
@@ -242,9 +259,19 @@ export class WindowsServiceAdapter implements ServiceAdapter {
     const evidence = await actionEvidence(this, binding, sourceRoot, expected !== undefined);
     const daemon = { executable: binding.nodeExecutable, argv: [binding.nodeExecutable,
       ...(evidence.wrapper.kind === "managed" ? managedArguments(binding) : legacyDaemonArguments(binding, sourceRoot))] };
-    invoke(WINDOWS_STOP_SCRIPT, { ...selector(binding), action: evidence.action, wrapper: evidence.wrapper, checkOnly, daemon,
+    const output = this.#stopInvoke(WINDOWS_STOP_SCRIPT, { ...selector(binding), action: evidence.action, wrapper: evidence.wrapper, checkOnly, daemon,
       definition: evidence.snapshot.definition.toString("base64"), security: evidence.snapshot.security.toString("base64"),
       expected: expected ? { pid: expected.pid, startedAt: expected.startedAt } : null }, checkOnly ? 30_000 : 65_000);
+    if (!checkOnly && expected) {
+      let proof: { version?: number; stopped?: boolean; daemonExited?: boolean; supervisorExited?: boolean;
+        familyAbsent?: boolean; expected?: ServiceStopContext };
+      try { proof = JSON.parse(output) as typeof proof; } catch { throw new Error("Windows stop proof is malformed"); }
+      if (proof?.version !== 1 || proof.stopped !== true || proof.daemonExited !== true || proof.supervisorExited !== true
+        || proof.familyAbsent !== true || proof.expected?.pid !== expected.pid || proof.expected.startedAt !== expected.startedAt) {
+        throw new Error("Windows stop proof is incomplete");
+      }
+      this.#stopped = this.#proofKey(binding, expected);
+    }
   }
   async start(binding: ServiceBinding): Promise<void> { invoke("Import-Module ScheduledTasks;Start-ScheduledTask -TaskName $payload.serviceName -TaskPath $payload.taskPath", selector(binding)); }
 }

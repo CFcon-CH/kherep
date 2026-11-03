@@ -37,9 +37,16 @@ $native=Get-KherepNativeState;$service=$native.service;$registered=$native.regis
 
 export const WINDOWS_FINAL_STOP_WAIT_SCRIPT = String.raw`function Wait-KherepFinalStop([scriptblock]$probe,[int]$timeoutMs=30000,[int]$intervalMs=100){$clock=[Diagnostics.Stopwatch]::StartNew();while($true){$state=&$probe;if($state-ceq'clear'){return};if($state-cne'busy'){throw 'Windows final stop provenance is unknown'};if($clock.ElapsedMilliseconds-ge$timeoutMs){throw 'STOP_BLOCKED_NATIVE_DESCENDANTS'};Start-Sleep -Milliseconds ([Math]::Min($intervalMs,[Math]::Max(1,$timeoutMs-[int]$clock.ElapsedMilliseconds)))}}`;
 
+// This final, mutation-free decision uses retained handles, never a new lookup by PID.
+export const WINDOWS_FINAL_STOP_PROOF_SCRIPT = String.raw`function Complete-KherepStopProof($supervisorRetained,$daemonRetained,[scriptblock]$confirmFamily,$expected){
+  if($null-eq$supervisorRetained -or -not$supervisorRetained.HasExited -or ($null-ne$daemonRetained -and -not$daemonRetained.HasExited)){throw 'retained service instance exit is unproven'}
+  $family=&$confirmFamily;if($family-isnot[string] -or $family-cne'clear'){throw 'selected task family absence is unproven'}
+  @{version=1;stopped=$true;daemonExited=$true;supervisorExited=$true;familyAbsent=$true;expected=$expected}|ConvertTo-Json -Compress
+}`;
+
 export const WINDOWS_PROCESS_PROVENANCE_SCRIPT = ARGUMENTS + NATIVE + String.raw`$p=$all|Where-Object{[int]$_.ProcessId-eq[int]$payload.pid}|Select-Object -First 1;if($null-eq$p){'{"missing":true}';exit};$owner=Invoke-CimMethod -InputObject $p -MethodName GetOwnerSid -ErrorAction Stop;if($owner.ReturnValue-ne0){throw 'process owner is unresolved'};$supervisorOwner=if($null-ne$wrapper){Test-KherepOwner $wrapper $current}else{$false};$descendants=@(Get-KherepDescendants ([int]$p.ProcessId) $all);@{missing=$false;executable=$p.ExecutablePath;commandLine=$p.CommandLine;created=$p.CreationDate.ToUniversalTime().ToString('o');supervisorCreated=if($null-ne$wrapper){$wrapper.CreationDate.ToUniversalTime().ToString('o')}else{$null};ownerSid=[string]$owner.Sid;currentSid=$current;selectedInstances=$selected.Count;enginePid=$engine;engineInAncestry=(Test-KherepAncestor ([int]$p.ProcessId) $engine $parents);matchingEngineTasks=$sameEngine.Count;supervisorPid=$supervisorPid;supervisorOwner=$supervisorOwner;daemonDirectChild=([int]$p.ParentProcessId -eq $supervisorPid);supervisorChildren=$supervisorChildren.Count;daemonDescendants=$descendants.Count}|ConvertTo-Json -Compress`;
 
-export const WINDOWS_STOP_SCRIPT = ARGUMENTS + NATIVE + WINDOWS_FINAL_STOP_WAIT_SCRIPT + String.raw`
+export const WINDOWS_STOP_SCRIPT = ARGUMENTS + NATIVE + WINDOWS_FINAL_STOP_WAIT_SCRIPT + WINDOWS_FINAL_STOP_PROOF_SCRIPT + String.raw`
 $supervisorRetained=$null;$daemonRetained=$null;
 try{
   if($null-eq$payload.expected -and $selected.Count-eq0){
@@ -98,5 +105,12 @@ try{
   if(@($after|Where-Object{[int]$_.ProcessId-ne$allowed}).Count-ne0){throw 'replacement daemon appeared while stopping the supervisor'}
   if($null-ne$daemonRetained -and -not$daemonRetained.HasExited){$daemonRetained.Kill();if(-not$daemonRetained.WaitForExit(10000)){throw 'expected daemon did not exit'}}
   if(@(Get-CimInstance Win32_Process|Where-Object{[int]$_.ParentProcessId-eq$supervisorPid}).Count-ne0){throw 'expected supervisor child absence is unknown'}
-  '{"stopped":true}'
+  Complete-KherepStopProof $supervisorRetained $daemonRetained {
+  $finalStopped=Get-KherepNativeState
+  if($finalStopped.selected.Count-ne0 -or [int]$finalStopped.registered.State-ne3 -or -not$finalStopped.actionMatches -or [string]$finalStopped.definition-cne$baselineDefinition -or [string]$finalStopped.security-cne$baselineSecurity){throw 'selected task final absence is unproven'}
+  $remainingWrappers=@($finalStopped.all|Where-Object{(Test-KherepCandidate $_ $payload.wrapper $baselineCurrent)-ne'foreign'})
+  $remainingDaemons=@($finalStopped.all|Where-Object{(Test-KherepCandidate $_ $payload.daemon $baselineCurrent)-ne'foreign'})
+  if($remainingWrappers.Count-ne0 -or $remainingDaemons.Count-ne0){throw 'selected task family absence is unproven'}
+  return 'clear'
+  } $payload.expected
 }finally{if($null-ne$daemonRetained){$daemonRetained.Dispose()};if($null-ne$supervisorRetained){$supervisorRetained.Dispose()}}`;
