@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { requestError, SCOPES, type ConfluenceSession } from "./confluence-contract.mts";
-import { reportRelated, type NeighbourDeps } from "./confluence-neighbours.mts";
+import { reportRelated, relatedSection, type NeighbourDeps } from "./confluence-neighbours.mts";
 
 const PAGES = [
   { id: "900", title: "Acme", parentId: null },
@@ -195,4 +195,10 @@ test("related rows carry area, terms and snippet, and the term rule drops nothin
     `related\t3\t${PAGES[4].title}\tAcme\tcolor,palette\tPalette tokens.`,
   ]);
   assert.ok(log.includes("count: 2"));
+});
+
+
+test("related title maps literal curly punctuation after escaping plain entity-looking text", () => {
+  assert.equal(relatedSection("SYNTHETIC", [{id:"30",title:"Node’s ‘input’ &rsquo; & 'ASCII'"}]),
+    "<h2>Related pages</h2><ul><li><p><a href=\"/wiki/spaces/SYNTHETIC/pages/30\">Node&rsquo;s &lsquo;input&rsquo; &amp;rsquo; &amp; 'ASCII'</a></p></li></ul>");
 });
