@@ -1,4 +1,5 @@
 import { env, exports } from "cloudflare:workers";
+import { afterEach } from "vitest";
 
 import {
   challengeMessage, makeEnvelope, parseEnvelope, toBase64Url, type AuthBody, type ChallengeBody, type Envelope, type MessageType,
@@ -52,8 +53,27 @@ export function session(nodeId: string) {
 }
 
 export async function workerFetch(path: string, init?: RequestInit): Promise<Response> {
-  return exports.default.fetch(new Request(`${BASE}${path}`, init));
+  const response = await exports.default.fetch(new Request(`${BASE}${path}`, init));
+  const ws = response.webSocket;
+  if (ws) sockets.push({ ws, closed: new Promise((resolve) => ws.addEventListener("close", () => resolve(), { once: true })) });
+  return response;
 }
+
+// Every node socket a test opens, so that a test cannot end with a close in
+// flight. NodeSession.webSocketClose (issue #727) invalidates the connection
+// token at the Registry before it completes the closing handshake; the client
+// sees its close event only after that. Work still in flight when the file is
+// torn down surfaces as an unhandled EnvironmentTeardownError. Sockets a test
+// leaves open are not touched.
+const sockets: { ws: WebSocket; closed: Promise<void> }[] = [];
+afterEach(async () => {
+  const open: typeof sockets = [];
+  for (const entry of sockets.splice(0)) {
+    if (entry.ws.readyState < 2) open.push(entry); // CONNECTING or OPEN: no handshake under way
+    else await entry.closed;
+  }
+  sockets.push(...open);
+});
 
 export async function enrollWithCode(code: string, key: NodeKey, name = "node-a"): Promise<Response> {
   return workerFetch("/node/enroll", {
