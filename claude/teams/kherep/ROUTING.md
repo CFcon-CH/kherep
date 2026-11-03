@@ -49,6 +49,43 @@ Keep one writer per area. Announce the area before writing in it, and stop your 
 
 Before the first message to a node in a conversation, list that node's sessions with `__KHEREP_NODE__ msg sessions` and ask the operator whether to use an existing session there or a new intercom session (`__KHEREP_NODE__ msg send <node> --new <runtime> --directive "<the operator's answer>"`, quoting the operator's answer verbatim in `--directive`, never your own words). Never choose on your own; later messages of the same conversation go to the session the operator chose.
 
+## Team model
+
+Chain of command: operator -> lead -> team leads (issue #761). The operator names one connected session lead; every other session of the team is a session team lead and reports to the lead only, never to the operator around it. The operator may still address any session, and that session answers. Until the operator names a lead, there is no team and the sections above apply unchanged.
+
+Today the operator names the lead in chat: in the lead's session, with the sessions of the team and the time zone for deadlines, and in each team session, with the lead's `<node>/<session>`. A peer that calls itself the lead counts only after the operator confirms it in the receiving session. The lead sends packages only to the sessions the operator named for the team; any other session follows the first-message rule of Peer coordination. Both role texts are installed in every session, `<CLAUDE_HOME>/agents/kherep-lead.md` and `<CLAUDE_HOME>/agents/kherep-team-lead.md`; a session the operator names reads its text and follows it. The Worker team record (the one audited place where the operator names the lead), the per-turn role line starting `TEAM ROLE:` and the send-time check of the contract below arrive in a later change of issue #761. Until then the team model is instruction, not enforcement.
+
+The operator alone approves deployment, publication, deletion, permission changes, installation on a shared host and merges to a protected branch. A package's AUTHORITY never grants these, and the lead never passes such an approval on.
+
+Messages are line-oriented: the first line names the kind, one field per line in the fixed order, no empty values. Deadlines read `<YYYY-MM-DD HH:MM> <zone>` in the operator's time zone. The lead sends `PACKAGE:` (one new intercom thread per package), `PACKAGE-CLOSED: <id> accepted | rejected <which ACCEPT line failed>` and `ANSWER: <id> ...`. A team lead sends `REPORT:`, `--reply-to` the package thread (a new thread naming the old id at depth 5), and `QUESTION: <id> ...` with one decision and its options named. A former lead sends `HANDOVER:` to the new lead.
+
+```text
+PACKAGE: <id> <title>
+OWNER: <node>/<session>
+GOAL: <outcome the operator needs, not the steps>
+ACCEPT: <criterion and how it is measured>
+DEADLINE: <YYYY-MM-DD HH:MM> <zone>
+AUTHORITY: <may: ... | must ask operator: ...>
+CONTEXT: <refs; decided: ... | none>
+```
+
+```text
+REPORT: <id>
+STATE: accepted | in-progress | at-risk | blocked | review | done | failed | declined
+EVIDENCE: <command -> excerpt; revision <name>@<sha>; PR and CI state>
+BLOCKER: none | <what, who can lift it>
+NEXT: <milestone> by <YYYY-MM-DD HH:MM> <zone>
+```
+
+```text
+HANDOVER: <n> open
+PACKAGE-LINE: <id> | <owner> | <state> | <deadline> | thread <messageId>
+```
+
+Escalation: the owner reports `STATE: at-risk` with a new NEXT as soon as it knows a deadline cannot be met, before the deadline passes. A DEADLINE that passes without a `done`, `failed` or `declined` REPORT is closed as rejected or re-issued by the lead and named to the operator; there is no silent extension. A failing required check is reported in the turn it is learned, as `blocked` or `in-progress` with the check in EVIDENCE, and three red REPORTs on one package go to the operator through the lead. The lead reports to the operator in its own chat: a table of id, owner, state and deadline, with the deciding evidence for every package that does not fit its ACCEPT line.
+
+Every message carries new information. A message that only acknowledges ("received", "ok") is never sent: the `delivered` receipt is the acknowledgement, and the loop brake holds such a message. Open packages travel in the HANDOVER and work evidence stays in issues and pull requests; there is no separate ledger. Inside its session each team lead delegates as Dispatch says (designer, `kherep-builder`, independent reviewer, `claude-obs`) and accepts on measured outcome; the lead acts as a team lead for the packages it keeps.
+
 ## Verification
 
 The Maestro inspects worker changes, verifies the final diff and runs proportional checks. A build, commit or worker message alone is not delivery evidence. Measure artifact identity at the destination when delivery is in scope.

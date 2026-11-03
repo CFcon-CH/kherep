@@ -19,7 +19,9 @@
     "lmstudio-win-researcher": { "role": "researcher" },
     "lmstudio-mac-researcher": { "role": "researcher" },
     "claude-obs": { "role": "observer", "model": "haiku" },
-    "atlassian-broker": { "role": "broker", "model": "haiku" }
+    "atlassian-broker": { "role": "broker", "model": "haiku" },
+    "kherep-lead": { "role": "root" },
+    "kherep-team-lead": { "role": "root" }
   },
   "models": {
     "opus": { "dispatchable": true },

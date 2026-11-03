@@ -38,7 +38,9 @@
     "n8n-workflow-deploy-runner": "n8n-workflow-deploy-runner.md",
     "win-agent": "win-agent.md",
     "claude-obs": "claude-obs.md",
-    "atlassian-broker": "atlassian-broker.md"
+    "atlassian-broker": "atlassian-broker.md",
+    "kherep-lead": "kherep-lead.md",
+    "kherep-team-lead": "kherep-team-lead.md"
   },
   "skills": [
     "kherep-content-humanizer",
