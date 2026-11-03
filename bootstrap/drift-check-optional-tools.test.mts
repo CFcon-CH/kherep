@@ -150,6 +150,9 @@ test("every tool the Codex installer writes is compared", () => {
   const listed = observationTools(script);
   const written = observationFiles(path.join(HERE, ".."));
   assert.deepEqual(listed, written.filter((name) => name.startsWith("observation-")).sort());
+  const compared = [...script.matchAll(/^cmp_file "project\/tools\/(observation-[a-z-]*\.mts)"/gm)]
+    .map(([, name]) => name).sort();
+  assert.deepEqual(compared, listed);
   for (const name of written.filter((item) => !item.startsWith("observation-"))) {
     assert.ok(script.includes(`modules/atl-jira-brokers/${name}`), `${name} is not compared`);
   }
