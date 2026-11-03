@@ -23,7 +23,8 @@ describe("Registry sessions migration", () => {
       expect(columns(sql)).toEqual(expect.arrayContaining([...ADDED_SESSION_COLUMNS]));
       // A second start finds the columns and changes nothing.
       migrateRegistry(sql);
-      expect(columns(sql).length).toBe(11);
+      expect(columns(sql).length).toBe(12);
+      expect(sql.exec("SELECT canonical_identity FROM sessions").one().canonical_identity).toBeNull();
       expect(sql.exec("SELECT session_id, name, cwd, kind, label, title FROM sessions").toArray())
         .toEqual([{ session_id: "s", name: null, cwd: null, kind: null, label: null, title: null }]);
     });
@@ -39,12 +40,38 @@ describe("Registry sessions migration", () => {
         hostname TEXT, os TEXT, arch TEXT, cpus INTEGER, memory_bytes INTEGER, capabilities TEXT NOT NULL DEFAULT '[]',
         enrolled_at INTEGER NOT NULL, last_seen INTEGER, revoked_at INTEGER)`);
       sql.exec("INSERT INTO nodes (id, name, enrolled_at) VALUES ('n', 'earlier', 1)");
+      const addedColumns = [
+        "message_connection_token", "status_connection_token", "identity_digest", "registration_token", "last_accepted_at", "identity_generation",
+      ];
+      const schema = () => sql.exec("PRAGMA table_info(nodes)").toArray();
+      const oldColumns = nodeColumns();
+      const oldRow = sql.exec("SELECT * FROM nodes WHERE id=?", "n").one();
+      expect(oldColumns).toHaveLength(13);
+      for (const name of addedColumns) expect(oldColumns).not.toContain(name);
       expect(nodeColumns()).not.toContain("last_accepted_at");
 
       migrateRegistry(sql);
       expect(nodeColumns()).toContain("last_accepted_at");
+      expect([...nodeColumns()].sort()).toEqual([...oldColumns, ...addedColumns].sort());
+      const firstSchema = schema();
+      for (const name of addedColumns) {
+        expect(firstSchema.filter((column) => column.name === name)).toHaveLength(1);
+        expect(firstSchema.find((column) => column.name === name)).toMatchObject({
+          type: name === "last_accepted_at" || name === "identity_generation" ? "INTEGER" : "TEXT",
+          notnull: 0, dflt_value: null,
+        });
+      }
+      const firstRow = sql.exec("SELECT * FROM nodes WHERE id=?", "n").one();
+      expect(firstRow).toEqual({
+        ...oldRow, status_connection_token: null, message_connection_token: null, identity_digest: null, registration_token: null,
+        last_accepted_at: null, identity_generation: null,
+      });
+
       migrateRegistry(sql);
-      expect(nodeColumns().length).toBe(14);
+      expect(schema()).toEqual(firstSchema);
+      expect(sql.exec("SELECT * FROM nodes WHERE id=?", "n").one()).toEqual(firstRow);
+      expect(sql.exec("SELECT identity_generation, identity_digest, registration_token, message_connection_token FROM nodes").one())
+        .toEqual({ identity_generation: null, identity_digest: null, registration_token: null, message_connection_token: null });
       expect(sql.exec("SELECT id, name, last_accepted_at FROM nodes").toArray()).toEqual([{ id: "n", name: "earlier", last_accepted_at: null }]);
     });
   });

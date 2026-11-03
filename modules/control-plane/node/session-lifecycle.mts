@@ -74,6 +74,7 @@ export function publishLiveness(paths: NodePaths, evidence: SessionEvidence[], n
       verdict = { runtime: e.runtime, sessionId: e.sessionId, state: conflict ? "unknown" : terminal.state,
         observedAt: terminal.observedAt, lifecycleGeneration: terminal.generation, reasonCode: conflict ? "conflict" : "observed" };
     }
+    if (terminal?.state === "restored") verdict = { ...verdict, lifecycleGeneration: terminal.generation };
     sessions.set(key, verdict);
   }
   // Positive lifecycle identity survives a failed/empty/capped observation.

@@ -1,3 +1,4 @@
+import { MessageReferenceResolver } from "./message-reference.mts";
 import { wasGuardedMcpReply } from "./guarded-replies.mts";
 import { isLoopAdmissionV1 } from "../protocol-loop-brake.mts";
 import fs from "node:fs";
@@ -172,8 +173,9 @@ function takeDirectoryRequest(paths: NodePaths): boolean {
 // The client callbacks that record directory frames and sent states, and read
 // the local session listing for the messaging policy.
 export function exchangeOptions(paths: NodePaths, now: () => number = Date.now):
-  Pick<ClientOptions, "storeDirectory" | "sentUpdate" | "receiptUpdate" | "localSessions"> {
+  Pick<ClientOptions, "storeDirectory" | "sentUpdate" | "receiptUpdate" | "localSessions" | "selectedReferences"> {
   return {
+    selectedReferences: new MessageReferenceResolver(paths, now),
     storeDirectory: (body) => writeDirectory(paths, body),
     sentUpdate: (messageId, state, reason, progress) => { recordSent(paths, messageId, state, reason, now(), progress); },
     receiptUpdate: (body) => {

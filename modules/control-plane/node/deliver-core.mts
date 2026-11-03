@@ -1,3 +1,5 @@
+import { messageOwnerMatches } from "./message-owner.mts";
+import type { SelectedOwner } from "../protocol-message-binding.mts";
 import { automaticReplyDecision } from "./reply-admission.mts";
 import { codexAckInstruction, prepareCodexOffers } from "./codex-inbox-ack.mts";
 import type { DirectoryBody } from "../protocol-messages.mts";
@@ -55,6 +57,7 @@ export const RECORD_LOCK_BUDGET_MS = 1_000;
 // those records again instead of the whole of sent/.
 // offeredBy: the label this call's offers carry, EVENT_OFFER of the event by default.
 export interface HookDeps {
+  owner?: SelectedOwner;
   paths: NodePaths; nonce?: () => string; replyCommand?: string; now?: () => number; replyFrom?: string; maxBytes?: number;
   mayContinue?: (messageIds: string[]) => boolean;
   reofferOffered?: boolean;
@@ -177,8 +180,8 @@ export function frameForFork(record: InboxRecord, tag: string): string {
 }
 
 // The inbox records addressed to any of the session's references (id, name).
-export function sessionInbox(paths: NodePaths, refs: string[]): InboxRecord[] {
-  return listInbox(paths.inbox).filter((r) => refs.includes(r.toSession));
+export function sessionInbox(paths: NodePaths, refs: string[], owner?: SelectedOwner): InboxRecord[] {
+  return listInbox(paths.inbox).filter((r) => messageOwnerMatches(r, owner, refs));
 }
 
 // Stop runs only when the turn completed, so what that turn carried arrived.
@@ -211,7 +214,7 @@ function contextUnderBudget(event: DeliveryEvent, refs: string[], deps: HookDeps
   const { paths } = deps;
   const now = deps.now?.() ?? Date.now();
   const maxBytes = deps.maxBytes ?? MAX_CONTEXT_BYTES;
-  const mine = deps.codexOwner && deps.codexSelected ? [deps.codexSelected] : sessionInbox(paths, refs);
+  const mine = deps.codexOwner && deps.codexSelected ? [deps.codexSelected].filter(r => messageOwnerMatches(r, deps.owner, refs)) : sessionInbox(paths, refs, deps.owner);
   if (event === "Stop" && !deps.codexOwner) confirmOffered(paths, mine);
   // UserPromptSubmit offers again what an ended turn carried without a Stop,
   // up to MAX_OFFERS times; Stop offers only new arrivals.

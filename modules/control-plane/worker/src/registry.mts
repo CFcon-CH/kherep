@@ -1,3 +1,7 @@
+import { bindingContext, prepareMessageBinding } from "./message-binding.mts";
+import { isSelectedPair, loopCapability, type SelectedPair, type SelectedIdentityEvidence } from "./message-loop-identity-api.mts";
+import { RegistrySessionIdentity } from "./registry-session-identity.mts";
+import type { IdentitySnapshotV1 } from "../../protocol-session-identity.mts";
 import type { LoopSigner } from "./message-loop-signals.mts";
 import { LOOP_STALE } from "../../protocol-loop-brake.mts";
 import { DurableObject } from "cloudflare:workers";
@@ -9,7 +13,7 @@ import type {
   TaskControlRegisterBody, TaskControlResultBody, TaskControlSubmitBody,
 } from "../../protocol-task-control.mts";
 import { randomToken, sha256 } from "./crypto.mts";
-import type { Env } from "./env.mts";
+import { sessionStub, type Env } from "./env.mts";
 import { directoryBody } from "./directory.mts";
 import { routeEffects } from "./message-routing.mts";
 import { MessageStore, type MessageEffects, type MessageRecord, type NewMessage, type SendResult } from "./message-store.mts";
@@ -41,6 +45,7 @@ export class Registry extends DurableObject<Env> {
   private readonly meter: SqlMeter;
   private readonly sql: SqlStorage;
   private readonly messages: MessageStore;
+  private readonly sessionIdentity: RegistrySessionIdentity;
   private readonly tasks: TaskStore;
   private readonly taskControl: TaskControlRegistry;
   private readonly mcp: McpRegistry;
@@ -59,7 +64,7 @@ export class Registry extends DurableObject<Env> {
       let secret = await ctx.storage.get<Uint8Array>("loop-hmac-v1");
       if (secret === undefined) {
         const retained = this.sql.exec(`SELECT 1 FROM message_loop_pairs LIMIT 1`).toArray().length
-          || this.sql.exec("SELECT 1 FROM messages WHERE loop_pair IS NOT NULL LIMIT 1").toArray().length
+          || this.sql.exec("SELECT 1 FROM messages WHERE loop_pair IS NOT NULL OR delivery_pair IS NOT NULL LIMIT 1").toArray().length
           || this.sql.exec("SELECT 1 FROM message_tombstones WHERE loop_pair IS NOT NULL LIMIT 1").toArray().length;
         if (retained) throw new Error("loop-crypto-unavailable");
         secret = crypto.getRandomValues(new Uint8Array(32));
@@ -75,6 +80,7 @@ export class Registry extends DurableObject<Env> {
     });
     this.sql.exec(REGISTRY_SCHEMA);
     migrateRegistry(this.sql);
+    this.sessionIdentity = new RegistrySessionIdentity(this.sql);
     this.messages = new MessageStore(this.sql, (...args) => this.audit(...args), (nodeId) => this.capabilitiesOf(nodeId));
     this.tasks = new TaskStore(this.sql, (...args) => this.audit(...args));
     this.taskControl = new TaskControlRegistry(this.sql, this.messages, this.tasks, (...args) => this.audit(...args));
@@ -191,23 +197,39 @@ export class Registry extends DurableObject<Env> {
     });
   }
 
-  setStatus(nodeId: string, status: Exclude<NodeStatus, "revoked">, lastSeen: number): void {
-    this.metered("setStatus", () => {
+  setStatus(nodeId: string, status: Exclude<NodeStatus, "revoked">, lastSeen: number, connectionToken?: string): void {
+    this.tx("setStatus", () => {
+      const row = this.sql.exec("SELECT status_connection_token,message_connection_token FROM nodes WHERE id=? AND revoked_at IS NULL", nodeId).toArray()[0];
+      if (!row || connectionToken !== undefined && (typeof connectionToken !== "string" || !connectionToken || row.status_connection_token !== connectionToken
+        || status === "online" && row.message_connection_token !== connectionToken)) return;
       this.directoryRows = null;
+      if (status === "offline") this.sql.exec("UPDATE nodes SET status_connection_token=NULL,message_connection_token=NULL,registration_token=NULL WHERE id=? AND revoked_at IS NULL", nodeId);
       this.sql.exec("UPDATE nodes SET status = ?, last_seen = ? WHERE id = ? AND revoked_at IS NULL", status, lastSeen, nodeId);
       this.audit(`node:${nodeId}`, `node.${status}`, nodeId);
     });
   }
 
-  updateRegistration(nodeId: string, facts: NodeFacts, runtimes: RuntimeInfo[], capabilities: string[]): void {
-    this.tx("updateRegistration", () => {
+  beginMessageConnection(nodeId: string, token: string): boolean {
+    return this.tx("beginMessageConnection", () => {
+      if (typeof token !== "string" || !token) return false;
+      this.sql.exec("UPDATE nodes SET status_connection_token=?,message_connection_token=?,registration_token=NULL WHERE id=? AND revoked_at IS NULL", token, token, nodeId);
+      return this.sql.exec("SELECT message_connection_token FROM nodes WHERE id=? AND revoked_at IS NULL", nodeId).toArray()[0]?.message_connection_token === token;
+    });
+  }
+  invalidateMessageConnection(nodeId: string, token: string): void {
+    this.tx("invalidateMessageConnection", () => this.sql.exec("UPDATE nodes SET message_connection_token=NULL,registration_token=NULL WHERE id=? AND message_connection_token=?", nodeId, token));
+  }
+  updateRegistration(nodeId: string, facts: NodeFacts, runtimes: RuntimeInfo[], capabilities: string[], connectionToken?: string): boolean {
+    return this.tx("updateRegistration", () => {
+      if (connectionToken !== undefined && this.sql.exec("SELECT message_connection_token FROM nodes WHERE id=? AND revoked_at IS NULL", nodeId).toArray()[0]?.message_connection_token !== connectionToken) return false;
       this.directoryRows = null;
-      this.sql.exec(`UPDATE nodes SET hostname = ?, os = ?, arch = ?, cpus = ?, memory_bytes = ?, capabilities = ?
+      this.sql.exec(`UPDATE nodes SET hostname = ?, os = ?, arch = ?, cpus = ?, memory_bytes = ?, capabilities = ?, registration_token = ?
         WHERE id = ? AND revoked_at IS NULL`,
-        facts.hostname, facts.os, facts.arch, facts.cpus, facts.memoryBytes, JSON.stringify(capabilities), nodeId);
+        facts.hostname, facts.os, facts.arch, facts.cpus, facts.memoryBytes, JSON.stringify(capabilities), connectionToken ?? null, nodeId);
       this.writeRuntimes(nodeId, runtimes);
       if (!capabilities.includes(REMOTE_MCP_CAPABILITY)) this.mcp.removeNode(nodeId);
       else if (!capabilities.includes(CLAUDE_MCP_CAPABILITY)) this.mcp.removeRuntime(nodeId, "claude-code");
+      return true;
     });
   }
 
@@ -218,11 +240,12 @@ export class Registry extends DurableObject<Env> {
     });
   }
 
-  replaceSessions(nodeId: string, sessions: SessionInfo[]): void {
-    const pending = new Map(sessions.map((session) => [session.sessionId, session]));
+  replaceSessions(nodeId: string, sessions: SessionInfo[], identitySnapshot?: IdentitySnapshotV1): { ok: true } | { ok: false; code: "IDENTITY_SNAPSHOT_REJECTED" | "IDENTITY_SNAPSHOT_UNAVAILABLE" } {
     const now = Date.now();
-    this.tx("replaceSessions", () => {
-      const existing = this.sql.exec(`SELECT session_id, runtime, state, started_at, name, cwd, kind, label, title
+    try { this.tx("replaceSessions", () => {
+      if (!this.sessionIdentity.accept(nodeId, sessions, identitySnapshot)) return;
+      const pending = new Map(sessions.map(session => [session.sessionId, session]));
+      const existing = this.sql.exec(`SELECT session_id, runtime, state, started_at, name, cwd, kind, label, title, canonical_identity
         FROM sessions WHERE node_id = ?`, nodeId).toArray();
       for (const row of existing) {
         const sessionId = String(row.session_id);
@@ -236,21 +259,47 @@ export class Registry extends DurableObject<Env> {
         const unchanged = row.runtime === session.runtime && row.state === session.state
           && row.started_at === (session.startedAt ?? null) && row.name === (session.name ?? null)
           && row.cwd === (session.cwd ?? null) && row.kind === (session.kind ?? null)
-          && row.label === (session.label ?? null) && row.title === (session.title ?? null);
+          && row.label === (session.label ?? null) && row.title === (session.title ?? null)
+          && row.canonical_identity === (session.canonicalIdentity ? JSON.stringify(session.canonicalIdentity) : null);
         if (unchanged) continue;
         this.directoryRows = null;
-        this.sql.exec(`UPDATE sessions SET runtime = ?, state = ?, started_at = ?, name = ?, cwd = ?, kind = ?, label = ?, title = ?,
+        this.sql.exec(`UPDATE sessions SET runtime = ?, state = ?, started_at = ?, name = ?, cwd = ?, kind = ?, label = ?, title = ?, canonical_identity = ?,
           updated_at = ? WHERE node_id = ? AND session_id = ?`, session.runtime, session.state, session.startedAt ?? null,
-          session.name ?? null, session.cwd ?? null, session.kind ?? null, session.label ?? null, session.title ?? null, now, nodeId, sessionId);
+          session.name ?? null, session.cwd ?? null, session.kind ?? null, session.label ?? null, session.title ?? null, session.canonicalIdentity ? JSON.stringify(session.canonicalIdentity) : null, now, nodeId, sessionId);
       }
       if (pending.size > 0) this.directoryRows = null;
       for (const session of pending.values()) {
         this.sql.exec(`INSERT INTO sessions (node_id, session_id, runtime, state, started_at, name, cwd, kind, label, title,
-          updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, nodeId, session.sessionId, session.runtime, session.state,
+          canonical_identity, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, nodeId, session.sessionId, session.runtime, session.state,
           session.startedAt ?? null, session.name ?? null, session.cwd ?? null, session.kind ?? null, session.label ?? null,
-          session.title ?? null, now);
+          session.title ?? null, session.canonicalIdentity ? JSON.stringify(session.canonicalIdentity) : null, now);
       }
     });
+      return { ok: true };
+    } catch (error) {
+      const rejected = error instanceof Error && ["identity-population-invalid", "identity-duplicate", "identity-snapshot-invalid", "identity-proof-invalid", "identity-node-invalid", "identity-generation-rollback", "identity-generation-conflict"].includes(error.message);
+      return { ok: false, code: rejected ? "IDENTITY_SNAPSHOT_REJECTED" : "IDENTITY_SNAPSHOT_UNAVAILABLE" };
+    }
+  }
+
+  // Narrow two-selector read; never uses a directory or command-history accessor.
+  selectedLoopIdentityCheck(body: SelectedPair): SelectedIdentityEvidence {
+    if (!isSelectedPair(body)) throw new Error("identity-selection-invalid");
+    return this.metered("selectedLoopIdentityCheck", () => {
+      const n = this.sql.exec("SELECT capabilities, registration_token, identity_generation FROM nodes WHERE id = ? AND revoked_at IS NULL", body.nodeId).toArray()[0];
+      const refs = body.selectors.map(s => this.sessionIdentity.resolveCanonicalReference({ nodeId: body.nodeId, session: s.ref }, Date.now()));
+      const endpoints = refs.map((r, i) => ({ canonicalMatch: !!r.address && r.address.session === body.selectors[i].expectedSessionId
+        && r.runtime === body.selectors[i].expectedRuntime, attested: r.code === "ATTESTED",
+        availabilityUnknown: !!r.address && r.unknown, code: r.code }));
+      const registryCapability = !!n && loopCapability(JSON.parse(String(n.capabilities)) as string[]);
+      return { stamp: JSON.stringify([n ?? null, refs]), registrationToken: typeof n?.registration_token === "string" ? n.registration_token : null,
+        registryCapability, endpointA: endpoints[0], endpointB: endpoints[1],
+        samePairEligible: registryCapability && endpoints.every(e => e.canonicalMatch && e.attested)
+          && refs[0].address?.session !== refs[1].address?.session };
+    });
+  }
+  selectedLoopIdentityUnchanged(body: SelectedPair, stamp: string): boolean {
+    return this.selectedLoopIdentityCheck(body).stamp === stamp;
   }
 
   // Revocation deletes the key binding (design section 2). The row stays, marked
@@ -264,7 +313,7 @@ export class Registry extends DurableObject<Env> {
       if (!found) return null;
       const now = Date.now();
       this.directoryRows = null;
-      this.sql.exec("UPDATE nodes SET public_key = NULL, status = 'revoked', revoked_at = ? WHERE id = ?", now, nodeId);
+      this.sql.exec("UPDATE nodes SET public_key = NULL, status_connection_token=NULL,message_connection_token=NULL,registration_token=NULL, status = 'revoked', revoked_at = ? WHERE id = ?", now, nodeId);
       this.sql.exec("DELETE FROM runtimes WHERE node_id = ?", nodeId);
       this.sql.exec("DELETE FROM sessions WHERE node_id = ?", nodeId);
       this.mcp.removeNode(nodeId);
@@ -295,13 +344,18 @@ export class Registry extends DurableObject<Env> {
   }
 
   private async recoverMcpMessage(intent: McpIntentClaim) {
-    if (!this.messages.replay(intent.requestId, intent.nodeId)) return null;
+    if (!this.messages.replay(intent.requestId, intent.nodeId, false)) return null;
     return this.messageTx("recoverMcpMessage", () => {
+      const peek = this.mcp.peekClaimSession(intent, Date.now());
+      if (!peek.ok) return { ...peek, denied: true as const };
+      const ownerError = this.messages.recoveryOwnerError(intent.requestId, intent.nodeId, peek.sessionId, intent.runtime);
+      if (ownerError) return { ok: false as const, error: ownerError };
+      if (this.messages.tombstoneOnlyPayload(intent.requestId)) return { ok: false as const, error: "duplicate messageId" };
       const claim = this.mcp.claim(intent, Date.now());
       if (!claim.ok) return { ...claim, denied: true as const };
       const effects = this.messages.expireDue(Date.now());
       const sent = this.messages.replay(intent.requestId, intent.nodeId);
-      return sent?.ok ? { ...sent, effects, claim } : sent;
+      return sent?.ok ? { ...sent, effects: { deliveries: [...effects.deliveries, ...sent.effects.deliveries], statuses: [...effects.statuses, ...sent.effects.statuses] }, claim } : sent;
     });
   }
 
@@ -313,7 +367,7 @@ export class Registry extends DurableObject<Env> {
     const peek = this.mcp.peekClaimSession(intent, Date.now());
     if (!peek.ok) return { ...peek, denied: true as const };
     const message: NewMessage = { messageId: intent.requestId, from: { nodeId: intent.nodeId, session: peek.sessionId }, to, text, inReplyTo };
-    const prepared = await this.messages.prepare(message, await this.loopSigner);
+    const prepared = await this.prepareMessage(message);
     return this.messageTx("sendMcpMessage", () => {
       const current = this.mcp.peekClaimSession(intent, Date.now());
       if (!current.ok) return { ...current, denied: true as const };
@@ -346,7 +400,7 @@ export class Registry extends DurableObject<Env> {
     const to = target === "missing" ? this.messages.retention.inboxReplyTarget({ nodeId: intent.nodeId, session: peek.sessionId }, inReplyTo, item ?? null) : target;
     if (!to) return { ok: false as const, error: "reply relationship or depth is not allowed" };
     const message: NewMessage = { messageId: intent.requestId, from: { nodeId: intent.nodeId, session: peek.sessionId }, to, text, inReplyTo };
-    const prepared = await this.messages.prepare(message, await this.loopSigner);
+    const prepared = await this.prepareMessage(message);
     return this.messageTx("replyMcpMessage", () => {
       const current = this.mcp.peekClaimSession(intent, Date.now());
       if (!current.ok) return { ...current, denied: true as const };
@@ -359,14 +413,31 @@ export class Registry extends DurableObject<Env> {
     });
   }
 
+  private async prepareMessage(message: NewMessage) {
+    const signer = await this.loopSigner;
+    const prepared = await this.messages.prepare(message, signer);
+    const binding = await prepareMessageBinding(this.sql, message, signer,
+      (nodeId, request) => sessionStub(this.env, nodeId).resolveMessageReferences(request));
+    if (message.connectionToken && bindingContext(this.sql, message).nodes[0]?.token !== message.connectionToken) binding.error = LOOP_STALE;
+    return { ...prepared, binding };
+  }
+  async prepareMessageDelivery(messageId: string, phase?: "auth" | "registration") {
+    const candidate = this.messages.deliveryCandidate(messageId);
+    const prepared = candidate?.required ? await prepareMessageBinding(this.sql, candidate.message, await this.loopSigner,
+      (nodeId, request) => sessionStub(this.env, nodeId).resolveMessageReferences(request), "egress", candidate.binding ?? undefined) : null;
+    const result = await this.messageTx("prepareMessageDelivery", () => this.messages.prepareDelivery(messageId, prepared, Date.now(), phase));
+    if (result.effects.statuses.length) await routeEffects(this.env, result.effects);
+    return result.body;
+  }
   // ---- Messages (issue #31). The caller pushes the returned effects. -------
 
   async sendMessage(message: NewMessage, actor: string): Promise<SendResult> {
-    const prepared = await this.messages.prepare(message, await this.loopSigner);
+    const prepared = await this.prepareMessage(message);
     return this.messageTx("sendMessage", (): SendResult => {
       if (message.taskId !== undefined && !this.tasks.taskOnEitherNode(message.taskId, message.from.nodeId, message.to.nodeId)) {
         return { ok: false, error: "unknown task for this message" };
       }
+      if (message.connectionToken && bindingContext(this.sql, message).nodes[0]?.token !== message.connectionToken) prepared.binding.error = LOOP_STALE;
       return this.messages.send(message, actor, Date.now(), prepared);
     });
   }

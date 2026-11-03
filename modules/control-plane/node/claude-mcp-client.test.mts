@@ -89,9 +89,9 @@ test("stages and verifies the complete closed public graph", (t) => {
   const { outputRoot, clientRoot, configRoot } = fixture(t);
   const result = stageClaudeClient({ outputRoot, clientRoot, configRoot, nodeCommand: process.execPath });
   assert.deepEqual(CLAUDE_CLIENT_GRAPH, [
-    "protocol.mts", "protocol-mcp.mts", "protocol-messages.mts", "protocol-loop-brake.mts", "protocol-task-control.mts",
-    "protocol-tasks.mts", "node/config.mts", "node/inbox.mts", "node/inbox-record-lock.mts", "node/mcp-local.mts",
-    "node/mcp-credential-file.mts", "node/guarded-replies.mts", "node/session-publication.mts", "node/policy.mts",
+    "protocol.mts", "protocol-mcp.mts", "protocol-messages.mts", "protocol-loop-brake.mts", "protocol-session-identity.mts", "protocol-message-binding.mts", "protocol-task-control.mts",
+    "protocol-tasks.mts", "node/config.mts", "node/inbox.mts", "node/inbox-storage.mts", "node/inbox-selected-read.mts", "node/inbox-record-lock.mts", "node/mcp-local.mts",
+    "node/mcp-credential-file.mts", "node/guarded-replies.mts", "node/message-owner.mts", "node/session-publication.mts", "node/policy.mts",
     "node/session-policy.mts", "node/mcp-intent-hook.mts", "node/mcp-stdio-bridge.mts",
   ]);
   for (const relative of CLAUDE_CLIENT_GRAPH) {

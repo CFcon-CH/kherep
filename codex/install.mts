@@ -603,10 +603,10 @@ export function install(options: InstallOptions = {}) {
     transaction.copyFile(sources.integritySources, path.join(targets.hookDir, "hook-integrity-sources.mts"));
     if (messagingClient.enabled) {
       for (const relative of [
-        "protocol.mts", "protocol-mcp.mts", "protocol-messages.mts", "protocol-loop-brake.mts", "protocol-task-control.mts", "protocol-tasks.mts",
-        path.join("node", "config.mts"), path.join("node", "inbox.mts"), path.join("node", "inbox-record-lock.mts"), path.join("node", "mcp-local.mts"),
+        "protocol.mts", "protocol-mcp.mts", "protocol-messages.mts", "protocol-loop-brake.mts", "protocol-session-identity.mts", "protocol-message-binding.mts", "protocol-task-control.mts", "protocol-tasks.mts",
+        path.join("node", "config.mts"), path.join("node", "inbox.mts"), path.join("node", "inbox-storage.mts"), path.join("node", "inbox-selected-read.mts"), path.join("node", "inbox-record-lock.mts"), path.join("node", "mcp-local.mts"),
         path.join("node", "mcp-credential-file.mts"),
-        path.join("node", "guarded-replies.mts"),
+        path.join("node", "guarded-replies.mts"), path.join("node", "message-owner.mts"),
         path.join("node", "session-publication.mts"),
         path.join("node", "policy.mts"), path.join("node", "session-policy.mts"),
         path.join("node", "mcp-intent-hook.mts"), path.join("node", "mcp-stdio-bridge.mts"),

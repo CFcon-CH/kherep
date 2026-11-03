@@ -14,6 +14,7 @@ export const TALLY_KINDS = [
   "frame:message.status:replied", "frame:message.status:expired", "frame:message.status:refused", "frame:message.status:invalid",
   "frame:challenge", "frame:auth", "frame:register", "frame:capabilities.update", "frame:sessions.snapshot",
   "frame:command.ack", "frame:command.result", "frame:error", "frame:message.send", "frame:message.deliver",
+  "frame:message.resolve.request", "frame:message.resolve.response",
   "frame:directory.get", "frame:directory", "frame:task.report", "frame:task.request",
   "frame:mcp.credential.rotate", "frame:mcp.credential", "frame:mcp.intent.register", "frame:mcp.intent.receipt",
   "frame:mcp.inbox.request", "frame:mcp.inbox.response",

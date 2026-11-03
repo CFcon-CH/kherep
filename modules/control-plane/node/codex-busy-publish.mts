@@ -1,3 +1,4 @@
+import { messageOwnerMatches } from "./message-owner.mts";
 import { automaticReplyDecision } from "./reply-admission.mts";
 import crypto from "node:crypto";
 
@@ -38,7 +39,7 @@ export function publishAdmittedBusyHint(deps: RunnerDeps, ticket: BusyHintAdmiss
     const messages = ticket.messages.filter((admitted) => {
       const record = getMessage(deps.paths.inbox, admitted.messageId);
         return record?.messageId === admitted.messageId && record.state === "accepted"
-        && record.toSession === admitted.toSession && refs.has(admitted.toSession)
+        && record.toSession === admitted.toSession && messageOwnerMatches(record, { sessionId: ticket.owner, runtime: "codex" }, [...refs])
         && automaticReplyDecision(record).allowed;
     });
     if (messages.length === 0) return "invalid";

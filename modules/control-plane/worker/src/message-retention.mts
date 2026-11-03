@@ -1,5 +1,5 @@
 import { safeLoopReason } from "../../protocol-loop-brake.mts";
-import { LOOP_COLUMNS, LOOP_FIELDS, parentOf } from "./message-loop-identity.mts";
+import { LOOP_COLUMNS, ALL_LOOP_FIELDS, loopColumnType, parentOf } from "./message-loop-identity.mts";
 import type { McpInboxItem } from "../../protocol-mcp.mts";
 import {
   isFinalMessageState, MESSAGING_ACK_CAPABILITY, type MessageAddress, type MessageReceiptBody, type MessageState,
@@ -93,8 +93,8 @@ export class MessageRetention {
     this.capabilities = capabilities;
     this.sql.exec(SCHEMA);
     const columns = this.sql.exec("PRAGMA table_info(message_tombstones)").toArray().map((c) => String(c.name));
-    for (const field of LOOP_FIELDS) if (!columns.includes(field)) {
-      this.sql.exec(`ALTER TABLE message_tombstones ADD COLUMN ${field} ${field === "loop_thread" || field === "loop_pair" ? "TEXT" : "INTEGER"}`);
+    for (const field of ALL_LOOP_FIELDS) if (!columns.includes(field)) {
+      this.sql.exec(`ALTER TABLE message_tombstones ADD COLUMN ${field} ${loopColumnType(field)}`);
     }
   }
 
@@ -210,7 +210,7 @@ export class MessageRetention {
   // entry with ids only.
   private remove(row: Row, actor: string, via: "ack" | "fallback", now: number): void {
     this.sql.exec(`INSERT OR REPLACE INTO message_tombstones (id, from_node, to_node, state, reason, depth, reply_message_id, deleted_at, ${LOOP_COLUMNS})
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, row.id, row.from_node, row.to_node, row.state, row.reason, row.depth, row.reply_message_id, now, ...LOOP_FIELDS.map((f) => row[f]));
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, row.id, row.from_node, row.to_node, row.state, row.reason, row.depth, row.reply_message_id, now, ...ALL_LOOP_FIELDS.map((f) => row[f]));
     this.sql.exec("DELETE FROM messages WHERE id = ?", row.id);
     this.audit(actor, "message.delete", String(row.to_node), { messageId: String(row.id), via });
   }

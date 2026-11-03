@@ -1,3 +1,4 @@
+import { handleLoopIdentityCheck } from "./message-loop-identity-api.mts";
 import { handleMessageHolds } from "./message-holds-api.mts";
 import { isNodeId, isPhase1Command, PHASE1_COMMANDS } from "../../protocol.mts";
 import { isMessageId, isMessageText, isSessionRef, MAX_SESSION_REF, OPERATOR_NODE_ID } from "../../protocol-messages.mts";
@@ -14,6 +15,8 @@ export async function handleApi(request: Request, env: Env, actor: string): Prom
   const parts = pathname.split("/").filter(Boolean); // ["api", ...]
   const method = request.method;
   const registry = registryStub(env);
+
+  if (pathname === "/api/message-loop/identity-check") return handleLoopIdentityCheck(request, env);
 
   if (parts[1] === "message-holds") return handleMessageHolds(request, env, actor);
 
@@ -65,7 +68,7 @@ export async function handleApi(request: Request, env: Env, actor: string): Prom
 
   if (parts.length === 4 && parts[3] === "messages" && method === "POST") {
     const body = await readJsonObject(request);
-    if (!body || !isSessionRef(body.session) || !isMessageText(body.text)) return fail(400, "invalid session or text");
+    if (!body || Object.keys(body).some(k => k === "binding" || k === "denyPairKey" || k.startsWith("delivery_") || k === "loop" || k.startsWith("loop_")) || !isSessionRef(body.session) || !isMessageText(body.text)) return fail(400, "invalid session or text");
     if (body.inReplyTo !== undefined && !isMessageId(body.inReplyTo)) return fail(400, "invalid inReplyTo");
     const node = await registry.getNode(nodeId);
     if (!node) return fail(404, "unknown node");

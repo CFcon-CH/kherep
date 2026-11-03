@@ -87,7 +87,7 @@ export async function deliverToClosed(deps: RunnerDeps, log: (line: string) => v
   const listedAt = Date.parse(readJson<{ updatedAt?: string }>(paths.sessions)?.updatedAt ?? "");
   if (!(now - listedAt <= LISTING_FRESH_MS)) return;
   const live = new Set(readLocalSessions(paths).flatMap((s) => (s.name ? [s.sessionId, s.name] : [s.sessionId])));
-  const waiting = listInbox(paths.inbox).filter((r) => r.state === "accepted" && r.closedAttempt === undefined
+  const waiting = listInbox(paths.inbox).filter((r) => !Object.hasOwn(r, "binding") && r.state === "accepted" && r.closedAttempt === undefined
     && !live.has(r.toSession) && Date.parse(r.receivedAt) < listedAt);
   // One burst per session and sender. An unknown session is left to the
   // refusal after UNDELIVERABLE_AFTER_MS.
@@ -154,7 +154,7 @@ async function deliver(deps: RunnerDeps, found: Target, all: InboxRecord[], now:
   if (!sessions?.enabled) return refuse("sessions are not enabled on this node", "wake-disabled");
   if (!sessions.delegate.accept) return refuse("this node does not accept delegated tasks", "wake-not-authorized");
   const local = readLocalSessions(paths);
-  const accepted = all.filter((r) => acceptsMessage(policy, r.toSession, r.from.nodeId, local));
+  const accepted = all.filter((r) => !Object.hasOwn(r, "binding") && acceptsMessage(policy, r.toSession, r.from.nodeId, local));
   if (accepted.length < all.length) refuse("not accepted by node policy", "wake-not-authorized", all.filter((r) => !accepted.includes(r)));
   const deep = accepted.filter((r) => !automaticReplyDecision(r).allowed);
   if (deep.length > 0) refuse("reply depth limit", "reply-limit", deep);

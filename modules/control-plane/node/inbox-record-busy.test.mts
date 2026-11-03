@@ -63,7 +63,7 @@ test("a busy record is not written by markOffered, markDelivered, markRetry, mar
   });
   const record = getMessage(dir, ID);
   assert.deepEqual([record?.state, record?.offers, record?.retry], ["offered", 1, undefined], "the record is as the holder left it");
-  assert.deepEqual(renames, [false, true], "the store and the one offer; nothing while the record was held");
+  assert.deepEqual(renames, [true, true], "creation and update hold the common UUID lock; nothing while the record was held");
   assert.ok(fs.existsSync(lockOf(dir, ID)), "the holder's lock is untouched");
 });
 

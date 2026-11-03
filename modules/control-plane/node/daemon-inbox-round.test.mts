@@ -1,3 +1,4 @@
+import { watchInboxReads } from "./inbox-read-fixture.mts";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
@@ -30,13 +31,7 @@ function populate(inbox: string, count: number, receipts: (n: number) => InboxRe
 }
 
 function countInboxReads(t: test.TestContext, inbox: string): () => number {
-  let reads = 0;
-  const read = fs.readFileSync;
-  t.mock.method(fs, "readFileSync", (...args: Parameters<typeof fs.readFileSync>) => {
-    if (String(args[0]).startsWith(inbox + path.sep)) reads++;
-    return read(...args);
-  });
-  return () => reads;
+  return watchInboxReads(t, inbox).reads;
 }
 
 async function connectedRound(t: test.TestContext, options: Parameters<typeof intakeHarness>[1] = {}) {
@@ -136,6 +131,7 @@ test("items 11 and 12: 33 log the line, and every following round starts from ze
 // drains, the rest are deferred to the chain, so one frame is the window's share.
 test("a round whose Codex queue poll throws carries no window frame into the next round", async (t) => {
   const h = await connectedRound(t);
+  fs.mkdirSync(h.paths.tasks, { recursive: true });
   const read = fs.readdirSync;
   let injected = false, thrown = false;
   t.mock.method(fs, "readdirSync", (...args: Parameters<typeof fs.readdirSync>) => {

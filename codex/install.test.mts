@@ -1335,6 +1335,69 @@ test("rolls every managed target back when installation fails", (t) => {
     );
   }
 });
+test("rolls combined observation and messaging targets back with bytes modes and config", async (t) => {
+  const { root, codexHome, installOptions, workspace } = fixture();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const { CLAUDE_CLIENT_GRAPH } = await import("../modules/control-plane/node/claude-mcp-client.mts");
+  const { observationFiles } = await import("./lib/observation-projection.mts");
+  const { OBSERVATION_SOURCES } = await import("./lib/observation-source.mts");
+  const { isDeepStrictEqual } = await import("node:util");
+  const repo = path.join(here, "..");
+  const groups = [
+    ...CLAUDE_CLIENT_GRAPH.map((relative) => ({
+      source: path.join(repo, "modules", "control-plane", relative),
+      target: path.join(codexHome, "orchestra", "control-plane", relative),
+    })),
+    ...observationFiles(repo).map((relative) => ({
+      source: path.join(repo, "modules", "atl-jira-brokers", relative),
+      target: path.join(workspace, "tools", relative),
+    })),
+    ...OBSERVATION_SOURCES.map((relative) => ({
+      source: path.join(repo, relative),
+      target: path.join(codexHome, "orchestra", "observation-source", relative),
+    })),
+  ];
+  for (const [index, { target }] of groups.entries()) {
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.writeFileSync(target, `prior combined target ${index}\n`, { mode: index % 2 ? 0o640 : 0o600 });
+  }
+  const configTarget = path.join(codexHome, "config.toml");
+  const priorConfig = Buffer.from('model = "keep"\n');
+  fs.writeFileSync(configTarget, priorConfig, { mode: 0o640 });
+  const snapshot = (): Record<string, { mode: number; bytes: Buffer }> => {
+    const files: Record<string, { mode: number; bytes: Buffer }> = {};
+    const backupRoot = path.join(codexHome, "backups");
+    const walk = (directory: string): void => {
+      for (const name of fs.readdirSync(directory).sort()) {
+        const target = path.join(directory, name);
+        if (target === backupRoot) continue; // Installer recovery copies are retained separately.
+        const info = fs.lstatSync(target);
+        assert.equal(info.isSymbolicLink(), false);
+        if (info.isDirectory()) walk(target);
+        else {
+          assert.equal(info.isFile(), true);
+          files[path.relative(root, target)] = { mode: info.mode & 0o777, bytes: fs.readFileSync(target) };
+        }
+      }
+    };
+    walk(root);
+    return files;
+  };
+  const before = snapshot();
+  let copiedTogether = false;
+  assert.throws(() => install({ ...installOptions, messagingClient: true, afterWrite() {
+    if (!groups.every(({ source, target }) => fs.existsSync(target)
+      && fs.readFileSync(target).equals(fs.readFileSync(source)))) return;
+    const config = fs.readFileSync(configTarget);
+    if (config.equals(priorConfig)) return;
+    assert.match(config.toString(), /\[mcp_servers\.kherep_observations\]/);
+    assert.match(config.toString(), /\[mcp_servers\.kherep_messaging\]/);
+    copiedTogether = true;
+    throw new Error("combined rollback fixture");
+  } }), /combined rollback fixture/);
+  assert.equal(copiedTogether, true);
+  assert.ok(isDeepStrictEqual(snapshot(), before), "all target file bytes, modes and config must be restored");
+});
 test("rolls the observation hook back when reinstall fails after replacing it", (t) => {
   const { root, codexHome, installOptions, workspace } = fixture();
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
@@ -1892,12 +1955,18 @@ test("installs the disabled-by-default messaging client with its public dependen
     + `commandWindows = ${JSON.stringify(`& ${adaptedIntent}`)}\ntimeout = 15\n`), 1);
   assert.equal(occurrences(config, `command = ${JSON.stringify(directIntent)}`), 0);
   for (const relative of [
-    "protocol.mts", "protocol-mcp.mts", "protocol-messages.mts", "protocol-task-control.mts", "protocol-tasks.mts",
-    "node/config.mts", "node/inbox.mts", "node/inbox-record-lock.mts", "node/mcp-local.mts", "node/mcp-credential-file.mts",
-    "node/session-publication.mts", "node/guarded-replies.mts",
+    "protocol.mts", "protocol-mcp.mts", "protocol-messages.mts", "protocol-session-identity.mts", "protocol-message-binding.mts", "protocol-task-control.mts", "protocol-tasks.mts",
+    "node/config.mts", "node/inbox.mts", "node/inbox-storage.mts", "node/inbox-selected-read.mts", "node/inbox-record-lock.mts", "node/mcp-local.mts", "node/mcp-credential-file.mts",
+    "node/session-publication.mts", "node/guarded-replies.mts", "node/message-owner.mts",
     "node/policy.mts", "node/session-policy.mts",
     "node/mcp-intent-hook.mts", "node/mcp-stdio-bridge.mts",
   ]) assert.ok(fs.statSync(path.join(clientRoot, relative)).isFile(), relative);
+  for (const relative of ["node/inbox-storage.mts", "node/inbox-selected-read.mts"]) {
+    assert.deepEqual(fs.readFileSync(path.join(clientRoot, relative)),
+      fs.readFileSync(path.join(here, "../modules/control-plane", relative)), relative);
+  }
+  assert.deepEqual(fs.readFileSync(path.join(clientRoot, "protocol-session-identity.mts")),
+    fs.readFileSync(path.join(here, "../modules/control-plane/protocol-session-identity.mts")));
   const configRoot = path.dirname(path.dirname(installOptions.controlPlaneOutbox));
   fs.mkdirSync(path.join(configRoot, "control-plane"), { recursive: true });
   fs.writeFileSync(path.join(configRoot, "control-plane", "policy.json"),

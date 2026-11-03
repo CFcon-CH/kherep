@@ -1,3 +1,5 @@
+import { attachIdentitySnapshot, uniqueSourceRows } from "./session-identity.mts";
+import { currentIdentity } from "../protocol-session-identity.mts";
 import { commitAuthority, faultAuthority, observationBelongs, revokeAuthority, type AdmissionAuthority } from "./session-authority.mts";
 import { listingObservation } from "./liveness-pass.mts";
 import { closedReference, publishLiveness, readLivenessSnapshot, sessionVerdict, terminalReference } from "./session-lifecycle.mts";
@@ -61,7 +63,7 @@ export function recordingSessions(paths: NodePaths, list: (signal?: AbortSignal)
     const prior = readLocalSessions(paths);
     const previousSnapshot = readLivenessSnapshot(paths);
     // Unsupported/partial metadata cannot remove a previously addressable row.
-    const rows: SessionInfo[] = [...listed];
+    const rows: SessionInfo[] = uniqueSourceRows(listed);
     const supplied = observation?.status === "value" && observationReason(observation, observedAt) === null ? observation.value : [];
     const unseen = unlistedRuntimes(listed);
     // Carry prior identities into classification. Visibility is decided only
@@ -91,13 +93,23 @@ export function recordingSessions(paths: NodePaths, list: (signal?: AbortSignal)
       // UNKNOWN and partial identities remain addressable. Terminal visibility
       // always follows the accepted ledger verdict, never raw lifecycle input.
       const omittedClosed = !rawPresent && completeRuntime && verdict.state === "closed";
-      return directoryVisibility(verdict) && !omittedClosed ? [{ ...s, state: verdict.state }] : [];
+      const events = supplied.filter(e => targetKey(e) === targetKey(s)).flatMap(e => e.lifecycle ? [e.lifecycle] : []);
+      const lifecycleAccepted = events.every(e => trusted && e.status === "value" && e.source === "native-lifecycle"
+        && observationReason(e, observedAt) === null && snapshot.tombstones.some(t => targetKey(t) === targetKey(s)
+          && t.generation === e.value.generation && t.state === e.value.state));
+      const { canonicalIdentity, ...display } = s;
+      const proof = rawPresent && lifecycleAccepted && !unseen.includes("*") && !unseen.includes(s.runtime) && currentIdentity(canonicalIdentity, s, observedAt)
+        && !["closed", "archived", "deleted"].includes(verdict.state)
+        && !["identity", "malformed", "conflict", "capped", "failed", "aborted"].includes(verdict.reasonCode)
+        && !snapshot.capped ? { ...canonicalIdentity, lifecycleGeneration: verdict.lifecycleGeneration ?? 0 } : undefined;
+      return directoryVisibility(verdict) && !omittedClosed ? [{ ...display, state: verdict.state, ...(proof ? { canonicalIdentity: proof } : {}) }] : [];
     });
     // Keep the original completeness markers on the normalized population.
     markUnseen(sessions, snapshot.capped ? [...new Set([...unlistedRuntimes(listed), "*"])] : unlistedRuntimes(listed));
       writeLocalSessions(paths, sessions, observedAt, snapshot.generation);
       signal?.throwIfAborted();
       commitAuthority(authority, paths, observation, snapshot, observedAt);
+      attachIdentitySnapshot(sessions, snapshot.generation);
     } catch (error) {
       faultAuthority(authority);
       log("kherep-node: session publication failed; autonomous admission faulted for this daemon run");

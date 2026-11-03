@@ -110,7 +110,7 @@ function queueFor(deps: RunnerDeps, sessionId: string, live: string[], selectInb
     progressRecords(paths, shared, "waiting", "ambiguous-target", now);
     note(paths, now, sessionId, shared.map((r) => r.messageId), "ambiguous-name");
   }
-  const mine = selectInbox(refs);
+  const mine = selectInbox(refs, { sessionId, runtime: "codex" });
   if (inFlight.has(sessionId)) return;
   progressRecords(paths, mine.filter((record) => record.state === "offered"
     && getMessageProgress(paths.inbox, record.messageId)?.phase !== "failed"),

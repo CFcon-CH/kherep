@@ -189,3 +189,40 @@ test("T7: the sliced purge leaves a record touched within the margin before the 
   handle.stop();
   await handle.done;
 });
+
+for (const abort of [false, true]) test(`Purge-correction: actual maintenance yields preflight work${abort ? " and aborts before mutation" : " across pauses"}`, async t => {
+  const { fixture: storageFixture } = await import("./inbox-storage-fixture.mts");
+  const { storeMessage, markDelivered, markReported } = await import("./inbox.mts");
+  const f = storageFixture(t), controller = new AbortController(), logs: string[] = [];
+  for (let n = 0; n < 20; n++) {
+    const { binding: _binding, ...legacy } = f.body;
+    const body = { ...(n % 2 ? f.body : legacy), messageId: crypto.randomUUID() };
+    storeMessage(f.paths.inbox, body, Date.now() - 8 * DAY); markDelivered(f.paths.inbox, body.messageId);
+    markReported(f.paths.inbox, body.messageId, "delivered", "delivered");
+  }
+  const bodies = [f.paths.inbox, path.join(f.paths.inbox, "bound-v1")].flatMap(dir => fs.readdirSync(dir).filter(n => n.endsWith(".json")).map(n => path.join(dir, n)));
+  for (const file of bodies) fs.utimesSync(file, new Date(Date.now() - 8 * DAY), new Date(Date.now() - 8 * DAY));
+  const before = new Map(bodies.map(file => [file, fs.readFileSync(file)]));
+  let reads = 0, pauses = 0; const perPause: string[][] = []; let ids = new Set<string>(); const open = fs.openSync;
+  t.mock.method(fs, "openSync", ((file: fs.PathLike, ...args: unknown[]) => {
+    if (bodies.includes(String(file))) { reads++; ids.add(path.basename(String(file))); }
+    return Reflect.apply(open, fs, [file, ...args]);
+  }) as typeof fs.openSync);
+  await inboxStart.runInboxMaintenance(f.paths, line => logs.push(line), { signal: controller.signal, sliceMs: 0, clock: () => 0,
+    yield: async () => {
+      pauses++; perPause.push([...ids]); ids = new Set();
+      if (abort && reads >= 3) controller.abort();
+    } });
+  perPause.push([...ids]);
+  assert.ok(perPause.every(names => names.length <= 1), "one record at most per maintenance slice");
+  assert.ok(pauses > 5);
+  if (abort) {
+    assert.equal(reads, 3, "abort occurs partway through full preflight");
+    for (const [file, bytes] of before) assert.deepEqual(fs.readFileSync(file), bytes);
+    assert.ok(logs.some(line => line.startsWith("kherep-node: start maintenance stopped")));
+  } else {
+    assert.ok(logs.some(line => line.startsWith("kherep-node: start maintenance done")));
+    assert.ok(bodies.every(file => !fs.existsSync(file)), "the non-aborted control actually removes every eligible old body");
+    assert.ok(logs.includes("kherep-node: removed 20 inbox message(s) older than 7 days"));
+  }
+});

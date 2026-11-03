@@ -1,3 +1,7 @@
+import type { BindingStorageSnapshot } from "./inbox-storage.mts";
+import { isResolveRequest, SELECTED_BINDING_CAPABILITY } from "../protocol-message-binding.mts";
+import type { MessageReferenceResolver } from "./message-reference.mts";
+import { identitySnapshotOf } from "./session-identity.mts";
 import {
   isCommandBody, makeEnvelope, MAX_FRAME_BYTES, parseEnvelope, PONG_FRAME, type ChallengeBody, type Envelope, type MessageType,
   type NodeFacts, type Phase1Command, type RuntimeInfo, type SessionCommand, type SessionInfo,
@@ -34,6 +38,9 @@ export type SentState = MessageState | "error";
 export const STAMP_MARGIN = 32;
 
 export interface ClientOptions {
+  selectedReferences?: MessageReferenceResolver;
+  bindingStorageReady?: () => boolean | BindingStorageSnapshot;
+  bindingStorageFault?: () => void;
   nodeId: string;
   identity: NodeIdentity;
   policy: NodePolicy;
@@ -65,11 +72,11 @@ export interface ClientOptions {
   mcpCredential?: (body: McpCredentialBody) => void;
   mcpIntentReceipt?: (body: McpIntentReceiptBody) => void;
   mcpDisabled?: () => void;
-  readMcpInbox?: (sessionId: string, limit: number, messageId?: string) => McpInboxItem[] | Promise<McpInboxItem[]>;
+  readMcpInbox?: (sessionId: string, limit: number, messageId?: string, runtime?: string) => McpInboxItem[] | Promise<McpInboxItem[]>;
   // Issue #308: the messages a returned inbox response carries, offered to their session.
-  offerMcpInbox?: (messageIds: string[]) => void;
+  offerMcpInbox?: (messageIds: string[], sessionId: string, runtime: string) => void;
   // Issue #308: the item an MCP reply answers (mcp.inbox.request with reply).
-  answerMcpInbox?: (messageIds: string[]) => void;
+  answerMcpInbox?: (messageIds: string[], sessionId: string, runtime: string) => void;
   // Issue #197: the runtimes whose last readiness probe passed; a change re-registers.
   readyRuntimes?: () => readonly TaskRuntime[];
   log?: (line: string) => void;
@@ -89,6 +96,8 @@ export class NodeClient {
   private credentialRequestPending: string | null = null;
   // The ready runtimes the last register frame carried, as JSON.
   private advertisedReady: string | undefined;
+  private storageReady = false;
+  private storageGeneration = 0;
   // Issue #441: built numbers frames in build order (provisional); sent is the
   // wire seq, assigned by stamp() at the daemon's single send step.
   private built = 0;
@@ -108,13 +117,36 @@ export class NodeClient {
   constructor(options: ClientOptions) {
     this.options = options;
     this.policy = options.policy;
+    this.sampleStorage();
   }
 
   get ack(): number {
     return this.processedSeq;
   }
 
+  private setStorageReady(ready: boolean, generation = this.storageGeneration): void {
+    if (ready === this.storageReady && generation === this.storageGeneration) return;
+    this.storageGeneration = generation;
+    this.storageReady = ready;
+    this.options.selectedReferences?.clear();
+    this.registrationDirty = true;
+    this.registrationFrames = null;
+  }
+
+  private sampleStorage(): void {
+    try {
+      const snapshot = this.options.bindingStorageReady?.() ?? false;
+      this.setStorageReady(typeof snapshot === "boolean" ? snapshot : snapshot.ready,
+        typeof snapshot === "boolean" ? this.storageGeneration : snapshot.generation);
+    } catch {
+      this.options.bindingStorageFault?.();
+      this.options.selectedReferences?.clear();
+      this.setStorageReady(false);
+    }
+  }
+
   connectionClosed(): void {
+    this.options.selectedReferences?.clear();
     this.authenticated = false;
     this.workerCapabilities = null;
     this.registrationDirty = true;
@@ -125,6 +157,7 @@ export class NodeClient {
   // live: the frame arrived on the socket that is current and open when it is
   // handled (the daemon decides; tests and the default take it as live).
   async onFrame(raw: string, live = true): Promise<string[]> {
+    this.sampleStorage();
     if (raw === PONG_FRAME) return [];
     const parsed = parseEnvelope(raw);
     if (!parsed.ok) return [];
@@ -164,6 +197,7 @@ export class NodeClient {
           return [];
         }
         if ((envelope.body as { name?: unknown }).name !== "auth.ok") return [];
+        this.options.selectedReferences?.clear();
         this.authenticated = true;
         this.workerCapabilities = null;
         this.lastSnapshot = null;
@@ -178,8 +212,11 @@ export class NodeClient {
         ];
       case "command":
         return this.authenticated ? this.onCommand(envelope) : [];
+      case "message.resolve.request":
+        if (!live || !this.authenticated || !this.storageReady || !this.options.selectedReferences || !isResolveRequest(envelope.body)) return [];
+        return [this.frame("message.resolve.response", { ...this.options.selectedReferences.resolve(envelope.body, JSON.stringify(this.policy)) })];
       case "message.deliver":
-        if (!this.authenticated || !isMessageDeliverBody(envelope.body)) return [];
+        if (!live || !this.authenticated || !isMessageDeliverBody(envelope.body)) return [];
         return this.onDeliver(envelope.body);
       case "directory":
         if (!isDirectoryBody(envelope.body)) return [];
@@ -220,7 +257,7 @@ export class NodeClient {
         const body = envelope.body;
         if (!mcpRuntimeEnabled(this.policy, body.runtime ?? "codex")) return [];
         try {
-          const items = await this.options.readMcpInbox?.(body.sessionId, body.limit, body.messageId);
+          const items = await this.options.readMcpInbox?.(body.sessionId, body.limit, body.messageId, body.runtime ?? "codex");
           const response = this.frame("mcp.inbox.response", items
             ? { requestId: body.requestId, ok: true, items }
             : { requestId: body.requestId, ok: false, error: "local inbox reader is unavailable" });
@@ -229,8 +266,8 @@ export class NodeClient {
           }
           if (items) {
             const ids = items.map((item) => item.messageId);
-            if (body.reply) this.callback("MCP reply", () => this.options.answerMcpInbox?.(ids));
-            else this.callback("MCP inbox offer", () => this.options.offerMcpInbox?.(ids));
+            if (body.reply) this.callback("MCP reply", () => this.options.answerMcpInbox?.(ids, body.sessionId, body.runtime ?? "codex"));
+            else this.callback("MCP inbox offer", () => this.options.offerMcpInbox?.(ids, body.sessionId, body.runtime ?? "codex"));
           }
           return [response];
         } catch {
@@ -268,17 +305,21 @@ export class NodeClient {
 
   sessionFrames(sessions: SessionInfo[]): string[] {
     if (!this.authenticated) return [];
-    const json = JSON.stringify(sessions);
+    const identitySnapshot = identitySnapshotOf(sessions);
+    const body = { sessions, ...(identitySnapshot ? { identitySnapshot } : {}) };
+    const json = JSON.stringify(body);
     if (json === this.lastSnapshot) return [];
     this.lastSnapshot = json;
-    return [this.frame("sessions.snapshot", { sessions })];
+    return [this.frame("sessions.snapshot", body)];
   }
 
   async refreshPolicy(policy: NodePolicy): Promise<string[]> {
+    this.sampleStorage();
     const previous = advertisedCapabilities(this.policy);
     const capabilities = advertisedCapabilities(policy);
     const wasMcpEnabled = this.policy.remoteMcp?.enabled === true;
     const mcpEnabled = policy.remoteMcp?.enabled === true;
+    if (JSON.stringify(this.policy) !== JSON.stringify(policy)) this.options.selectedReferences?.clear();
     this.policy = policy;
     if (wasMcpEnabled && !mcpEnabled) {
       this.credentialRequestPending = null;
@@ -320,7 +361,7 @@ export class NodeClient {
   }
 
   knownMcpIntents(intents: McpIntentRegistration[]): McpIntentRegistration[] {
-    const sessions: SessionInfo[] = JSON.parse(this.lastSnapshot ?? "[]");
+    const sessions: SessionInfo[] = this.lastSnapshot ? JSON.parse(this.lastSnapshot).sessions : [];
     const runtimes = new Map(sessions.map(session => [session.sessionId, session.runtime]));
     return intents.filter(intent => runtimes.get(intent.sessionId) === intent.runtime);
   }
@@ -378,18 +419,25 @@ export class NodeClient {
   // queued and delivers it again after the next authentication.
   private onDeliver(body: MessageDeliverBody): string[] {
     const { messageId } = body;
+    if (body.binding && (!this.storageReady || !this.options.selectedReferences?.validate(messageId, body.binding, JSON.stringify(this.policy)))) {
+      // Lease loss is a deferred receipt: keep durable queued work for a fresh lease.
+      return [];
+    }
     let local: { sessionId: string; name?: string }[] = [];
     try {
       local = this.options.localSessions?.() ?? [];
     } catch {
       // unreadable listing: only the addressed reference itself matches
     }
-    if (!acceptsMessage(this.policy, body.toSession, body.from.nodeId, local)) {
+    if (!acceptsMessage(this.policy, body.toSession, body.from.nodeId, body.binding ? local.filter(s => s.sessionId === body.toSession) : local)) {
       return [this.frame("message.status", { messageId, state: "refused", reason: "not accepted by node policy" })];
     }
     try {
       this.options.storeMessage(body);
     } catch (error) {
+      this.options.bindingStorageFault?.();
+      this.options.selectedReferences?.clear();
+      this.setStorageReady(false);
       this.options.log?.(`kherep-node: could not store message ${messageId}: ${String((error as Error).message ?? error)}`);
       return [];
     }
@@ -467,7 +515,8 @@ export class NodeClient {
     const ready = this.readyRuntimes();
     this.advertisedReady = JSON.stringify(ready);
     return this.frame("register", {
-      facts: this.options.facts(), runtimes: this.lastRuntimes, capabilities: advertisedCapabilities(this.policy, ready),
+      facts: this.options.facts(), runtimes: this.lastRuntimes, capabilities: [...advertisedCapabilities(this.policy, ready),
+        ...(this.storageReady && this.options.selectedReferences ? [SELECTED_BINDING_CAPABILITY] : [])],
     });
   }
 

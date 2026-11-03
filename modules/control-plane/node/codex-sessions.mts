@@ -1,3 +1,4 @@
+import { identityFromCodexRecord } from "./session-identity.mts";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -226,6 +227,8 @@ export function listCodexSessions(paths: NodePaths, now: number = Date.now(), ac
     if (!record || !isCodexSessionId(record.sessionId) || `${record.sessionId}.json` !== name || now - seen > activeMs) continue;
     const session: SessionInfo = { sessionId: record.sessionId, runtime: CODEX_RUNTIME, state: seen <= now ? "reachable-probable" : "unknown",
       name: codexSessionName(record.sessionId), ...(record.cwd ? { cwd: record.cwd } : {}), kind: "codex" };
+    const proof = identityFromCodexRecord(record, name, now);
+    if (proof) session.canonicalIdentity = proof;
     if (isSessionInfo(session) && isSessionRef(session.name)) sessions.push(session);
   }
   return sessions;

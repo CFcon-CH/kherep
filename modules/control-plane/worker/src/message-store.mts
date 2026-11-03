@@ -1,5 +1,9 @@
+import { duplicateSendError, recoveryOwnerError } from "./message-dedup.mts";
+import { RESOLUTION_REQUIRED, type MessageBinding, type DeliveryBinding } from "../../protocol-message-binding.mts";
+import { bindingContext, selectedAgreesWithProof, type PreparedBinding } from "./message-binding.mts";
+import { BINDING_COLUMNS, migrateMessageBinding, storedMessageBinding } from "./message-binding-store.mts";
 import { LOOP_LINEAGE, LOOP_STALE, LOOP_COMPATIBILITY, MESSAGING_LOOP_BRAKE_CAPABILITY, type LoopAdmissionV1 } from "../../protocol-loop-brake.mts";
-import { LoopIdentity, LOOP_COLUMNS, LOOP_FIELDS, parentOf, storedLoopLineage, type LoopSnapshot } from "./message-loop-identity.mts";
+import { LoopIdentity, LOOP_COLUMNS, ALL_LOOP_FIELDS, loopColumnType, parentOf, storedLoopLineage, type LoopSnapshot } from "./message-loop-identity.mts";
 import { MessageLoopStore, LOOP_QUERIES } from "./message-loop-store.mts";
 import { prepareLoopSignal, type LoopSigner, type LoopSignal } from "./message-loop-signals.mts";
 import {
@@ -57,7 +61,7 @@ export interface MessageRecord {
 
 // proxyOf: a proxy answer (message-proxy.mts, issue #408), never with inReplyTo.
 export interface NewMessage {
-  messageId: string; from: MessageAddress; to: MessageAddress; text: string; inReplyTo?: string; taskId?: string; proxyOf?: string;
+  messageId: string; from: MessageAddress; to: MessageAddress; text: string; inReplyTo?: string; taskId?: string; proxyOf?: string; connectionToken?: string;
 }
 
 // Frames the caller must push to nodes after the SQL work is done.
@@ -74,7 +78,7 @@ type Audit = (actor: string, action: string, target: string | null, detail: unkn
 // Registered capabilities of an enrolled, non-revoked node, or null.
 type Capabilities = (nodeId: string) => string[] | null;
 
-const COLUMNS = "id, from_node, from_session, to_node, to_session, in_reply_to, proxy_of, state, reason, progress_phase, progress_code, progress_observed_at, progress_retry_at, created_at, updated_at, expires_at, depth, " + LOOP_COLUMNS;
+const COLUMNS = "id, from_node, from_session, to_node, to_session, in_reply_to, proxy_of, state, reason, progress_phase, progress_code, progress_observed_at, progress_retry_at, created_at, updated_at, expires_at, depth, " + LOOP_COLUMNS + ", " + BINDING_COLUMNS;
 
 // The queries that run on every send, status report and sender reconnect.
 // Each names its index of SCHEMA (INDEXED BY fails the query rather than fall
@@ -100,7 +104,7 @@ export const HOT_MESSAGE_QUERIES = {
   ...DEPTH_QUERIES, ...RETENTION_QUERIES, ...PROXY_QUERIES, ...LOOP_QUERIES,
 } as const;
 
-export interface PreparedLoop { snapshot: LoopSnapshot; key: string | null; signal: LoopSignal | null; error?: string }
+export interface PreparedLoop { binding?: PreparedBinding; snapshot: LoopSnapshot; key: string | null; signal: LoopSignal | null; error?: string }
 function loopOf(row: Record<string, SqlStorageValue>): LoopAdmissionV1 | undefined {
   const lineage = storedLoopLineage(row);
   if (lineage.kind === "guarded-invalid") throw new Error(LOOP_LINEAGE);
@@ -174,9 +178,10 @@ export class MessageStore {
     if (!columns.includes("task_id")) this.sql.exec("ALTER TABLE messages ADD COLUMN task_id TEXT");
     for (const [name, type] of [["progress_phase", "TEXT"], ["progress_code", "TEXT"], ["progress_observed_at", "TEXT"],
       ["progress_retry_at", "TEXT"], ["reply_message_id", "TEXT"], ["depth", "INTEGER"], ["delete_after", "INTEGER"],
-      ["deletable", "INTEGER"], ["proxy_of", "TEXT"], ["settled_state", "TEXT"], ...LOOP_FIELDS.map((name) => [name, name === "loop_thread" || name === "loop_pair" ? "TEXT" : "INTEGER"] as const)] as const) {
+      ["deletable", "INTEGER"], ["proxy_of", "TEXT"], ["settled_state", "TEXT"], ...ALL_LOOP_FIELDS.map((name) => [name, loopColumnType(name)] as const)] as const) {
       if (!columns.includes(name)) this.sql.exec(`ALTER TABLE messages ADD COLUMN ${name} ${type}`);
     }
+    migrateMessageBinding(this.sql);
     this.sql.exec(REPLAY_INDEX);
     this.retention = new MessageRetention(sql, audit, capabilities);
     this.loops = new MessageLoopStore(sql);
@@ -184,7 +189,7 @@ export class MessageStore {
   }
 
   contextMatches(message: NewMessage, prepared: PreparedLoop): boolean {
-    return !prepared.error && JSON.stringify(prepared.snapshot) === JSON.stringify(this.identity.snapshot(message.from, message.to, message.inReplyTo ?? message.proxyOf));
+    return !prepared.error && (!prepared.binding || prepared.binding.stamp === bindingContext(this.sql, message).stamp) && JSON.stringify(prepared.snapshot) === JSON.stringify(this.identity.snapshot(message.from, message.to, message.inReplyTo ?? message.proxyOf));
   }
 
   async prepare(message: NewMessage, sign: LoopSigner): Promise<PreparedLoop> {
@@ -195,31 +200,49 @@ export class MessageStore {
       // Prefix stripping has exactly the same live-original authorization as admission.
       const proxy = message.proxyOf && proxyRefusal(this.sql, message.proxyOf, message.from, message.to) === null
         ? { owner: message.from.session, messageId: message.proxyOf } : undefined;
-      const signal = await prepareLoopSignal(message.text, sign, proxy);
+      const signal = snapshot.both && snapshot.from && snapshot.to ? await prepareLoopSignal(message.text, sign, proxy) : null;
       return { snapshot, key, signal };
     } catch { return { snapshot, key: null, signal: null, error: "loop-crypto-unavailable" }; }
   }
 
   // Authorization is checked by the caller; replay never scores or creates a delivery.
-  replay(messageId: string, fromNode: string): SendResult | null {
-    const existing = this.get(messageId);
+  replay(messageId: string, fromNode: string, revalidate = true): SendResult | null {
+    const effects = none();
+    const row = this.sql.exec(`SELECT ${COLUMNS} FROM messages WHERE id = ?`, messageId).toArray()[0];
+    if (revalidate && row?.from_node === fromNode && row.state === "queued") this.queueDeliveryAllowed(row, Date.now(), effects);
+    const existing = !revalidate && row ? recordMetadata(row) : this.get(messageId);
     if (existing) return existing.fromNode !== fromNode ? { ok: false, error: "duplicate messageId" }
-      : { ok: true, status: this.statusFor(fromNode, statusOf(existing)), effects: none() };
+      : { ok: true, status: this.statusFor(fromNode, statusOf(existing)), effects };
     const settled = this.retention.resend(messageId, fromNode);
     return settled ? settled.ok ? { ...settled, effects: none() } : settled : null;
   }
 
+  // Tombstones intentionally retain no endpoint identity/body. A payload retry
+  // cannot establish the original owner from historical status alone.
+  tombstoneOnlyPayload(messageId: string): boolean {
+    return this.sql.exec("SELECT id FROM messages WHERE id=?", messageId).toArray().length === 0
+      && this.sql.exec("SELECT id FROM message_tombstones WHERE id=?", messageId).toArray().length !== 0;
+  }
+
+  recoveryOwnerError(messageId: string, nodeId: string, sessionId: string, runtime: string): string | null {
+    const row = this.sql.exec(`SELECT ${COLUMNS} FROM messages WHERE id=?`, messageId).toArray()[0];
+    return row ? recoveryOwnerError(row, nodeId, sessionId, runtime) : null;
+  }
+
   // Records one message as queued, or as refused when the target cannot take
-  // it. A repeated messageId from the same sender returns the current state.
+  // it. A bound retry proves the same exact owners before returning status.
   send(message: NewMessage, actor: string, now: number, prepared?: PreparedLoop): SendResult {
     const effects = this.expireDue(now);
-    const existing = this.get(message.messageId);
-    if (existing) {
-      if (existing.fromNode !== message.from.nodeId) return { ok: false, error: "duplicate messageId" };
+    const row = this.sql.exec(`SELECT ${COLUMNS}, text, task_id FROM messages WHERE id = ?`, message.messageId).toArray()[0];
+    if (row) {
+      const error = duplicateSendError(row, message, prepared, !!prepared && this.contextMatches(message, prepared));
+      if (error) return { ok: false, error };
+      if (row.state === "queued") this.queueDeliveryAllowed(row, now, effects);
+      const existing = this.get(message.messageId)!;
       return { ok: true, status: this.statusFor(existing.fromNode, statusOf(existing)), effects };
     }
     const settled = this.retention.resend(message.messageId, message.from.nodeId);
-    if (settled) return settled.ok ? { ...settled, effects } : settled;
+    if (settled) return { ok: false, error: "duplicate messageId" };
     if (message.proxyOf !== undefined && message.inReplyTo !== undefined) return { ok: false, error: "a proxy answer is not a reply" };
     const target = message.to.nodeId;
     const capabilities = this.capabilities(target);
@@ -232,13 +255,21 @@ export class MessageStore {
     else if (!capabilities.includes(MESSAGING_CAPABILITY)) reason = `target node lacks ${MESSAGING_CAPABILITY}`;
     else if (this.queuedCount(target) >= MAX_QUEUED_PER_NODE) reason = `more than ${MAX_QUEUED_PER_NODE} queued messages for the target node`;
     let loop: LoopAdmissionV1 | undefined;
-    const current = this.identity.snapshot(message.from, message.to, message.inReplyTo ?? message.proxyOf);
+    const current = this.identity.snapshot(message.from, message.to, message.inReplyTo ?? message.proxyOf, now);
     const mode = this.identity.validate(current, prepared?.key ?? null, !!(message.inReplyTo ?? message.proxyOf));
+    const denyKey = prepared?.binding?.binding ? prepared.binding.denyKey : prepared?.key;
+    const bindingRequired = this.loops.hasHeldNodeScope(message.from.nodeId, target)
+      || (mode === "guarded" && current.identityBinding !== null);
     if (reason === null) {
       if (prepared && JSON.stringify(prepared.snapshot) !== JSON.stringify(current)) reason = LOOP_STALE;
-      else if (prepared?.error) reason = prepared.error;
+      else if (prepared?.error || prepared?.binding?.error) reason = prepared.error ?? prepared.binding!.error!;
+      else if (prepared?.binding && prepared.binding.stamp !== bindingContext(this.sql, message).stamp) reason = LOOP_STALE;
+      else if (denyKey && this.loops.held(denyKey)) reason = this.loops.held(denyKey);
       else if (typeof mode === "object") reason = mode.reason;
-      else if (prepared?.key && this.loops.held(prepared.key)) reason = this.loops.held(prepared.key);
+      else if (bindingRequired && !prepared?.binding?.binding) reason = RESOLUTION_REQUIRED;
+      else if (bindingRequired && prepared?.binding?.binding && current.identityBinding !== null
+        && (current.from?.session !== prepared.binding.binding.from.sessionId || current.to?.session !== prepared.binding.binding.to.sessionId
+          || !selectedAgreesWithProof(prepared.binding.binding, current.identityBinding, current.direction))) reason = LOOP_STALE;
       else if (mode === "legacy") { if (depthExceeded(depth)) reason = REPLY_DEPTH_EXCEEDED; }
       else if (!prepared?.key || !prepared.signal || current.direction === null) reason = "loop-crypto-unavailable";
       else {
@@ -254,27 +285,38 @@ export class MessageStore {
         }
       }
     }
-    if (reason?.startsWith("loop-held:") && prepared?.key) {
+    const deniedKey = reason?.startsWith("loop-held:") ? denyKey : null;
+    if (deniedKey) {
+      for (const row of this.sql.exec(`SELECT ${COLUMNS} FROM messages INDEXED BY messages_delivery_pair
+        WHERE delivery_pair = ? AND state = 'queued'`, deniedKey).toArray()) this.setState(recordMetadata(row), "refused", reason!, actor, now, effects);
       for (const row of this.sql.exec(`SELECT ${COLUMNS} FROM messages INDEXED BY messages_loop_queued
-        WHERE loop_pair = ? AND state = 'queued'`, prepared.key).toArray()) {
-        this.setState(toRecord(row), "refused", reason, actor, now, effects);
+        WHERE loop_pair = ? AND state = 'queued'`, deniedKey).toArray()) {
+        this.setState(toRecord(row), "refused", reason!, actor, now, effects);
       }
     }
     const state: MessageState = reason === null ? "queued" : "refused";
 
+    // Bind queued attested rows to exact canonical endpoints. Delivery rechecks
+    // these identities, so a later alias reassignment cannot redirect the queue.
+    const binding = reason === null && bindingRequired
+      ? prepared?.binding?.binding ?? null : null;
+    const storedFrom = binding ? { nodeId: message.from.nodeId, session: binding.from.sessionId } : loop && current.identityBinding ? current.from! : message.from;
+    const storedTo = binding ? { nodeId: target, session: binding.to.sessionId } : loop && current.identityBinding ? current.to! : message.to;
     // deletable = 1: a row this Worker version stored, which it may delete (#308).
     this.sql.exec(`INSERT INTO messages (id, from_node, from_session, to_node, to_session, in_reply_to, text, state, reason,
       created_at, updated_at, expires_at, task_id, depth, deletable, proxy_of) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
-      message.messageId, message.from.nodeId, message.from.session, target, message.to.session, message.inReplyTo ?? null,
+      message.messageId, storedFrom.nodeId, storedFrom.session, target, storedTo.session, message.inReplyTo ?? null,
       state === "queued" ? message.text : null, state, reason, now, now, now + MESSAGE_TTL_MS, message.taskId ?? null, depth,
       message.proxyOf ?? null);
-    if (loop) this.sql.exec(`UPDATE messages SET loop_thread = ?, loop_pair = ?, loop_generation = ?, loop_ordinal = ?, loop_direction = ? WHERE id = ?`,
-      loop.threadId, prepared!.key, loop.generation, loop.ordinal, current.direction, message.messageId);
+    if (loop) this.sql.exec(`UPDATE messages SET loop_thread = ?, loop_pair = ?, loop_generation = ?, loop_ordinal = ?, loop_direction = ?, loop_identity = ? WHERE id = ?`,
+      loop.threadId, prepared!.key, loop.generation, loop.ordinal, current.direction, current.identityBinding, message.messageId);
+    if (binding) this.sql.exec("UPDATE messages SET delivery_binding=?, delivery_pair=? WHERE id=?",
+      JSON.stringify(binding), prepared!.binding!.denyKey, message.messageId);
     this.retention.finalized(message.messageId, message.from.nodeId, state, now);
     this.audit(actor, "message.send", target, { messageId: message.messageId, toSession: message.to.session, state, reason });
     if (state === "queued") {
       effects.deliveries.push({ nodeId: target, body: {
-        messageId: message.messageId, from: { nodeId: message.from.nodeId, session: message.from.session }, toSession: message.to.session, text: message.text,
+        messageId: message.messageId, from: storedFrom, toSession: storedTo.session, text: message.text,
         ...(message.inReplyTo === undefined ? {} : { inReplyTo: message.inReplyTo }),
         ...(message.proxyOf === undefined ? {} : { proxyOf: message.proxyOf }),
         ...(message.taskId === undefined ? {} : { taskId: message.taskId }), ...(loop ? { loop } : {}), createdAt: new Date(now).toISOString(),
@@ -365,7 +407,7 @@ export class MessageStore {
     const effects = none();
     for (const row of this.sql.exec(`SELECT ${COLUMNS} FROM messages WHERE to_node = ? AND state = 'queued' ORDER BY created_at, rowid`,
       nodeId).toArray()) {
-      this.setState(toRecord(row), "refused", reason, actor, now, effects);
+      this.setState(toRecord(row), "refused", reason!, actor, now, effects);
     }
     return effects;
   }
@@ -452,11 +494,49 @@ export class MessageStore {
     return { ready: !!row && row.state === "queued" && this.queueDeliveryAllowed(row, now, effects), effects };
   }
 
+  deliveryCandidate(messageId: string): { message: NewMessage; binding: MessageBinding | null; required: boolean } | null {
+    const row = this.sql.exec(`SELECT ${COLUMNS}, text, task_id FROM messages WHERE id=? AND state='queued'`, messageId).toArray()[0];
+    if (!row) return null;
+    const binding = storedMessageBinding(row);
+    if (binding === "invalid") return null;
+    return { message: { messageId, from: { nodeId: String(row.from_node), session: String(row.from_session) },
+      to: { nodeId: String(row.to_node), session: String(row.to_session) }, text: String(row.text) }, binding,
+      required: !!binding || row.loop_identity !== null || this.loops.hasHeldNodeScope(String(row.from_node), String(row.to_node)) };
+  }
+  prepareDelivery(messageId: string, prepared: PreparedBinding | null, now: number, phase?: "auth" | "registration"): { body: MessageDeliverBody | null; effects: MessageEffects } {
+    const effects = this.expireDue(now);
+    const row = this.sql.exec(`SELECT ${COLUMNS}, text, task_id FROM messages WHERE id=? AND state='queued'`, messageId).toArray()[0];
+    if (!row || !this.queueDeliveryAllowed(row, now, effects)) return { body: null, effects };
+    const message = { messageId, from: { nodeId: String(row.from_node), session: String(row.from_session) },
+      to: { nodeId: String(row.to_node), session: String(row.to_session) } };
+    const stored = storedMessageBinding(row);
+    if (stored === "invalid") return { body: null, effects };
+    const required = !!stored || row.loop_identity !== null || this.loops.hasHeldNodeScope(message.from.nodeId, message.to.nodeId);
+    if (phase === "auth" && required || phase === "registration" && !required) return { body: null, effects };
+    if (required && (!prepared?.binding || !prepared.leaseId || prepared.error
+      || prepared.stamp !== bindingContext(this.sql, message).stamp
+      || stored && JSON.stringify(stored) !== JSON.stringify(prepared.binding))) return { body: null, effects };
+    const key = prepared?.denyKey ?? row.delivery_pair ?? row.loop_pair;
+    const held = typeof key === "string" ? this.loops.held(key) : null;
+    if (held) { this.setState(recordMetadata(row), "refused", held, "system", now, effects); return { body: null, effects }; }
+    let binding: DeliveryBinding | undefined;
+    if (required && prepared?.binding && prepared.leaseId) {
+      const stable = prepared.binding;
+      this.sql.exec("UPDATE messages SET from_session=?,to_session=?,delivery_binding=?,delivery_pair=? WHERE id=? AND state='queued'",
+        stable.from.sessionId, stable.to.sessionId, JSON.stringify(stable), prepared.denyKey, messageId);
+      row.from_session = stable.from.sessionId; row.to_session = stable.to.sessionId;
+      binding = { ...stable, leaseId: prepared.leaseId, localGeneration: prepared.localGeneration };
+    }
+    return { body: { ...deliverBodyOf(row), ...(binding ? { binding } : {}) }, effects };
+  }
   private queueDeliveryAllowed(row: Record<string, SqlStorageValue>, now: number, effects: MessageEffects): boolean {
     const lineage = storedLoopLineage(row);
-    const reason = lineage.kind === "guarded-invalid" ? LOOP_LINEAGE
+    const denyKey = typeof row.delivery_pair === "string" ? row.delivery_pair : lineage.kind === "guarded" ? lineage.pair : null;
+    const held = denyKey ? this.loops.held(denyKey) : null;
+    const reason = held ?? (storedMessageBinding(row) === "invalid" ? RESOLUTION_REQUIRED : lineage.kind === "guarded-invalid" ? LOOP_LINEAGE
+      : lineage.kind === "guarded" && lineage.identityBinding !== null && !this.identity.deliveryValid(row, lineage.identityBinding, now) ? LOOP_COMPATIBILITY
       : lineage.kind === "guarded" && (!this.capabilities(String(row.from_node))?.includes(MESSAGING_LOOP_BRAKE_CAPABILITY)
-        || !this.capabilities(String(row.to_node))?.includes(MESSAGING_LOOP_BRAKE_CAPABILITY)) ? LOOP_COMPATIBILITY : null;
+        || !this.capabilities(String(row.to_node))?.includes(MESSAGING_LOOP_BRAKE_CAPABILITY)) ? LOOP_COMPATIBILITY : null);
     if (reason === null) return true;
     this.setState(recordMetadata(row), "refused", reason, "system", now, effects);
     return false;

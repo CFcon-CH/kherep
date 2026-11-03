@@ -98,6 +98,22 @@ describe("Access JWT on /api/*", () => {
 });
 
 describe("operator API", () => {
+  it("S28: operator message fields cannot inject binding or loop authority", async () => {
+    const jwt = await token(), nodeId = await enroll(await newKey(), "synthetic-injection-target");
+    await registry().updateRegistration(nodeId, FACTS, [], ["messaging.v1"]);
+    const post = (body: unknown) => api(`/api/nodes/${nodeId}/messages`, { method: "POST", body: JSON.stringify(body) }, jwt);
+    const counts = () => runInDurableObject(registry(), (_i, state) => ({
+      messages: state.storage.sql.exec("SELECT COUNT(*) AS n FROM messages").one().n,
+      pairs: state.storage.sql.exec("SELECT COUNT(*) AS n FROM message_loop_pairs").one().n,
+    }));
+    const before = await counts();
+    for (const field of ["binding", "denyPairKey", "delivery_binding", "delivery_pair", "loop", "loop_identity"]) {
+      expect((await post({ session: "synthetic-target", text: "Synthetic operator body", [field]: "injected" })).status).toBe(400);
+      expect(await counts()).toEqual(before);
+    }
+    expect((await post({ session: "synthetic-target", text: "Synthetic operator body" })).status).toBe(202);
+    expect(await counts()).toEqual({ messages: Number(before.messages) + 1, pairs: before.pairs });
+  });
   it("creates enrollment codes and lists enrolled nodes", async () => {
     const jwt = await token();
     const created = await api("/api/enrollments", { method: "POST", body: JSON.stringify({ ttlSeconds: 120 }) }, jwt);

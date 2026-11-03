@@ -100,8 +100,10 @@ function readOr<T>(read: () => T, failed: T): T {
   try { return read(); } catch { return failed; }
 }
 
-// full false: the relay's subset, without the attempt store and readiness, which only admission reads.
-function gather(deps: ForkAdmissionDeps, owner: string, messageId: string, fingerprint: string, full = true): Facts {
+type Purpose = "admit" | "continue" | "relay";
+
+// Only admission enumerates attempts; continuation retains the readiness check.
+function gather(deps: ForkAdmissionDeps, owner: string, messageId: string, fingerprint: string, purpose: Purpose): Facts {
   const { paths } = deps;
   const session = readOr(() => readCodexSession(paths, owner), null);
   return {
@@ -110,8 +112,8 @@ function gather(deps: ForkAdmissionDeps, owner: string, messageId: string, finge
     policy: readPolicy(paths.policy, true), session, taskSession: readOr(() => listTasks(paths).some((task) => task.sessionId === owner), true),
     mode: deps.payload && Object.hasOwn(deps.payload, "permission_mode") ? deps.payload.permission_mode : session?.permissionMode,
     postToolHook: readOr(deps.postToolHook ?? (() => codexPostToolHookInstalled(path.join(codexHome(), "config.toml"), REPO_ROOT)), false),
-    message: readOr(() => getMessage(paths.inbox, messageId), null), attempts: full ? readOr(() => forkAttempts(paths, owner), null) : null,
-    readiness: full ? notReadyNow(deps.readiness, "codex") : null, realpath: deps.realpath,
+    message: readOr(() => getMessage(paths.inbox, messageId), null), attempts: purpose === "admit" ? readOr(() => forkAttempts(paths, owner), null) : null,
+    readiness: purpose !== "relay" ? notReadyNow(deps.readiness, "codex") : null, realpath: deps.realpath,
   };
 }
 
@@ -132,17 +134,18 @@ const eligible = (m: InboxRecord | null, owner: string): m is InboxRecord => m?.
   && m.taskId === undefined && m.from.nodeId !== OPERATOR_NODE_ID;
 const depthOk = (m: InboxRecord): boolean => automaticReplyDecision(m).allowed;
 
-function messageRefusal(f: Facts): PreClaimRefusal | null {
+function messageRefusal(f: Facts, purpose: Purpose): PreClaimRefusal | null {
   const m = f.message;
   if (!eligible(m, f.owner)) return "message-not-eligible";
   if (!depthOk(m)) return "depth-limit";
+  if (purpose !== "admit") return null;
   if (!f.attempts || f.attempts.length >= MAX_FORK_ATTEMPTS) return "attempts-unreadable";
   if (f.attempts.some((a) => a.messageId === m.messageId)) return "attempt-exists";
   return f.attempts.some((a) => a.state === "launching" || a.state === "running") ? "fork-in-flight" : null;
 }
 
 // Guards 1 to 7 and 9 of design section 2.4, in order, without side effects.
-function decide(f: Facts): ForkAdmission {
+function decide(f: Facts, purpose: Purpose): ForkAdmission {
   const refuse = (reason: PreClaimRefusal): ForkAdmission => ({ ok: false, reason });
   const policy = f.policy, fork = policy?.wake?.codexFork;
   if (!f.enrolled || !policy || !fork) return refuse("fork-off");
@@ -155,7 +158,7 @@ function decide(f: Facts): ForkAdmission {
   // Stop is idle evidence only where PostToolUse records tool boundaries.
   if (!f.postToolHook) return refuse("post-tool-hook-missing");
   if (!idleEvidence(f.session, f.now, fork.idleAfterSeconds * 1000)) return refuse("fork-not-idle");
-  const message = messageRefusal(f);
+  const message = messageRefusal(f, purpose);
   if (message) return refuse(message);
   const sessions = policy.sessions;
   const cwd = sessions?.enabled && sessions.runtimes.includes(CODEX_RUNTIME) && f.session?.cwd
@@ -168,12 +171,17 @@ function decide(f: Facts): ForkAdmission {
 
 // fingerprint: busyPolicyFingerprint of the policy the message was admitted under.
 export function admitForkReply(deps: ForkAdmissionDeps, owner: string, messageId: string, fingerprint: string): ForkAdmission {
-  const facts = gather(deps, owner, messageId, fingerprint);
-  const decision = decide(facts);
+  const facts = gather(deps, owner, messageId, fingerprint, "admit");
+  const decision = decide(facts, "admit");
   if (!decision.ok) return decision;
   const budget = takeTurn(deps.paths, owner, facts.now, forkBudget(facts.policy!));
   if (budget === "ok") return decision;
   return { ok: false, reason: budget === "exhausted" ? "budget-exhausted" : "budget-spacing" };
+}
+
+// Read-only lifetime permission check: no capacity check, claim or budget debit.
+export function recheckForkReply(deps: ForkAdmissionDeps, owner: string, messageId: string, fingerprint: string): ForkAdmission {
+  return decide(gather(deps, owner, messageId, fingerprint, "continue"), "continue");
 }
 
 // RG-4 alone (issue #408, PR 4, design r3 section 2.3 and review R3-WX1): the
@@ -194,7 +202,7 @@ export type RelayGuardDeps = ForkAdmissionDeps & { workerCapabilities?: () => re
 // original, RG-5 the owner's recorded session with admission's own clauses.
 export function relayRefusal(deps: RelayGuardDeps, owner: string, attempt: ForkAttempt, now: number): ForkRefusal | null {
   if (!(now - attempt.attemptedAt <= RELAY_MAX_AGE_MS)) return "fork-relay-stale";
-  const f = gather({ ...deps, now: () => now, payload: undefined }, owner, attempt.messageId, attempt.policyFingerprint, false);
+  const f = gather({ ...deps, now: () => now, payload: undefined }, owner, attempt.messageId, attempt.policyFingerprint, "relay");
   const policy = f.policy, fork = policy?.wake?.codexFork;
   if (!f.enrolled || !policy || !fork) return "fork-off";
   if (f.killSwitch) return "kill-switch";

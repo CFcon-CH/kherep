@@ -1,3 +1,5 @@
+import { messageOwnerMatches } from "./message-owner.mts";
+import type { SelectedOwner } from "../protocol-message-binding.mts";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -163,8 +165,8 @@ export function consumeMcpIntentReceipt(paths: NodePaths, requestId: string): Mc
 }
 
 // messageId (issue #308): only that record, and only when it is addressed to sessionId.
-export function readMcpInbox(paths: NodePaths, sessionId: string, limit: number, messageId?: string): McpInboxItem[] {
-  return listInbox(paths.inbox, sessionId).filter((record) => messageId === undefined || record.messageId === messageId)
+export function readMcpInbox(paths: NodePaths, sessionId: string, limit: number, messageId?: string, runtime = "codex"): McpInboxItem[] {
+  return listInbox(paths.inbox, sessionId).filter(r => messageOwnerMatches(r, { sessionId, runtime }, [sessionId])).filter((record) => messageId === undefined || record.messageId === messageId)
     .slice(-limit).map((record) => ({
     messageId: record.messageId, from: { ...record.from }, createdAt: record.createdAt, text: record.text,
     ...(record.inReplyTo ? { inReplyTo: record.inReplyTo } : {}), depth: record.depth ?? 0,
@@ -176,12 +178,18 @@ export function readMcpInbox(paths: NodePaths, sessionId: string, limit: number,
 // client fires hooks) or a reply confirms them; a client without hooks
 // reaches delivered only through a reply. Already offered or final records
 // stay as they are.
-export function offerMcpInbox(paths: NodePaths, messageIds: string[], now: number = Date.now()): void {
-  for (const id of messageIds) if (getMessage(paths.inbox, id)?.state === "accepted") markOffered(paths.inbox, id, now, "mcp");
+export function offerMcpInbox(paths: NodePaths, messageIds: string[], now: number = Date.now(), owner?: SelectedOwner): void {
+  for (const id of messageIds) {
+    const record = getMessage(paths.inbox, id);
+    if (record?.state === "accepted" && messageOwnerMatches(record, owner, [record.toSession])) markOffered(paths.inbox, id, now, "mcp");
+  }
 }
 
 // An MCP reply the Worker routes through this node (issue #308) answers the
 // record, as `msg send --reply-to` does.
-export function answerMcpInbox(paths: NodePaths, messageIds: string[]): void {
-  for (const id of messageIds) markAnswered(paths.inbox, id);
+export function answerMcpInbox(paths: NodePaths, messageIds: string[], owner?: SelectedOwner): void {
+  for (const id of messageIds) {
+    const record = getMessage(paths.inbox, id);
+    if (record && messageOwnerMatches(record, owner, [record.toSession])) markAnswered(paths.inbox, id);
+  }
 }

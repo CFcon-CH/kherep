@@ -1,3 +1,4 @@
+import { boundRecordValid, messageOwnerMatches } from "./message-owner.mts";
 import fs from "node:fs";
 
 import {
@@ -85,7 +86,9 @@ export function observeClaudeDeliveryProgress(deps: RunnerDeps): void {
     byName.set(session.name, [...(byName.get(session.name) ?? []), session]);
   }
   const resolve = (record: InboxRecord): LocalSession | "ambiguous" | undefined => {
+    if (!boundRecordValid(record)) return undefined;
     const exact = allSessions.get(record.toSession);
+    if (record.binding) return exact && messageOwnerMatches(record, { sessionId: exact.sessionId, runtime: exact.runtime ?? null }, []) ? exact : undefined;
     if (exact) return exact;
     const aliases = byName.get(record.toSession) ?? [];
     if (aliases.length > 1 && aliases.some((session) => session.runtime === "claude-code")) return "ambiguous";
@@ -129,7 +132,7 @@ export function observeCodexTaskProgress(deps: RunnerDeps): void {
   const now = deps.now?.() ?? Date.now();
   const waiting = inboxOf(deps).filter((record) => record.state === "accepted" && record.closedTo === undefined);
   for (const task of held) {
-    const records = waiting.filter((record) => record.toSession === task.sessionId || record.toSession === task.name);
+    const records = waiting.filter((record) => messageOwnerMatches(record, { sessionId: task.sessionId!, runtime: "codex" }, [task.sessionId!, task.name]));
     const code = task.operatorStoppedAt !== undefined ? "operator-stopped" : "target-busy";
     progressRecords(deps.paths, records, "waiting", code, now);
   }

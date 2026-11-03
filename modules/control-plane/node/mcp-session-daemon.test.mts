@@ -1,3 +1,4 @@
+import { SELECTED_BINDING_CAPABILITY } from "../protocol-message-binding.mts";
 import { MESSAGING_LOOP_BRAKE_CAPABILITY } from "../protocol-loop-brake.mts";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -29,6 +30,13 @@ const decode = (frame: string) => {
 };
 
 async function fixture(t: test.TestContext, options: { initialGate?: Promise<void> } = {}) {
+  // Registration facts are fixed test dependencies, never the executing host.
+  t.mock.method(os, "hostname", () => "synthetic-node");
+  t.mock.method(os, "platform", () => "linux");
+  t.mock.method(os, "arch", () => "x64");
+  t.mock.method(os, "cpus", () => []);
+  t.mock.method(os, "totalmem", () => 1024);
+  t.mock.method(globalThis, "fetch", async () => { throw new Error("synthetic endpoint unavailable"); });
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "kherep-mcp-session-daemon-"));
   const paths = nodePaths(root), identity = generateIdentity();
   fs.mkdirSync(paths.dir, { recursive: true });
@@ -56,14 +64,6 @@ async function fixture(t: test.TestContext, options: { initialGate?: Promise<voi
     timers.set(ms, [...timers.get(ms) ?? [], callback]); return { interval: ms };
   }) as unknown as typeof setInterval;
   globalThis.clearInterval = (() => {}) as typeof clearInterval;
-  // Stub authentication only. Discovery, policy-file reads, registration,
-  // snapshots, scheduling and recording use the production daemon path.
-  NodeClient.prototype.onFrame = async function (raw) {
-    if (raw !== "synthetic-auth-ok") return original.frame.call(this, raw);
-    this.authenticated = true;
-    const registration = await this.refreshPolicy(loadPolicy(paths.policy));
-    return options.initialGate ? registration : [...registration, ...await this.sessionsSnapshot()];
-  };
   NodeClient.prototype.refreshPolicy = async function (policy) {
     await policyGate;
     return original.refresh.call(this, policy);
@@ -81,8 +81,15 @@ async function fixture(t: test.TestContext, options: { initialGate?: Promise<voi
     fs.rmSync(root, { recursive: true, force: true });
   });
   listeners.get("open")?.({});
-  listeners.get("message")?.({ data: "synthetic-auth-ok" });
-  await flush();
+  listeners.get("message")?.({ data: JSON.stringify(makeEnvelope("event", { name: "auth.ok" }, 0, 0)) });
+  // Wait for the actual initial publication, or for the deliberately held read.
+  let initialReady = false;
+  for (let i = 0; i < 100; i++) {
+    await flush();
+    initialReady = options.initialGate ? signal !== undefined : frames.some(frame => decode(frame).type === "sessions.snapshot");
+    if (initialReady) break;
+  }
+  assert.equal(initialReady, true);
   frames.length = 0; reads = 0;
   const tick = timers.get(EXCHANGE_INTERVAL_MS)?.[0];
   assert.ok(tick);
@@ -110,7 +117,7 @@ test("the daemon reloads a policy-file revocation after discovery and sends no n
   release(); await flush();
   const frames = f.frames.map(decode);
   assert.deepEqual(frames.map(frame => frame.type), ["register"]);
-  assert.deepEqual((frames[0]!.body as { capabilities: unknown }).capabilities, [MESSAGING_ACK_CAPABILITY, MESSAGING_PROGRESS_V2_CAPABILITY, MESSAGING_LOOP_BRAKE_CAPABILITY]);
+  assert.deepEqual((frames[0]!.body as { capabilities: unknown }).capabilities, [MESSAGING_ACK_CAPABILITY, MESSAGING_PROGRESS_V2_CAPABILITY, MESSAGING_LOOP_BRAKE_CAPABILITY, SELECTED_BINDING_CAPABILITY]);
 });
 
 test("the daemon publishes the one complete discovery result before the intent with ascending seq", async t => {
@@ -119,7 +126,12 @@ test("the daemon publishes the one complete discovery result before the intent w
   enqueue(f); f.tick(); await flush();
   const frames = f.frames.map(decode);
   assert.deepEqual(frames.map(frame => frame.type), ["sessions.snapshot", "mcp.intent.register"]);
-  assert.deepEqual(frames[0]!.body, { sessions: normalized([OLD, NEW]) });
+  const snapshot = frames[0]!.body as { sessions: SessionInfo[]; identitySnapshot: { version: number; generation: number } };
+  assert.deepEqual(snapshot.sessions, normalized([OLD, NEW]));
+  assert.equal(snapshot.identitySnapshot.version, 1);
+  assert.ok(Number.isSafeInteger(snapshot.identitySnapshot.generation) && snapshot.identitySnapshot.generation > 0);
+  const cache = JSON.parse(fs.readFileSync(f.paths.sessions, "utf8"));
+  assert.equal(snapshot.identitySnapshot.generation, cache.generation);
   assert.ok(frames[0]!.seq < frames[1]!.seq);
   assert.equal(f.reads(), 1);
 });

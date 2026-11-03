@@ -46,19 +46,19 @@ const state = (paths: NodePaths, messageId: string) => {
 
 // Opens of `lock` fail with `codes` in turn, later ones open for real; returns
 // the codes seen ("open" for a real one) and the descriptors really opened.
-function lockOpens(t: test.TestContext, lock: string, codes: readonly string[]): { seen: string[]; fds: number[] } {
+function lockOpens(t: test.TestContext, lock: string, codes: readonly string[]): { seen: string[]; fds: number[]; live: Set<number> } {
   const real = fs.openSync;
-  const seen: string[] = [], fds: number[] = [];
+  const seen: string[] = [], fds: number[] = [], live = new Set<number>();
   t.mock.method(fs, "openSync", (file: fs.PathLike, flags: fs.OpenMode, mode?: fs.Mode | null) => {
     if (String(file) !== lock) return real(file, flags, mode);
     const code = codes[seen.length];
     seen.push(code ?? "open");
     if (code) throw Object.assign(new Error(`synthetic ${code}`), { code, syscall: "open" });
     const fd = real(file, flags, mode);
-    fds.push(fd);
+    fds.push(fd); live.add(fd);
     return fd;
   });
-  return { seen, fds };
+  return { seen, fds, live };
 }
 
 for (const codes of [["EPERM"], ["EPERM", "EPERM"], ["EBUSY", "EACCES"]]) {
@@ -119,10 +119,10 @@ test("a failed close after the PID write is not repeated; the own lock is remove
   const paths = setup(t);
   const messageId = inbox(paths);
   const lock = midTurnLock(paths, SELF);
-  const { fds } = lockOpens(t, lock, []);
+  const { fds, live } = lockOpens(t, lock, []);
   const real = fs.closeSync, closes: number[] = [];
-  t.mock.method(fs, "closeSync", (fd: number) => {
-    if (!fds.includes(fd)) return real(fd);
+  const closing = t.mock.method(fs, "closeSync", (fd: number) => {
+    if (!live.delete(fd)) return real(fd);
     closes.push(fd);
     real(fd); // close(2) on Linux releases the number even when it reports an error
     throw Object.assign(new Error("synthetic EIO"), { code: "EIO" });
@@ -130,5 +130,6 @@ test("a failed close after the PID write is not repeated; the own lock is remove
   assert.equal(toolUse(paths), "");
   assert.deepEqual([fds.length, closes], [1, fds], "one create, closed exactly once");
   assert.equal(fs.existsSync(lock), false, "no lock is left behind");
+  closing.mock.restore();
   assert.deepEqual(state(paths, messageId), ["accepted", undefined]);
 });

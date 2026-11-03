@@ -66,34 +66,14 @@ describe("session snapshot write budget", () => {
     expect(await reconcile(nodeId, [])).toBe(0);
   });
 
-  it("keeps the last duplicate id and makes the same reconnect snapshot a no-op", async () => {
-    const key = await newKey();
-    const nodeId = await enroll(key);
+  it("rejects duplicate IDs before deduplication without changing stored rows", async () => {
+    const nodeId = await enroll(await newKey());
     const snapshot: SessionInfo[] = [
-      { sessionId: "same", runtime: "codex", state: "active", title: "old" },
-      { sessionId: "same", runtime: "claude-code", state: "idle", title: "last" },
+      { sessionId: "same", runtime: "codex", state: "active" },
+      { sessionId: "same", runtime: "claude-code", state: "idle" },
     ];
-    const registryChanges = () => runInDurableObject(registry(), (_instance, state) => changes(state.storage.sql));
-
-    const first = await authenticate(nodeId, key);
-    const beforeFirst = await registryChanges();
-    first.send(makeEnvelope("sessions.snapshot", { sessions: snapshot }, 1, 0));
-    first.send(makeEnvelope("directory.get", {}, 2, 0));
-    expect((await first.next()).type).toBe("directory");
-    expect(await registryChanges() - beforeFirst).toBe(1);
-    expect(await stored(nodeId)).toEqual([
-      expect.objectContaining({ sessionId: "same", runtime: "claude-code", state: "idle", title: "last" }),
-    ]);
-    first.ws.close(1000, "reconnect");
-    await first.closed;
-
-    const second = await authenticate(nodeId, key);
-    const beforeSecond = await registryChanges();
-    second.send(makeEnvelope("sessions.snapshot", { sessions: snapshot }, 1, 0));
-    second.send(makeEnvelope("directory.get", {}, 2, 0));
-    expect((await second.next()).type).toBe("directory");
-    expect(await registryChanges() - beforeSecond).toBe(0);
-    second.ws.close(1000, "done");
+    expect(await registry().replaceSessions(nodeId, snapshot)).toEqual({ ok: false, code: "IDENTITY_SNAPSHOT_REJECTED" });
+    expect(await stored(nodeId)).toEqual([]);
   });
 });
 

@@ -20,8 +20,8 @@ const control = (action: string): string => frame("event", { name: "task.control
 const SUMMARY = new RegExp(`^((${[...TALLY_KINDS, "other"].map((k) => k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")}) \\d+(, |$))*$`);
 
 test("item 1: marker and cardinality stay bounded to TALLY_KINDS", () => {
-  assert.equal(TALLY_KINDS.length, 1 + 1 + 1 + 1 + 2 + 1 + 6 + 2 + 6 + 1 + 20 + 1);
-  assert.equal(TALLY_KINDS.length, 43);
+  assert.equal(TALLY_KINDS.length, 1 + 1 + 1 + 1 + 2 + 1 + 6 + 2 + 6 + 1 + 22 + 1);
+  assert.equal(TALLY_KINDS.length, 45);
   assert.equal(tallyKind(command(MARKER)), "command:unknown");
   const tally = roundTally();
   for (let n = 0; n < 200; n++) tally.add(tallyKind(command(`${MARKER}-${n}`)));
