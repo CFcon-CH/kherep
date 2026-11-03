@@ -201,7 +201,7 @@ export class WindowsServiceAdapter implements ServiceAdapter {
     return Buffer.from(result, "base64");
   }
   async retargeted(snapshot: NativeServiceSnapshot, binding: ServiceBinding): Promise<Buffer> {
-    if (!snapshot.windows) throw new Error("Scheduled Task summary is missing");
+    // Persisted backups retain definition bytes, not live summaries; callers validate task authority separately.
     const action = windowsManagedAction(binding);
     const result = invoke(MUTATE, { definition: snapshot.definition.toString("base64"), command: action.executable,
       arguments: action.arguments, workingDirectory: action.workingDirectory });
