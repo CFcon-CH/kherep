@@ -190,7 +190,7 @@ export function seedManaged(h: ReturnType<typeof setup>): void {
 }
 
 export function setup(t: test.TestContext) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "kherep-service-transaction-"));
+  const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "kherep-service-transaction-")));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const paths = nodePaths(root);
   fs.mkdirSync(paths.dir, { recursive: true });
