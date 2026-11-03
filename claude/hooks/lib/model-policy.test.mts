@@ -47,6 +47,7 @@ test("the shipped default resolves today's mapping and the observer default effo
     "win-agent": ["haiku", undefined], "mac-agent": ["haiku", undefined],
     "lmstudio-win-researcher": ["haiku", undefined], "lmstudio-mac-researcher": ["haiku", undefined],
     "claude-obs": ["haiku", "medium"], "atlassian-broker": ["haiku", undefined],
+    "kherep-lead": [undefined, undefined], "kherep-team-lead": [undefined, undefined],
   });
   assert.deepEqual(policy.warnings, []);
 });

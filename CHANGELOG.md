@@ -29,6 +29,17 @@ increments the minor version; every other release increments the patch version.
   (`systemMessage`). The recorder shows its notification on macOS through `osascript`.
   `npm run test:mods` validates and tests the mods with the Claude Code CLI (SKIP
   without it); a bootstrap test pins the mod's copy of `usage-window.mts`.
+- Team model profiles (issue #761, first part): every session on every node and
+  runtime gets two role texts, `kherep-lead` and `kherep-team-lead`, with the chain
+  of command operator -> lead -> team leads and one message contract (PACKAGE,
+  REPORT, PACKAGE-CLOSED, QUESTION, ANSWER, HANDOVER; eight STATE values). Claude
+  installs `claude/agents/kherep-*.md` through the file manifest and model policy
+  (role `root`, native inherit) and drift-check compares them; Codex projects its own
+  `codex/agents/kherep-*.md` into `agents/kherep-*.toml` with the root defaults. Both
+  ROUTING files gain a "Team model" section and the user rules a pointer to it.
+  `bootstrap/team-profile-parity.test.mts` keeps the two runtimes' texts on the same
+  contract. For now the operator names the lead in chat; the Worker team record, the
+  per-turn role line and the send-time contract check follow in a later change.
 - Weekly usage watcher (issue #748): the status line hands the documented
   `rate_limits.seven_day` window to a detached recorder, `hooks/usage-record.mts`,
   which caches it under `.cache/usage-watch/` and shows one Windows toast per

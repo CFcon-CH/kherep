@@ -28,6 +28,7 @@
 - Give each worker a bounded objective, ownership, constraints, required evidence and return format. Do not delegate final acceptance.
 - Use models and tools actually available in the current runtime. Respect configured privacy, cost and capability constraints; do not force a particular provider or model.
 - Treat a worker's report as evidence to inspect. Verify the result independently at its destination.
+- When the operator names a lead of the connected sessions, the chain of command is operator -> lead -> team leads: the named lead follows the `developer_instructions` of `agents/kherep-lead.toml` in the active Codex home, every other session of the team follows `agents/kherep-team-lead.toml`, and the Team model section of `orchestra/ROUTING.md` defines the messages. Without a named lead nothing changes.
 
 ## Communication
 
