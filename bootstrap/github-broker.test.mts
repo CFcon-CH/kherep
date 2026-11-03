@@ -37,7 +37,11 @@ test('actual bootstrap transaction projects the closure and rolls back an interr
     KHEREP_WORKSPACE:toBashPath(workspace),KHEREP_CREDENTIALS_ROOT:toBashPath(path.join(root,'synthetic-config')),
     KHEREP_PROFILE:'win',KHEREP_INSTALL_PREVIEW:'1',SKIP_DEPS:'1',SKIP_SECRETS:'1',
     GIT_CONFIG_GLOBAL:path.join(root,'git-global'),GIT_CONFIG_SYSTEM:path.join(root,'git-system')};
-  const install=(extra:Record<string,string>={})=>spawnSync('bash',[toBashPath(path.join(repo,'bootstrap','install.sh'))],{encoding:'utf8',env:{...env,...extra},timeout:120000});
+  // A Windows runner needs more than two minutes per install; a timeout or kill must fail, never pass as a non-zero exit.
+  const install=(extra:Record<string,string>={})=>{
+    const result=spawnSync('bash',[toBashPath(path.join(repo,'bootstrap','install.sh'))],{encoding:'utf8',env:{...env,...extra},timeout:600000});
+    assert.ifError(result.error);assert.equal(result.signal,null,'install was killed');return result;
+  };
   const first=install();assert.equal(first.status,0,first.stdout+first.stderr);
   const directory=path.join(workspace,'tools','github-broker');
   for(const file of githubBrokerFiles(repo)) assert.deepEqual(fs.readFileSync(path.join(directory,file)),fs.readFileSync(path.join(repo,'modules','github-broker',file)));
@@ -45,5 +49,6 @@ test('actual bootstrap transaction projects the closure and rolls back an interr
   assert.equal(fs.existsSync(path.join(home,'.kherep','github-broker')),false);
   const target=path.join(directory,'github-claude.mts');fs.writeFileSync(target,'prior synthetic entrypoint');
   const failed=install({KHEREP_BOOTSTRAP_TEST_FAIL_AFTER_LABEL:'project/tools/github-broker/github-claude.mts'});
-  assert.notEqual(failed.status,0);assert.equal(fs.readFileSync(target,'utf8'),'prior synthetic entrypoint');
+  assert.equal(failed.status,97,failed.stdout+failed.stderr);
+  assert.match(failed.stderr,/TEST: injected failure after project\/tools\/github-broker\/github-claude\.mts/);assert.equal(fs.readFileSync(target,'utf8'),'prior synthetic entrypoint');
 });

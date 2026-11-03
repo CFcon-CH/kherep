@@ -28,7 +28,9 @@ function fixture(t: TestContext) {
     });
     assert.ifError(result.error);
     assert.equal(result.signal, null);
-    assert.equal(result.stderr, '');
+    // Node releases that still mark type stripping experimental print this warning; any other stderr fails.
+    const stderr = result.stderr.replace(/^\(node:\d+\) ExperimentalWarning: Type Stripping .*\n(?:\(Use `node --trace-warnings \.\.\.` to show where the warning was created\)\n)?/m, '');
+    assert.equal(stderr, '');
     return result;
   };
   return { root, run };
