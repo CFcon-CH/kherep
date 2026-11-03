@@ -340,9 +340,24 @@ done
 if [ "$observation_present" = "1" ]; then
   drift_before_observation="$drift"
   drift=0
-  for tool in $OBSERVATION_TOOLS; do
-    cmp_file "project/tools/$tool" "$HERE/../modules/atl-jira-brokers/$tool" "$WS/tools/$tool"
-  done
+cmp_file "project/tools/observation-broker.mts" \
+  "$HERE/../modules/atl-jira-brokers/observation-broker.mts" "$WS/tools/observation-broker.mts"
+cmp_file "project/tools/observation-candidate.mts" \
+  "$HERE/../modules/atl-jira-brokers/observation-candidate.mts" "$WS/tools/observation-candidate.mts"
+cmp_file "project/tools/observation-linking.mts" \
+  "$HERE/../modules/atl-jira-brokers/observation-linking.mts" "$WS/tools/observation-linking.mts"
+cmp_file "project/tools/observation-lookup.mts" \
+  "$HERE/../modules/atl-jira-brokers/observation-lookup.mts" "$WS/tools/observation-lookup.mts"
+cmp_file "project/tools/observation-policy.mts" \
+  "$HERE/../modules/atl-jira-brokers/observation-policy.mts" "$WS/tools/observation-policy.mts"
+cmp_file "project/tools/observation-publisher.mts" \
+  "$HERE/../modules/atl-jira-brokers/observation-publisher.mts" "$WS/tools/observation-publisher.mts"
+cmp_file "project/tools/observation-receipt.mts" \
+  "$HERE/../modules/atl-jira-brokers/observation-receipt.mts" "$WS/tools/observation-receipt.mts"
+cmp_file "project/tools/observation-result.mts" \
+  "$HERE/../modules/atl-jira-brokers/observation-result.mts" "$WS/tools/observation-result.mts"
+cmp_file "project/tools/observation-stdio.mts" \
+  "$HERE/../modules/atl-jira-brokers/observation-stdio.mts" "$WS/tools/observation-stdio.mts"
   if [ "$drift" != "0" ]; then
     echo "HINT          project/tools/observation-*.mts: codex/install.mts writes these, bootstrap/install.sh does not"
   else
