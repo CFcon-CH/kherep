@@ -14,16 +14,22 @@ export interface LegacyRecoveryOptions { backup: string; source: string }
 
 // No link or ancestor may redirect a claimed pin/check-out outside its canonical location.
 function canonicalDirectory(root: string): string {
+  const assertUnlinked = (directory: string): void => {
+    for (let cursor = directory; ; cursor = path.dirname(cursor)) {
+      let stat: fs.Stats;
+      try { stat = fs.lstatSync(cursor); } catch { throw new Error("recovery source directory is unavailable"); }
+      if (stat.isSymbolicLink() || !stat.isDirectory()) throw new Error("recovery source has a linked or invalid ancestor");
+      if (path.dirname(cursor) === cursor) break;
+    }
+  };
   const resolved = path.resolve(root);
-  for (let cursor = resolved; ; cursor = path.dirname(cursor)) {
-    let stat: fs.Stats;
-    try { stat = fs.lstatSync(cursor); } catch { throw new Error("recovery source directory is unavailable"); }
-    if (stat.isSymbolicLink() || !stat.isDirectory()) throw new Error("recovery source has a linked or invalid ancestor");
-    if (path.dirname(cursor) === cursor) break;
-  }
+  assertUnlinked(resolved);
   let real: string;
   try { real = fs.realpathSync.native(resolved); } catch { throw new Error("recovery source directory is unavailable"); }
-  if (real !== resolved) throw new Error("recovery source is not canonical");
+  assertUnlinked(real);
+  let repeated: string;
+  try { repeated = fs.realpathSync.native(resolved); } catch { throw new Error("recovery source directory is unavailable"); }
+  if (repeated !== real) throw new Error("recovery source changed while resolving");
   return real;
 }
 

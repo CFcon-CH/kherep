@@ -5,10 +5,11 @@ import test from "node:test";
 import { writeConfig } from "./config.mts";
 import { windowsManagedAction } from "./service-definitions.mts";
 import { parseServiceCommand, runService } from "./service-cli.mts";
-import { readServiceCandidate, readServiceReceipt, removeServiceCandidate, serviceRoot, writeServiceCandidate } from "./service-records.mts";
+import { readServiceCandidate, readServiceReceipt, removeServiceCandidate, serviceRoot, writeServiceCandidate, writeServiceReceipt } from "./service-records.mts";
 import { activateManagedService, rollbackManagedService } from "./service-transaction.mts";
 import { seedManaged, setup } from "./service-transaction-fixture.mts";
 import { candidateFile, caught, status } from "./service-candidate-fixture.mts";
+import { recoverLegacyCandidate } from "./service-recovery.mts";
 
 async function orphan(t: test.TestContext) {
   const h = setup(t);
@@ -24,8 +25,9 @@ async function orphan(t: test.TestContext) {
   removeServiceCandidate(h.paths);
   h.advanceController();
   h.adapter.snapshot!.windows = { actions: [windowsManagedAction(pending.binding)] } as any;
-  const checkout = path.join(path.dirname(h.paths.dir), "candidate-checkout");
-  fs.mkdirSync(checkout);
+  const checkoutDirectory = path.join(path.dirname(h.paths.dir), "candidate-checkout");
+  fs.mkdirSync(checkoutDirectory);
+  const checkout = fs.realpathSync.native(checkoutDirectory);
   const captureSource = (root: string) => {
     if (root === checkout) return { ...pending.binding.source, root, kind: "checkout" as const };
     const binding = [h.old, pending.binding].find(b => b.source.root === root);
@@ -132,5 +134,84 @@ test("legacy recovery refuses a linked checkout before source capture or native 
   const stops = f.h.adapter.stopCalls.length;
   await assert.rejects(runService(f.argv, f.dependencies), /linked/);
   assert.equal(f.h.adapter.stopCalls.length, stops);
+  assert.equal(readServiceCandidate(f.h.paths), null);
+});
+
+for (const spelling of ["case", "short-name"] as const) {
+  test(`legacy recovery accepts a ${spelling} spelling of the same checkout object`, async t => {
+    const f = await orphan(t);
+    const drive = path.win32.parse(f.checkout).root;
+    let alias: string;
+    if (spelling === "short-name") alias = path.join(path.dirname(f.checkout), "CANDID~1");
+    else if (/^[A-Za-z]:/.test(drive)) {
+      const changedDrive = f.checkout[0].toLowerCase() === f.checkout[0] ? f.checkout[0].toUpperCase() : f.checkout[0].toLowerCase();
+      alias = changedDrive + f.checkout.slice(1);
+    } else alias = path.join(path.dirname(f.checkout), "CANDIDATE-CHECKOUT");
+    const lstat = fs.lstatSync, stat = fs.statSync, realpath = fs.realpathSync.native;
+    const mapped = (input: fs.PathLike) => input === alias ? f.checkout : input;
+    t.mock.method(fs, "lstatSync", ((input: fs.PathLike, options: any) => lstat(mapped(input), options)) as typeof lstat);
+    t.mock.method(fs, "statSync", ((input: fs.PathLike, options: any) => stat(mapped(input), options)) as typeof stat);
+    t.mock.method(fs.realpathSync, "native", ((input: fs.PathLike, options: any) => realpath(mapped(input), options)) as typeof realpath);
+    const stops = f.h.adapter.stopCalls.length;
+    await recoverLegacyCandidate({ backup: f.pending.backupId!, source: alias }, f.dependencies.lifecycle);
+    assert.equal(readServiceCandidate(f.h.paths)?.binding.source.commit, f.pending.binding.source.commit);
+    assert.equal(f.h.adapter.stopCalls.length, stops, "validation creates evidence without a native stop");
+  });
+}
+
+for (const scenario of ["leaf-link", "ancestor-link", "canonical-output-link", "lstat-failure", "realpath-failure", "changing-realpath"] as const) {
+  test(`legacy recovery rejects ${scenario} before checkout capture or native mutation`, async t => {
+    const f = await orphan(t), parent = path.join(path.dirname(f.checkout), "virtual-parent"), alias = path.join(parent, "alias");
+    const canonical = path.join(path.dirname(f.checkout), "virtual-canonical");
+    const lstat = fs.lstatSync, realpath = fs.realpathSync.native, directory = lstat(f.checkout);
+    const linked = { ...directory, isSymbolicLink: () => true, isDirectory: () => true };
+    let resolutions = 0, checkoutCaptures = 0;
+    const capture = f.dependencies.lifecycle.captureSource;
+    f.dependencies.lifecycle.captureSource = root => {
+      if ([alias, canonical, f.checkout].includes(root)) checkoutCaptures++;
+      return capture(root);
+    };
+    t.mock.method(fs, "lstatSync", ((input: fs.PathLike, options: any) => {
+      if (input === alias) {
+        if (scenario === "lstat-failure") throw new Error("synthetic unavailable directory");
+        return scenario === "leaf-link" ? linked : directory;
+      }
+      if (input === parent) return scenario === "ancestor-link" ? linked : directory;
+      if (input === canonical) return scenario === "canonical-output-link" ? linked : directory;
+      return lstat(input, options);
+    }) as typeof lstat);
+    t.mock.method(fs.realpathSync, "native", ((input: fs.PathLike, options: any) => {
+      if (input !== alias) return realpath(input, options);
+      resolutions++;
+      if (scenario === "realpath-failure") throw new Error("synthetic unavailable resolution");
+      return scenario === "changing-realpath" && resolutions === 2 ? f.checkout : canonical;
+    }) as typeof realpath);
+    const before = fs.readFileSync(path.join(serviceRoot(f.h.paths), "receipt.json"));
+    const events = [...f.h.adapter.events], stops = f.h.adapter.stopCalls.length;
+    await assert.rejects(recoverLegacyCandidate({ backup: f.pending.backupId!, source: alias }, f.dependencies.lifecycle),
+      scenario.includes("link") ? /linked/ : scenario === "changing-realpath" ? /changed/ : /unavailable/);
+    assert.equal(checkoutCaptures, 0);
+    assert.equal(f.h.adapter.stopCalls.length, stops);
+    assert.equal(f.h.adapter.events.filter(x => x === "stop" || x.startsWith("write:")).length,
+      events.filter(x => x === "stop" || x.startsWith("write:")).length);
+    assert.deepEqual(fs.readFileSync(path.join(serviceRoot(f.h.paths), "receipt.json")), before);
+    assert.equal(readServiceCandidate(f.h.paths), null);
+    if (scenario === "leaf-link" || scenario === "ancestor-link") assert.equal(resolutions, 0);
+  });
+}
+
+test("legacy recovery rejects an unrelated canonical pin without source capture or mutation", async t => {
+  const f = await orphan(t), receipt = readServiceReceipt(f.h.paths)!;
+  const unrelated = path.join(path.dirname(f.checkout), "unrelated-pin");
+  fs.mkdirSync(unrelated);
+  writeServiceReceipt(f.h.paths, { ...receipt, binding: { ...receipt.binding, source: { ...receipt.binding.source, root: unrelated } } });
+  let captures = 0;
+  f.dependencies.lifecycle.captureSource = () => { captures++; throw new Error("capture must not run"); };
+  const before = fs.readFileSync(path.join(serviceRoot(f.h.paths), "receipt.json"));
+  const stops = f.h.adapter.stopCalls.length;
+  await assert.rejects(recoverLegacyCandidate({ backup: f.pending.backupId!, source: f.checkout }, f.dependencies.lifecycle), /outside its expected root/);
+  assert.equal(captures, 0);
+  assert.equal(f.h.adapter.stopCalls.length, stops);
+  assert.deepEqual(fs.readFileSync(path.join(serviceRoot(f.h.paths), "receipt.json")), before);
   assert.equal(readServiceCandidate(f.h.paths), null);
 });
