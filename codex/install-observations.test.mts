@@ -42,7 +42,8 @@ function fixture(t: {
     const agentFile = path.join(home, 'agents', 'codex-obs.toml');
     const agent = fs.readFileSync(agentFile, 'utf8');
     const model = JSON.parse(/^model = (.*)$/m.exec(agent)![1]);
-    fs.writeFileSync(agentFile, renderAgent('codex-obs', predecessor['codex/agents/codex-obs.md'], { model, reasoning: 'low', sandbox: 'read-only' }));
+    const reasoning = JSON.parse(/^model_reasoning_effort = (.*)$/m.exec(agent)![1]);
+    fs.writeFileSync(agentFile, renderAgent('codex-obs', predecessor['codex/agents/codex-obs.md'], { model, reasoning, sandbox: 'read-only' }));
     for (const [source, target] of [['obs-result-check.mts', 'codex-obs-result-check.mts'], ['obs-candidate-policy.mts', 'obs-candidate-policy.mts'],
         ['confluence-delivery-check.mts', 'codex-confluence-delivery-check.mts'], ['hook-integrity-repair.mts', 'hook-integrity-repair.mts'], ['hook-integrity-sources.mts', 'hook-integrity-sources.mts'],
         ['observation-stop.mts', 'codex-observation-stop.mts'], ['observation-turn-completion.mts', 'codex-observation-turn-completion.mts']]) {
@@ -85,7 +86,8 @@ function installIdentityPredecessor(f: ReturnType<typeof fixture>, previous = id
     fs.writeFileSync(f.configFile, config.replaceAll(JSON.stringify(` \"--workspace-b64\" \"${Buffer.from(f.workspace).toString('base64url')}\"`).slice(1, -1), ''));
     const agentFile = path.join(f.home, 'agents', 'codex-obs.toml');
     const model = JSON.parse(/^model = (.*)$/m.exec(fs.readFileSync(agentFile, 'utf8'))![1]);
-    fs.writeFileSync(agentFile, renderAgent('codex-obs', previous['codex/agents/codex-obs.md'], { model, reasoning: 'low', sandbox: 'read-only' }));
+    const reasoning = JSON.parse(/^model_reasoning_effort = (.*)$/m.exec(fs.readFileSync(agentFile, 'utf8'))![1]);
+    fs.writeFileSync(agentFile, renderAgent('codex-obs', previous['codex/agents/codex-obs.md'], { model, reasoning, sandbox: 'read-only' }));
     const relative = 'codex/hooks/kherep-maestro-context.mts', bytes = previous[relative] ?? fs.readFileSync(path.join(REPO, relative), 'utf8');
     fs.writeFileSync(path.join(f.home, 'hooks', path.basename(relative)), bytes);
     const restoreRoot = path.join(f.home, 'orchestra', 'observation-source');

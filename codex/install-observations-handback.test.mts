@@ -43,7 +43,8 @@ function fixture(t: { after(fn: () => void): void }) {
     const dir = path.join(home, 'hooks/kherep-maestro');
     const agent = path.join(home, 'agents/codex-obs.toml');
     const model = JSON.parse(/^model = (.*)$/m.exec(fs.readFileSync(agent, 'utf8'))![1]);
-    const agentOptions = { model, reasoning: 'low', sandbox: 'read-only' };
+    const reasoning = JSON.parse(/^model_reasoning_effort = (.*)$/m.exec(fs.readFileSync(agent, 'utf8'))![1]);
+    const agentOptions = { model, reasoning, sandbox: 'read-only' };
     const targets: Record<string, string> = {};
     for (const [relative, previous] of Object.entries(old)) {
         let file: string, text = previous;

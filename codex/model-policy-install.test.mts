@@ -9,7 +9,9 @@ import { install, type InstallOptions } from "./install.mts";
 import { dispatchPolicy, validate } from "./hooks/dispatch-contract-guard.mts";
 import type { Capabilities, ProjectionReceipt } from "./lib/contracts.mts";
 import { fixtureModels } from "./lib/model-policy.fixture.mts";
-import type { ModelResolution } from "./lib/model-policy.mts";
+import { parseModelPolicy, resolveModels, type ModelResolution } from "./lib/model-policy.mts";
+import { checkObservationPublisher, installObservationPublisher } from "./install-observations.mts";
+import { turnContext } from "./hooks/kherep-maestro-context.mts";
 
 interface ModelReceipt { modelResolution: ModelResolution; projection: ProjectionReceipt }
 const catalog = () => ({ complete: true, models: structuredClone(fixtureModels) });
@@ -84,6 +86,17 @@ function readInstallation(f: ReturnType<typeof fixture>) {
   assert.deepEqual(actualFiles.sort(), expectedFiles.sort());
   assert.equal(fs.readFileSync(path.join(f.codexHome, "orchestra", "model-policy.toml"), "utf8"),
     fs.readFileSync(new URL("./parity/model-policy.toml", import.meta.url), "utf8"));
+  assert.equal(parseModelPolicy(fs.readFileSync(path.join(f.codexHome, "orchestra/model-policy.toml"), "utf8")).roles.observer.reasoning, "medium");
+  assert.deepEqual(receipt.modelResolution.roles.observer, { model: "gpt-6-luna", reasoning: "medium" });
+  assert.deepEqual(receipt.projection.agentDefaults["codex-obs"], { role: "observer", model: "gpt-6-luna", reasoning: "medium" });
+  assert.equal(snapshot.agents["claude-obs"].enforcePin, true);
+  assert.equal(snapshot.agents["claude-obs"].sandbox, "read-only");
+  assert.equal(snapshot.agents["claude-obs"].reasoning, "medium");
+  assert.match(fs.readFileSync(path.join(f.codexHome, "agents/codex-obs.toml"), "utf8"), /sandbox_mode = "read-only"/);
+  assert.equal(fs.readFileSync(path.join(f.codexHome, "hooks/kherep-maestro-context.mts"), "utf8"),
+    fs.readFileSync(new URL("./hooks/kherep-maestro-context.mts", import.meta.url), "utf8"));
+  assert.match(turnContext(), /the exact model and model_reasoning_effort from its installed agent TOML/);
+  assert.doesNotMatch(turnContext(), /reasoning_effort low/);
   assert.equal(f.calls.length, 0, "fixture neither launches Codex nor registers external plugins");
   return { receipt, snapshot, policy };
 }
@@ -119,6 +132,7 @@ for (const personalDesigner of [false, true]) test(`first install shares native 
   assert.match(dispatch({}) ?? "", /pinned/);
   assert.match(dispatch({ model: designer.model }) ?? "", /pinned/);
   assert.equal(dispatch({ model: policy.pins.get("codex-obs"), reasoning_effort: "low" }), null);
+  assert.equal(dispatch({ model: policy.pins.get("codex-obs"), reasoning_effort: "medium" }), null);
 });
 
 test("normal reinstall preserves exact resolution despite a newer supplied catalog", (t) => {
@@ -166,4 +180,66 @@ test("refresh failure after projected plugin snapshot rolls native agents, snaps
   assert.equal(fs.readFileSync(f.receiptFile, "utf8"), receiptBefore);
   assert.deepEqual(tree(path.join(f.codexHome, "agents")), agentsBefore);
   assert.deepEqual(readInstallation(f).receipt.modelResolution, before.receipt.modelResolution);
+});
+
+test("observation-only updater preserves the validated Medium installation", (t) => {
+  const f = fixture(t);
+  f.run({ modelCatalog: catalog() });
+  const before = readInstallation(f);
+  assert.equal(checkObservationPublisher({ codexHome: f.codexHome, workspace: f.workspace }).pinUnchanged, true);
+  assert.equal(installObservationPublisher({ codexHome: f.codexHome, workspace: f.workspace }).receipt.installedHashesMatch, true);
+  assert.deepEqual(readInstallation(f), before);
+});
+
+for (const mismatch of ["receipt", "snapshot", "native"] as const) test(`observation updater refuses Low ${mismatch} mismatch before writes`, (t) => {
+  const f = fixture(t);
+  f.run({ modelCatalog: catalog() });
+  if (mismatch === "native") {
+    const file = path.join(f.codexHome, "agents/codex-obs.toml");
+    write(file, fs.readFileSync(file, "utf8").replace('model_reasoning_effort = "medium"', 'model_reasoning_effort = "low"'));
+  } else {
+    const file = mismatch === "receipt" ? f.receiptFile : f.guardFile;
+    const value = JSON.parse(fs.readFileSync(file, "utf8"));
+    (mismatch === "receipt" ? value.projection.agentDefaults["codex-obs"] : value.agents["claude-obs"]).reasoning = "low";
+    write(file, JSON.stringify(value));
+  }
+  const before = tree(f.root);
+  let writes = 0;
+  const options = { codexHome: f.codexHome, workspace: f.workspace, afterWrite() { writes++; } };
+  assert.throws(() => checkObservationPublisher(options), /observation-(pin-unrecognized|agent-drift)/);
+  assert.throws(() => installObservationPublisher(options), /observation-(pin-unrecognized|agent-drift)/);
+  assert.equal(writes, 0);
+  assert.deepEqual(tree(f.root), before);
+});
+
+test("coherent synthetic Low installation requires refresh, then ordinary reinstall retains Medium", (t) => {
+  const f = fixture(t);
+  f.run({ modelCatalog: catalog() });
+  const { receipt, snapshot } = readInstallation(f);
+  const policyFile = path.join(f.codexHome, "orchestra/model-policy.toml");
+  const lowText = fs.readFileSync(policyFile, "utf8").replace(/(\[roles\.observer\]\s+family = "luna"\s+reasoning = )"medium"/, '$1"low"');
+  const low = resolveModels(parseModelPolicy(lowText), catalog());
+  assert.equal(low.roles.observer.reasoning, "low");
+  receipt.modelResolution = snapshot.modelResolution = low;
+  receipt.projection.agentDefaults["codex-obs"].reasoning = "low";
+  snapshot.projectedAgents!["codex-obs"].reasoning = snapshot.agents["claude-obs"].reasoning = "low";
+  write(policyFile, lowText);
+  write(f.receiptFile, JSON.stringify(receipt));
+  write(f.guardFile, JSON.stringify(snapshot));
+  const agentFile = path.join(f.codexHome, "agents/codex-obs.toml");
+  write(agentFile, fs.readFileSync(agentFile, "utf8").replace('model_reasoning_effort = "medium"', 'model_reasoning_effort = "low"'));
+  const before = tree(f.root);
+  let writes = 0;
+  assert.throws(() => f.run({ modelCatalog: newerCatalog(), afterWrite() { writes++; } }), /explicit refresh/);
+  assert.throws(() => installObservationPublisher({ codexHome: f.codexHome, workspace: f.workspace, afterWrite() { writes++; } }), /explicit refresh/);
+  assert.equal(writes, 0);
+  assert.deepEqual(tree(f.root), before);
+  f.run({ modelCatalog: catalog(), refreshModels: true });
+  const refreshed = readInstallation(f), agents = tree(path.join(f.codexHome, "agents"));
+  assert.equal(refreshed.receipt.modelResolution.roles.observer.reasoning, "medium");
+  f.run({ modelCatalog: newerCatalog() });
+  const after = readInstallation(f);
+  assert.deepEqual(after.receipt.modelResolution, refreshed.receipt.modelResolution);
+  assert.deepEqual(after.snapshot, refreshed.snapshot);
+  assert.deepEqual(tree(path.join(f.codexHome, "agents")), agents);
 });

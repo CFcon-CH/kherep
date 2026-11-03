@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { parseModelPolicy, resolveModels } from "./model-policy.mts";
 import { selectModelResolution } from "./model-install-state.mts";
 import { fixtureModels, fixtureResolution, policyText } from "./model-policy.fixture.mts";
 
@@ -22,4 +23,29 @@ test("corrupt or stale persisted resolution fails closed rather than silently se
     { ...existing, supportedModels: {} }, { ...existing, catalogSha256: "broken" }]) {
     assert.throws(() => selectModelResolution(policyText, { existing: value }), /resolution/);
   }
+});
+
+test("Observer Low policy requires explicit refresh to Medium, with reverse stale-source refusal", () => {
+  assert.equal(parseModelPolicy(policyText).roles.observer.reasoning, "medium");
+  const lowText = policyText.replace(/(\[roles\.observer\]\s+family = "luna"\s+reasoning = )"medium"/, '$1"low"');
+  const oldPolicy = parseModelPolicy(lowText), currentPolicy = parseModelPolicy(policyText);
+  assert.equal(oldPolicy.roles.observer.reasoning, "low");
+  for (const role of ["root", "designer", "builder", "support", "researcher", "broker"] as const)
+    assert.deepEqual(currentPolicy.roles[role], oldPolicy.roles[role]);
+  const catalog = { complete: true, models: structuredClone(fixtureModels) };
+  const low = resolveModels(oldPolicy, catalog);
+  assert.equal(low.roles.observer.reasoning, "low");
+  assert.deepEqual(selectModelResolution(lowText, { existing: low }), low);
+  assert.throws(() => selectModelResolution(policyText, { existing: low, catalog }), /explicit refresh/);
+  const medium = selectModelResolution(policyText, { existing: low, catalog, refresh: true });
+  assert.equal(medium.roles.observer.reasoning, "medium");
+  assert.equal(medium.roles.observer.model, low.roles.observer.model);
+  assert.deepEqual(selectModelResolution(policyText, { existing: medium, catalog }), medium);
+  assert.throws(() => selectModelResolution(lowText, { existing: medium, catalog }), /explicit refresh/);
+});
+
+test("Observer Medium is never downgraded when the visible Luna model supports only Low", () => {
+  const catalog = { complete: true, models: fixtureModels.map(model => model.model.endsWith("-luna")
+    ? { ...model, supportedReasoningEfforts: [{ reasoningEffort: "low" }] } : model) };
+  assert.throws(() => selectModelResolution(policyText, { catalog, refresh: true }), /role observer, family luna/);
 });

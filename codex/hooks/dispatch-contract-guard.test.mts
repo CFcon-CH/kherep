@@ -225,7 +225,7 @@ test("reasoning is checked against the selected or inherited model's catalog sup
 
 test("explicit model override checks the inherited agent effort when no effort is supplied", () => {
   const fixture = structuredClone(capabilities);
-  (fixture.modelResolution as ReturnType<typeof fixtureResolution>).supportedModels["gpt-6-luna"] = ["low"];
+  (fixture.modelResolution as ReturnType<typeof fixtureResolution>).supportedModels["gpt-6-luna"] = ["low", "medium"];
   const policy = dispatchPolicy(fixture);
   assert.match(validate(spawnDispatch({ agent_type: "kherep-builder", model: "gpt-6-luna" }), policy) ?? "", /reasoning effort/);
   assert.equal(validate(spawnDispatch({ agent_type: "kherep-builder", model: "gpt-6-luna", reasoning_effort: "low" }), policy), null);
@@ -249,7 +249,7 @@ test("a generic effort-only override requires the actual model explicitly", () =
 
 test("a generic complete explicit pair is checked against its exact model support", () => {
   const fixture = structuredClone(capabilities);
-  (fixture.modelResolution as ReturnType<typeof fixtureResolution>).supportedModels["gpt-6-luna"] = ["low"];
+  (fixture.modelResolution as ReturnType<typeof fixtureResolution>).supportedModels["gpt-6-luna"] = ["low", "medium"];
   const policy = dispatchPolicy(fixture);
   assert.equal(validate(spawnDispatch({ model: "gpt-6-luna", reasoning_effort: "low" }), policy), null);
   assert.match(validate(spawnDispatch({ model: "gpt-6-luna", reasoning_effort: "high" }), policy) ?? "", /reasoning effort/);

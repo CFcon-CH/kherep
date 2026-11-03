@@ -45,7 +45,8 @@ function f0893dHome(t: { after(fn: () => void): void }) {
         helper: path.join(hookDir, 'obs-candidate-policy.mts'), broker: path.join(workspace, 'tools', 'observation-candidate.mts'),
         stop: path.join(hookDir, HOOKS['codex/hooks/observation-stop.mts']), turn: path.join(hookDir, HOOKS['codex/hooks/observation-turn-completion.mts']) };
     const model = JSON.parse(/^model = (.*)$/m.exec(fs.readFileSync(files.agent, 'utf8'))![1]);
-    const agentOptions = { model, reasoning: 'low', sandbox: 'read-only' };
+    const reasoning = JSON.parse(/^model_reasoning_effort = (.*)$/m.exec(fs.readFileSync(files.agent, 'utf8'))![1]);
+    const agentOptions = { model, reasoning, sandbox: 'read-only' };
     fs.writeFileSync(files.agent, renderAgent('codex-obs', scoped[AGENT], agentOptions));
     for (const [relative, target] of Object.entries(HOOKS))
         fs.writeFileSync(path.join(hookDir, target), renderObservationHook(scoped[relative], workspace));
