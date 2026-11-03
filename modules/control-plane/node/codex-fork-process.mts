@@ -48,6 +48,8 @@ export interface ForkRunInput {
   maxAnswerBytes: number; admission: ServiceAdmission;
   // Step 5: false when the owner read the message meanwhile ("original wins").
   stillAccepted: () => boolean;
+  // Fresh permission check, required at every continuation and result boundary.
+  continueAllowed: () => boolean;
   // Step 8: persists launching -> running with the goal proof; a throw makes the attempt uncertain.
   running: (lastTurnId: string, forkId: string, goalProof: ForkGoalProof) => void;
   log: (line: string) => void; timeouts?: Partial<ForkTimeouts>; realpath?: (file: string) => string;
@@ -56,7 +58,7 @@ type Phase = "launching" | "running";
 export type ForkOutcome = { state: "completed"; from: "running"; answer: string }
   | { state: "declined"; from: "running"; reason: "needs-owner" | "insufficient-context" }
   | { state: "failed" | "uncertain"; from: Phase; reason: ForkAttemptReason; detail?: ForkGoalDetail }
-  | { state: "superseded"; from: "launching" };
+  | { state: "superseded"; from: Phase };
 
 const object = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -71,6 +73,7 @@ interface Session {
 }
 
 export async function runForkAttempt(deps: { codex?: CodexDeps }, input: ForkRunInput): Promise<ForkOutcome> {
+  if (!allowed(input)) return { state: "superseded", from: "launching" };
   const t = { ...TIMEOUTS, ...input.timeouts };
   const platform = deps.codex?.platform ?? process.platform;
   const { producer } = input;
@@ -118,13 +121,27 @@ export async function runForkAttempt(deps: { codex?: CodexDeps }, input: ForkRun
     try { deps.codex?.onUnconfirmedShutdown?.(); } catch { /* the retention above holds */ }
     return { state: "uncertain", from: outcome.from, reason: "close-unconfirmed" };
   }
-  return discardOnViolation(outcome, watch);
+  outcome = discardOnViolation(outcome, watch);
+  if ((outcome.state === "completed" || outcome.state === "declined") && !allowed(input)) {
+    return { state: "superseded", from: outcome.from };
+  }
+  return outcome;
+}
+
+function allowed(input: ForkRunInput): boolean {
+  try { return input.continueAllowed() === true; } catch { return false; }
+}
+
+function continuation(s: Session): ForkOutcome | null {
+  if (allowed(s.input)) return null;
+  return s.watch.violation ? { state: "failed", from: s.phase, reason: s.watch.violation }
+    : { state: "superseded", from: s.phase };
 }
 
 // A watch rule that fired at any time, also in the stdout chunk that carried
-// turn/completed or while the helper closed, discards an answer or a decline.
+// turn/completed or while the helper closed, discards output, including a withdrawn result.
 function discardOnViolation(outcome: ForkOutcome, watch: ForkWatch): ForkOutcome {
-  if (!watch.violation || (outcome.state !== "completed" && outcome.state !== "declined")) return outcome;
+  if (!watch.violation || (outcome.state !== "completed" && outcome.state !== "declined" && outcome.state !== "superseded")) return outcome;
   return { state: "failed", from: outcome.from, reason: watch.violation };
 }
 
@@ -158,20 +175,25 @@ async function converse(s: Session): Promise<ForkOutcome> {
   try {
     await ask(s, "initialize", { clientInfo: { name: "kherep_fork_reply", version: VERSION }, capabilities: { experimentalApi: true } },
       s.t.initializeMs, "initialize");
+    let veto = continuation(s);
+    if (veto) return veto;
     s.client.notify("initialized", {});
     const read = await ask(s, "thread/read", { threadId: owner, includeTurns: false }, s.t.requestMs, "cwd-mismatch");
     const thread = object(read) && object(read.thread) ? read.thread : null;
     if (!thread || thread.id !== owner || thread.ephemeral !== false || !sameDir(s, thread.cwd)) return failed("cwd-mismatch");
+    if ((veto = continuation(s))) return veto;
     const turns = await ask(s, "thread/turns/list", { threadId: owner, limit: 1, sortDirection: "desc", itemsView: "notLoaded" },
       s.t.requestMs, "last-turn-not-completed");
     const rows = object(turns) && Array.isArray(turns.data) ? turns.data : [];
     const newest = rows.length === 1 && object(rows[0]) ? rows[0] : null;
     if (!newest || newest.status !== "completed" || typeof newest.id !== "string" || !newest.id) return failed("last-turn-not-completed");
+    if ((veto = continuation(s))) return veto;
     const ownerGoal = classifyOwnerGoalOutcome(await goalOutcome(s, owner));
     if (s.gone()) return failed("helper-exit");
     if (!ownerGoal.ok) return failed(ownerGoal.reason);
     if (s.watch.violation) return failed(s.watch.violation);
     if (!input.stillAccepted()) return { state: "superseded", from: "launching" };
+    if ((veto = continuation(s))) return veto;
     const fork = await ask(s, "thread/fork", forkParams(owner, newest.id, input.cwd, input.features, input.mcpNames), s.t.forkMs,
       "fork-rejected", newest.id);
     const forkThread = object(fork) && object(fork.thread) ? fork.thread : null;
@@ -181,9 +203,11 @@ async function converse(s: Session): Promise<ForkOutcome> {
       || fork.approvalPolicy !== "on-request" || !sameDir(s, fork.cwd)) return failed("fork-shape");
     // The watch rules are armed from the fork response on, also during the goal check.
     s.watch.setFork(forkId);
+    if ((veto = continuation(s))) return veto;
     const forkGoal = classifyForkGoalOutcome(await goalOutcome(s, forkId), forkId, ownerGoal.outcome);
     if (s.watch.violation) return failed(s.watch.violation);
     if (!forkGoal.ok) return { state: "failed", from: "launching", reason: "fork-goal", detail: forkGoal.detail };
+    if ((veto = continuation(s))) return veto;
     try { input.running(newest.id, forkId, forkGoal.proof); } catch { return { state: "uncertain", from: "launching", reason: "helper-exit" }; }
     s.phase = "running";
     return await turn(s, forkId);
@@ -221,6 +245,8 @@ function waitTurn(s: Session, forkId: string, turnId: string): Promise<TurnEnd> 
 async function turn(s: Session, forkId: string): Promise<ForkOutcome> {
   const failed = (reason: ForkAttemptReason): ForkOutcome => ({ state: "failed", from: "running", reason });
   const uncertain = (reason: ForkAttemptReason): ForkOutcome => ({ state: "uncertain", from: "running", reason });
+  let veto = continuation(s);
+  if (veto) return veto;
   const prompt = forkPrompt(s.input.record, crypto.randomUUID().slice(-12), s.input.maxAnswerBytes);
   s.watch.turnRequested();
   let started: unknown;
@@ -233,9 +259,14 @@ async function turn(s: Session, forkId: string): Promise<ForkOutcome> {
   const turnId = object(started) && object(started.turn) && typeof started.turn.id === "string" ? started.turn.id : null;
   if (!turnId) return uncertain("turn-failed");
   s.watch.setTurn(turnId);
-  const end = await waitTurn(s, forkId, turnId);
   const interrupt = (): Promise<unknown> => s.client.request("turn/interrupt", { threadId: forkId, turnId }, s.t.interruptMs)
     .catch(() => undefined);
+  if ((veto = continuation(s))) {
+    s.client.escalate();
+    await interrupt();
+    return veto;
+  }
+  const end = await waitTurn(s, forkId, turnId);
   if (end.kind === "violation" || end.kind === "timeout") {
     s.client.escalate();
     await interrupt();
@@ -243,6 +274,7 @@ async function turn(s: Session, forkId: string): Promise<ForkOutcome> {
   }
   if (end.kind === "gone") return uncertain("helper-exit");
   if (s.watch.violation) return failed(s.watch.violation);
+  if ((veto = continuation(s))) return veto;
   const answer = validateForkAnswer(s.watch.notifications, end.params, forkId, turnId, s.input.maxAnswerBytes);
   if (answer.kind === "answer") return { state: "completed", from: "running", answer: answer.text };
   if (answer.kind === "decline") return { state: "declined", from: "running", reason: answer.code };

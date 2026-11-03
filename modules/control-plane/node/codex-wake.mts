@@ -1,3 +1,4 @@
+import { messageOwnerMatches } from "./message-owner.mts";
 import { automaticReplyDecision } from "./reply-admission.mts";
 import fs from "node:fs";
 import { livenessAdmission } from "./session-lifecycle.mts";
@@ -101,8 +102,8 @@ async function wakeTask(deps: RunnerDeps, record: TaskRecord, log: (line: string
   };
   // Only waiting records are used below. Each is read again, so a stale
   // snapshot never authorizes a wake; delivered and refused are final.
-  const all = inbox.filter((r) => (r.state === "accepted" || r.state === "offered") && refs.includes(r.toSession))
-    .map((r) => getMessage(paths.inbox, r.messageId)).filter((r): r is InboxRecord => r !== null && refs.includes(r.toSession));
+  const all = inbox.filter((r) => (r.state === "accepted" || r.state === "offered") && messageOwnerMatches(r, { sessionId, runtime: "codex" }, refs))
+    .map((r) => getMessage(paths.inbox, r.messageId)).filter((r): r is InboxRecord => r !== null && messageOwnerMatches(r, { sessionId, runtime: "codex" }, refs));
   const unlisted = all.filter((r) => !granted(r) && r.state === "accepted");
   // Every early return below leaves a fixed progress code on the waiting
   // messages, so none stays accepted without a reason (issue #197).
@@ -179,17 +180,17 @@ async function wakeTask(deps: RunnerDeps, record: TaskRecord, log: (line: string
     return note(paths, now, sessionId, due, "budget");
   }
 
-  const context = deliveryContext("UserPromptSubmit", refs, { paths, now: () => now, offeredBy: "codex-wake",
+  const context = deliveryContext("UserPromptSubmit", refs, { paths, now: () => now, offeredBy: "codex-wake", owner: { sessionId, runtime: "codex" },
     ...(deps.cli ? { replyCommand: deps.cli } : {}) });
   const offeredAt = new Date(now).toISOString();
-  const offered = ids(sessionInbox(paths, refs).filter((r) => r.state === "offered" && r.offeredAt === offeredAt));
+  const offered = ids(sessionInbox(paths, refs, { sessionId, runtime: "codex" }).filter((r) => r.state === "offered" && r.offeredAt === offeredAt));
   if (!context || offered.length === 0) return;
   if (fresh.length > 0) note(paths, now, sessionId, ids(fresh), "wake");
   if (stuck.length > 0) note(paths, now, sessionId, ids(stuck), "stuck-offer");
   const prompt = `${fresh.length > 0 ? wakeText(fresh.length) : STUCK_TEXT}\n\n${context}`;
   const run: TaskRecord = { ...record, cwd: cwd.cwd, running: true, offered,
     deadline: new Date(now + deps.policy.sessions!.maxRuntimeMinutes * 60_000).toISOString() };
-  const carried = sessionInbox(paths, refs).filter((r) => offered.includes(r.messageId));
+  const carried = sessionInbox(paths, refs, { sessionId, runtime: "codex" }).filter((r) => offered.includes(r.messageId));
   try {
     await spawnRun(deps, run, (files, outbox) => resumeArgs(sessionId, record.permissionMode, files, outbox), prompt);
     // The run's turn carries them: running for the sender until it confirms.

@@ -1,3 +1,4 @@
+import { messageOwnerMatches } from "./message-owner.mts";
 import { automaticReplyDecision } from "./reply-admission.mts";
 import fs from "node:fs";
 
@@ -49,7 +50,7 @@ export function consumeBusyHint(input: unknown, deps: HookDeps): string {
       for (const admitted of ticket.messages) {
         const record = getMessage(deps.paths.inbox, admitted.messageId);
             if (record?.messageId === admitted.messageId && record.toSession === admitted.toSession && record.state === "accepted"
-          && automaticReplyDecision(record).allowed) count++;
+          && messageOwnerMatches(record, { sessionId: owner, runtime: "codex" }, [admitted.toSession]) && automaticReplyDecision(record).allowed) count++;
       }
       return count;
     });

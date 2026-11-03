@@ -14,10 +14,16 @@ export async function routeEffects(env: Env, effects: MessageEffects, local?: Lo
     ...effects.statuses.map((s) => ({ nodeId: s.nodeId, type: "message.status" as const, body: { ...s.body } })),
   ];
   for (const frame of frames) {
+    if (frame.type === "message.deliver") {
+      if (local?.nodeId === frame.nodeId) {
+        const body = await registryStub(env).prepareMessageDelivery(String(frame.body.messageId));
+        if (body) local.send("message.deliver", { ...body });
+      } else await sessionStub(env, frame.nodeId).pushFrame(frame.type, frame.body);
+      continue;
+    }
     if (local && local.nodeId === frame.nodeId) {
       // Issue #408 (design r3 section 4.3): a proxy refused since its effect was produced is dropped here.
-      if (isProxyDelivery(frame.type, frame.body) && !await registryStub(env).messageQueued(String(frame.body.messageId))) continue;
-      if (frame.type === "message.deliver" && frame.body.loop !== undefined && !await registryStub(env).messageDeliveryReady(String(frame.body.messageId))) continue;
+
       local.send(frame.type, frame.body);
     } else await sessionStub(env, frame.nodeId).pushFrame(frame.type, frame.body);
   }

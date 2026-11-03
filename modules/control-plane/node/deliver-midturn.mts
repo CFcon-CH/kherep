@@ -79,10 +79,10 @@ export function midTurnOutput(input: Record<string, unknown>, sessionId: string,
   if (Object.hasOwn(input, "agent_id") || !isPlainSessionId(sessionId) || bypassesPermissions(input.permission_mode)) return "";
   // Every tool call runs this: leave without a lock or directory when nothing
   // waits and no failure or receipt notice is due.
-  const waiting = sessionInbox(deps.paths, refs).some((record) => record.state === "accepted");
+  const waiting = sessionInbox(deps.paths, refs, { sessionId, runtime: "claude-code" }).some((record) => record.state === "accepted");
   // One read of sent/ per call: deliveryContext rechecks only these records.
   const notices = waiting ? undefined : unnoticedNotices(deps.paths, refs, deps.now?.() ?? Date.now());
   if (notices && notices.failures.length === 0 && notices.receipts.length === 0) return "";
-  const call: HookDeps = notices ? { ...deps, notices } : deps;
+  const call: HookDeps = { ...deps, ...(notices ? { notices } : {}), owner: { sessionId, runtime: "claude-code" } };
   return withMidTurnLock(deps.paths, sessionId, () => contextOutput("PostToolUse", deliveryContext("PostToolUse", refs, call))) ?? "";
 }

@@ -45,6 +45,11 @@ export function countReads(t: test.TestContext, dir: string): { records: () => s
     else if (path.dirname(path.dirname(file)) === dir) sidecars++;
     return read(...args);
   });
+  const open = fs.openSync;
+  t.mock.method(fs, "openSync", ((file: fs.PathLike, ...args: unknown[]) => {
+    if (path.dirname(String(file)) === dir && String(file).endsWith(".json")) records.push(path.basename(String(file)));
+    return Reflect.apply(open, fs, [file, ...args]);
+  }) as typeof fs.openSync);
   return { records: () => records, sidecars: () => sidecars };
 }
 
@@ -108,19 +113,14 @@ test("a deleted record disappears and a new one appears", (t) => {
   assert.deepEqual(index.records().map((r) => r.messageId).sort(), [idOf(0), idOf(2), idOf(3), idOf(9)]);
 });
 
-test("a stat error on one file re-reads that file and never fails the round", (t) => {
-  const dir = settledInbox(t, 6);
-  const index = inboxIndex(dir);
-  index.records();
-  const target = path.join(dir, `${idOf(4)}.json`);
-  const stat = fs.statSync;
-  t.mock.method(fs, "statSync", (...args: Parameters<typeof fs.statSync>) => {
-    if (args[0] === target) throw Object.assign(new Error("synthetic stat failure"), { code: "EIO" });
-    return stat(...args);
-  });
-  const reads = countReads(t, dir);
-  assert.equal(index.records().length, 6);
-  assert.deepEqual(reads.records(), [`${idOf(4)}.json`]);
+test("a file identity read failure clears cached bodies and fails closed", (t) => {
+  const dir = settledInbox(t, 6); const index = inboxIndex(dir); index.records();
+  const target = path.join(dir, `${idOf(4)}.json`); const stat = fs.lstatSync;
+  t.mock.method(fs, "lstatSync", ((file: fs.PathLike, ...args: unknown[]) => {
+    if (file === target) throw Object.assign(new Error("synthetic identity failure"), { code: "EIO" });
+    return Reflect.apply(stat, fs, [file, ...args]);
+  }) as typeof fs.lstatSync);
+  assert.throws(() => index.records(), /synthetic identity failure/);
 });
 
 test("a failed directory read throws and is never an empty inbox", (t) => {

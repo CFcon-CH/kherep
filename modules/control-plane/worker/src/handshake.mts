@@ -7,6 +7,10 @@ import { verifyChallenge } from "./crypto.mts";
 export interface Attachment {
   nodeId: string;
   authed: boolean;
+  connectionToken?: string;
+  registrationAccepted?: boolean;
+  loopCapability?: boolean;
+  selectedBindingCapability?: boolean;
   nonce?: string;
   nonceIssuedAt?: number;
   connectedAt: number;

@@ -4,7 +4,7 @@ import { MESSAGING_PROXY_CAPABILITY } from "../protocol-messages.mts";
 import { audit, type AutonomyAction } from "./autonomy.mts";
 import { findCodex } from "./codex-binary.mts";
 import { busyPolicyFingerprint } from "./codex-busy-policy.mts";
-import { admitForkReply, FORK_AUDIT, type PreClaimRefusal } from "./codex-fork-admission.mts";
+import { admitForkReply, recheckForkReply, FORK_AUDIT, type PreClaimRefusal } from "./codex-fork-admission.mts";
 import { advanceForkAttempt, claimForkAttempt, readForkAttempt } from "./codex-fork-attempts.mts";
 import { parseFeaturesList } from "./codex-fork-params.mts";
 import { markRelayDue } from "./codex-fork-relay.mts";
@@ -155,21 +155,35 @@ async function attempt(deps: RunnerDeps, owner: string, messageIds: string[], fi
   }
   refusedLog.delete(owner);
   const now = (): number => deps.now?.() ?? Date.now();
-  const decision = admitForkReply({ paths: deps.paths, now: deps.now, platform: deps.platform, readiness: deps.readiness,
-    realpath: deps.realpath, postToolHook: deps.codex?.postToolHook }, owner, messageId, fingerprint);
+  const admissionDeps = { paths: deps.paths, now: deps.now, platform: deps.platform, readiness: deps.readiness,
+    realpath: deps.realpath, postToolHook: deps.codex?.postToolHook };
+  const decision = admitForkReply(admissionDeps, owner, messageId, fingerprint);
   if (!decision.ok) return noteOnce(deps, owner, [messageId], FORK_AUDIT[decision.reason]);
   const claim = claimForkAttempt(deps.paths, { owner, messageId, attemptedAt: now(), policyFingerprint: fingerprint,
     producer: { ...guards.producer } });
   if (!claim) return;
+  let vetoed = false;
+  const continueAllowed = (): boolean => {
+    if (vetoed) return false;
+    try {
+      const fresh = recheckForkReply(admissionDeps, owner, messageId, fingerprint);
+      vetoed = !fresh.ok || fresh.cwd !== decision.cwd
+        || deps.workerCapabilities?.()?.includes(MESSAGING_PROXY_CAPABILITY) !== true;
+    } catch { vetoed = true; }
+    return !vetoed;
+  };
   // A record gone or read since admission: the owner was first.
   const record = getMessage(deps.paths.inbox, messageId);
-  const outcome: ForkOutcome = record?.state !== "accepted" ? { state: "superseded", from: "launching" }
+  let outcome: ForkOutcome = record?.state !== "accepted" ? { state: "superseded", from: "launching" }
     : await runForkAttempt({ codex }, { owner, cwd: decision.cwd, producer: guards.producer, features: guards.features,
       mcpNames: guards.mcpNames, record, maxAnswerBytes, admission, log, timeouts: forkTestTimeouts.value, realpath: deps.realpath,
-      stillAccepted: () => getMessage(deps.paths.inbox, messageId)?.state === "accepted",
+      continueAllowed, stillAccepted: () => getMessage(deps.paths.inbox, messageId)?.state === "accepted",
       running: (lastTurnId, forkId, goalProof) => {
         advanceForkAttempt(deps.paths, owner, messageId, "launching", "running", { lastTurnId, forkId, goalProof }, now());
       } }).catch((): ForkOutcome => ({ state: "uncertain", from: "launching", reason: "helper-exit" }));
+  if ((outcome.state === "completed" || outcome.state === "declined") && !continueAllowed()) {
+    outcome = { state: "superseded", from: outcome.from };
+  }
   // Each outcome carries exactly its write-once fields: answer, or reason and detail.
   const { state, from, ...fields } = outcome;
   try {

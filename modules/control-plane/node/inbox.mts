@@ -1,3 +1,6 @@
+import { readInboxRecord, inboxRecordIds, recordWriteLocation } from "./inbox-storage.mts";
+import { isDeliveryBinding, stableBinding, type MessageBinding } from "../protocol-message-binding.mts";
+import { boundRecordValid, mayRetarget } from "./message-owner.mts";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -57,6 +60,7 @@ export interface InboxRecord {
   // sent message it answers (exchange.mts replyDepth). Missing means 0.
   depth?: number;
   loop?: LoopAdmissionV1;
+  binding?: MessageBinding;
   // Set by closed-delivery.mts (issues #102, #105) when the message was handed
   // to an intercom session of its sender, reused or new: once per message.
   closedAttempt?: string;
@@ -83,10 +87,6 @@ export type ReportedState = "accepted" | "delivered" | "refused";
 export interface ReceiptRecord { reportedAt: string; reportedState: ReportedState; workerState: MessageState; reportedProgressAt?: string; progressRetryAt?: string }
 
 export interface DeliveryTaskIdentity { taskId: string; runtime: TaskRuntime; sessionId?: string }
-
-function fileOf(dir: string, messageId: string): string {
-  return path.join(dir, `${messageId}.json`);
-}
 
 export function receiptFileOf(dir: string, messageId: string): string {
   return path.join(dir, "receipts", `${messageId}.json`);
@@ -144,8 +144,20 @@ export function writeJsonAtomic(file: string, value: unknown, deps: RenameDeps =
 // the existing file. Throws when the record cannot be written.
 export function storeMessage(dir: string, body: MessageDeliverBody, now: number = Date.now(), depth = 0): InboxRecord {
   if (Object.hasOwn(body, "loop") && !isLoopAdmissionV1(body.loop)) throw new Error("invalid loop admission");
+  if (Object.hasOwn(body, "binding") && (!isDeliveryBinding(body.binding)
+    || body.binding.to.sessionId !== body.toSession || body.binding.from.sessionId !== body.from.session)) throw new Error("invalid message binding");
+  if (!isMessageId(body.messageId)) throw new Error("invalid message id");
+  ensureDir(dir);
+  return withRecordLock(dir, body.messageId, () => {
   const existing = getMessage(dir, body.messageId);
-  if (existing) return existing;
+  const binding = body.binding ? stableBinding(body.binding) : undefined;
+  if (existing) {
+    if ((Object.hasOwn(existing, "binding") || binding !== undefined) && (!boundRecordValid(existing) || JSON.stringify(existing.binding) !== JSON.stringify(binding)
+      || existing.toSession !== body.toSession || existing.from.nodeId !== body.from.nodeId || existing.from.session !== body.from.session
+      || existing.text !== body.text || existing.inReplyTo !== body.inReplyTo || existing.proxyOf !== body.proxyOf
+      || existing.taskId !== body.taskId || existing.createdAt !== body.createdAt)) throw new Error("message redelivery mismatch");
+    return existing;
+  }
   ensureDir(dir);
   const record: InboxRecord = {
     messageId: body.messageId, from: { nodeId: body.from.nodeId, session: body.from.session }, toSession: body.toSession,
@@ -153,10 +165,11 @@ export function storeMessage(dir: string, body: MessageDeliverBody, now: number 
     ...(body.proxyOf ? { proxyOf: body.proxyOf } : {}), ...(body.taskId ? { taskId: body.taskId } : {}),
     createdAt: body.createdAt,
     receivedAt: new Date(now).toISOString(), state: "accepted", depth: body.loop?.depth ?? depth,
-    ...(body.loop ? { loop: { ...body.loop } } : {}),
+    ...(body.loop ? { loop: { ...body.loop } } : {}), ...(binding ? { binding } : {}),
   };
-  writeJsonAtomic(fileOf(dir, body.messageId), record);
+  writeJsonAtomic(recordWriteLocation(dir, body.messageId, record), record);
   return record;
+  });
 }
 
 // The parsed file, or null when it does not exist. Other errors throw.
@@ -170,7 +183,7 @@ export function readJson<T>(file: string): T | null {
 }
 
 export function getMessage(dir: string, messageId: string): InboxRecord | null {
-  return isMessageId(messageId) ? readJson<InboxRecord>(fileOf(dir, messageId)) : null;
+  return isMessageId(messageId) ? readInboxRecord(dir, messageId) : null;
 }
 
 export function getReceipt(dir: string, messageId: string): ReceiptRecord | null {
@@ -206,12 +219,7 @@ export function setMessageProgress(dir: string, messageId: string, phase: Messag
 
 // The message ids of the <messageId>.json files in a directory.
 export function messageIds(dir: string): string[] {
-  try {
-    return fs.readdirSync(dir).filter((name) => name.endsWith(".json")).map((name) => name.slice(0, -5)).filter(isMessageId);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
-    throw error;
-  }
+  return inboxRecordIds(dir);
 }
 
 // Records oldest first, optionally only those for one session.
@@ -234,9 +242,20 @@ function updateRecord(dir: string, messageId: string, change: (record: InboxReco
     const record = getMessage(dir, messageId);
     if (!record) return null;
     const next = change(record);
-    if (next) writeJsonAtomic(fileOf(dir, messageId), next);
+    if (next) {
+      if (Object.hasOwn(record, "binding") && (!boundRecordValid(next) || JSON.stringify(record.binding) !== JSON.stringify(next.binding)
+        || !mayRetarget(record, { sessionId: next.toSession, runtime: next.binding?.to.runtime ?? null }))) throw new Error("bound owner cannot change");
+      replaceInboxRecordLocked(dir, messageId, next);
+    }
     return { record: next ?? record, written: next !== null };
   });
+}
+
+// Caller already owns withRecordLock(inboxRoot, messageId). Revalidates both
+// locations and immutable binding before replacing the current body.
+export function replaceInboxRecordLocked(dir: string, messageId: string, next: InboxRecord): void {
+  if (!getMessage(dir, messageId)) throw new Error("missing inbox record");
+  writeJsonAtomic(recordWriteLocation(dir, messageId, next), next);
 }
 
 // A busy record is "not written": the next event, round or read writes it
@@ -257,7 +276,11 @@ export function setDeliveryTask(dir: string, messageId: string, identity: Delive
     || (identity.sessionId !== undefined && !isSessionRef(identity.sessionId))) {
     throw new Error("invalid delivery task identity");
   }
-  return updateRecord(dir, messageId, (record) => ({ ...record, delivery: identity })) !== null;
+  return updateRecord(dir, messageId, (record) => {
+    if (Object.hasOwn(record, "binding") && (!identity.sessionId || !mayRetarget(record,
+      { sessionId: identity.sessionId, runtime: identity.runtime === "claude" ? "claude-code" : identity.runtime }))) throw new Error("bound delivery owner cannot change");
+    return { ...record, delivery: identity };
+  }) !== null;
 }
 // Marks a stored message as delivered into its session and returns the
 // message.status body to send, or null when the message is not in the inbox

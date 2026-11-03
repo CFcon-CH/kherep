@@ -71,10 +71,10 @@ export function deliverForCodex(input: unknown, deps: HookDeps): string {
         + receiveRecipe);
     }
     const maxBytes = CODEX_CONTEXT_BYTES - Buffer.byteLength(receiveRecipe) - 1;
-    const context = deliveryContext(event, refs, { maxBytes, ...deps, replyCommand: cli, replyFrom: sessionId, offeredBy: "codex-prompt", codexOwner: sessionId });
+    const context = deliveryContext(event, refs, { maxBytes, ...deps, replyCommand: cli, replyFrom: sessionId, offeredBy: "codex-prompt", codexOwner: sessionId, owner: { sessionId, runtime: "codex" } });
     return contextOutput(event, context ? `${context}\n${receiveRecipe}` : receiveRecipe);
   }
-  const mine = sessionInbox(deps.paths, refs);
+  const mine = sessionInbox(deps.paths, refs, { sessionId, runtime: "codex" });
   const arrived = mine.filter((r) => r.state === "accepted").map((r) => r.messageId);
   if (continued === true || arrived.length === 0) return stopEnded(deps, sessionId);
   // A continuation is an autonomous turn: the same budget and bypass check as

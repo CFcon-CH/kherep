@@ -1,8 +1,10 @@
+import { createBindingStorage } from "./inbox-storage.mts";
+import { MessageReferenceResolver } from "./message-reference.mts";
 import { createAdmissionAuthority, revokeAuthority, stopAuthority } from "./session-authority.mts";
 import { readLivenessSnapshot } from "./session-lifecycle.mts";
 import { targetKey } from "./session-liveness.mts";
 import { attachLiveness, createLivenessPass, type LivenessSource } from "./liveness-pass.mts";
-import { PING_FRAME, type SessionInfo } from "../protocol.mts";
+import { parseEnvelope, PING_FRAME, type SessionInfo } from "../protocol.mts";
 import { isTaskRuntime, type TaskRuntime } from "../protocol-tasks.mts";
 import { reconnectDelay } from "./backoff.mts";
 import { NodeClient, type CommandHandlers } from "./client.mts";
@@ -139,7 +141,15 @@ export function startDaemon(config: NodeConfig, paths: NodePaths, log: (line: st
   };
   // Issue #487: one in-process inbox index for the daemon's readers (inbox-index.mts); issue #589: the
   // session listing's refusal check reads it too, so a snapshot costs one stat per record, not a read.
-  const inbox = inboxIndex(paths.inbox);
+  const selectedReferences = new MessageReferenceResolver(paths);
+  const bindingStorage = createBindingStorage(paths.inbox);
+  const storageFault = (): void => { bindingStorage.fault(); selectedReferences.clear(); };
+  const indexedInbox = inboxIndex(paths.inbox);
+  const inbox = { ...indexedInbox, records: () => {
+    try { return indexedInbox.records(); } catch (error) { storageFault(); throw error; }
+  }, unreported: (...args: Parameters<typeof indexedInbox.unreported>) => {
+    try { return indexedInbox.unreported(...args); } catch (error) { storageFault(); throw error; }
+  } };
   const sessions = recordingSessions(paths, (signal) => {
     backgroundDiscovery?.controller.abort();
     return source(signal);
@@ -182,7 +192,8 @@ export function startDaemon(config: NodeConfig, paths: NodePaths, log: (line: st
     // Issue #520: a reply records the sent message it answers replied; settleReplied never throws.
     storeMessage: (body) => {
       const now = Date.now();
-      storeMessage(paths.inbox, body, now, deliveryDepth(paths, body));
+      try { storeMessage(paths.inbox, body, now, deliveryDepth(paths, body)); }
+      catch (error) { storageFault(); throw error; }
       settleReplied(paths, body, now, (error) => log(`kherep-node: could not record ${body.inReplyTo} replied: ${String((error as Error).message ?? error)}`));
     },
     taskRequestResult: (result) => recordRequestResult(paths, result),
@@ -202,12 +213,12 @@ export function startDaemon(config: NodeConfig, paths: NodePaths, log: (line: st
     mcpCredential: (body) => recordMcpCredential(paths, body),
     mcpIntentReceipt: (body) => recordMcpIntentReceipt(paths, mcpInflight, body),
     mcpDisabled: () => disableMcp(paths, mcpInflight),
-    readMcpInbox: (sessionId, limit, messageId) => readMcpInbox(paths, sessionId, limit, messageId),
-    offerMcpInbox: (messageIds) => offerMcpInbox(paths, messageIds),
-    answerMcpInbox: (messageIds) => answerMcpInbox(paths, messageIds),
+    readMcpInbox: (sessionId, limit, messageId, runtime) => readMcpInbox(paths, sessionId, limit, messageId, runtime),
+    offerMcpInbox: (messageIds, sessionId, runtime) => offerMcpInbox(paths, messageIds, Date.now(), { sessionId, runtime }),
+    answerMcpInbox: (messageIds, sessionId, runtime) => answerMcpInbox(paths, messageIds, { sessionId, runtime }),
     taskControlExecute: (body) => handleTaskControlExecute(paths, body,
       (execute) => executeTaskControl(execute, { nodeId: config.nodeId, paths, runner })),
-    ...exchangeOptions(paths), log,
+    ...exchangeOptions(paths), selectedReferences, bindingStorageReady: bindingStorage.snapshot, bindingStorageFault: storageFault, log,
   });
   const timed = lockRounds(laneTimer(log, lanes.slowLaneMs), DAEMON_RECORD_LOCK_WAIT_MS);
   const tally = roundTally(); // inbound items since the last round, by kind (issues #487, #493)
@@ -290,10 +301,12 @@ export function startDaemon(config: NodeConfig, paths: NodePaths, log: (line: st
         // cannot accumulate behind redundant periodic exchange work.
         if (exchangePending) return;
         exchangePending = true;
-        chain = chain.then(enqueued(timed, "chain", "exchange-round", () => exchangeRound({ client, paths, policyFile: config.policyFile,
+        chain = chain.then(enqueued(timed, "chain", "exchange-round", () => {
+          if (!bindingStorage.recheck()) selectedReferences.clear();
+          return exchangeRound({ client, paths, policyFile: config.policyFile,
           runner, inbox, log, inflight, requestsInflight, taskControlInflight: () => taskControlInflight, mcpInflight: () => mcpInflight,
           send, publishRegistration, live: () => !stopped && socket === ws && ws.readyState === WebSocket.OPEN, defer: dispatchFrame,
-          window: (window) => { intakeWindow = window; }, tally })))
+          window: (window) => { intakeWindow = window; }, tally }); }))
           .catch((error: unknown) => log(`kherep-node: message exchange failed: ${String(error)}`))
           .finally(() => { exchangePending = false; });
       }, EXCHANGE_INTERVAL_MS);
@@ -311,7 +324,8 @@ export function startDaemon(config: NodeConfig, paths: NodePaths, log: (line: st
     // auth.ok is handled on chain, a delivery stays behind it there, never unauthenticated on intake.
     const dispatchFrame = (data: string, arrivedAt = Date.now()): void => {
       const route = routeFrame(data, paths);
-      if (route.kind === "deliver" && client.authenticated) intake(data, arrivedAt, connection);
+      const parsed = parseEnvelope(data);
+      if ((route.kind === "deliver" || parsed.ok && parsed.envelope.type === "message.resolve.request") && client.authenticated) intake(data, arrivedAt, connection);
       else if (route.kind !== "command") handleFrame(data);
       else {
         // Issue #197: a session command for a runtime without any readiness

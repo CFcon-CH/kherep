@@ -23,7 +23,7 @@ export const LOOP_COMPATIBILITY = "loop-compatibility: legacy reply limit";
 // Only Worker-defined loop diagnostics, never arbitrary persisted peer/node reasons.
 export function safeLoopReason(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
-  if ([LOOP_LINEAGE, LOOP_STALE, LOOP_COMPATIBILITY, "loop-capacity", "loop-crypto-unavailable", "loop-state-unavailable"].includes(value)) return value;
+  if ([LOOP_LINEAGE, LOOP_STALE, LOOP_COMPATIBILITY, "loop-capacity", "loop-crypto-unavailable", "loop-state-unavailable", "loop-resolution-required"].includes(value)) return value;
   const match = /^loop-held: (ack-or-repeat|segment-limit); hold=([^;]+); operator release required$/.exec(value);
   return match && UUID.test(match[2]) ? value : undefined;
 }

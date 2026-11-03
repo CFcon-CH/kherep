@@ -138,11 +138,12 @@ async function resumeCodexAdmitted(
   deps: RunnerDeps, task: TaskRecord, cwd: string, count: number, now: number, admission: ServiceAdmission,
 ): Promise<string | null> {
   const sessionId = task.sessionId!;
+  const owner = { sessionId, runtime: "codex" };
   const refs = [sessionId, task.name];
-  const context = deliveryContext("UserPromptSubmit", refs, { paths: deps.paths, now: () => now, offeredBy: "intercom",
+  const context = deliveryContext("UserPromptSubmit", refs, { paths: deps.paths, owner, now: () => now, offeredBy: "intercom",
     ...(deps.cli ? { replyCommand: deps.cli } : {}) });
   const offeredAt = new Date(now).toISOString();
-  const offered = sessionInbox(deps.paths, refs).filter((r) => r.state === "offered" && r.offeredAt === offeredAt).map((r) => r.messageId);
+  const offered = sessionInbox(deps.paths, refs, owner).filter((r) => r.state === "offered" && r.offeredAt === offeredAt).map((r) => r.messageId);
   if (offered.length === 0) return "no message left to offer";
   // As codex-wake.mts: a run for peer messages keeps the task's state; the watch round settles its offers.
   const run: TaskRecord = { ...rerunRecord(deps, task, cwd, now), running: true, offered };
@@ -181,6 +182,7 @@ function senderLabel(deps: RunnerDeps, from: InboxRecord["from"]): string | unde
 // settleCarried, issue #308; Codex: codex-runner.mts adoptOffered, issue #119).
 export async function startIntercom(deps: RunnerDeps, target: ClosedTarget, records: InboxRecord[],
   mode: PermissionMode, directive = fallbackDirective(target.sessionId), taskId: string = crypto.randomUUID()): Promise<string | null> {
+  if (records.length === 0 || records.some(r => Object.hasOwn(r, "binding"))) return "loop-resolution-required";
   const from = records[0].from;
   const label = senderLabel(deps, from);
   let text: string;

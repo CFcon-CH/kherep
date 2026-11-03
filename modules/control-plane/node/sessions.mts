@@ -1,3 +1,4 @@
+import { identityFromClaudeListing, uniqueSourceRows } from "./session-identity.mts";
 import { execFile } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -133,7 +134,12 @@ export async function listSessions(deps: SessionDeps = {}): Promise<SessionInfo[
   const now = deps.now?.() ?? Date.now();
   const tasks = deps.paths ? listCodexTaskSessions(deps.paths, now) : [];
   // A task's thread the delivery hook recorded too is listed once, as the task.
-  const codex = deps.paths ? listCodexSessions(deps.paths, now).filter((s) => !tasks.some((t) => t.sessionId === s.sessionId)) : [];
+  const hooks = deps.paths ? listCodexSessions(deps.paths, now) : [];
+  for (const task of tasks) {
+    const matches = hooks.filter(s => s.sessionId === task.sessionId && s.runtime === task.runtime);
+    if (matches.length === 1 && matches[0].canonicalIdentity) task.canonicalIdentity = matches[0].canonicalIdentity;
+  }
+  const codex = hooks.filter((s) => !tasks.some((t) => t.sessionId === s.sessionId));
   const claude = await listClaudeSessions(deps);
   deps.signal?.throwIfAborted();
   const titled = deps.codexHome ? withCodexTitles([...tasks, ...codex], readCodexTitles(deps.codexHome)) : [...tasks, ...codex];
@@ -143,7 +149,7 @@ export async function listSessions(deps: SessionDeps = {}): Promise<SessionInfo[
   const unseen: string[] = [];
   if (!claude || unlistedRuntimes(claude).length > 0) unseen.push(CLAUDE_RUNTIME);
   if (all.length >= MAX_SESSIONS) unseen.push("*");
-  return markUnseen(all.slice(0, MAX_SESSIONS), unseen);
+  return markUnseen(uniqueSourceRows(all).slice(0, MAX_SESSIONS), unseen);
 }
 
 // A Claude task session with a label (issue #74) carries it, found by the
@@ -171,5 +177,12 @@ async function listClaudeSessions(deps: SessionDeps): Promise<SessionInfo[] | nu
   }
   const sessions = mapClaudeAgents(parsed);
   if (!sessions) throw new Error("claude agents printed no session list");
-  return sessions;
+  const observedAt = deps.now?.() ?? Date.now();
+  for (const row of sessions) {
+    const raw = (parsed as Record<string, unknown>[]).filter(v => v && v.sessionId === row.sessionId);
+    const proof = raw.length === 1 && (raw[0].runtime === undefined || raw[0].runtime === CLAUDE_RUNTIME)
+      ? identityFromClaudeListing(row, observedAt) : undefined;
+    if (proof) row.canonicalIdentity = proof;
+  }
+  return markUnseen(uniqueSourceRows(sessions), unlistedRuntimes(sessions));
 }

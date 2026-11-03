@@ -31,7 +31,7 @@ export async function runFork(t: test.TestContext, scenario: Partial<ForkScenari
   const outcome = await withServiceAdmission(node.paths, (admission) => runForkAttempt({ codex: { spawn: app.spawn as never,
     killGroup: app.killGroup, platform: "darwin", onUnconfirmedShutdown: () => { unconfirmed++; }, ...codex } }, {
     owner: FORK_OWNER, cwd, producer: PRODUCER, features: new Set(FORK_FEATURE_KEYS), mcpNames: ["synthetic_probe"], record: RECORD,
-    maxAnswerBytes: 4096, admission, stillAccepted: () => true, running: (lastTurnId, forkId, proof) => { running.push([lastTurnId, forkId, proof]); },
+    maxAnswerBytes: 4096, admission, continueAllowed: () => true, stillAccepted: () => true, running: (lastTurnId, forkId, proof) => { running.push([lastTurnId, forkId, proof]); },
     log: (line) => { logs.push(line); }, timeouts: FAST, ...extra }), testServiceOwner);
   const run = app.runs[0]!;
   const methods = (): string[] => run.requests.filter((r) => r.method).map((r) => r.method!);

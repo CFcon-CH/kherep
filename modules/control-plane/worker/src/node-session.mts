@@ -1,3 +1,7 @@
+import { isResolveRequest, SELECTED_BINDING_CAPABILITY, type ResolveRequest, type ResolveResponse } from "../../protocol-message-binding.mts";
+import { NodeReferenceRpc } from "./node-reference-rpc.mts";
+import { isIdentitySnapshot } from "../../protocol-session-identity.mts";
+import { loopCapability, type ConnectionEvidence } from "./message-loop-identity-api.mts";
 import { DurableObject } from "cloudflare:workers";
 
 import {
@@ -35,6 +39,7 @@ export type EnqueueResult = { ok: true; commandId: string; seq: number; delivere
 // WebSocket, the pending-command log and the liveness state.
 export class NodeSession extends DurableObject<Env> {
   private readonly store: SessionStore;
+  private readonly references = new NodeReferenceRpc();
   private readonly pendingInbox = new Map<string, {
     socket: WebSocket;
     resolve: (body: McpInboxResponseBody) => void;
@@ -80,6 +85,7 @@ export class NodeSession extends DurableObject<Env> {
     const envelope = parsed.envelope;
     if (!attachment.authed) return this.handleAuth(ws, attachment, envelope);
 
+    if (this.authedSocket() !== ws) return;
     if (envelope.ack > 0) this.store.ackThrough(envelope.ack);
     if (envelope.seq > 0 && envelope.seq <= attachment.lastNodeSeq) return; // duplicate on this connection
     this.store.set("lastSeen", Date.now());
@@ -96,6 +102,9 @@ export class NodeSession extends DurableObject<Env> {
   // Liveness is decided by the alarm, not by a close, so a node that
   // reconnects within its backoff window never flaps to offline.
   async webSocketClose(ws: WebSocket, code: number, reason: string): Promise<void> {
+    this.references.clear(ws);
+    const attachment = ws.deserializeAttachment() as Attachment | null;
+    if (attachment?.connectionToken) await registryStub(this.env).invalidateMessageConnection(attachment.nodeId, attachment.connectionToken);
     try {
       ws.close(code === 1005 || code === 1006 ? 1000 : code, reason);
     } catch {
@@ -115,7 +124,7 @@ export class NodeSession extends DurableObject<Env> {
     if (now - last >= MISSED_INTERVALS * ALARM_INTERVAL_MS) {
       this.store.set("status", "offline");
       const nodeId = this.store.get("nodeId");
-      if (nodeId) await registryStub(this.env).setStatus(nodeId, "offline", last);
+      if (nodeId) await registryStub(this.env).setStatus(nodeId, "offline", last, this.store.get("connectionToken") ?? undefined);
       for (const ws of this.ctx.getWebSockets()) ws.close(CLOSE.offline, "offline");
       return; // not re-armed while offline
     }
@@ -147,7 +156,14 @@ export class NodeSession extends DurableObject<Env> {
       pending: this.store.outboxSize(), connected: this.authedSocket() !== null };
   }
 
+  loopCapabilityEvidence(): ConnectionEvidence {
+    const sockets = this.ctx.getWebSockets().filter(ws => ws.readyState === 1 && (ws.deserializeAttachment() as Attachment | null)?.authed === true);
+    const a = sockets.length === 1 ? sockets[0].deserializeAttachment() as Attachment : undefined;
+    return { token: a?.connectionToken ?? null, registered: a?.registrationAccepted === true, capability: a?.loopCapability === true };
+  }
+
   async revoke(): Promise<void> {
+    this.references.clear();
     this.store.set("status", "revoked");
     this.store.clearOutbox();
     await this.ctx.storage.deleteAlarm();
@@ -159,11 +175,16 @@ export class NodeSession extends DurableObject<Env> {
     const verdict = await checkAuth(attachment, envelope, now, (nodeId) => registryStub(this.env).getNodeKey(nodeId));
     if (!verdict.ok) return ws.close(verdict.code, verdict.reason);
 
-    ws.serializeAttachment({ nodeId: attachment.nodeId, authed: true, connectedAt: attachment.connectedAt, lastNodeSeq: 0 } satisfies Attachment);
+    const connectionToken = crypto.randomUUID();
+    this.references.clear();
+    this.store.set("connectionToken", connectionToken);
+    ws.serializeAttachment({ nodeId: attachment.nodeId, authed: true, connectionToken, registrationAccepted: false, loopCapability: false, connectedAt: attachment.connectedAt, lastNodeSeq: 0 } satisfies Attachment);
+    if (!await registryStub(this.env).beginMessageConnection(attachment.nodeId, connectionToken)) { ws.close(CLOSE.unknownOrRevoked, "node unavailable"); return; }
+    if (this.authedSocket() !== ws) return;
     for (const other of this.ctx.getWebSockets()) if (other !== ws) other.close(CLOSE.replaced, "replaced by newer connection");
     this.store.set("status", "online");
     this.store.set("lastSeen", now);
-    await registryStub(this.env).setStatus(attachment.nodeId, "online", now);
+    await registryStub(this.env).setStatus(attachment.nodeId, "online", now, connectionToken);
     await this.ctx.storage.setAlarm(now + ALARM_INTERVAL_MS);
 
     // Resume: drop what the node already processed, resend the rest in order.
@@ -187,13 +208,24 @@ export class NodeSession extends DurableObject<Env> {
   // Issue #408 (design r3 section 4.3): a proxy delivery re-reads its row here,
   // in the object that sends, and is dropped unless it is still queued.
   async pushFrame(type: "message.deliver" | "message.status" | "event", body: Record<string, unknown>): Promise<boolean> {
-    if (isProxyDelivery(type, body) && !await registryStub(this.env).messageQueued(String(body.messageId))) return false;
-    if (type === "message.deliver" && body.loop !== undefined && !await registryStub(this.env).messageDeliveryReady(String(body.messageId))) return false;
     const ws = this.authedSocket();
-    if (ws) this.sendControl(ws, type, body);
-    return ws !== null;
+    if (!ws) return false;
+    const token = (ws.deserializeAttachment() as Attachment).connectionToken;
+    const prepared = type === "message.deliver" ? await registryStub(this.env).prepareMessageDelivery(String(body.messageId)) : body;
+    if (!prepared || this.authedSocket() !== ws || (ws.deserializeAttachment() as Attachment).connectionToken !== token) return false;
+    this.sendControl(ws, type, { ...prepared });
+    return true;
   }
 
+  resolveMessageReferences(request: ResolveRequest): Promise<ResolveResponse | null> {
+    const ws = this.authedSocket();
+    const a = ws?.deserializeAttachment() as Attachment | undefined;
+    if (!ws || !a?.connectionToken || !a.registrationAccepted || !a.selectedBindingCapability || !isResolveRequest(request)) return Promise.resolve(null);
+    const current = () => this.authedSocket() === ws && (ws.deserializeAttachment() as Attachment).connectionToken === a.connectionToken
+      && (ws.deserializeAttachment() as Attachment).registrationAccepted === true;
+    return this.references.request(ws, a.connectionToken, request,
+      () => this.sendControl(ws, "message.resolve.request", { ...request }), current);
+  }
   // messageId (issue #308): one item, for an MCP reply whose parent row is
   // gone; the node marks it answered. An older node ignores both fields.
   requestMcpInbox(sessionId: string, limit: number, runtime: McpRuntime, messageId?: string): Promise<McpInboxResponseBody> {
@@ -214,7 +246,7 @@ export class NodeSession extends DurableObject<Env> {
   }
 
   private local(ws: WebSocket, nodeId: string): LocalNode {
-    return { nodeId, send: (type, body) => this.sendControl(ws, type, body) };
+    return { nodeId, send: (type, body) => { if (this.authedSocket() === ws) this.sendControl(ws, type, body); } };
   }
 
   private localControl(ws: WebSocket, nodeId: string): LocalControlNode {
@@ -226,25 +258,42 @@ export class NodeSession extends DurableObject<Env> {
     switch (envelope.type) {
       case "register":
         if (!isRegisterBody(body)) return this.sendControl(ws, "error", { error: "invalid register body" });
-        await registry.updateRegistration(nodeId, body.facts, body.runtimes, body.capabilities);
+        {
+          const a = ws.deserializeAttachment() as Attachment;
+          const accepted = await registry.updateRegistration(nodeId, body.facts, body.runtimes, body.capabilities, a.connectionToken);
+          // A superseded socket never certifies the current connection.
+          if (accepted && this.loopCapabilityEvidence().token === a.connectionToken) ws.serializeAttachment({ ...ws.deserializeAttachment() as Attachment,
+            registrationAccepted: true, loopCapability: loopCapability(body.capabilities), selectedBindingCapability: body.capabilities.includes(SELECTED_BINDING_CAPABILITY) } satisfies Attachment);
+        }
+        if (this.authedSocket() === ws) await routeEffects(this.env, await registry.pendingMessagesFor(nodeId), this.local(ws, nodeId));
         return flushTaskControl(this.env, nodeId, this.localControl(ws, nodeId));
       case "capabilities.update":
         if (!isRuntimeList(body.runtimes)) return this.sendControl(ws, "error", { error: "invalid runtimes" });
         return registry.replaceRuntimes(nodeId, body.runtimes);
       case "sessions.snapshot":
         if (!isSessionList(body.sessions)) return this.sendControl(ws, "error", { error: "invalid sessions" });
-        return registry.replaceSessions(nodeId, body.sessions);
+        if (body.identitySnapshot !== undefined && !isIdentitySnapshot(body.identitySnapshot)) return this.sendControl(ws, "error", { error: "invalid identity snapshot" });
+        {
+          const result = await registry.replaceSessions(nodeId, body.sessions, body.identitySnapshot);
+          if (!result.ok) this.sendControl(ws, "error", { error: result.code });
+        }
+        return;
       case "command.ack":
         if (typeof body.commandId === "string") this.store.markCommand(body.commandId, "acked");
         return;
       case "command.result":
         return this.handleResult(nodeId, body);
+      case "message.resolve.response": {
+        const a = ws.deserializeAttachment() as Attachment;
+        if (a.connectionToken) this.references.receive(ws, a.connectionToken, body);
+        return;
+      }
       case "message.send": {
         if (!isMessageSendBody(body)) return this.sendControl(ws, "error", { error: "invalid message.send body" });
         // The sender is the authenticated connection, never a field of the body.
         const result = await registry.sendMessage({ messageId: body.messageId, from: { nodeId, session: body.fromSession },
           to: { nodeId: body.to.nodeId, session: body.to.session }, text: body.text, inReplyTo: body.inReplyTo, taskId: body.taskId,
-          proxyOf: body.proxyOf },
+          proxyOf: body.proxyOf, connectionToken: (ws.deserializeAttachment() as Attachment).connectionToken },
         `node:${nodeId}`);
         if (!result.ok) return this.sendControl(ws, "error", { error: result.error, messageId: body.messageId });
         this.sendControl(ws, "message.status", { ...result.status });
@@ -318,7 +367,10 @@ export class NodeSession extends DurableObject<Env> {
   }
 
   private authedSocket(): WebSocket | null {
-    return this.ctx.getWebSockets().find((ws) => (ws.deserializeAttachment() as Attachment | null)?.authed === true) ?? null;
+    if (this.store.get("status") === "revoked") return null;
+    const token = this.store.get("connectionToken");
+    return this.ctx.getWebSockets().find((ws) => ws.readyState === 1 && (ws.deserializeAttachment() as Attachment | null)?.authed === true
+      && (ws.deserializeAttachment() as Attachment).connectionToken === token) ?? null;
   }
 
   // Sockets that never completed the handshake are closed once their nonce is

@@ -1,6 +1,7 @@
-import path from "node:path";
+import type { SelectedOwner } from "../protocol-message-binding.mts";
+import { messageOwnerMatches } from "./message-owner.mts";
 import { isMessageId, isMessageText } from "../protocol-messages.mts";
-import { readSelected } from "./inbox-selected-read.mts";
+import { readInboxRecord } from "./inbox-storage.mts";
 import { acknowledgeCodexOffer } from "./codex-inbox-ack.mts";
 import { codexSessionRefs, listCodexSessions, readCodexSession } from "./codex-sessions.mts";
 import { CODEX_CONTEXT_BYTES, CODEX_ESCALATION_NOTE } from "./deliver-codex.mts";
@@ -26,12 +27,14 @@ export function inbox(io: InboxIo, values: MsgArgs["values"], selectors: string[
   if (values.receive && !values.from) return fail("--receive needs --from with the recorded Codex session id");
 
   let refs: string[];
+  let owner: SelectedOwner;
   if (values.from !== undefined) {
     try {
       const session = readCodexSession(io.paths, values.from);
       if (!session || session.sessionId !== values.from || session.runtime !== "codex") {
         return fail("--from needs a recorded Codex session id for inbox access");
       }
+      owner = { sessionId: session.sessionId, runtime: "codex" };
       const verified = senderSession(io.paths, io.env, values.from, io.now(), io);
       if (!verified.ok) return fail(verified.error);
       // An unsuccessful listing cannot prove an alias is unambiguous.
@@ -44,6 +47,7 @@ export function inbox(io: InboxIo, values: MsgArgs["values"], selectors: string[
     const identity = sessionIdentity(io.paths, io.env, io);
     if (!identity.ok) return fail(identity.error);
     const id = identity.id;
+    owner = { sessionId: id, runtime: identity.runtime === "claude" ? "claude-code" : "codex" };
     refs = [id];
     try {
       const sessions = readJson<{ sessions?: LocalSession[] }>(io.paths.sessions)?.sessions;
@@ -67,13 +71,13 @@ export function inbox(io: InboxIo, values: MsgArgs["values"], selectors: string[
     let selected: InboxRecord | undefined;
     if (selectors.length) {
       try {
-        selected = readSelected(path.join(io.paths.inbox, `${selectors[0]}.json`)) as InboxRecord;
-        if (!selected || selected.messageId !== selectors[0] || !refs.includes(selected.toSession)
+        selected = readInboxRecord(io.paths.inbox, selectors[0]) ?? undefined;
+        if (!selected || selected.messageId !== selectors[0] || !messageOwnerMatches(selected, { sessionId: values.from!, runtime: "codex" }, refs)
           || !["accepted", "offered"].includes(selected.state) || !isMessageText(selected.text)) return fail("single receive record is not currently owned and waiting");
       } catch { return fail("single receive record is missing, invalid or unreadable"); }
     }
     const context = deliveryContext("UserPromptSubmit", refs, {
-      paths: io.paths, now: io.now, replyFrom: values.from,
+      paths: io.paths, now: io.now, replyFrom: values.from, owner: { sessionId: values.from!, runtime: "codex" },
       maxBytes: (selected ? 128 * 1024 : CODEX_CONTEXT_BYTES) - Buffer.byteLength(CODEX_ESCALATION_NOTE) - 1,
       codexSelected: selected,
       reofferOffered: true, offeredBy: "receive", codexOwner: values.from,
@@ -82,7 +86,7 @@ export function inbox(io: InboxIo, values: MsgArgs["values"], selectors: string[
     return 0;
   }
   const records = listInbox(io.paths.inbox)
-    .filter(r => refs.includes(r.toSession) || (r.closedTo !== undefined && refs.includes(r.closedTo)))
+    .filter(r => messageOwnerMatches(r, owner, refs) || !Object.hasOwn(r, "binding") && r.closedTo !== undefined && refs.includes(r.closedTo))
     .filter(r => values.all || r.state === "accepted" || r.state === "offered");
   if (records.length === 0) {
     io.out(values.all ? "no messages for this session" : "no undelivered messages for this session (--all includes delivered ones)");

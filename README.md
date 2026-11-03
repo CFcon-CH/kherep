@@ -92,6 +92,11 @@ flowchart LR
   runtimes --> bridge --> mcp
   nodeDaemon -->|five-minute coalesced pass| liveness
   liveness -->|truthful listing and deny-only admission| nodeDaemon
+  nodeDaemon -->|coherent Node-attested canonical identity, separate from availability| worker
+  nodeDaemon -->|selected references after bound-v1 storage initialization| selectedBinding["Deny-only held-pair resolution"]
+  nodeDaemon --> boundInbox["Exact bound inbox/bound-v1/UUID.json"]
+  nodeDaemon --> legacyInbox["Legacy inbox/UUID.json"]
+  selectedBinding --> worker
   nodeDaemon <--> worker <--> peers
   daemonService -->|starts and upgrades| nodeDaemon
   nodeDaemon -.->|delivers peer messages| runtimes
@@ -128,7 +133,9 @@ Sessions are asked to search the space before answering, and a substantial turn 
 [![Relief: two temples on opposite banks exchange sealed scrolls by boat through a central obelisk, where waiting messages are kept in jars.](assets/illustrations/kherep-control-plane-relief.svg)](https://raw.githubusercontent.com/cfaysal/kherep/main/assets/illustrations/kherep-control-plane.svg)
 
 Phase 1 session liveness uses metadata and local lifecycle tombstones, with UNKNOWN
-native adapters. UNKNOWN identities remain addressable without granting native
+native adapters. Current supported source identities can qualify a fresh pair-brake root even when availability is UNKNOWN, using enrolled-Node attestation and runtime/lifecycle binding. This does not cryptographically authenticate a native session. Historical legacy chains require a fresh root.
+
+UNKNOWN identities remain addressable without granting native
 MCP registration or claim permission. This does not establish native acceptance or wire the later
 24-hour admission deadline; native turn start can follow timely admission after
 expiry. See the [liveness contract](modules/control-plane/ARCHITECTURE.md#session-liveness-metadata-phase-1-706).

@@ -678,7 +678,9 @@ flowchart TD
   guards -->|refused| refused[fork-code audit, once per owner, message and code]
   admit -->|refused| refused
   admit --> claim[claimForkAttempt: launching]
-  claim --> helper[codex app-server, own group, KHEREP_CODEX_FORK=1]
+  claim --> fresh[Fresh latched continuation guard, no budget debit]
+  fresh -->|allowed| helper[codex app-server, own group, KHEREP_CODEX_FORK=1]
+  fresh -->|vetoed| superseded
   helper --> pre[thread/read, thread/turns/list, thread/goal/get on the owner]
   pre --> inbox{Inbox record still accepted?}
   inbox -->|no| superseded[superseded]
@@ -686,7 +688,8 @@ flowchart TD
   fork --> running[running: lastTurnId, forkId]
   running --> turn[turn/start with outputSchema; watch rules]
   turn --> close[close, group SIGKILL after grace]
-  close --> done[completed with answer, declined, failed or uncertain; one audit line]
+  close --> retain[Fresh guard after close and before persistence]
+  retain --> done[completed with answer, declined, failed, uncertain or superseded; one audit line]
 ```
 
 `codex-app-server-client.mts` holds the JSON-RPC client the native Queue
@@ -707,6 +710,19 @@ attempt `uncertain/close-unconfirmed` and the service admission retained,
 whatever the direct helper did. On Windows `taskkill /T` cannot address an
 exited root, so a forced close there is unconfirmed once the helper has exited;
 the fork stays limited to darwin (`policy.mts`, `FORK_PLATFORMS`).
+The producer binds a required synchronous continuation guard to the admitted
+owner, message, policy fingerprint and canonical cwd. It reuses admission's fresh
+permission predicates and current Worker capability without enumerating attempts
+or spending another turn. The first veto is latched: restored permission cannot
+revive the claim. The runner checks before spawning, after each awaited native
+preflight, before recording running and sending a turn, after turn/start and
+completion, and after confirmed close. The producer checks again before storing
+an answer or decline. A veto withdraws output as terminal `superseded`, preserves
+the original and charged budget, and never schedules relay. Already submitted
+native requests may have executed; revocation is observed at existing boundaries,
+not atomically. Cleanup always runs; watch failures and unconfirmed shutdown
+retain their stronger failure or uncertainty semantics.
+
 `codex-fork-process.mts` runs one attempt, and `codex-fork-refusal.mts`
 turns a JSON-RPC error response to one of its four requests into one
 content-free daemon log line (method, integer code, shape marker, 12 hex
@@ -828,7 +844,7 @@ Fallback handover (`node/closed-delivery.mts`) acts only on a target that is clo
 
 The target node reports optional fixed progress on the existing authenticated `message.status` path while the canonical state remains `accepted`. The Registry accepts it only from the stored target node, persists strictly newer observations in additive columns, relays the metadata-only projection to the sender, and clears it on a forward state transition. A same-state duplicate changes neither audit nor sender traffic.
 
-Delivery hooks own `inbox/<messageId>.json`; the daemon owns `inbox/progress/<messageId>.json`; Worker receipts remain in `inbox/receipts/<messageId>.json`. This split prevents a stale daemon read and write from restoring an older delivery state. A receipt settles progress only when `storedProgressAt` covers the current observation. Nodes connected to an older Worker back off before retrying an unacknowledged observation.
+Delivery hooks own unbound legacy `inbox/<messageId>.json` and exact-bound `inbox/bound-v1/<messageId>.json`; the daemon owns `inbox/progress/<messageId>.json`; Worker receipts remain in `inbox/receipts/<messageId>.json`. This split prevents a stale daemon read and write from restoring an older delivery state. A receipt settles progress only when `storedProgressAt` covers the current observation. Nodes connected to an older Worker back off before retrying an unacknowledged observation.
 
 Senders read `running` and `stopped` as refinements of `accepted`, derived from those progress codes by one shared function (`senderState`). No new wire state exists, because an older Worker rejects an unknown state in `isNodeMessageStatusBody` and would leave a newer node retrying forever. An accepted message without progress for 5 minutes is shown with a fixed actionable reason instead of a bare `accepted`; the bound is evaluated on the sender, so it also covers an offline or older target node. The MCP `status` tool applies the same two functions to the Worker's stored state, progress and `updated_at` against the Worker's clock and adds `senderState` and a fixed `hint` beside the unchanged canonical `state`. `running` is not a liveness signal: progress is written on change only, so it reports the last observation and its `observedAt`.
 
@@ -909,7 +925,7 @@ Compatibility: no new message state or progress code. `refused` and its reason a
 
 ## Exchange recovery
 
-The sender's outbox file is removed only after the Worker's answer has been written to `sent/`, so a daemon crash between the socket send and that write leaves the file to be sent again by the next daemon. On a live connection an unanswered send is repeated after 30 seconds. The Worker's `messageId` deduplication answers every repeat with the current state and creates no second delivery. A target that crashes before its `accepted` answer leaves the message `queued`; the Worker hands it over again after the next authentication, and the idempotent inbox keeps the first record. A message whose target never returns expires after 24 hours and the sender is told. Inbox retention refuses rather than deletes a waiting record and keeps final records until their state is confirmed.
+The sender's outbox file is removed only after the Worker's answer has been written to `sent/`, so a daemon crash between the socket send and that write leaves the file to be sent again by the next daemon. On a live connection an unanswered send is repeated after 30 seconds. The Worker's `messageId` deduplication creates no second delivery; live bound payload retries must first prove the same current exact owners and retained relationship fields before receiving canonical status. A target that crashes before its `accepted` answer leaves the message `queued`; the Worker hands it over again after the next authentication, and the idempotent inbox keeps the first record. A message whose target never returns expires after 24 hours and the sender is told. Inbox retention refuses rather than deletes a waiting record and keeps final records until their state is confirmed.
 
 The reconnect replay (`MessageStore.statusPageFor`) pages through the sender's rows with `settled_state IS NOT state`, through the partial index `messages_replay` on `from_node` with the same `WHERE` term; the constructor creates that index after the column loop has added `settled_state` to an existing table, and existing rows start with NULL. Issue #493: a row the Worker may delete (`deletable = 1`) is deleted on its sender's `message.status.ack`, as before. A row stored before that mark existed is never deleted; `MessageRetention.ack()` settles it instead, when the acknowledging node is its sender and the acknowledged state is its stored final state: it stores that state in `settled_state` and audits `message.settle` with ids only, in the acknowledgement's transaction, and a repeated acknowledgement of the same state writes nothing. `MessageStore.setState()` does not touch the column: a state change leaves the acknowledged state behind, so a settled `delivered` row that becomes `replied` is replayed again until the sender acknowledges `replied`, and a late `delivered` acknowledgement settles nothing. Rollback: a Worker before this change keeps the column and the index (SQLite maintains a partial index on every write), replays every row through `messages_from_node` and moves states with its own `setState()`; after the roll forward such a row still differs from its acknowledged state and is replayed again, so nothing is lost in either direction. `refused`, `expired` and `replied` are terminal and no state is reached twice, so an acknowledged state never matches a later one by accident. Duplicate, regressive, wrong-target and wrong-session reports change no state. `queued` and `accepted` rows are never final and always replayed.
 
@@ -1201,3 +1217,114 @@ Guarded MCP reply provenance is preserved by the common trusted Claude/Codex `Pr
 The marker count and write use a non-stealable, exclusive directory mutex at the existing index record-lock pathname. Atomic nonrecursive directory creation shares the namespace with older file-lock writers; a file or directory already there is bounded contention, never an age-based takeover. Only the successful owner removes its own empty directory after checking its identity. A paused live holder cannot lose this capacity mutex. A crash or uncertain ownership leaves a conservative fence. Existing offline operator maintenance must stop all marker writers before inspecting or removing orphan lock state; automatic hook execution never cleans it up. The shared inbox record-lock helper and marker retention rules are unchanged.
 
 One complete stored-lineage classifier gates parent lookup, delivery projection, replay and queued push. Only an all-NULL loop tuple is legacy. Invalid pair format, absent fields or invalid direction/generation/ordinal/depth refuse queued rows with the existing `loop-lineage-unavailable` status. Corrupt proof remains unchanged for diagnosis and can never become legacy; terminal status readback carries no authoritative loop context.
+
+
+### Canonical identity and UNKNOWN availability (#727)
+
+```mermaid
+flowchart LR
+  source["Current Claude listing or exact fresh Codex hook record"] --> publisher["Lifecycle normalization and coherent publication generation"]
+  publisher --> registry["Authenticated enrolled Node, strict population replay validation"]
+  registry --> identity["Indexed exact reference before unique alias"]
+  identity --> brake["Two current source attestations, runtime/lifecycle binding"]
+  brake --> pair["Existing pair HMAC, holds and budgets"]
+  registry --> selected["Access-protected selected-pair diagnostic, fixed safe projection"]
+```
+
+The optional canonical identity receipt attests metadata from existing supported discovery under the enrolled Node trust boundary. It provides no independent cryptographic native-session origin, loaded application, liveness or permission proof. Codex requires matching record runtime, filename and full UUID plus an explicit source timestamp within 12 hours; mtime is display compatibility only. Task-only and retained-only rows cannot mint receipts. Accepted lifecycle restore generations survive normalization, and terminal, ambiguous or conflicting records cannot qualify.
+
+Publication carries the existing coherent generation only after both writes succeed. Registry validates the full population before deduplication, persists nullable receipts and a per-Node replay watermark, and compares an exact serialized population digest for collision-free replay equality. Legacy snapshots clear receipt authority while preserving the watermark. Admission resolves exact IDs before considering unique aliases; alias ambiguity includes ineligible rows. Registered CLI runtime consistency is required for attestation.
+
+A fresh root with two current attestations can use advanced pair accounting despite UNKNOWN availability. New guarded messages store exact canonical endpoints and a separate content-free runtime/lifecycle binding, copied unchanged to tombstones. Publication refresh never changes the pair key or clears a hold. Historical legacy parents remain legacy. Unbound guarded parents require the old positive-state compatibility path. Runtime or restore-generation changes cannot inherit an attested chain. Preparation, admission, replay and queued push recheck proof; a unique structural lookup is deny-only and retains held-pair refusals after proof or capability loss.
+
+`POST /api/message-loop/identity-check` uses the existing verified Access flow and accepts one selected Node with exactly two selectors. It performs no discovery, send, registration or inventory read. The output contains only booleans, fixed codes and a validated revision or null. Current-connection registration is measured by bracketing the selected read with a server-issued connection token and accepted registration marker, then checking Registry context again. Tokens and selectors never appear in the response. This is registration evidence only; a short or null Worker revision is insufficient for exact installed artifact acceptance.
+
+MCP UNKNOWN admission, wake, Queue, resume, native intent guards, pair thresholds, release authority and local budgets remain separate and unchanged. Source tests do not establish installation or native acceptance. Installation and a selected-pair read require their existing authorized owner; native qualification starts with a fresh root after target proof.
+
+### Selected transport binding and retained holds (#727)
+
+```mermaid
+flowchart LR
+  send["Authenticated send, MCP preflight or operator"] --> positive["Existing Registry proof and parent validation"]
+  send --> selected["Selected-reference RPC on current Node sockets"]
+  selected --> deny["Existing pair HMAC, deny only"]
+  positive --> tx["Final synchronous admission transaction"]
+  deny --> tx
+  tx --> queued["Message-only exact binding, existing queue lifetime"]
+  queued --> lease["Fresh exact target lease"]
+  lease --> egress["Final Registry hold and ownership check"]
+  egress --> storage["Initialized bound-v1 storage capability"]
+  storage --> inbox["Live Node lease and policy check, atomic bound inbox write"]
+  egress --> legacy["Unbound legacy inbox/UUID.json"]
+  inbox --> owner["Bound exact owner/runtime; legacy reference matching"]
+  legacy --> owner
+```
+
+`message.resolve.request/response` is an additive protocol-v1 exchange,
+negotiated by `messaging.selected-binding.v1` on the accepted current
+connection. A request selects at most the source and target owned by that
+Node. Same-node requests use one metadata snapshot; remote Nodes resolve their
+own role independently. Only fixed selected fields return, without a directory,
+body, path, title, inventory, policy contents or exception text. Socket,
+connection token, request, message, roles and a five-second deadline bind pending
+RPCs. Each side has capacity 32. Close, replacement and policy drift invalidate
+ephemeral work. No lease is persisted or evicted into permission.
+
+Selected metadata provides transport ownership and a deny key only. It never
+becomes native liveness, MCP eligibility, positive `loop_identity`, a guarded
+parent or execution permission. Existing proof and parent validation remain
+separate. Missing Registry rows therefore cannot hide a held pair behind a
+never-published local alias. Exact local IDs precede aliases; conflict,
+ambiguity and incomplete or unreadable metadata fail closed.
+
+Messages in an unordered participant-node scope containing a retained hold need
+complete selected ownership and enforcing consumers. Unresolved or old routes
+wait or refuse with `loop-resolution-required`. Resolved unrelated legacy pairs
+retain their legacy depth and bind exact transport without acquiring loop
+lineage. Outside held scopes, unbound legacy behavior remains compatible. Historical legacy parents stay unbound outside those scopes even when their endpoints now have positive attestations; optional selected metadata cannot promote or veto that legacy chain. Matching holds, changed relevant snapshots and cryptographic failures still refuse. Existing fixed lineage/self-pair refusals precede mandatory selected-binding consistency checks; known lifecycle contradictions on a required bound path still refuse.
+
+A live exact-bound payload retry strictly validates its stored binding, fresh selected context, source and destination Node/session/runtime/incarnation tuples, and retained reply/proxy/task fields. Retained text must also match. Another alias for the same exact tuple is permitted; alias reassignment or another session on the same Node is refused without rebinding, scoring or new delivery effects. Once text was erased, retry checks do not reconstruct it or retain a new body digest. MCP recovery first validates the existing native claim and argument digest, then checks the live bound source against that exact claimant before consuming a new claim. Pure status recovery does not resolve the destination. Terminal historical lookups remain Node-scoped under the existing retention contract. A payload-bearing send or MCP send/reply with a tombstone-only ID returns the fixed `duplicate messageId` refusal. MCP validates its native claim and digest first, then refuses before consuming a new claim. Pure historical status/replay stays available without destination resolution; no body, digest or endpoint identity is added to tombstones.
+Every later egress checks the scope again. A bound queued source stays pinned
+even while its source Node is offline; only the exact target obtains a new
+lease. Every physical send reconstructs authorization from the current queued
+row, including same-node routing and reconnect flush.
+
+`delivery_binding` and `delivery_pair` exist only on live message rows. Runtime
+and nullable lifecycle identities remain stable there; population generation
+and lease IDs are attempt-local. Existing retention removes this information
+with its message. Holds retain no alias history or new endpoint material. Local
+consumers require exact owner/runtime matching, malformed bindings cannot become
+legacy, and implicit closed-session fallback/task handover cannot change a
+bound owner. Expired or invalidated leases defer receipt, preserving queued
+work; a fresh local policy veto still refuses it.
+
+The final Registry egress transaction is the hold authorization point. A later
+hold cannot recall bytes already authorized or work already accepted locally.
+The daemon constructs the selected resolver and initializes `inbox-storage.mts`.
+`NodeClient.bindingStorageReady` samples the storage capability and generation
+for registration, selected resolution and receipt gates. It describes this
+source's safe storage, without attesting to loaded old consumers or installed
+targets. A store/index/layout fault clears leases, invalidates unsent register
+frames and suppresses bound acceptance. Existing rounds recheck the layout and,
+after a fault, bounded scratch write/read/rename cleanup before recovery. No
+inline delivery retry or receipt can make readiness true.
+
+Strict stable binding-v1 records exist only in `inbox/bound-v1/<UUID>.json`;
+unbound legacy records stay flat. Invalid/null/unknown bindings, flat bound
+records, bound-namespace unbound records, duplicate IDs, unknown namespaces,
+links, hardlinks and nonregular records fail closed without migration or body
+backfill. Selected reads inspect only the requested UUID's two candidates.
+Index entries bind location and file identity. Create, update, ACK and purge
+share the existing root UUID lock and atomic replacement, including existing
+Win32 rename retries; this adds no fsync or power-loss durability guarantee.
+Receipts, progress and proxy sidecars remain metadata in their existing paths.
+Purge revalidates the canonical location under that lock and removes sidecars
+only after actual body removal.
+
+The immutable previous source cannot enumerate or read bound-v1 bodies through
+its flat-only supported readers, even with old sidecars. Old source waits
+without reconstructing a flat body. Source fixtures establish that isolation;
+installation and cutover still require their separately authorized target
+identity and native evidence. Preexisting unbound local work needs a quiescent
+disposition. This path supplies no automatic migration, signer replacement,
+hold reset, quarantine deletion or downgrade into permission.

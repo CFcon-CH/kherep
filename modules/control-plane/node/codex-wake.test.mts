@@ -83,7 +83,8 @@ test("a Codex task session is listed from its task record, with the thread id an
   recordCodexSession(node.paths, THREAD, node.workspace, T0);
   const listed = (await listSessions({ paths: node.paths, findClaude: () => null, now: () => T0 })).filter((s) => s.sessionId === THREAD);
   assert.deepEqual(listed, [{ sessionId: THREAD, runtime: "codex", state: "unknown", startedAt: new Date(T0).toISOString(), name: NAME,
-    cwd: fs.realpathSync.native(node.workspace), kind: "codex-task" }]);
+    cwd: fs.realpathSync.native(node.workspace), kind: "codex-task", canonicalIdentity: { version: 1, source: "codex-hook", runtime: "codex",
+      sessionId: THREAD, observedAt: T0, lifecycleGeneration: 0 } }]);
   await stopTask({ taskId: TASK }, node.deps());
   const idle = await listSessions({ paths: node.paths, findClaude: () => null, now: () => T0 });
   assert.equal(idle.find((s) => s.sessionId === THREAD)?.state, "unknown", "task completion is not loaded-holder evidence");

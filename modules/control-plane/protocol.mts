@@ -11,7 +11,7 @@ export const PROTOCOL_VERSION = 1;
 export const MESSAGE_TYPES = [
   "challenge", "auth", "register", "capabilities.update", "sessions.snapshot",
   "command", "command.ack", "command.result", "event", "error",
-  "message.send", "message.deliver", "message.status", "directory.get", "directory",
+  "message.resolve.request", "message.resolve.response", "message.send", "message.deliver", "message.status", "directory.get", "directory",
   "task.report", "task.request",
   "mcp.credential.rotate", "mcp.credential", "mcp.intent.register", "mcp.intent.receipt",
   "mcp.inbox.request", "mcp.inbox.response",
@@ -110,9 +110,10 @@ export interface RuntimeInfo { name: string; kind: "cli" | "local-endpoint"; ver
 // "intercom: claude@sekhmet"; the session keeps its task-<8> name.
 // title (issue #88) is the Codex thread title the Codex app shows; display
 // only, never an address. Older nodes and Workers omit or ignore it.
+import { isCanonicalIdentity, type CanonicalIdentityV1 } from "./protocol-session-identity.mts";
 export interface SessionInfo {
   sessionId: string; runtime: string; state: string; startedAt?: string; name?: string; cwd?: string; kind?: string; label?: string;
-  title?: string;
+  title?: string; canonicalIdentity?: CanonicalIdentityV1;
 }
 export interface NodeFacts { hostname: string; os: string; arch: string; cpus: number; memoryBytes: number }
 export interface RegisterBody { facts: NodeFacts; runtimes: RuntimeInfo[]; capabilities: string[] }
@@ -155,7 +156,9 @@ export function isSessionInfo(value: unknown): value is SessionInfo {
     && isShortString(value.state, 32) && (value.startedAt === undefined || isShortString(value.startedAt, 64))
     && (value.name === undefined || isShortString(value.name, 128)) && (value.cwd === undefined || isShortString(value.cwd, 512))
     && (value.kind === undefined || isShortString(value.kind, 32)) && (value.label === undefined || isLabel(value.label))
-    && (value.title === undefined || isTitle(value.title));
+    && (value.title === undefined || isTitle(value.title))
+    && (value.canonicalIdentity === undefined || isCanonicalIdentity(value.canonicalIdentity)
+      && value.canonicalIdentity.sessionId === value.sessionId && value.canonicalIdentity.runtime === value.runtime);
 }
 
 export function isNodeFacts(value: unknown): value is NodeFacts {

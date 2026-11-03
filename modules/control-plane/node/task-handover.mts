@@ -1,7 +1,7 @@
-import path from "node:path";
+import { mayRetarget } from "./message-owner.mts";
 import { isMessageId, isSessionRef } from "../protocol-messages.mts";
 import { isTaskId, SUPPORTED_RUNTIMES } from "../protocol-tasks.mts";
-import { getMessage, listInbox, writeJsonAtomic, type DeliveryTaskIdentity, type InboxRecord } from "./inbox.mts";
+import { getMessage, listInbox, replaceInboxRecordLocked, type DeliveryTaskIdentity, type InboxRecord } from "./inbox.mts";
 import { withRecordLock } from "./inbox-record-lock.mts";
 
 type Scope = Pick<DeliveryTaskIdentity, "taskId" | "runtime">;
@@ -13,8 +13,8 @@ function rewrite(dir: string, messageId: string, change: (r: InboxRecord) => Inb
   return withRecordLock(dir, messageId, () => {
     const record = getMessage(dir, messageId);
     const next = record ? change(record) : null;
-    if (!next) return false;
-    writeJsonAtomic(path.join(dir, `${messageId}.json`), next);
+    if (!next || !mayRetarget(record!, { sessionId: next.toSession, runtime: next.binding?.to.runtime ?? null })) return false;
+    replaceInboxRecordLocked(dir, messageId, next);
     return true;
   });
 }
@@ -28,8 +28,8 @@ export function handoverTaskMessages(dir: string, from: string, to: string, scop
     throw new Error("invalid task handover identity or session");
   }
   if (from === to) return;
-  const owned = (r: InboxRecord): boolean => r.delivery?.taskId === scope.taskId && r.delivery?.runtime === scope.runtime;
-  const waiting = (r: InboxRecord): boolean => (r.state === "accepted" || r.state === "offered")
+  const owned = (r: InboxRecord): boolean => !Object.hasOwn(r, "binding") && r.delivery?.taskId === scope.taskId && r.delivery?.runtime === scope.runtime;
+  const waiting = (r: InboxRecord): boolean => !Object.hasOwn(r, "binding") && (r.state === "accepted" || r.state === "offered")
     && r.toSession !== to && (r.toSession === from || owned(r));
   const moved: string[] = [];
   for (const record of listInbox(dir).filter(waiting)) {

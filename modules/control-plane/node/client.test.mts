@@ -253,3 +253,13 @@ test("a Worker error frame that names no message is logged once", async () => {
   await client.onFrame(JSON.stringify(makeEnvelope("error", { error: "synthetic rejection" }, 0, 0)));
   assert.deepEqual(logs, ["kherep-node: control plane rejected a frame: synthetic rejection"]);
 });
+
+test("I10: snapshot generation participates in frame deduplication", async () => {
+  const { attachIdentitySnapshot } = await import("./session-identity.mts");
+  const { client } = await authed();
+  const rows = [{ sessionId: "synthetic", runtime: "codex", state: "unknown" }];
+  attachIdentitySnapshot(rows, 1);
+  assert.equal(decode(client.sessionFrames(rows))[0].body && client.sessionFrames(rows).length, 0);
+  attachIdentitySnapshot(rows, 2);
+  assert.deepEqual(decode(client.sessionFrames(rows))[0].body, { sessions: rows, identitySnapshot: { version: 1, generation: 2 } });
+});
