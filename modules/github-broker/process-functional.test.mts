@@ -25,7 +25,7 @@ function fixture(t:TestContext) {
   const lines=(name:string):Reply[]=>{const file=path.join(home,`${name}.jsonl`);return fs.existsSync(file)?fs.readFileSync(file,'utf8').trim().split('\n').filter(Boolean).map(line=>JSON.parse(line)):[];};
   const receipts=():Reply[]=>{const dir=path.join(root,'receipts');return fs.existsSync(dir)?fs.readdirSync(dir).filter(n=>n.endsWith('.json')).map(n=>JSON.parse(fs.readFileSync(path.join(dir,n),'utf8'))):[];};
   async function launch(runtime:Runtime,request:Reply,phase:Phase='normal') {
-    const child=spawn(process.execPath,['--import',path.join(sourceRoot,'process-functional.fixture.mts'),path.join(sourceRoot,`github-${runtime}.mts`)],{env:{},stdio:['pipe','pipe','pipe','ipc']});children.push(child);
+    const child=spawn(process.execPath,['--disable-warning=ExperimentalWarning','--import',path.join(sourceRoot,'process-functional.fixture.mts'),path.join(sourceRoot,`github-${runtime}.mts`)],{env:{},stdio:['pipe','pipe','pipe','ipc']});children.push(child);
     let stdout='',stderr='',closed=false;
     const events:string[]=[];child.on('message',(message:unknown)=>{if(message&&typeof message==='object'&&'event'in message)events.push(String(message.event));});
     child.stdout!.on('data',chunk=>{stdout+=String(chunk);if(stdout.length>16384)child.kill('SIGKILL');});
@@ -127,7 +127,7 @@ test('one UUID uses the separately approved runtime/App namespaces',{timeout:300
   assert.equal(f.receipts().length,2);assert.equal(f.lines('effects').length,2);matrix.push({case:'separate runtime/App namespaces',status:'PASS',businessEffects:2});
 });
 test('preload refusal prevents production import and leaves parent environment untouched',{timeout:15000},async t=>{
-  const f=fixture(t),child=spawn(process.execPath,['--import',path.join(sourceRoot,'process-functional.fixture.mts'),path.join(sourceRoot,'github-claude.mts')],{env:{},stdio:['pipe','pipe','pipe','ipc']});f.children.push(child);
+  const f=fixture(t),child=spawn(process.execPath,['--disable-warning=ExperimentalWarning','--import',path.join(sourceRoot,'process-functional.fixture.mts'),path.join(sourceRoot,'github-claude.mts')],{env:{},stdio:['pipe','pipe','pipe','ipc']});f.children.push(child);
   let outputBytes=0,failed=false;child.stdout!.on('data',b=>{outputBytes+=b.length;});child.stderr!.on('data',b=>{outputBytes+=b.length;});child.on('message',(m:unknown)=>{if(m&&typeof m==='object'&&'event'in m&&m.event==='fixture-failed')failed=true;});
   const done=once(child,'close'),timer=setTimeout(()=>child.kill('SIGKILL'),10000);
   child.send({home:'/__forbidden_fixture_canary__',sourceRoot,phase:'normal'});child.stdin!.end(JSON.stringify(create()));
