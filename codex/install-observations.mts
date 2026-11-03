@@ -72,13 +72,13 @@ function prepareObservationPublisher(options: ObservationInstallOptions) {
     if (observers.length !== 1)
         throw new Error('observation-role-unrecognized');
     const [agentName, agent] = observers[0];
-    if (!/^[a-z0-9-]+$/.test(agentName) || agent.model !== resolution.roles.observer.model || agent.reasoning !== 'low')
+    if (!/^[a-z0-9-]+$/.test(agentName) || agent.model !== resolution.roles.observer.model || agent.reasoning !== resolution.roles.observer.reasoning)
         throw new Error('observation-pin-unrecognized');
     const capabilities = JSON.parse(read(path.join(home, 'hooks', 'parity', 'capabilities.json')));
     const pin = capabilities.agents?.['claude-obs'];
-    if (pin?.as !== agentName || pin.enforcePin !== true || pin.sandbox !== 'read-only' || pin.model !== agent.model || pin.reasoning !== 'low')
+    if (pin?.as !== agentName || pin.enforcePin !== true || pin.sandbox !== 'read-only' || pin.model !== agent.model || pin.reasoning !== resolution.roles.observer.reasoning)
         throw new Error('observation-pin-unrecognized');
-    const agentOptions = { model: agent.model, reasoning: 'low', sandbox: 'read-only' };
+    const agentOptions = { model: agent.model, reasoning: resolution.roles.observer.reasoning, sandbox: 'read-only' };
     const agentFile = path.join(home, 'agents', `${agentName}.toml`), beforeAgent = read(agentFile);
     const newAgent = renderAgent(agentName, source('codex/agents/codex-obs.md'), agentOptions);
     if (beforeAgent !== newAgent && ![predecessor, scopedPredecessor, identityPredecessor, pilotPredecessor, handbackPredecessor, linkingPredecessor].some(known => beforeAgent === renderAgent(agentName, known['codex/agents/codex-obs.md'], agentOptions)))

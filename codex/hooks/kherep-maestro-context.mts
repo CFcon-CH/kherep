@@ -66,7 +66,7 @@ export function turnContext(data: HookData = {}): string {
     "Classify privacy before tools; private material is forbidden to Codex/cloud paths.",
     "Delegate only for parallelism, specialization, isolation or independent review; never overlap writes. Bound workers by objective, scope, constraints, evidence and return format; Maestro owns acceptance.",
     "Inspect the final diff; report C1 correctness, C2 verification, C3 safety and C4 scope integrity. Trivial conversation skips ceremony.",
-    "Before final, dispatch codex-obs once: agent_type codex-obs, the exact model from its installed agent TOML, reasoning_effort low, fork_turns none; bounded nonprivate summary with session/turn IDs; require a strict OBS-RESULT receipt or bounded OBS-ATTEMPT worker report from its contract when no canonical receipt exists.",
+    "Before final, dispatch codex-obs once: agent_type codex-obs, the exact model and model_reasoning_effort from its installed agent TOML, fork_turns none; bounded nonprivate summary with session/turn IDs; require a strict OBS-RESULT receipt or bounded OBS-ATTEMPT worker report from its contract when no canonical receipt exists.",
     "Luna extracts and publishes only through mcp__kherep_observations__publish_observations; its adapter enforces canonical authority and target checks. Independently validate the handback and read canonical created targets. Preserve canonical receipts and all IDs even with isError true; isError alone does not prove an outer refusal. Empty means zero I/O. Report failed receipts and non-adapter attempts in the same turn; attempted calls without a receipt leave publication and IDs UNKNOWN. Never silently publish or repair.",
   ].join("\n");
 }
