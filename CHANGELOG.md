@@ -19,6 +19,16 @@ increments the minor version; every other release increments the patch version.
 
 ### Added
 
+- Permanent usage notice (issue #757): the `usage-band` mod, installed to
+  `<CLAUDE_HOME>/mods/usage-band/` and loaded through `CLAUDE_CODE_PLUGIN_DIRS` in the
+  rendered `settings.json`, draws the weekly plan budget in the band above the prompt in
+  the CLI and the desktop app (Windows and macOS), highlighted over the threshold or
+  ahead of pace, and writes the engine's `seven_day` reading to
+  `.cache/usage-watch/state.json` after each turn, so the cache refreshes without a
+  status line. The `usage-watch` hook now also shows the person a one-line notice
+  (`systemMessage`). The recorder shows its notification on macOS through `osascript`.
+  `npm run test:mods` validates and tests the mods with the Claude Code CLI (SKIP
+  without it); a bootstrap test pins the mod's copy of `usage-window.mts`.
 - Weekly usage watcher (issue #748): the status line hands the documented
   `rate_limits.seven_day` window to a detached recorder, `hooks/usage-record.mts`,
   which caches it under `.cache/usage-watch/` and shows one Windows toast per

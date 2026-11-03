@@ -1,5 +1,7 @@
 {
-  "env": {},
+  "env": {
+    "CLAUDE_CODE_PLUGIN_DIRS": "__KHEREP_CLAUDE_HOME__/mods/usage-band"
+  },
   "permissions": {
     "allow": [
       "Bash(node __KHEREP_WORKSPACE__/tools/atl-confluence-ccoder.mts get:*)",

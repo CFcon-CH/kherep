@@ -3,8 +3,9 @@
 // never wired as a hook (hook integrity does not restore it; the installers do):
 //   node "<CLAUDE_HOME>/hooks/usage-record.mts" --used <number> --resets-at <epoch-seconds|iso>
 //        [--home <dir>] [--now <epoch-ms>]
-// It evaluates the documented rate_limits.seven_day window, shows at most one Windows toast
-// per condition per reset window (exclusive-create markers), and writes
+// It evaluates the documented rate_limits.seven_day window, shows at most one notification
+// per condition per reset window (exclusive-create markers; a Windows toast, or on macOS
+// osascript's display notification, issue #757), and writes
 // <home>/.cache/usage-watch/state.json for hooks/usage-watch.mts, then last-input, the
 // throttle the status line compares. Every failure prints one line to stderr and exits 0.
 import { spawn } from "node:child_process";
@@ -57,6 +58,14 @@ function powershellPath(env: Env): string {
   return fs.existsSync(full) ? full : "powershell.exe";
 }
 
+// The AppleScript string literal takes \ and " escaped; the command is argv, never a shell.
+const appleEscape = (text: string) => text.replace(/[\\"]/g, (c) => `\\${c}`);
+
+export function notifierArgs(platform: "win32" | "darwin", title: string, body: string, env: Env = process.env): { command: string; args: string[] } {
+  if (platform === "win32") return { command: powershellPath(env), args: toastArgs(title, body) };
+  return { command: "osascript", args: ["-e", `display notification "${appleEscape(body)}" with title "${appleEscape(title)}"`] };
+}
+
 // "sent" or "skipped:<reason>". KHEREP_USAGE_TOAST_LOG is the test seam: it records the
 // toast instead of showing it, on every platform.
 export function deliverToast(text: { title: string; body: string }, env: Env = process.env, platform: string = process.platform): string {
@@ -65,8 +74,9 @@ export function deliverToast(text: { title: string; body: string }, env: Env = p
     fs.appendFileSync(env.KHEREP_USAGE_TOAST_LOG, `${text.title}\t${text.body}\n`, "utf8");
     return "sent";
   }
-  if (platform !== "win32") return "skipped:platform";
-  const child = spawn(powershellPath(env), toastArgs(text.title, text.body), { detached: true, stdio: "ignore", windowsHide: true });
+  if (platform !== "win32" && platform !== "darwin") return "skipped:platform";
+  const { command, args } = notifierArgs(platform, text.title, text.body, env);
+  const child = spawn(command, args, { detached: true, stdio: "ignore", windowsHide: platform === "win32" });
   child.on("error", () => { /* a toast that cannot start is not worth an error */ });
   child.unref();
   return "sent";

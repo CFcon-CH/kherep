@@ -11,7 +11,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { WEEK_SECONDS, windowKey } from "./lib/usage-window.mts";
-import { TOAST_APP_ID, deliverToast, toastArgs } from "./usage-record.mts";
+import { TOAST_APP_ID, deliverToast, notifierArgs, toastArgs } from "./usage-record.mts";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SCRIPT = path.join(HERE, "usage-record.mts");
@@ -97,7 +97,7 @@ test("B5 two recorders at once still toast at most once per condition", async ()
   }
 });
 
-test("B6 opt-out and non-Windows: no toast, no marker, state still written", () => {
+test("B6 opt-out and platforms without a notifier: no toast, no marker, state still written", () => {
   const t = setup();
   const r = t.run(["--used", "55", "--resets-at", String(RESETS), "--now", at(RESETS, 20)], { KHEREP_USAGE_TOAST: "0" });
   assert.equal(r.status, 0, r.stderr);
@@ -107,8 +107,21 @@ test("B6 opt-out and non-Windows: no toast, no marker, state still written", () 
   assert.deepEqual(t.state().conditions, { threshold: true, pace: true });
   const text = { title: "t", body: "b" };
   assert.equal(deliverToast(text, {}, "linux"), "skipped:platform");
-  assert.equal(deliverToast(text, {}, "darwin"), "skipped:platform");
   assert.equal(deliverToast(text, { KHEREP_USAGE_TOAST: "0" }, "win32"), "skipped:disabled");
+  assert.equal(deliverToast(text, { KHEREP_USAGE_TOAST: "0" }, "darwin"), "skipped:disabled");
+  const log = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "usage-record-mac-")), "toasts.log");
+  assert.equal(deliverToast(text, { KHEREP_USAGE_TOAST_LOG: log }, "darwin"), "sent");
+  assert.equal(fs.readFileSync(log, "utf8"), "t\tb\n");
+  fs.rmSync(path.dirname(log), { recursive: true, force: true });
+});
+
+test("B7b the macOS notifier is osascript display notification with escaped text, argv only", () => {
+  const n = notifierArgs("darwin", 'Budget "half" \\ used', "55% used. Resets Thu 06 Nov 09:00.");
+  assert.equal(n.command, "osascript");
+  assert.deepEqual(n.args, ["-e", 'display notification "55% used. Resets Thu 06 Nov 09:00." with title "Budget \\"half\\" \\\\ used"']);
+  const w = notifierArgs("win32", "t", "b", { SystemRoot: "Z:\\NoWindows" });
+  assert.equal(w.command, "powershell.exe");
+  assert.deepEqual(w.args, toastArgs("t", "b"));
 });
 
 test("B7 the toast command is Windows PowerShell WinRT with escaped text", () => {

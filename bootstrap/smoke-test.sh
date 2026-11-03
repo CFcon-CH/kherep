@@ -189,6 +189,7 @@ check_profile() {
     kherep/githooks/commit-msg kherep/githooks/post-checkout
     kherep/githooks/pre-push kherep/githooks/attribution-record.mts
     hooks/main-checkout-guard.mts hooks/lib/main-checkout.mts hooks/lib/command-walk.mts
+    mods/usage-band/hooks/register.mts
   )
   for file in "${must_exist[@]}"; do
     [ -e "$CLAUDE_HOME/$file" ] || { note_fail "MISSING [$profile] $file"; }
