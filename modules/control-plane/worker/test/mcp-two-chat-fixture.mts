@@ -200,7 +200,10 @@ export async function startNativeNode(name: string, sessions: SessionInfo[]): Pr
     async close() {
       for (const instance of clients) await instance.close();
       await chain;
+      const closed = ws.readyState === 3 ? Promise.resolve() : new Promise<void>(resolve => ws.addEventListener("close", () => resolve(), { once: true }));
       ws.close(1000, "done");
+      await closed;
+      await chain;
       releaseRename();
       fs.rmSync(root, { recursive: true, force: true });
     },

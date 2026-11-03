@@ -9,16 +9,19 @@ const SCHEMA = `CREATE TABLE IF NOT EXISTS message_loop_pairs (
 );
 CREATE INDEX IF NOT EXISTS loop_idle ON message_loop_pairs(last_activity) WHERE hold_id IS NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS loop_hold ON message_loop_pairs(hold_id) WHERE hold_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS loop_held_nodes ON message_loop_pairs(from_node,to_node) WHERE hold_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS loop_released ON message_loop_pairs(released_id) WHERE released_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS messages_loop_pair ON messages(loop_pair);
 CREATE INDEX IF NOT EXISTS messages_loop_queued ON messages(loop_pair, state) WHERE state = 'queued';
 CREATE INDEX IF NOT EXISTS tombstones_loop_pair ON message_tombstones(loop_pair);`;
 const DUE = `SELECT pair_key FROM message_loop_pairs INDEXED BY loop_idle WHERE hold_id IS NULL AND last_activity <= ?
  AND NOT EXISTS (SELECT 1 FROM messages INDEXED BY messages_loop_pair WHERE loop_pair = pair_key)
+ AND NOT EXISTS (SELECT 1 FROM messages INDEXED BY messages_delivery_pair WHERE delivery_pair = pair_key)
  AND NOT EXISTS (SELECT 1 FROM message_tombstones INDEXED BY tombstones_loop_pair WHERE loop_pair = pair_key)
  ORDER BY last_activity LIMIT 64`;
 const NEXT = `SELECT MIN(last_activity) AS next FROM message_loop_pairs INDEXED BY loop_idle WHERE hold_id IS NULL
  AND NOT EXISTS (SELECT 1 FROM messages INDEXED BY messages_loop_pair WHERE loop_pair = pair_key)
+ AND NOT EXISTS (SELECT 1 FROM messages INDEXED BY messages_delivery_pair WHERE delivery_pair = pair_key)
  AND NOT EXISTS (SELECT 1 FROM message_tombstones INDEXED BY tombstones_loop_pair WHERE loop_pair = pair_key)`;
 export const LOOP_QUERIES = { loopDue: { sql: DUE, args: [0] }, loopNext: { sql: NEXT, args: [] },
   loopPair: { sql: "SELECT * FROM message_loop_pairs WHERE pair_key = ?", args: ["key"] } } as const;
@@ -47,6 +50,15 @@ export class MessageLoopStore {
   held(key: string): string | null {
     const r = this.read(key);
     return r?.hold_id ? loopHeldReason(r.hold_code as LoopHoldCode, String(r.hold_id)) : null;
+  }
+  hasHeldNodeScope(fromNode: string, toNode: string): boolean {
+    const rows = this.sql.exec(`SELECT pair_key FROM message_loop_pairs INDEXED BY loop_held_nodes
+      WHERE hold_id IS NOT NULL AND from_node=? AND to_node=? UNION ALL
+      SELECT pair_key FROM message_loop_pairs INDEXED BY loop_held_nodes
+      WHERE hold_id IS NOT NULL AND from_node=? AND to_node=?`, fromNode, toNode, toNode, fromNode).toArray();
+    // A corrupt retained row never masquerades as an empty scope.
+    for (const r of rows) this.read(String(r.pair_key));
+    return rows.length !== 0;
   }
   admit(c: LoopCandidate): { loop: LoopAdmissionV1 } | { reason: string } {
     let r = this.read(c.key);

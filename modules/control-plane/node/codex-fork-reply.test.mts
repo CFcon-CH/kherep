@@ -6,13 +6,13 @@ import test from "node:test";
 
 import { listenerDir, wakeAudit } from "./autonomy.mts";
 import { advanceForkAttempt, claimForkAttempt, forkAttempts, forkAttemptsPath, recoverForkAttempts } from "./codex-fork-attempts.mts";
-import { ANSWER, FORK_ID, FORK_OWNER, forkNode, LAST_TURN } from "./codex-fork-fixture.mts";
+import { ANSWER, FORK_ID, FORK_OWNER, forkNode, LAST_TURN, PEER } from "./codex-fork-fixture.mts";
 import { forkTestTimeouts, resetForkFeatureCache } from "./codex-fork-reply.mts";
 import { FAST } from "./codex-fork-run-fixture.mts";
 import { resetMcpCache } from "./codex-mcp.mts";
 import { codexQueueIdle, pollCodexQueue } from "./codex-queue.mts";
 import { recordCodexSession } from "./codex-sessions.mts";
-import { getMessage } from "./inbox.mts";
+import { getMessage, storeMessage } from "./inbox.mts";
 import { T0 } from "./task-fixture.mts";
 
 // Issue #408, PR 3: the fork reply producer through the real poll and lane
@@ -33,6 +33,37 @@ const turns = (f: Node): number[] => {
   const file = path.join(listenerDir(f.paths), `${FORK_OWNER}.turns.json`);
   return fs.existsSync(file) ? (JSON.parse(fs.readFileSync(file, "utf8")) as { turns: number[] }).turns : [];
 };
+
+test("S18: revoking codexFork at owner thread/read prevents the later fork turn", async t => {
+  let revoked = false;
+  const f = forkNode(t, { onRequest: (method, params) => {
+    if (method !== "thread/read" || params.threadId !== FORK_OWNER) return;
+    const policy = JSON.parse(fs.readFileSync(f.paths.policy, "utf8"));
+    delete policy.wake.codexFork;
+    fs.writeFileSync(f.paths.policy, JSON.stringify(policy));
+    revoked = true;
+  } });
+  const id = crypto.randomUUID(), from = { ...PEER, session: crypto.randomUUID() };
+  storeMessage(f.paths.inbox, { messageId: id, from, toSession: FORK_OWNER, text: "Synthetic S18 exact-owner content",
+    createdAt: new Date(T0).toISOString(), binding: { version: 1, mode: "exact",
+      from: { sessionId: from.session, runtime: "codex", lifecycleGeneration: null },
+      to: { sessionId: FORK_OWNER, runtime: "codex", lifecycleGeneration: null },
+      leaseId: crypto.randomUUID(), localGeneration: null } }, T0);
+  const before = getMessage(f.paths.inbox, id);
+  await poll(f);
+  const requests = f.app.runs.flatMap(run => run.requests);
+  const attempts = forkAttempts(f.paths, FORK_OWNER);
+  const outbox = fs.existsSync(f.paths.outbox) ? fs.readdirSync(f.paths.outbox) : [];
+  t.diagnostic(JSON.stringify({ boundary: "owner thread/read", revoked, requests,
+    attempts: attempts.map(a => ({ state: a.state, answer: a.answer })), outbox,
+    inboxUnchanged: JSON.stringify(getMessage(f.paths.inbox, id)) === JSON.stringify(before) }));
+  assert.equal(revoked, true, "the real scheduler reached the revocation callback");
+  assert.equal(f.app.runs.length, 1, "an already-admitted synthetic helper is allowed");
+  assert.deepEqual(getMessage(f.paths.inbox, id), before, "the exact bound original stays accepted and unchanged");
+  assert.ok(!requests.some(request => request.method === "turn/start"), "revoked permission must veto a later turn/start");
+  assert.ok(attempts.every(attempt => attempt.answer === undefined), "no answer is retained after revocation");
+  assert.deepEqual(outbox, [], "no answer is queued after revocation");
+});
 
 test("with wake.codexFork absent nothing is read, started, written or audited (design section 12)", async (t) => {
   const f = forkNode(t, {}, { fork: false });

@@ -1,3 +1,4 @@
+import { watchInboxReads } from "./inbox-read-fixture.mts";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
@@ -12,19 +13,15 @@ test("the original owner receives one compact hint with at most eight targeted r
   const node = busyFixture(t, 12);
   const before = node.inboxBytes();
   const session = fs.readFileSync(path.join(node.paths.codexSessions, `${BUSY_OWNER}.json`), "utf8");
-  let reads = 0;
-  const read = fs.readFileSync;
-  const mockedRead = t.mock.method(fs, "readFileSync", (...args: Parameters<typeof read>) => {
-    if (String(args[0]).startsWith(node.paths.inbox + path.sep)) reads++;
-    return Reflect.apply(read, fs, args);
-  });
+  const mockedRead = watchInboxReads(t, node.paths.inbox);
+  const reads = mockedRead.reads;
   const discovery = t.mock.method(fs, "readdirSync", () => { throw new Error("discovery is forbidden at a tool boundary"); });
   const output = deliverForCodex(node.input, node.hookDeps);
   assert.deepEqual(JSON.parse(output), { hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: BUSY_CONTEXT } });
-  assert.equal(reads, 8);
+  assert.equal(reads(), 8);
   assert.equal(deliverForCodex(node.input, node.hookDeps), "");
-  assert.equal(reads, 8, "a claimed generation does not reread Inbox records");
-  discovery.mock.restore(); mockedRead.mock.restore();
+  assert.equal(reads(), 8, "a claimed generation does not reread Inbox records");
+  discovery.mock.restore(); mockedRead.restore();
   assert.deepEqual(node.inboxBytes(), before, "hinting does not offer, confirm or change progress");
   // Issue #408: the tool boundary refreshes only the last event, never lastSeen, cwd or mode.
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(node.paths.codexSessions, `${BUSY_OWNER}.json`), "utf8")),
@@ -82,16 +79,15 @@ test("only still-accepted admitted records count, and arrivals during a read are
   }
   const remaining = node.ids.filter((_, i) => i !== 1);
   const before = remaining.map((id) => fs.readFileSync(path.join(node.paths.inbox, `${id}.json`), "utf8"));
-  const read = fs.readFileSync;
-  const during = t.mock.method(fs, "readFileSync", (...args: Parameters<typeof read>) => {
-    const value = Reflect.apply(read, fs, args);
-    if (String(args[0]) === path.join(node.paths.inbox, `${node.ids[4]}.json`)) {
+  let injected = false;
+  const during = watchInboxReads(t, node.paths.inbox, { after: file => {
+    if (file === path.join(node.paths.inbox, `${node.ids[4]}.json`) && !injected) {
+      injected = true;
       fs.writeFileSync(path.join(node.paths.inbox, "00000000-0000-4000-8000-000000000009.json"), "{new synthetic arrival}");
     }
-    return value;
-  });
+  } });
   assert.match(deliverForCodex(node.input, node.hookDeps), /New peer messages/);
-  during.mock.restore();
+  during.restore();
   assert.equal(getMessage(node.paths.inbox, node.ids[4])?.state, "accepted");
   assert.equal(JSON.parse(fs.readFileSync(node.ticket, "utf8")).claimed, true);
   assert.deepEqual(remaining.map((id) => fs.readFileSync(path.join(node.paths.inbox, `${id}.json`), "utf8")), before);

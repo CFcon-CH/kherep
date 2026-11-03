@@ -19,7 +19,8 @@ describe("deletion after the sender's acknowledgement", () => {
     await deletedByAck(id, a.nodeId, b.nodeId);
     const stone = await tombstone(id);
     expect(stone).toMatchObject({ from_node: a.nodeId, to_node: b.nodeId, state: "delivered", depth: 0 });
-    expect(Object.keys(stone ?? {}).sort()).toEqual(["deleted_at", "depth", "from_node", "id", "loop_direction", "loop_generation", "loop_ordinal", "loop_pair", "loop_thread", "reason", "reply_message_id", "state", "to_node"]);
+    expect(stone?.loop_identity).toBeNull();
+    expect(Object.keys(stone ?? {}).sort()).toEqual(["deleted_at", "depth", "from_node", "id", "loop_direction", "loop_generation", "loop_identity", "loop_ordinal", "loop_pair", "loop_thread", "reason", "reply_message_id", "state", "to_node"]);
     expect(await deletes(id)).toEqual([{ actor: `node:${a.nodeId}`, detail: JSON.stringify({ messageId: id, via: "ack" }) }]);
     expect(await settles(id)).toEqual([]); // issue #493: a deletable row is deleted, never settled
     expect((await registry().listMessages(a.nodeId, 100)).map((m) => m.messageId)).not.toContain(id);
@@ -58,14 +59,15 @@ describe("deletion after the sender's acknowledgement", () => {
     await deletedByAck(id, a.nodeId, b.nodeId);
   });
 
-  it("answers a late resend and a late target report from the tombstone, and after the prune", async () => {
+  it("refuses a late payload resend, retains historical status and answers late target reports", async () => {
     const { a, sender, target, b } = await pair();
     const id = await deliveredMessage(sender, target, b.nodeId);
     ack(sender, id, "delivered");
     await deletedByAck(id, a.nodeId, b.nodeId);
     frame(sender, "message.send", { messageId: id, fromSession: "s-a", to: { nodeId: b.nodeId, session: "s-b" }, text: "synthetic" });
-    expect((await until(sender, "message.status", { messageId: id, state: "delivered" })).map((envelope) => [envelope.type, envelope.body]))
-      .toEqual([["message.status", { messageId: id, state: "delivered" } satisfies MessageStatusBody]]);
+    expect((await until(sender, "error", { messageId: id })).map((envelope) => [envelope.type, envelope.body]))
+      .toEqual([["error", { messageId: id, error: "duplicate messageId" }]]);
+    expect(await registry().mcpMessageStatus(a.nodeId, id)).toMatchObject({ state: "delivered" });
     expect(await sync(sender)).toEqual([]); // no second frame for the sender before its directory answer
     expect(await row(id)).toBeUndefined(); // answered from the tombstone: no row came back
     expect(await sync(target)).toEqual([]); // nothing for the target before its directory answer
@@ -86,7 +88,7 @@ describe("deletion after the sender's acknowledgement", () => {
 
   // Issue #529: the status of a resend reaches the socket after the answer to a
   // later directory.get. The hold forces that order; sync() alone misses the status.
-  it("answers a resend whose status a directory answer overtakes", async () => {
+  it("refuses a payload resend whose error a directory answer overtakes", async () => {
     const { a, sender, target, b } = await pair();
     const id = await deliveredMessage(sender, target, b.nodeId);
     ack(sender, id, "delivered");
@@ -96,8 +98,8 @@ describe("deletion after the sender's acknowledgement", () => {
       frame(sender, "message.send", { messageId: id, fromSession: "s-a", to: { nodeId: b.nodeId, session: "s-b" }, text: "synthetic" });
       expect(await sync(sender)).toEqual([]); // the failure shape of CI run 39371064143: the directory answer comes first under the hold
       hold.release();
-      expect((await until(sender, "message.status", { messageId: id, state: "delivered" })).map((e) => [e.type, e.body]))
-        .toEqual([["message.status", { messageId: id, state: "delivered" } satisfies MessageStatusBody]]);
+      expect((await until(sender, "error", { messageId: id })).map((e) => [e.type, e.body]))
+        .toEqual([["error", { messageId: id, error: "duplicate messageId" }]]);
       expect(await row(id)).toBeUndefined();
       expect(await sync(sender)).toEqual([]);
     } finally {

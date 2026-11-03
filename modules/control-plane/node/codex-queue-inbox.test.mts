@@ -1,3 +1,4 @@
+import { watchInboxReads } from "./inbox-read-fixture.mts";
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -81,11 +82,7 @@ test("multiple admitted owners reread no unrelated message body after the round 
   }
   const unrelated = Array.from({ length: 20 }, (_, n) => message(node, `unrelated-${n}`));
   const reads = new Map(unrelated.map((id) => [path.join(node.paths.inbox, `${id}.json`), 0]));
-  const read = fs.readFileSync;
-  const intercepted = t.mock.method(fs, "readFileSync", (...args: Parameters<typeof fs.readFileSync>) => {
-    if (typeof args[0] === "string" && reads.has(args[0])) reads.set(args[0], reads.get(args[0])! + 1);
-    return read(...args);
-  });
+  const intercepted = watchInboxReads(t, file => reads.has(file), { after: file => reads.set(file, reads.get(file)! + 1) });
 
   pollCodexQueue(node.deps());
   await codexQueueIdle();
@@ -93,7 +90,7 @@ test("multiple admitted owners reread no unrelated message body after the round 
   assert.deepEqual([...reads.values()], Array(20).fill(1), "filename cleanup must not reparse unrelated records");
   assert.deepEqual(queues(node), []);
   assert.deepEqual(hints(node).sort(), [...owners].sort());
-  intercepted.mock.restore();
+  intercepted.restore();
   pollCodexQueue(node.deps());
   await codexQueueIdle();
   assert.equal(hints(node).length, owners.length, "pending CP hints are not published twice");
@@ -102,17 +99,12 @@ test("multiple admitted owners reread no unrelated message body after the round 
 test("a round without an eligible plain Codex owner does not read an Inbox record snapshot", async (t) => {
   const node = queueNode(t);
   message(node, "unrelated");
-  const read = fs.readFileSync;
-  let recordReads = 0;
-  t.mock.method(fs, "readFileSync", (...args: Parameters<typeof fs.readFileSync>) => {
-    if (typeof args[0] === "string" && path.dirname(args[0]) === node.paths.inbox && args[0].endsWith(".json")) recordReads++;
-    return read(...args);
-  });
+  const recordReads = watchInboxReads(t, node.paths.inbox).reads;
 
   pollCodexQueue(node.deps());
   await codexQueueIdle();
 
-  assert.equal(recordReads, 0, "filename-only note cleanup may still run");
+  assert.equal(recordReads(), 0, "filename-only note cleanup may still run");
 });
 
 test("full ids and aliases route oldest first while an ambiguous alias and task owner stay excluded", async (t) => {
@@ -169,16 +161,10 @@ test("targeted refresh rejects records changed after the routing snapshot and us
     [readdressed, () => rewrite(readdressed, { toSession: "different-owner" })],
     [deep, () => rewrite(deep, { depth: 6 })],
   ]);
-  const read = fs.readFileSync;
-  t.mock.method(fs, "readFileSync", (...args: Parameters<typeof fs.readFileSync>) => {
-    const result = read(...args);
-    if (typeof args[0] === "string" && path.dirname(args[0]) === node.paths.inbox) {
-      const id = path.basename(args[0], ".json");
-      const transition = transitions.get(id);
-      if (transition) { transitions.delete(id); transition(); }
-    }
-    return result;
-  });
+  watchInboxReads(t, node.paths.inbox, { after: selected => {
+    const id = path.basename(selected, ".json"), transition = transitions.get(id);
+    if (transition) { transitions.delete(id); transition(); }
+  } });
   function file(id: string): string { return path.join(node.paths.inbox, `${id}.json`); }
   function rewrite(id: string, patch: Partial<InboxRecord>): void {
     writeJsonAtomic(file(id), { ...getMessage(node.paths.inbox, id), ...patch });
@@ -202,17 +188,14 @@ test("a message arriving after the snapshot waits for the next CP admission roun
   recordCodexSession(node.paths, owner, node.workspace, T0, "default");
   const unrelated = message(node, "unrelated", T0);
   const unrelatedFile = path.join(node.paths.inbox, `${unrelated}.json`);
-  const read = fs.readFileSync;
-  let arrived: string | undefined;
-  const intercepted = t.mock.method(fs, "readFileSync", (...args: Parameters<typeof fs.readFileSync>) => {
-    const result = read(...args);
-    if (args[0] === unrelatedFile && !arrived) arrived = message(node, owner, T0 + 1);
-    return result;
-  });
+  let arrived: string | undefined, injected = false;
+  const intercepted = watchInboxReads(t, candidate => candidate === unrelatedFile, { after: () => {
+    if (!injected) { injected = true; arrived = message(node, owner, T0 + 1); }
+  } });
 
   pollCodexQueue(node.deps());
   await codexQueueIdle();
-  intercepted.mock.restore();
+  intercepted.restore();
 
   assert.ok(arrived);
   assert.deepEqual(queues(node), [], "the captured round cannot see a later arrival");
@@ -230,16 +213,12 @@ test("an Inbox snapshot failure logs once and fails the queue round closed", asy
   for (const owner of OWNERS.slice(0, 3)) recordCodexSession(node.paths, owner, node.workspace, T0, "default");
   const id = message(node, "unrelated");
   const failingFile = path.join(node.paths.inbox, `${id}.json`);
-  const read = fs.readFileSync;
-  t.mock.method(fs, "readFileSync", (...args: Parameters<typeof fs.readFileSync>) => {
-    if (args[0] === failingFile) throw new Error("synthetic inbox scan failure");
-    return read(...args);
-  });
+  watchInboxReads(t, candidate => candidate === failingFile, { fault: () => true });
   const lines: string[] = [];
 
   pollCodexQueue(node.deps(), (line) => lines.push(line));
   await codexQueueIdle();
 
   assert.deepEqual(queues(node), []);
-  assert.deepEqual(lines, ["kherep-node: could not scan Codex Inbox: synthetic inbox scan failure"]);
+  assert.deepEqual(lines, ["kherep-node: could not scan Codex Inbox: unreadable"]);
 });

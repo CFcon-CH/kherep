@@ -1,8 +1,7 @@
-import fs from "node:fs";
-import path from "node:path";
+import { inboxInventory, locateInboxRecord, type InboxLocation } from "./inbox-storage.mts";
 
 import {
-  getMessage, getReceipt, messageIds, unreportedStatuses, type InboxRecord, type ReceiptRecord, type UnreportedStatus,
+  getReceipt, unreportedStatuses, type InboxRecord, type ReceiptRecord, type UnreportedStatus,
 } from "./inbox.mts";
 
 // Issue #487: the daemon's exchange round read every inbox record, its receipt
@@ -32,11 +31,12 @@ export const INDEX_REVALIDATE_MS = 10 * 60_000;
 export interface InboxIndex {
   // The current records, oldest first, as listInbox returns them (copies).
   records(): InboxRecord[];
+  invalidate(): void;
   // unreportedStatuses over records (by default the current ones).
   unreported(now: number, records?: InboxRecord[]): UnreportedStatus[];
 }
 
-interface Entry { mtimeMs: number; size: number; ino: number; record: InboxRecord; receipt?: ReceiptRecord }
+interface Entry { location: InboxLocation; file: string; dev: number; ctimeMs: number; mtimeMs: number; size: number; ino: number; record: InboxRecord; receipt?: ReceiptRecord }
 
 function final(record: InboxRecord): boolean {
   return record.state === "delivered" || record.state === "refused";
@@ -49,22 +49,17 @@ export function inboxIndex(dir: string, options: { now?: () => number; revalidat
   let rebuiltAt = Number.NEGATIVE_INFINITY;
 
   const current = (id: string): InboxRecord | null => {
-    const file = path.join(dir, `${id}.json`);
-    let stat: fs.Stats;
-    try {
-      stat = fs.statSync(file);
-    } catch (error) {
-      entries.delete(id);
-      // Gone since the listing; any other stat error: read the file itself.
-      return (error as NodeJS.ErrnoException).code === "ENOENT" ? null : getMessage(dir, id);
-    }
+    let location;
+    try { location = locateInboxRecord(dir, id, entries.get(id)?.location); } catch (error) { entries.clear(); throw error; }
+    if (!location) { entries.delete(id); return null; }
+    const { file, stat } = location;
     const cached = entries.get(id);
-    if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size && cached.ino === stat.ino) return cached.record;
+    if (cached && cached.file === file && cached.dev === stat.dev && cached.ctimeMs === stat.ctimeMs && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size && cached.ino === stat.ino) return cached.record;
     entries.delete(id);
     // Stat before read: a write in between leaves a newer file than the
     // cached stat, so the next call reads it again.
-    const record = getMessage(dir, id);
-    if (record) entries.set(id, { mtimeMs: stat.mtimeMs, size: stat.size, ino: stat.ino, record });
+    const record = location.record;
+    if (record) entries.set(id, { location, file, dev: stat.dev, ctimeMs: stat.ctimeMs, mtimeMs: stat.mtimeMs, size: stat.size, ino: stat.ino, record });
     return record;
   };
 
@@ -74,11 +69,14 @@ export function inboxIndex(dir: string, options: { now?: () => number; revalidat
       entries.clear();
       rebuiltAt = now;
     }
-    const ids = messageIds(dir); // throws unless the directory is missing
+    let inventory: ReturnType<typeof inboxInventory>;
+    try { inventory = inboxInventory(dir); } catch (error) { entries.clear(); throw error; }
+    const { ids } = inventory;
     const listed = new Set(ids);
     for (const id of entries.keys()) if (!listed.has(id)) entries.delete(id);
-    return ids.map(current).filter((r): r is InboxRecord => r !== null)
-      .sort((a, b) => a.receivedAt.localeCompare(b.receivedAt))
+    const records = ids.map(current).filter((r): r is InboxRecord => r !== null);
+    try { inventory.validateParents(); } catch (error) { entries.clear(); throw error; }
+    return records.sort((a, b) => a.receivedAt.localeCompare(b.receivedAt))
       .map((record) => ({ ...record }));
   };
 
@@ -92,6 +90,7 @@ export function inboxIndex(dir: string, options: { now?: () => number; revalidat
   };
 
   return {
+    invalidate: () => { entries.clear(); rebuiltAt = Number.NEGATIVE_INFINITY; },
     records,
     unreported: (now, list = records()) => unreportedStatuses(dir, now, list, receiptOf),
   };

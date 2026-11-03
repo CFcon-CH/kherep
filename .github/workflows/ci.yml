@@ -20,6 +20,8 @@ jobs:
     runs-on: ${{ matrix.os == 'ubuntu-latest' && 'ubuntu-26.04' || matrix.os }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v7
         with:
           node-version: lts/*
@@ -46,6 +48,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
+          persist-credentials: false
           fetch-depth: 0
       - uses: actions/setup-node@v7
         with:
@@ -65,6 +68,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
+          persist-credentials: false
           # Audit legacy template blobs once with full public history (#728).
           fetch-depth: ${{ matrix.os == 'ubuntu-latest' && '0' || '1' }}
       - uses: actions/setup-node@v7
@@ -88,6 +92,12 @@ jobs:
       - name: Install dependencies for native Control Plane tests
         if: runner.os == 'macOS'
         run: npm ci
+      - name: Fetch pinned public legacy reader
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          git fetch --no-tags --depth=1 origin f34b66fa581be6b5bdd5f1d84262b6d64a80a150
+          git cat-file -e f34b66fa581be6b5bdd5f1d84262b6d64a80a150^{commit}
       - name: Control Plane protocol and node suites (macOS)
         if: runner.os == 'macOS'
         run: npm run test:control-plane
@@ -105,6 +115,8 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v7
         with:
           node-version: lts/*
@@ -126,6 +138,12 @@ jobs:
       - name: Install dependencies for native Control Plane tests
         if: matrix.suite == 'control-plane'
         run: npm ci
+      - name: Fetch pinned public legacy reader
+        if: matrix.suite == 'control-plane'
+        shell: bash
+        run: |
+          git fetch --no-tags --depth=1 origin f34b66fa581be6b5bdd5f1d84262b6d64a80a150
+          git cat-file -e f34b66fa581be6b5bdd5f1d84262b6d64a80a150^{commit}
       - name: Control Plane protocol and node suites (Windows)
         if: matrix.suite == 'control-plane'
         # Bound simultaneous native process/PowerShell fixtures on the hosted runner (PR #155).
@@ -179,6 +197,8 @@ jobs:
     runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v7
         with:
           node-version: ${{ matrix.node-version }}
@@ -205,6 +225,11 @@ jobs:
         run: npm run test:modules
       - name: atl-jira broker suites
         run: npm run test:brokers
+      - name: Fetch pinned public legacy reader
+        shell: bash
+        run: |
+          git fetch --no-tags --depth=1 origin f34b66fa581be6b5bdd5f1d84262b6d64a80a150
+          git cat-file -e f34b66fa581be6b5bdd5f1d84262b6d64a80a150^{commit}
       - name: Control Plane protocol and node suites
         run: npm run test:control-plane
 
@@ -217,6 +242,8 @@ jobs:
     runs-on: ${{ matrix.os == 'ubuntu-latest' && 'ubuntu-26.04' || matrix.os }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v7
         with:
           node-version: lts/*
@@ -244,6 +271,8 @@ jobs:
     runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v7
         with:
           node-version: lts/*
@@ -257,6 +286,11 @@ jobs:
         run: npm run test:modules
       - name: atl-jira broker suites
         run: npm run test:brokers
+      - name: Fetch pinned public legacy reader
+        shell: bash
+        run: |
+          git fetch --no-tags --depth=1 origin f34b66fa581be6b5bdd5f1d84262b6d64a80a150
+          git cat-file -e f34b66fa581be6b5bdd5f1d84262b6d64a80a150^{commit}
       - name: Control Plane protocol and node suites
         run: npm run test:control-plane
 
@@ -267,6 +301,8 @@ jobs:
         working-directory: modules/control-plane/worker
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v7
         with:
           node-version: lts/*
@@ -286,6 +322,8 @@ jobs:
     runs-on: ${{ matrix.os == 'ubuntu-latest' && 'ubuntu-26.04' || matrix.os }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v7
         with:
           node-version: lts/*

@@ -1,3 +1,4 @@
+import { watchInboxReads } from "./inbox-read-fixture.mts";
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -48,13 +49,7 @@ function message(node: Node, toSession: string, state: InboxRecord["state"] = "a
 }
 
 function countInboxReads(t: test.TestContext, node: Node): () => number {
-  let reads = 0;
-  const read = fs.readFileSync;
-  t.mock.method(fs, "readFileSync", (...args: Parameters<typeof fs.readFileSync>) => {
-    if (typeof args[0] === "string" && path.dirname(args[0]) === node.paths.inbox && args[0].endsWith(".json")) reads++;
-    return read(...args);
-  });
-  return () => reads;
+  return watchInboxReads(t, node.paths.inbox).reads;
 }
 
 test("18 ended tasks with no pending task messages read the populated inbox once and start no process", async (t) => {
@@ -123,15 +118,12 @@ test("a message arriving after an empty snapshot waits until the next fresh roun
   const node = endedTasks(t, 2);
   const unrelated = message(node, "unrelated-session");
   const file = path.join(node.paths.inbox, `${unrelated.messageId}.json`);
-  const read = fs.readFileSync;
-  let arrived: InboxRecord | undefined;
-  const intercepted = t.mock.method(fs, "readFileSync", (...args: Parameters<typeof fs.readFileSync>) => {
-    const result = read(...args);
-    if (args[0] === file && !arrived) arrived = message(node, node.tasks[1].name, "accepted", node.tasks[1]);
-    return result;
-  });
+  let arrived: InboxRecord | undefined, injected = false;
+  const intercepted = watchInboxReads(t, candidate => candidate === file, { after: selected => {
+    if (selected === file && !injected) { injected = true; arrived = message(node, node.tasks[1].name, "accepted", node.tasks[1]); }
+  } });
   await pollCodexInbound(node.deps());
-  intercepted.mock.restore();
+  intercepted.restore();
   assert.ok(arrived);
   assert.equal(node.attempts.length, 0, "the initially empty round ends");
   assert.equal(getMessage(node.paths.inbox, arrived.messageId)?.state, "accepted");
@@ -160,13 +152,10 @@ test("wakeTask rereads a pending message changed after the routing snapshot", as
   const node = endedTasks(t);
   const record = message(node, node.tasks[0].name, "accepted", node.tasks[0]);
   const file = path.join(node.paths.inbox, `${record.messageId}.json`);
-  const read = fs.readFileSync;
   let reads = 0;
-  t.mock.method(fs, "readFileSync", (...args: Parameters<typeof fs.readFileSync>) => {
-    const result = read(...args);
-    if (args[0] === file && ++reads === 1) writeJsonAtomic(file, { ...record, state: "delivered" });
-    return result;
-  });
+  watchInboxReads(t, candidate => candidate === file, { after: () => {
+    if (++reads === 1) writeJsonAtomic(file, { ...record, state: "delivered" });
+  } });
   await pollCodexInbound(node.deps());
   assert.equal(node.attempts.length, 0, "the routing snapshot cannot authorize execution");
   assert.equal(reads, 2, "the wake decision uses a fresh sessionInbox read");
@@ -189,17 +178,15 @@ test("a failed routing snapshot is logged and the original per-task read retries
   const node = endedTasks(t);
   const record = message(node, node.tasks[0].name, "accepted", node.tasks[0]);
   const file = path.join(node.paths.inbox, `${record.messageId}.json`);
-  const read = fs.readFileSync;
   let failed = false;
-  t.mock.method(fs, "readFileSync", (...args: Parameters<typeof fs.readFileSync>) => {
-    if (args[0] === file && !failed) { failed = true; throw new Error("synthetic routing read failure"); }
-    return read(...args);
-  });
+  watchInboxReads(t, candidate => candidate === file, { fault: () => {
+    if (failed) return false; failed = true; return true;
+  } });
   const lines: string[] = [];
   await pollCodexInbound(node.deps(), (line) => lines.push(line));
   assert.equal(node.attempts.length, 1, "the original wakeTask read retries after the routing failure");
   assert.equal(getMessage(node.paths.inbox, record.messageId)?.retry, true);
-  assert.ok(lines.some((line) => /could not read inbox for Codex task routing: synthetic routing read failure/.test(line)));
+  assert.ok(lines.some((line) => /could not read inbox for Codex task routing: unreadable/.test(line)));
 });
 
 // Issue #487: one waiting message for one ended task made every ended task

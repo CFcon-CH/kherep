@@ -64,7 +64,7 @@ export function claimWake(paths: NodePaths, sessionId: string, now: number): boo
 // judged, so a reply grant reads no sent record for a final one.
 export function pending(paths: NodePaths, refs: string[], sessionId: string, lock: Pick<ListenerLock, "startedAt" | "event">,
   now: number, grants?: (record: InboxRecord) => boolean) {
-  const mine = sessionInbox(paths, refs).filter((r) => (r.state === "accepted" || r.state === "offered") && (grants?.(r) ?? true));
+  const mine = sessionInbox(paths, refs, { sessionId, runtime: "claude-code" }).filter((r) => (r.state === "accepted" || r.state === "offered") && (grants?.(r) ?? true));
   const woken = wokenFor(paths, sessionId);
   // A readdressed record reached this session at its handover, not at its arrival (#113).
   const late = (r: InboxRecord): boolean => Date.parse((r.closedTo && r.closedAttempt) || r.receivedAt) > lock.startedAt + WAKE_GRACE_MS;

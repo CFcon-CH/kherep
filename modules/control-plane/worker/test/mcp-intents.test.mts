@@ -7,6 +7,8 @@ import {
 } from "../../protocol-mcp.mts";
 import { FACTS, newKey, registry } from "./helpers.mts";
 
+import { attestedPair, attestedRows, ID_A, ID_B } from "./message-loop-fixture.mts";
+
 const SESSION = "session-verified";
 const CALL = "call-verified";
 const REQUEST = "10000000-0000-4000-8000-000000000001";
@@ -251,4 +253,137 @@ describe("remote MCP credentials and native intents", () => {
       requestId: "60000000-0000-4000-8000-000000000128", tool: "sessions",
     }), 1_001)).toEqual({ ok: false, error: "too many unexpired MCP intents" });
   });
+});
+
+for (const tool of ["send", "reply"] as const) {
+  for (const boundary of ["before", "during selected resolution"] as const) {
+    it(`S28 MCP ${tool}: UNKNOWN origin ${boundary} cannot consume an intent`, async () => {
+      const f = await attestedPair();
+      const token = await runInDurableObject(registry(), (_i, state) =>
+        String(state.storage.sql.exec("SELECT message_connection_token FROM nodes WHERE id=?", f.nodeId).one().message_connection_token));
+      await registry().updateRegistration(f.nodeId, FACTS, [{ name: "codex", kind: "cli" }],
+        [REMOTE_MCP_CAPABILITY, "messaging.v1", "messaging.loop-brake.v1", "messaging.selected-binding.v1"], token);
+      await registry().replaceSessions(f.nodeId, attestedRows().map(r => ({ ...r, state: "running" })), { version: 1, generation: 2 });
+      const credential = await registry().rotateMcpCredential(f.nodeId);
+      if (!credential.ok) throw new Error(credential.error);
+      const id = crypto.randomUUID(), parent = crypto.randomUUID(), text = "Synthetic UNKNOWN origin";
+      if (tool === "reply") {
+        const seeded = await registry().sendMessage({ messageId: parent, from: { nodeId: f.nodeId, session: ID_B },
+          to: { nodeId: f.nodeId, session: ID_A }, text: "Synthetic delivered parent" }, "synthetic");
+        expect(seeded.ok && seeded.status.state).toBe("queued");
+        await registry().reportMessageStatus(f.nodeId, { messageId: parent, state: "delivered" });
+      }
+      const args = tool === "send" ? { to: { nodeId: f.nodeId, session: ID_B }, text } : { inReplyTo: parent, text };
+      const digest = await digestMcpArguments(args);
+      expect((await registry().registerMcpIntent(f.nodeId,
+        registration(digest, { requestId: id, sessionId: ID_A, threadId: ID_A, tool }))).ok).toBe(true);
+      const claim = { nodeId: f.nodeId, credentialVersion: credential.version, requestId: id, runtime: "codex" as const,
+        sessionId: ID_A, threadId: ID_A, callId: CALL, tool, argumentsDigest: digest };
+      const snapshot = () => runInDurableObject(registry(), (_i, s) => ({
+        messages: s.storage.sql.exec("SELECT * FROM messages WHERE from_node=? OR to_node=? ORDER BY id", f.nodeId, f.nodeId).toArray(),
+        pairs: s.storage.sql.exec("SELECT * FROM message_loop_pairs WHERE from_node=?", f.nodeId).toArray(),
+        intents: s.storage.sql.exec("SELECT request_id,claimed_at,outcome FROM mcp_intents WHERE node_id=? ORDER BY request_id", f.nodeId).toArray(),
+      }));
+      const before = await snapshot();
+      expect(before.intents).toEqual([{ request_id: id, claimed_at: null, outcome: null }]);
+      const source = await runInDurableObject(registry(), (_i, s) =>
+        s.storage.sql.exec("SELECT * FROM sessions WHERE node_id=? AND session_id=?", f.nodeId, ID_A).one());
+      let changed = false;
+      const unknown = async () => {
+        changed = true;
+        await runInDurableObject(registry(), (_i, s) => {
+          s.storage.sql.exec("UPDATE sessions SET state='unknown' WHERE node_id=? AND session_id=?", f.nodeId, ID_A);
+        });
+      };
+      if (boundary === "before") await unknown(); else f.beforeResponse(unknown);
+      const r = tool === "send" ? await registry().sendMcpMessage(claim, { nodeId: f.nodeId, session: ID_B }, text)
+        : await registry().replyMcpMessage(claim, parent, text);
+      expect(changed).toBe(true);
+      expect(r).toEqual({ ok: false, error: "native session is no longer registered", denied: true });
+      expect(await snapshot()).toEqual(before);
+      expect(await registry().registerMcpIntent(f.nodeId, registration(digest,
+        { requestId: crypto.randomUUID(), sessionId: ID_A, threadId: ID_A, tool })))
+        .toEqual({ ok: false, error: "native session is not registered on this node" });
+      expect(await snapshot()).toEqual(before);
+      await runInDurableObject(registry(), (_i, s) => {
+        expect(s.storage.sql.exec("SELECT * FROM sessions WHERE node_id=? AND session_id=?", f.nodeId, ID_A).one())
+          .toEqual({ ...source, state: "unknown" });
+        expect(JSON.parse(String(s.storage.sql.exec("SELECT capabilities FROM nodes WHERE id=?", f.nodeId).one().capabilities)))
+          .toContain("messaging.selected-binding.v1");
+      });
+    });
+  }
+  it(`A3 MCP ${tool}: valid bound recovery keeps claim/digest checks without fresh destination resolution`, async () => {
+    const f = await attestedPair();
+    const token = await runInDurableObject(registry(), (_i, state) => String(state.storage.sql.exec("SELECT message_connection_token FROM nodes WHERE id=?", f.nodeId).one().message_connection_token));
+    await registry().updateRegistration(f.nodeId, FACTS, [{ name: "codex", kind: "cli" }], [REMOTE_MCP_CAPABILITY, "messaging.v1", "messaging.loop-brake.v1", "messaging.selected-binding.v1"], token);
+    await registry().replaceSessions(f.nodeId, attestedRows().map(r => ({ ...r, state: "running" })), { version: 1, generation: 2 });
+    const credential = await registry().rotateMcpCredential(f.nodeId); if (!credential.ok) throw new Error(credential.error);
+    const id = crypto.randomUUID(), parent = crypto.randomUUID(), text = "Synthetic bound recovery";
+    const args = tool === "send" ? { to: { nodeId: f.nodeId, session: ID_B }, text } : { inReplyTo: parent, text };
+    const digest = await digestMcpArguments(args);
+    await registry().registerMcpIntent(f.nodeId, registration(digest, { requestId: id, sessionId: ID_A, threadId: ID_A, tool }));
+    const claim = { nodeId: f.nodeId, credentialVersion: credential.version, requestId: id, runtime: "codex" as const, sessionId: ID_A, threadId: ID_A, callId: CALL, tool, argumentsDigest: digest };
+    // A legitimate prior bound effect of this exact claimant; replay uses metadata only.
+    const first = await registry().sendMessage({ messageId: id, from: { nodeId: f.nodeId, session: ID_A }, to: { nodeId: f.nodeId, session: ID_B }, text }, "synthetic");
+    expect(first.ok && first.status.state).toBe("queued");
+    await registry().reportMessageStatus(f.nodeId, { messageId: id, state: "accepted" });
+    const recover = (value = claim) => tool === "send" ? registry().sendMcpMessage(value, { nodeId: f.nodeId, session: ID_B }, text) : registry().replyMcpMessage(value, parent, text);
+    f.setRows([]);
+    const recovered = await recover(); expect(recovered.ok && recovered.status.state).toBe("accepted");
+    expect(recovered.ok && recovered.effects.deliveries).toEqual([]);
+    expect(await recover({ ...claim, argumentsDigest: "b".repeat(64) })).toEqual({ ok: false, error: "tool arguments do not match intent", denied: true });
+    expect(await recover({ ...claim, callId: "different-native-call" })).toEqual({ ok: false, error: "native call identity does not match intent", denied: true });
+    expect((await recover()).ok).toBe(true);
+  });
+  for (const state of ["queued", "accepted"] as const) it(`A3 MCP ${tool}: ${state} ordinary bound row cannot become another verified session's effect`, async () => {
+    const f = await attestedPair(), other = crypto.randomUUID();
+    const token = await runInDurableObject(registry(), (_i, state) => String(state.storage.sql.exec("SELECT message_connection_token FROM nodes WHERE id=?", f.nodeId).one().message_connection_token));
+    await registry().updateRegistration(f.nodeId, FACTS, [{ name: "codex", kind: "cli" }], [REMOTE_MCP_CAPABILITY, "messaging.v1", "messaging.loop-brake.v1", "messaging.selected-binding.v1"], token);
+    await registry().replaceSessions(f.nodeId, [...attestedRows().map(r => ({ ...r, state: "running" })), { sessionId: other, runtime: "codex", state: "running" }], { version: 1, generation: 2 });
+    const credential = await registry().rotateMcpCredential(f.nodeId); if (!credential.ok) throw new Error(credential.error);
+    const id = crypto.randomUUID(), parent = crypto.randomUUID(), text = "Synthetic Node-created bound row";
+    const first = await registry().sendMessage({ messageId: id, from: { nodeId: f.nodeId, session: ID_A }, to: { nodeId: f.nodeId, session: ID_B }, text }, "synthetic");
+    expect(first.ok && first.status.state).toBe("queued");
+    if (state === "accepted") await registry().reportMessageStatus(f.nodeId, { messageId: id, state });
+    const digest = await digestMcpArguments(tool === "send" ? { to: { nodeId: f.nodeId, session: ID_B }, text } : { inReplyTo: parent, text });
+    expect((await registry().registerMcpIntent(f.nodeId, registration(digest, { requestId: id, sessionId: other, threadId: other, tool }))).ok).toBe(true);
+    const claim = { nodeId: f.nodeId, credentialVersion: credential.version, requestId: id, runtime: "codex" as const, sessionId: other, threadId: other, callId: CALL, tool, argumentsDigest: digest };
+    const before = await runInDurableObject(registry(), (_i, s) => ({ row: s.storage.sql.exec("SELECT * FROM messages WHERE id=?", id).one(), pairs: s.storage.sql.exec("SELECT * FROM message_loop_pairs WHERE from_node=?", f.nodeId).toArray() }));
+    const r = tool === "send" ? await registry().sendMcpMessage(claim, { nodeId: f.nodeId, session: ID_B }, text) : await registry().replyMcpMessage(claim, parent, text);
+    expect(r).toEqual({ ok: false, error: "duplicate messageId" });
+    expect(await runInDurableObject(registry(), (_i, s) => ({ row: s.storage.sql.exec("SELECT * FROM messages WHERE id=?", id).one(), pairs: s.storage.sql.exec("SELECT * FROM message_loop_pairs WHERE from_node=?", f.nodeId).toArray() }))).toEqual(before);
+    expect(await runInDurableObject(registry(), (_i, s) => s.storage.sql.exec("SELECT claimed_at,outcome FROM mcp_intents WHERE request_id=?", id).one())).toEqual({ claimed_at: null, outcome: null });
+  });
+}
+
+for (const claimant of ["same-owner", "other-session", "other-node"] as const) for (const tool of ["send", "reply"] as const) it(`D2 MCP ${tool} ${claimant}: tombstone payload refusal precedes claim consumption and keeps historical status`, async () => {
+  const f = await attestedPair();
+  const token = await runInDurableObject(registry(), (_i, s) => String(s.storage.sql.exec("SELECT message_connection_token FROM nodes WHERE id=?", f.nodeId).one().message_connection_token));
+  await registry().updateRegistration(f.nodeId, FACTS, [{ name: "codex", kind: "cli" }], [REMOTE_MCP_CAPABILITY, "messaging.v1", "messaging.ack.v1", "messaging.loop-brake.v1", "messaging.selected-binding.v1"], token);
+  await registry().replaceSessions(f.nodeId, attestedRows().map(r => ({ ...r, state: "running" })), { version: 1, generation: 2 });
+  const claimingNode = claimant === "other-node" ? await enrolled() : f.nodeId;
+  const claimingSession = claimant === "other-node" ? SESSION : claimant === "other-session" ? ID_B : ID_A;
+  const credential = await registry().rotateMcpCredential(claimingNode); if (!credential.ok) throw new Error(credential.error);
+  const id = crypto.randomUUID(), parent = crypto.randomUUID(), text = "Synthetic tombstone payload";
+  const first = await registry().sendMessage({ messageId: id, from: { nodeId: f.nodeId, session: ID_A }, to: { nodeId: f.nodeId, session: ID_B }, text }, "synthetic"); expect(first.ok).toBe(true);
+  await f.take(id);
+  const digest = await digestMcpArguments(tool === "send" ? { to: { nodeId: f.nodeId, session: ID_B }, text } : { inReplyTo: parent, text });
+  expect((await registry().registerMcpIntent(claimingNode, registration(digest, { requestId: id, sessionId: claimingSession, threadId: claimingSession, tool }))).ok).toBe(true);
+  const claim = { nodeId: claimingNode, credentialVersion: credential.version, requestId: id, runtime: "codex" as const, sessionId: claimingSession, threadId: claimingSession, callId: CALL, tool, argumentsDigest: digest };
+  const snapshot = () => runInDurableObject(registry(), (_i, s) => ({
+    stone: s.storage.sql.exec("SELECT * FROM message_tombstones WHERE id=?", id).one(),
+    rows: s.storage.sql.exec("SELECT * FROM messages WHERE id=?", id).toArray(),
+    pairs: s.storage.sql.exec("SELECT * FROM message_loop_pairs WHERE from_node=?", f.nodeId).toArray(),
+    intent: s.storage.sql.exec("SELECT * FROM mcp_intents WHERE request_id=?", id).one(),
+    audit: s.storage.sql.exec("SELECT COUNT(*) AS n FROM audit").one().n,
+  }));
+  const before = await snapshot();
+  const recover = (value = claim) => tool === "send" ? registry().sendMcpMessage(value, { nodeId: f.nodeId, session: ID_B }, text) : registry().replyMcpMessage(value, parent, text);
+  expect(await recover({ ...claim, argumentsDigest: "b".repeat(64) })).toEqual({ ok: false, error: "tool arguments do not match intent", denied: true });
+  expect(await recover({ ...claim, callId: "wrong-call" })).toEqual({ ok: false, error: "native call identity does not match intent", denied: true });
+  expect(await recover()).toEqual({ ok: false, error: "duplicate messageId" });
+  expect(await snapshot()).toEqual(before);
+  expect(before.intent).toMatchObject({ claimed_at: null, outcome: null });
+  expect(await registry().mcpMessageStatus(f.nodeId, id)).toMatchObject({ state: "delivered" });
 });

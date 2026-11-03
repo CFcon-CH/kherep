@@ -64,10 +64,10 @@ for (const [name, run] of Object.entries(cases)) {
   });
 }
 
-test("storeMessage creates the record without a lock: nothing exists to protect", (t) => {
+test("storeMessage creates the record under the common root UUID lock", (t) => {
   const { dir, renames } = watched(t);
   storeMessage(dir, deliver(ID), NOW);
-  assert.deepEqual(renames.ofRecord, [false]);
+  assert.deepEqual(renames.ofRecord, [true]);
   assert.deepEqual(fs.readdirSync(dir), [`${ID}.json`]);
 });
 

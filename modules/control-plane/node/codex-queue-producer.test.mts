@@ -7,8 +7,9 @@ import test from "node:test";
 import { takeTurn, TURN_SPACING_MS } from "./autonomy.mts";
 import { codexQueueIdle, pollCodexQueue } from "./codex-queue.mts";
 import { nativeQueueNode as fixture, NATIVE_OWNER as OWNER } from "./codex-queue-producer-fixture.mts";
-import { getMessage, getMessageProgress, markOffered } from "./inbox.mts";
-import { T0 } from "./task-fixture.mts";
+import { getMessage, getMessageProgress, markOffered, storeMessage } from "./inbox.mts";
+import { serviceAdmissionsIdle } from "./service-drain.mts";
+import { testServiceOwner, T0 } from "./task-fixture.mts";
 
 test("exact original-owner messages get one native pointer, without offering their content", async (t) => {
   const node = fixture(t);
@@ -143,4 +144,33 @@ test("a pending owner group coalesces newer accepted IDs without changing its im
   assert.equal(fs.existsSync(path.join(node.paths.dir, "codex-native-attempts", OWNER, `${newer}.json`)), false);
   assert.equal(fs.readFileSync(file, "utf8"), before);
   assert.equal(getMessage(node.paths.inbox, newer)?.state, "accepted");
+});
+
+test("S18: deferred native Queue rechecks revoked policy after the scheduled service lane resumes", { timeout: 10_000 }, async t => {
+  const node = fixture(t), id = crypto.randomUUID(), from = { nodeId: crypto.randomUUID(), session: crypto.randomUUID() };
+  storeMessage(node.paths.inbox, { messageId: id, from, toSession: OWNER, text: "Synthetic S18 accepted Queue body", createdAt: new Date(T0).toISOString(),
+    binding: { version: 1, mode: "exact", from: { sessionId: from.session, runtime: "codex", lifecycleGeneration: null },
+      to: { sessionId: OWNER, runtime: "codex", lifecycleGeneration: null }, leaseId: crypto.randomUUID(), localGeneration: null } }, T0);
+  const original = getMessage(node.paths.inbox, id), file = path.join(node.paths.inbox, "bound-v1", `${id}.json`), bytes = fs.readFileSync(file);
+  const entered = Promise.withResolvers<void>(), resume = Promise.withResolvers<void>(), deps = node.deps();
+  let lookups = 0;
+  deps.codex!.findCodex = () => { lookups++; return node.fake.file; };
+  t.after(() => resume.resolve());
+  deps.codex!.reconcileQueue = async () => { entered.resolve(); await resume.promise; };
+  pollCodexQueue(deps);
+  await entered.promise;
+  assert.equal(serviceAdmissionsIdle(node.paths, testServiceOwner), false, "real reconciliation holds the service admission and serial native lane");
+  assert.equal(node.fake.runs().length, 0); assert.equal(lookups, 0);
+  const policy = JSON.parse(fs.readFileSync(node.paths.policy, "utf8"));
+  delete policy.wake.nativeQueue;
+  fs.writeFileSync(node.paths.policy, JSON.stringify(policy));
+  resume.resolve();
+  await codexQueueIdle();
+  assert.deepEqual(node.fake.runs(), []);
+  assert.equal(lookups, 1, "the scheduled producer actually resumes before its fresh policy veto");
+  assert.equal(fs.existsSync(path.join(node.paths.dir, "codex-native-attempts")), false);
+  assert.equal(fs.existsSync(path.join(node.paths.dir, "listeners", `${OWNER}.turns.json`)), false);
+  assert.equal(serviceAdmissionsIdle(node.paths, testServiceOwner), true);
+  assert.deepEqual(getMessage(node.paths.inbox, id), original);
+  assert.deepEqual(fs.readFileSync(file), bytes);
 });

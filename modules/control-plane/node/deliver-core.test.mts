@@ -46,7 +46,8 @@ const UNRESOLVED = `No delivery status was recorded for a proxy answer by an eph
 
 function owner(t: test.TestContext) {
   const node = taskNode(t);
-  storeMessage(node.paths.inbox, { ...RECORD }, Date.parse(RECORD.receivedAt));
+  const { binding: _binding, ...body } = RECORD;
+  storeMessage(node.paths.inbox, body, Date.parse(RECORD.receivedAt));
   const at = new Date(Date.parse(RECORD.receivedAt) + 1000).toISOString();
   const fields = { relayMessageId: RELAY, forkId: "fork-a", attemptId: "40800001-0000-4000-8000-0000000000f2", at };
   claimProxied(node.paths.inbox, RECORD.messageId, fields);

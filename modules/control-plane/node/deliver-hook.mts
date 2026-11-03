@@ -65,7 +65,7 @@ export function deliverForHook(input: unknown, deps: HookDeps): string {
   if (event === "PostToolUse") return midTurnOutput(fields, sessionId, refs, deps);
   const now = deps.now?.() ?? Date.now();
   if (event === "StopFailure") {
-    withRecordLockBudget(RECORD_LOCK_BUDGET_MS, () => retryOffered(deps.paths, sessionInbox(deps.paths, refs)));
+    withRecordLockBudget(RECORD_LOCK_BUDGET_MS, () => retryOffered(deps.paths, sessionInbox(deps.paths, refs, { sessionId, runtime: "claude-code" })));
     markListenerIdle(deps.paths, sessionId, now);
     return "";
   }
@@ -77,7 +77,7 @@ export function deliverForHook(input: unknown, deps: HookDeps): string {
   } else if (claimWake(deps.paths, sessionId, now)) {
     gated = { ...deps, offeredBy: "wake" };
   }
-  return contextOutput(event, deliveryContext(event, refs, gated));
+  return contextOutput(event, deliveryContext(event, refs, { ...gated, owner: { sessionId, runtime: "claude-code" } }));
 }
 
 // The runtime a command line names: --runtime codex, otherwise Claude Code.

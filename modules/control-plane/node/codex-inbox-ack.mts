@@ -1,9 +1,10 @@
+import { messageOwnerMatches } from "./message-owner.mts";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { isMessageId } from "../protocol-messages.mts";
 import { ensureDir, type NodePaths } from "./config.mts";
-import { getMessage, getReceipt, writeJsonAtomic, type InboxRecord, type OfferedBy } from "./inbox.mts";
+import { getMessage, getReceipt, replaceInboxRecordLocked, writeJsonAtomic, type InboxRecord, type OfferedBy } from "./inbox.mts";
 import { readSelected } from "./inbox-selected-read.mts";
 import { withRecordLock } from "./inbox-record-lock.mts";
 
@@ -13,7 +14,7 @@ const receiptDir = (paths: NodePaths): string => path.join(paths.inbox, "codex-o
 const receiptFile = (paths: NodePaths, token: string): string => path.join(receiptDir(paths), `${token}.json`);
 const fingerprint = (r: InboxRecord): string => crypto.createHash("sha256").update(JSON.stringify([
   r.messageId, r.from, r.toSession, r.text, r.createdAt, r.receivedAt, r.inReplyTo, r.proxyOf, r.taskId,
-  r.delivery, r.closedTo, r.closedAttempt, r.offers, r.offeredAt, r.offeredBy,
+  r.delivery, r.binding, r.closedTo, r.closedAttempt, r.offers, r.offeredAt, r.offeredBy,
 ])).digest("hex");
 
 export function codexAckInstruction(owner: string, cli: string, token: string): string {
@@ -31,7 +32,7 @@ export function prepareCodexOffers(paths: NodePaths, records: InboxRecord[], own
   if (fs.lstatSync(receiptDir(paths)).isSymbolicLink()) throw new Error("invalid Codex receipt directory");
   for (const snapshot of records) withRecordLock(paths.inbox, snapshot.messageId, () => {
     const current = getMessage(paths.inbox, snapshot.messageId);
-    if (!current || fingerprint(current) !== fingerprint(snapshot)
+    if (!current || !messageOwnerMatches(current, { sessionId: owner, runtime: "codex" }, [current.toSession]) || fingerprint(current) !== fingerprint(snapshot)
       || (current.state !== "accepted" && current.state !== "offered")) return;
     const next: InboxRecord = current.state === "accepted" ? { ...current, state: "offered", offers: (current.offers ?? 0) + 1,
       offeredAt: new Date(now).toISOString(), offeredBy } : { ...current };
@@ -40,7 +41,7 @@ export function prepareCodexOffers(paths: NodePaths, records: InboxRecord[], own
     next.codexOffer = previous?.owner === owner && previous.fingerprint === hash ? previous
       : { owner, generation: crypto.randomUUID(), fingerprint: hash };
     entries.push({ messageId: next.messageId, generation: next.codexOffer.generation, fingerprint: hash });
-    writeJsonAtomic(path.join(paths.inbox, `${next.messageId}.json`), next);
+    replaceInboxRecordLocked(paths.inbox, next.messageId, next);
     // Persist before the block can escape. A failed receipt write emits no content.
     writeJsonAtomic(receiptFile(paths, token), { version: 1, owner, entries } satisfies OfferReceipt);
     emitted.push(next);
@@ -57,7 +58,7 @@ export function acknowledgeCodexOffer(paths: NodePaths, owner: string, token: st
     || !saved.entries.every(e => isMessageId(e.messageId) && isMessageId(e.generation) && /^[0-9a-f]{64}$/.test(e.fingerprint))) {
     throw new Error("invalid or wrong-owner Codex offer receipt");
   }
-  const matches = (r: InboxRecord | null, e: Entry): r is InboxRecord => !!r && refs.includes(r.toSession)
+  const matches = (r: InboxRecord | null, e: Entry): r is InboxRecord => !!r && messageOwnerMatches(r, { sessionId: owner, runtime: "codex" }, refs)
     && (r.state === "offered" || r.state === "delivered") && r.codexOffer?.owner === owner
     && r.codexOffer.generation === e.generation && fingerprint(r) === e.fingerprint;
   // Preflight avoids partial commits for already-stale batches. Each mutation
@@ -66,7 +67,7 @@ export function acknowledgeCodexOffer(paths: NodePaths, owner: string, token: st
   for (const entry of saved.entries) withRecordLock(paths.inbox, entry.messageId, () => {
     const current = getMessage(paths.inbox, entry.messageId);
     if (!matches(current, entry)) throw new Error("Codex offer changed; ACK incomplete, retry current offer");
-    if (current.state !== "delivered") writeJsonAtomic(path.join(paths.inbox, `${entry.messageId}.json`), { ...current, state: "delivered" });
+    if (current.state !== "delivered") replaceInboxRecordLocked(paths.inbox, entry.messageId, { ...current, state: "delivered" });
   });
   const persisted = saved.entries.every(e => {
     const receipt = getReceipt(paths.inbox, e.messageId);

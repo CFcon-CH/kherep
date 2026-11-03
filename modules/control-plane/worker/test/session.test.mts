@@ -82,3 +82,36 @@ describe("offline detection", () => {
     expect(alarm).toBeNull();
   });
 });
+
+for (const event of ["old-close", "old-alarm", "closed-new", "revoke"] as const) it(`status epoch fences ${event} after replacement`, async () => {
+  const nodeId = await enroll(await newKey()), r = registry();
+  const old = "synthetic-old-epoch", current = "synthetic-new-epoch";
+  expect(await r.beginMessageConnection(nodeId, old)).toBe(true);
+  await r.setStatus(nodeId, "online", 1, old);
+  await r.invalidateMessageConnection(nodeId, old);
+  expect(await r.beginMessageConnection(nodeId, current)).toBe(true);
+  await r.setStatus(nodeId, "online", 2, current);
+  if (event === "closed-new") await r.invalidateMessageConnection(nodeId, current);
+  if (event === "revoke") await r.revoke(nodeId, "synthetic");
+  await r.invalidateMessageConnection(nodeId, old);
+  await r.setStatus(nodeId, "offline", 3, old);
+  expect((await r.getNode(nodeId))?.status).toBe(event === "revoke" ? "revoked" : "online");
+  const tokens = await runInDurableObject(r, (_i, state) => state.storage.sql.exec(
+    "SELECT message_connection_token,registration_token,status_connection_token FROM nodes WHERE id=?", nodeId).one());
+  expect(tokens.registration_token).toBeNull();
+  expect(tokens.message_connection_token).toBe(event === "revoke" || event === "closed-new" ? null : current);
+  expect(tokens.status_connection_token).toBe(event === "revoke" ? null : current);
+  if (event !== "revoke") {
+    await r.invalidateMessageConnection(nodeId, current);
+    await r.setStatus(nodeId, "online", 4, current);
+    expect((await r.getNode(nodeId))?.lastSeen).toBe(2);
+    // A closed epoch cannot regain online authority, but owns its offline alarm.
+    await r.setStatus(nodeId, "offline", 5, current);
+    expect((await r.getNode(nodeId))?.status).toBe("offline");
+    const after = await runInDurableObject(r, (_i, state) => state.storage.sql.exec(
+      "SELECT message_connection_token,registration_token,status_connection_token FROM nodes WHERE id=?", nodeId).one());
+    expect(after).toEqual({ message_connection_token: null, registration_token: null, status_connection_token: null });
+    await r.setStatus(nodeId, "online", 6, current);
+    expect((await r.getNode(nodeId))?.status).toBe("offline");
+  }
+});

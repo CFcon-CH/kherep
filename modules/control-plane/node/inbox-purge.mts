@@ -1,11 +1,36 @@
+import { inboxRecordLocationSteps, locateInboxRecord, BOUND_NAMESPACE } from "./inbox-storage.mts";
 import fs from "node:fs";
 import path from "node:path";
 
-import { isMessageId } from "../protocol-messages.mts";
 import {
-  getMessage, getReceipt, INBOX_RETENTION_MS, markRefused, progressFileOf, proxiedFileOf, receiptFileOf, type InboxRecord,
+  getMessage, getReceipt, INBOX_RETENTION_MS, markRefused, progressFileOf, proxiedFileOf, receiptFileOf,
 } from "./inbox.mts";
 import { RecordLockBusy, withRecordLock } from "./inbox-record-lock.mts";
+
+function temporaryStat(file: string): fs.Stats | null {
+  try {
+    const stat = fs.lstatSync(file);
+    if (!stat.isFile() || stat.nlink !== 1) throw new Error("invalid inbox temporary file");
+    return stat;
+  } catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return null; throw error; }
+}
+function purgeParents(dir: string): [fs.Stats | null, fs.Stats | null] {
+  const directory = (file: string): fs.Stats | null => {
+    try {
+      const stat = fs.lstatSync(file);
+      if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error("invalid inbox directory");
+      return stat;
+    } catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return null; throw error; }
+  };
+  const root = directory(dir);
+  return [root, root ? directory(path.join(dir, BOUND_NAMESPACE)) : null];
+}
+function checkPurgeParents(dir: string, before: ReturnType<typeof purgeParents>): void {
+  const after = purgeParents(dir);
+  if (!before.every((stat, i) => stat === null ? after[i] === null : after[i]?.dev === stat.dev && after[i]?.ino === stat.ino)) {
+    throw new Error("inbox directory changed");
+  }
+}
 
 // The inbox purge, one step per directory entry (issue #581): the start
 // maintenance runs it in time-bounded slices after the daemon connected
@@ -24,49 +49,48 @@ import { RecordLockBusy, withRecordLock } from "./inbox-record-lock.mts";
 // not yet reported (#195), to the next start.
 export function* purgeInboxSteps(dir: string, now: number = Date.now(), maxAgeMs: number = INBOX_RETENTION_MS,
   touchedSince: number = Infinity): Generator<void, number> {
-  let entries: string[];
-  try {
-    entries = fs.readdirSync(dir);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return 0;
-    throw error;
+  yield;
+  const parents = purgeParents(dir);
+  if (!parents[0]) return 0;
+  const locations = yield* inboxRecordLocationSteps(dir); // complete read-only preflight first
+  const entries: { file: string; stat: fs.Stats }[] = [];
+  for (const parent of [dir, path.join(dir, BOUND_NAMESPACE)]) {
+    yield;
+    checkPurgeParents(dir, parents);
+    let names: string[];
+    try { names = fs.readdirSync(parent); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") continue; throw error; }
+    for (const name of names) {
+      yield;
+      checkPurgeParents(dir, parents);
+      if (name.endsWith(".tmp") || name.endsWith(".lock")) {
+        const file = path.join(parent, name), stat = temporaryStat(file);
+        if (stat) entries.push({ file, stat });
+      }
+    }
   }
   let removed = 0;
-  for (const name of entries) {
+  for (const location of locations) {
     yield;
-    const file = path.join(dir, name);
-    let received: number;
-    try {
-      received = fs.statSync(file).mtimeMs;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
-      throw error;
-    }
-    if (received >= touchedSince) continue;
-    let record: InboxRecord | null = null;
-    if (name.endsWith(".json")) {
-      try {
-        record = JSON.parse(fs.readFileSync(file, "utf8")) as InboxRecord;
-        const at = Date.parse(record.receivedAt);
-        if (!Number.isNaN(at)) received = at;
-      } catch {
-        // unreadable record: its file time decides
-      }
-    } else if (!name.endsWith(".tmp") && !name.endsWith(".lock")) {
-      continue;
-    }
+    checkPurgeParents(dir, parents);
+    const current = locateInboxRecord(dir, location.record.messageId);
+    if (!current || current.stat.mtimeMs >= touchedSince) continue;
+    const received = Date.parse(current.record.receivedAt);
+    if (!Number.isFinite(received)) throw new Error("invalid inbox retention time");
     if (now - received <= maxAgeMs) continue;
-    if (record && isMessageId(record.messageId) && name === `${record.messageId}.json`) {
-      if (markRefused(dir, record.messageId, "not delivered within the inbox retention period")) continue;
-      if (!removeSettled(dir, record.messageId, file, received, now, maxAgeMs)) continue;
-    } else {
-      fs.rmSync(file, { force: true });
-    }
-    if (name.endsWith(".json")) {
-      fs.rmSync(receiptFileOf(dir, name.slice(0, -5)), { force: true });
-      fs.rmSync(progressFileOf(dir, name.slice(0, -5)), { force: true });
-      if (isMessageId(name.slice(0, -5))) fs.rmSync(proxiedFileOf(dir, name.slice(0, -5)), { force: true });
-      removed++;
+    if (markRefused(dir, current.record.messageId, "not delivered within the inbox retention period")) continue;
+    if (removeSettled(dir, current.record.messageId, received, now, maxAgeMs, touchedSince)) removed++;
+  }
+  for (const { file, stat: saved } of entries) {
+    yield;
+    checkPurgeParents(dir, parents);
+    try {
+      const stat = temporaryStat(file);
+      if (!stat || stat.dev !== saved.dev || stat.ino !== saved.ino || stat.size !== saved.size
+        || stat.mtimeMs !== saved.mtimeMs || stat.ctimeMs !== saved.ctimeMs) continue;
+      if (stat.mtimeMs < touchedSince && now - stat.mtimeMs > maxAgeMs) fs.rmSync(file);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }
   }
   return removed;
@@ -80,14 +104,17 @@ export function* purgeInboxSteps(dir: string, now: number = Date.now(), maxAgeMs
 // have dropped a delivery no receipt confirmed (#195). A record that still
 // waits (its refusal above found it locked) and a lock that stays busy wait
 // for the next pass; no writer can rewrite the record around the removal.
-function removeSettled(dir: string, messageId: string, file: string, received: number, now: number, maxAgeMs: number): boolean {
+function removeSettled(dir: string, messageId: string, received: number, now: number, maxAgeMs: number, touchedSince: number): boolean {
   try {
     return withRecordLock(dir, messageId, () => {
       const current = getMessage(dir, messageId);
       if (!current || current.state === "accepted" || current.state === "offered") return false;
       const confirmed = getReceipt(dir, messageId)?.reportedState === current.state;
       if (!confirmed && now - received <= 2 * maxAgeMs) return false;
-      fs.rmSync(file, { force: true });
+      const location = locateInboxRecord(dir, messageId);
+      if (!location || location.stat.mtimeMs >= touchedSince) return false;
+      fs.unlinkSync(location.file);
+      for (const file of [receiptFileOf(dir, messageId), progressFileOf(dir, messageId), proxiedFileOf(dir, messageId)]) fs.rmSync(file, { force: true });
       return true;
     });
   } catch (error) {

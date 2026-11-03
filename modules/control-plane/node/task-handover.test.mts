@@ -54,7 +54,7 @@ test("a malformed stored message ID cannot construct an out-of-inbox path or loc
   const f = handoverInbox(t); const record = f.store(20);
   fs.writeFileSync(f.file(id(20)), JSON.stringify({ ...record, messageId: "../outside" }));
   const before = f.bytes(id(20)), writes = f.observeWrites();
-  handoverTaskMessages(f.dir, FROM, TO, scope);
+  assert.throws(() => handoverTaskMessages(f.dir, FROM, TO, scope), /mismatch/);
   assert.equal(f.bytes(id(20)), before); assert.deepEqual(writes, []);
   assert.deepEqual(fs.readdirSync(f.dir), [`${id(20)}.json`]);
 });
