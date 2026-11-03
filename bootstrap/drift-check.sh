@@ -327,6 +327,31 @@ else
   echo "NOT-INSTALLED project/tools/<Jira set> (optional; KHEREP_INSTALL_ATLASSIAN_TOOLS=1 installs and compares it)"
 fi
 
+# Issue #758. codex/install.mts copies these observation tools into $WS/tools/;
+# bootstrap/install.sh does not, so they appear only on a host with the Codex
+# adapter. Presence decides, as for the Jira set: a stale copy is drift, whichever
+# installer the operator ran last. The other modules of that import graph are
+# compared above.
+OBSERVATION_TOOLS="observation-broker.mts observation-candidate.mts observation-linking.mts observation-lookup.mts observation-policy.mts observation-publisher.mts observation-receipt.mts observation-result.mts observation-stdio.mts"
+observation_present=0
+for tool in $OBSERVATION_TOOLS; do
+  if [ -e "$WS/tools/$tool" ] || [ -L "$WS/tools/$tool" ]; then observation_present=1; break; fi
+done
+if [ "$observation_present" = "1" ]; then
+  drift_before_observation="$drift"
+  drift=0
+  for tool in $OBSERVATION_TOOLS; do
+    cmp_file "project/tools/$tool" "$HERE/../modules/atl-jira-brokers/$tool" "$WS/tools/$tool"
+  done
+  if [ "$drift" != "0" ]; then
+    echo "HINT          project/tools/observation-*.mts: codex/install.mts writes these, bootstrap/install.sh does not"
+  else
+    drift="$drift_before_observation"
+  fi
+else
+  echo "NOT-INSTALLED project/tools/<observation set> (optional; codex/install.mts installs it)"
+fi
+
 # Issue #252. The comparison above sees files, not what settings.json runs. A
 # wired hook command whose Claude-home script is missing or retired fails on
 # every event, so it is drift, reported per command. Both settings files are

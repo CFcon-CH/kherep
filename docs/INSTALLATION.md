@@ -705,6 +705,8 @@ Neither check of `drift-check.sh` proves that the gate is unwired: `DANGLING-HOO
 
 The Jira helpers in `<workspace>/tools/` (`atl-jira.mts`, `atl-jira-ccoder.mts` and the `jira-*.mts` modules they import) are optional. `drift-check.sh` compares them when `KHEREP_INSTALL_ATLASSIAN_TOOLS=1` is set or when any of these exact file names is present, so a stale copy left by an earlier installation with the switch is reported as `DRIFT`, and an incomplete set reports its absent members as `MISSING-LIVE`. Reinstall with `KHEREP_INSTALL_ATLASSIAN_TOOLS=1` to refresh them. Files that only resemble them, such as `atl-jira.mjs`, a `*.bak-*` copy or anything under `_deprecated/`, do not count. On a host with none of them and without the switch, `drift-check.sh` prints one line `NOT-INSTALLED project/tools/<Jira set>`, which is information and does not change the result.
 
+The observation tools in `<workspace>/tools/` (`observation-*.mts`) are written by `codex/install.mts`, not by `bootstrap/install.sh`. After a change under `modules/atl-jira-brokers/`, run both installers on a host with the Codex adapter. `drift-check.sh` compares the set when any of its files is present: a stale copy is `DRIFT` with a `HINT` line naming the installer, and absent members are `MISSING-LIVE`. On a host without the set it prints `NOT-INSTALLED project/tools/<observation set>`, which does not change the result.
+
 
 ## GitHub App issue broker source
 
