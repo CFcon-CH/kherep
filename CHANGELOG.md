@@ -11,6 +11,15 @@ increments the minor version; every other release increments the patch version.
 
 ### Added
 
+- Weekly usage watcher (issue #748): the status line hands the documented
+  `rate_limits.seven_day` window to a detached recorder, `hooks/usage-record.mts`,
+  which caches it under `.cache/usage-watch/` and shows one Windows toast per
+  condition per reset window, when 50 % of the weekly plan budget is used or usage
+  runs at least 5 points ahead of the elapsed window after 10 % of it. The new
+  `UserPromptSubmit` hook `usage-watch` adds a short notice to every prompt while a
+  condition holds. `KHEREP_USAGE_TOAST=0` turns the toast off; no toast outside
+  Windows.
+
 - Topic-judged linking (issue #736): `related` and `stitch` search with the title plus
   the finding sentence (`--topic`) inside the space (`twg rovo search --space`, twg
   1.3.8 or later) and print area, a shared-words hint and a snippet per candidate. The

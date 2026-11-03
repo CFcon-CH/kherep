@@ -16,18 +16,20 @@ try:
     five_h = d.get('rate_limits',{}).get('five_hour',{}).get('used_percentage')
     week = d.get('rate_limits',{}).get('seven_day',{}).get('used_percentage')
     sess = d.get('session_id') or d.get('session',{}).get('id') or ''
-    print('{}|{}|{}|{}|{}|{}'.format(
+    week_resets = d.get('rate_limits',{}).get('seven_day',{}).get('resets_at')
+    print('{}|{}|{}|{}|{}|{}|{}'.format(
         cwd, model,
         '' if used is None else used,
         '' if five_h is None else five_h,
         '' if week is None else week,
-        sess
+        sess,
+        '' if week_resets is None else week_resets
     ))
 except Exception:
-    print('?|?|||||')
+    print('?|?||||||')
 " 2>/dev/null)
 
-IFS='|' read -r cwd model used five_h week sessId <<< "$parsed"
+IFS='|' read -r cwd model used five_h week sessId weekResets <<< "$parsed"
 
 # Directory: show last two path components
 dir=$(echo "$cwd" | awk -F'/' '{if(NF>=2) print $(NF-1)"/"$NF; else print $NF}' | sed 's|\\|/|g')
@@ -68,6 +70,17 @@ if [ -n "$five_h" ]; then
 fi
 if [ -n "$week" ]; then
   limits="${limits} 7d:$(printf '%.0f' "$week")%"
+fi
+
+# Usage watcher (issue #748). The recorder evaluates and remembers; this script only hands it the
+# weekly window, detached, and only when the pair changed since the recorder last wrote it.
+# The recorder writes last-input at its end, so a run that Claude Code cancelled is redone later.
+usageHome="${CLAUDE_HOME:-$HOME/.claude}"
+if [ -n "$week" ] && [ -n "$weekResets" ] && [ -f "$usageHome/hooks/usage-record.mts" ]; then
+  if [ "$(cat "$usageHome/.cache/usage-watch/last-input" 2>/dev/null)" != "$week|$weekResets" ]; then
+    node "$usageHome/hooks/usage-record.mts" --used "$week" --resets-at "$weekResets" \
+      </dev/null >/dev/null 2>&1 &
+  fi
 fi
 
 # Maestro badge: deterministic indicator that the orchestration stack is active.
