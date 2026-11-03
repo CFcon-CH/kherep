@@ -153,9 +153,12 @@ export function bandView(state: UsageState, nowMs: number, timeZone?: string): B
   const stale = !Number.isFinite(observed) || nowMs - observed > STALE_AFTER_MS;
   const reading = Number.isFinite(observed) ? ` · reading ${clock(observed / 1000, timeZone)}` : "";
   const said = clauses(j.threshold, j.pace).join("; ");
+  let level: BandView["level"] = "calm";
+  if (j.threshold) level = "threshold";
+  else if (j.pace) level = "pace";
   return {
     text: `Weekly Claude budget ${pct(j.v.used)} used · ${pct(j.v.elapsed)} of the week elapsed · resets ${formatLocal(state.resets_at, timeZone)}${reading}${stale ? " (stale)" : ""}${said ? `: ${said}` : ""}`,
-    level: j.threshold ? "threshold" : j.pace ? "pace" : "calm",
+    level,
     stale,
   };
 }

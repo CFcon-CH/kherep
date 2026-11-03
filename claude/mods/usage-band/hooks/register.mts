@@ -18,6 +18,11 @@ const held = atom({ plugin: 'usage-band', key: 'state' } as const, null as Usage
 const readAt = atom({ plugin: 'usage-band', key: 'readAt' } as const, 0)
 const TICK_MS = 60_000
 const CHURN_MS = 60_000
+const LEVEL_STYLE = {
+  threshold: { bold: true, color: 'red' },
+  pace: { bold: true, color: 'yellow' },
+  calm: { dimColor: true },
+} as const
 // Flipped only if measurement M3 shows the desktop app does not show systemMessage and M3b
 // shows that $.ui.toast draws there (issue #757).
 const DESKTOP_PROMPT_TOAST: boolean = false
@@ -48,8 +53,9 @@ async function refresh($: EngineInterface): Promise<void> {
 async function record($: EngineInterface, limits: readonly SessionRateLimit[], nowMs: number): Promise<void> {
   const week = limits.find((limit) => limit.kind === 'seven_day')
   const window = parseWindow(week?.percentUsed, week?.resetsAt)
-  const file = window ? await stateFile($) : null
-  if (!window || !file) return
+  if (!window) return
+  const file = await stateFile($)
+  if (!file) return
   const previous = await readState($, file)
   const key = windowKey(window.resetsAt)
   const sameWindow = previous?.window_key === key
@@ -92,9 +98,7 @@ export const register: Register = (on) => {
       const view = state ? bandView(state, await read($, readAt)) : null
       if (!view) return next(e)
       const { Box, Text } = $.ui.resolve(e)
-      const style = view.level === 'threshold' ? { bold: true, color: 'red' }
-        : view.level === 'pace' ? { bold: true, color: 'yellow' } : { dimColor: true }
-      return h(Box, null, h(Text, style, view.text)) as RenderElement
+      return h(Box, null, h(Text, LEVEL_STYLE[view.level], view.text)) as RenderElement
     } catch {
       return next(e)
     }
