@@ -1,4 +1,12 @@
 #!/usr/bin/env node
+import {retireCompletedHookRoute,type HookCompletionProvider,type HookRetirementResult} from './target-delivery-hook-completion.mts';
+import {captureListedGrant,freezeMemberGrants} from './message-grant.mts';
+import {requireMessageEffect} from './message-admission.mts';
+import { checkExecution,selectRouteMembers } from "./target-delivery-route.mts";
+import { decideMessageRoute } from "./target-delivery-producer.mts";
+import { beginRouteEffect } from "./target-delivery-route.mts";
+import { finishRouteEffect, transitionRouteMessages } from "./target-delivery-outcome.mts";
+import type { RouteProducer } from "./target-delivery-operation.mts";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -82,8 +90,11 @@ export const wakeText = (count: number): string =>
 export const STUCK_TEXT = "Kherep: a message offered in an earlier turn may not have been read. It is offered again in this turn.";
 export const REARM_TEXT = "Kherep: message listener re-armed.";
 
+const emittedWakeResults=new WeakSet<object>();
+const messageWakeContexts=new WeakMap<object,import('./target-delivery-operation.mts').ExecutionContext>();
 export interface WakeDeps {
-  paths: NodePaths; now?: () => number; sleep?: (ms: number) => Promise<void>; pid?: number; maxWaitMs?: number;
+  livenessAuthority?:import("./session-authority.mts").AdmissionAuthority;
+  paths: NodePaths; messageProducer?:RouteProducer; now?: () => number; sleep?: (ms: number) => Promise<void>; pid?: number; maxWaitMs?: number;
   parentAlive?: () => boolean; token?: () => string; launchMode?: (cwd: unknown) => Promise<LaunchVerdict>;
   transcriptMode?: (transcriptPath: unknown) => string | undefined; runMode?: () => Promise<RunMode>;
 }
@@ -224,6 +235,7 @@ export async function runWake(input: unknown, deps: WakeDeps): Promise<WakeResul
     unreadable = current === null;
     policy = current ?? policy;
     if (policy.sessions?.enabled !== true) grant = undefined;
+    refs = refsOf();
     listed = wakeAllowed(policy, refs);
     wasListed ||= listed || replies();
     if (!listed && !grant) {
@@ -253,6 +265,11 @@ export async function runWake(input: unknown, deps: WakeDeps): Promise<WakeResul
     let fresh = below(found.fresh);
     let backlog = below(found.backlog);
     let stuck = found.stuck;
+    // Capture provenance before settling; only project this set afterward.
+    const listedBasis=listed?captureListedGrant(policy,{runtime:'claude-code',sessionId},refs[1]?{kind:'directory',name:refs[1]}:undefined):null;
+    const before=[...fresh,...backlog,...stuck].map(messageId=>getMessage(paths.inbox,messageId)!);
+    const witnesses=freezeMemberGrants(before,before.map(row=>listedBasis?{...listedBasis,messageId:row.messageId}:granted!.witnesses.get(row.messageId)!));
+
     if (fresh.length + backlog.length + stuck.length > 0) {
       // A delivery hook may be offering them right now; wake only for what still waits.
       await sleep(WAKE_SETTLE_MS);
@@ -266,7 +283,23 @@ export async function runWake(input: unknown, deps: WakeDeps): Promise<WakeResul
     if (messages + stuck.length > 0) due = "wake";
     else if (now() >= deadline) due = "rearm";
     else continue;
-    const budget = takeTurn(paths, sessionId, now(), wakeBudget(policy));
+    let route:import("./target-delivery-operation.mts").ExecutionContext|null=null;
+    if(due==="wake") {
+      if(!deps.messageProducer){audit(paths,now(),sessionId,[...fresh,...backlog,...stuck],"awaiting-user-turn");release();return quiet;}
+      const selected=[...fresh,...backlog,...stuck].slice(0,8);
+      const records=selectRouteMembers(selected.map(id=>getMessage(paths.inbox,id)).filter((r):r is NonNullable<typeof r>=>!!r));
+      try {
+        const result=decideMessageRoute({...deps,policy,messageRoute:{route:'claude-wake',grant:'members',memberGrants:records.map(r=>witnesses.find(w=>w.messageId===r.messageId)!),permissionMode:typeof mode==='string'?mode:undefined,taskId:grant?.taskId}},records,sessionId,"hook-continue",{runtime:"claude-code",sessionId,taskId:null},deps.messageProducer);
+        if(result.status==="denied-no-debit"&&result.reason==="spacing")continue;
+        if(result.status!=="granted"){audit(paths,now(),sessionId,selected,result.status==="denied-no-debit"?"budget":"awaiting-user-turn");release();return quiet;}
+        route=result.context;
+      }
+      catch {release();return quiet;}
+      if(!route){release();return quiet;}
+      const exact=route.kind==="message"?checkExecution(paths,route,["hook-continue"])!.group.binding.members.map(m=>m.messageId):selected;
+      fresh=fresh.filter(id=>exact.includes(id));backlog=backlog.filter(id=>exact.includes(id));stuck=stuck.filter(id=>exact.includes(id));
+    }
+    const budget = due==="rearm"?takeTurn(paths, sessionId, now(), wakeBudget(policy)):"ok";
     // Too soon after the last autonomous turn, or the budget was locked: try again at the next poll.
     if (budget === "spacing" || budget === "locked") continue;
     release();
@@ -278,6 +311,8 @@ export async function runWake(input: unknown, deps: WakeDeps): Promise<WakeResul
       audit(paths, now(), sessionId, [], "rearm");
       return { code: 2, text: REARM_TEXT };
     }
+    beginRouteEffect(paths,route!,["hook-continue"]);
+    transitionRouteMessages(paths,route!,row=>row);
     if (backlog.length + stuck.length > 0) rememberWoken(paths, sessionId, [...backlog, ...stuck]);
     const kinds: ReadonlyMap<string, WakeGrant> = granted?.kinds ?? new Map();
     auditGranted(paths, now(), sessionId, stuck, "stuck-offer", kinds);
@@ -288,8 +323,29 @@ export async function runWake(input: unknown, deps: WakeDeps): Promise<WakeResul
     } catch {
       // the woken turn's offers then read "prompt"; the wake itself goes ahead
     }
-    return { code: 2, text: messages > 0 ? wakeText(messages) : STUCK_TEXT };
+    try{requireMessageEffect({paths},route!,'continuation-output');}catch{return quiet;}
+    finishRouteEffect(paths,route!,{kind:'hook',emitted:true});
+    const result={code:2 as const,text:fresh.length+backlog.length>0?wakeText(fresh.length+backlog.length):STUCK_TEXT};
+    messageWakeContexts.set(result,route!);
+    try{requireMessageEffect({paths},route!,'continuation-output');}catch{return quiet;}
+    return result;
   }
+}
+
+// Final writer seam after the listener Promise resumes. Rearm has no message grant.
+export function emitWakeResult(result:WakeResult,deps:Pick<WakeDeps,'paths'>,write:(text:string)=>void):boolean {
+  if(result.code!==2)return false;
+  const context=messageWakeContexts.get(result);
+  if(context){try{requireMessageEffect(deps,context,'continuation-output');}catch{return false;}}
+  else if(result.text!==REARM_TEXT)return false;
+  write(`${result.text}\n`);if(context)emittedWakeResults.add(result);return true;
+}
+
+// The original private result/admission reference is required; JSON/copies cannot attach context.
+export function retireCompletedWakeResult(result:WakeResult,deps:Pick<WakeDeps,'paths'>,provider:HookCompletionProvider|undefined):HookRetirementResult {
+  const context=messageWakeContexts.get(result);
+  if(!context||!emittedWakeResults.has(result))return {status:'refused'};
+  return retireCompletedHookRoute(deps,context,provider);
 }
 
 if (isMainModule(import.meta.url)) {
@@ -301,9 +357,10 @@ if (isMainModule(import.meta.url)) {
   }
   const maxWaitMs = wakeMaxWaitMs(process.argv.slice(2));
   // Any failure, malformed input or --timeout included, ends quietly with exit 0.
+  const paths=nodePaths();
   Promise.resolve().then(() => maxWaitMs === null ? { code: 0 } as const
-    : runWake(JSON.parse(stdin || "null"), { paths: nodePaths(), maxWaitMs })).then((result) => {
-    if (result.code === 2) process.stderr.write(`${result.text}\n`);
-    process.exitCode = result.code;
+    : runWake(JSON.parse(stdin || 'null'), { paths, maxWaitMs })).then((result) => {
+    const emitted=emitWakeResult(result,{paths},text=>process.stderr.write(text));
+    process.exitCode = result.code===2&&!emitted?0:result.code;
   }, () => { process.exitCode = 0; });
 }

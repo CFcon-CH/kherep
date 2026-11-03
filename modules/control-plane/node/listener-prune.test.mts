@@ -32,7 +32,7 @@ const age = (file: string, at: number): void => fs.utimesSync(file, at / 1000, a
 function put(paths: NodePaths, name: string, at: number = OLD, body: string = "{}"): string {
   fs.mkdirSync(dir(paths), { recursive: true });
   const file = path.join(dir(paths), name);
-  fs.writeFileSync(file, body);
+  fs.writeFileSync(file, name.includes(".turns.json") && body === "{}" ? '{"turns":[]}' : body);
   age(file, at);
   return file;
 }
@@ -114,16 +114,16 @@ test("a file rewritten while the prune holds it aside is kept, with other or the
     // A resumed session remembering its unchanged mode: a new file with the same bytes.
     if (file === same) rememberMode(paths, "same", "default");
   } });
-  assert.deepEqual(result, { removed: 1, kept: 2, sessions: 1, failed: [] });
-  assert.deepEqual(names(paths), ["gone.mode.json", "same.mode.json"]);
+  assert.deepEqual(result, { removed: 0, kept: 3, sessions: 0, failed: [] });
+  assert.deepEqual(names(paths), ["gone.mode.json", "gone.turns.json", "same.mode.json"], "the fresh sibling also retains the budget on its under-lock recheck");
   assert.deepEqual(JSON.parse(fs.readFileSync(mode, "utf8")), { permissionMode: "acceptEdits" });
   assert.equal(fs.readFileSync(same, "utf8"), body);
   assert.ok(Date.now() - fs.statSync(same).mtimeMs < STATE_RETENTION_MS, "the fresh file stays, not the old one");
 
-  const tomb = put(paths, `.other.turns.json.${NOW - 2 * 60_000}-${crypto.randomUUID()}.tomb`, OLD, "[]");
+  const tomb = put(paths, `.other.turns.json.${NOW - 2 * 60_000}-${crypto.randomUUID()}.tomb`, OLD, '{"turns":[]}');
   assert.deepEqual(sweepListeners(paths, { now: NOW }), { removed: 0, kept: 0, failed: [] });
   assert.equal(fs.existsSync(tomb), false);
-  assert.equal(fs.readFileSync(path.join(dir(paths), "other.turns.json"), "utf8"), "[]");
+  assert.equal(fs.readFileSync(path.join(dir(paths), "other.turns.json"), "utf8"), '{"turns":[]}');
 });
 
 test("a pass removes at most PRUNE_MAX files and the rest the next time", (t) => {
@@ -166,8 +166,9 @@ test("a closed-session delivery whose intercom session ends keeps its listener s
   // (c) The next listing drops both entries: the three files go, the task record stays.
   rememberSessions(paths, [], later);
   assert.equal(checkListeners(paths, alive, later).orphaned, 3);
-  assert.deepEqual(prune(later), { removed: 3, kept: 0, sessions: 2, failed: [] });
-  for (const file of files) assert.equal(fs.existsSync(file), false, path.basename(file));
+  assert.deepEqual(prune(later), { removed: 2, kept: 1, sessions: 1, failed: [] });
+  for (const file of files.slice(0, 2)) assert.equal(fs.existsSync(file), false, path.basename(file));
+  assert.equal(fs.existsSync(files[2]), true, "protected v2 canonical budget stays with its marker");
   assert.equal(readTask(paths, intercom.taskId)?.state, "done");
-  assert.equal(checkListeners(paths, alive, later).orphaned, 0);
+  assert.equal(checkListeners(paths, alive, later).orphaned, 1);
 });

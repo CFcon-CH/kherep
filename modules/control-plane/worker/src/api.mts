@@ -94,7 +94,10 @@ async function listMessages(params: URLSearchParams, env: Env): Promise<Response
   if (node !== null && !isNodeId(node) && node !== OPERATOR_NODE_ID) return fail(400, "invalid node");
   const limit = Number(params.get("limit") ?? "50");
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > 200) return fail(400, "limit must be 1-200");
-  return json({ messages: await registryStub(env).listMessages(node, limit) });
+  const messages = await registryStub(env).listMessages(node, limit);
+  // Duplicate verification keeps its digest inside the Registry. Operator
+  // metadata retains its existing fields without this internal content verifier.
+  return json({ messages: messages.map(({ binding: _binding, ...metadata }) => metadata) });
 }
 
 // Issue #493: one sender's rows grouped by state and deletable mark, with the

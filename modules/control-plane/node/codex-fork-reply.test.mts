@@ -197,7 +197,7 @@ test("a thread/fork RPC error fails closed: fork-rejected, no text kept, no turn
   assert.ok(!run.requests.some((m) => m.method === "turn/start"));
   assert.deepEqual([f.app.runs.length, run.ended, run.signals], [1, true, []], "stdin end closed it; no signal");
   const dirs = fs.readdirSync(f.paths.dir, { withFileTypes: true }).filter((entry) => entry.isDirectory()).map((entry) => entry.name).sort();
-  assert.deepEqual(dirs, ["codex-fork-attempts", "codex-sessions", "inbox", "listeners", "service"], "no new store in the node dir");
+  assert.deepEqual(dirs, ["codex-fork-attempts","codex-native-pending","codex-sessions","inbox","listeners","service","target-delivery-groups"],"the required common owner/history are the only added stores");
   const hash = crypto.createHash("sha256").update(error.message, "utf8").digest("hex").slice(0, 12);
   // The test's temporary directory may itself carry the word kherep, then the path is also that mention.
   const kherep = error.message.toLowerCase().includes("kherep") ? ",kherep" : "";

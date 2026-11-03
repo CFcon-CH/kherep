@@ -4,7 +4,7 @@ import fs from "node:fs";
 import { isNodeId, isPhase1Command, isSessionCommand, PHASE1_COMMANDS, type NodeCommand, type Phase1Command } from "../protocol.mts";
 import { CLAUDE_MCP_CAPABILITY, REMOTE_MCP_CAPABILITY, type McpRuntime } from "../protocol-mcp.mts";
 import {
-  isSessionRef, MESSAGING_ACK_CAPABILITY, MESSAGING_CAPABILITY, MESSAGING_PROGRESS_V2_CAPABILITY, OPERATOR_NODE_ID,
+  isSessionRef, MESSAGING_ORIGIN_CAPABILITY, MESSAGING_ACK_CAPABILITY, MESSAGING_CAPABILITY, MESSAGING_PROGRESS_V2_CAPABILITY, OPERATOR_NODE_ID,
 } from "../protocol-messages.mts";
 import { TASK_CONTROL_CAPABILITY, TASK_CONTROL_REPORT_CAPABILITY } from "../protocol-task-control.mts";
 import {
@@ -47,7 +47,7 @@ export interface CodexForkPolicy { enabled: true; sessions: string[]; platforms:
 export interface NodePolicy {
   version: 1;
   allowedCommands: Phase1Command[];
-  messaging?: { accept: AcceptRule[]; resumeClosed?: true };
+  messaging?: { accept: AcceptRule[]; resumeClosed?: true; resumeTarget?: true };
   wake?: WakePolicy;
   sessions?: SessionsPolicy;
   remoteMcp?: { enabled: true; claudeCode?: true };
@@ -96,7 +96,7 @@ export function readPolicy(file: string, required = false): NodePolicy | null {
       ? { enabled: true as const, ...(remoteMcpValue.claudeCode === true ? { claudeCode: true as const } : {}) } : null;
     const resumeClosed = (value.messaging as { resumeClosed?: unknown } | undefined)?.resumeClosed === true;
     return { version: 1, allowedCommands: value.allowedCommands.filter(isPhase1Command),
-      ...(accept ? { messaging: { accept, ...(resumeClosed ? { resumeClosed: true as const } : {}) } } : {}),
+      ...(accept ? { messaging: { accept, ...(resumeClosed ? { resumeClosed: true as const } : {}), ...((value.messaging as { resumeTarget?: unknown } | undefined)?.resumeTarget === true ? { resumeTarget: true as const } : {}) } } : {}),
       ...(wake ? { wake } : {}), ...(sessions ? { sessions } : {}), ...(remoteMcp ? { remoteMcp } : {}) };
   } catch {
     return null;
@@ -115,6 +115,8 @@ const isSender = (value: unknown): boolean => value === "*" || value === OPERATO
 // the command allowlist is unaffected.
 function parseAcceptRules(section: unknown): AcceptRule[] | null {
   if (typeof section !== "object" || section === null) return null;
+  const target = (section as { resumeTarget?: unknown }).resumeTarget;
+  if (target !== undefined && typeof target !== "boolean") return null;
   const accept = (section as { accept?: unknown }).accept;
   if (!Array.isArray(accept)) return null;
   const rules: AcceptRule[] = [];
@@ -146,7 +148,7 @@ export function mcpRuntimeEnabled(policy: NodePolicy, runtime: unknown): runtime
 export function advertisedCapabilities(policy: NodePolicy, ready: readonly TaskRuntime[] = []): string[] {
   const s = policy.sessions;
   return [...policy.allowedCommands, ...(messagingEnabled(policy) ? [MESSAGING_CAPABILITY] : []), MESSAGING_ACK_CAPABILITY,
-    MESSAGING_PROGRESS_V2_CAPABILITY, MESSAGING_LOOP_BRAKE_CAPABILITY, ...(s?.enabled ? [SESSIONS_CAPABILITY] : []), ...(s?.delegate.accept ? [DELEGATE_ACCEPT_CAPABILITY] : []),
+    MESSAGING_PROGRESS_V2_CAPABILITY, MESSAGING_ORIGIN_CAPABILITY, MESSAGING_LOOP_BRAKE_CAPABILITY, ...(s?.enabled ? [SESSIONS_CAPABILITY] : []), ...(s?.delegate.accept ? [DELEGATE_ACCEPT_CAPABILITY] : []),
     ...(s?.delegate.request ? [DELEGATE_REQUEST_CAPABILITY] : []),
     ...(s?.ownTaskControl && s.runtimes.length > 0 ? [TASK_CONTROL_CAPABILITY, TASK_CONTROL_REPORT_CAPABILITY] : []),
     ...(mcpRuntimeEnabled(policy, "codex") ? [REMOTE_MCP_CAPABILITY] : []),

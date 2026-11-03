@@ -137,7 +137,7 @@ describe("operator API", () => {
     }
   });
 
-  it("sends an operator message and lists message metadata without text", async () => {
+  it("sends an operator message and lists metadata without text or the internal digest", async () => {
     const jwt = await token();
     const nodeId = await enroll(await newKey(), "inbox-node");
     await registry().updateRegistration(nodeId, FACTS, [], ["messaging.v1"]);
@@ -150,6 +150,10 @@ describe("operator API", () => {
       expect((await post(bad)).status).toBe(400);
     }
 
+    const digest = await runInDurableObject(registry(), (_i, state) =>
+      state.storage.sql.exec("SELECT message_binding FROM messages WHERE id = ?", messageId).one().message_binding);
+    expect(digest).toEqual(expect.any(String));
+    expect(String(digest)).toHaveLength(43);
     const listed = await api(`/api/messages?node=${nodeId}&limit=10`, {}, jwt);
     expect(listed.status).toBe(200);
     const raw = await listed.text();
@@ -158,6 +162,8 @@ describe("operator API", () => {
     expect(messages).toEqual([expect.objectContaining({
       messageId, fromNode: "operator", fromSession: "operator@example.com", toNode: nodeId, toSession: "build", state: "queued" })]);
     expect(messages[0]).not.toHaveProperty("text");
+    expect(messages[0]).not.toHaveProperty("binding");
+    expect(raw).not.toContain(String(digest));
     expect((await api("/api/messages?limit=0", {}, jwt)).status).toBe(400);
     expect((await api("/api/messages?node=bad", {}, jwt)).status).toBe(400);
 
@@ -165,6 +171,30 @@ describe("operator API", () => {
       state.storage.sql.exec("SELECT actor, action, detail FROM audit WHERE detail LIKE ?", `%${messageId}%`).toArray());
     expect(audit).toEqual([expect.objectContaining({ actor: "operator@example.com", action: "message.send" })]);
     expect(String(audit[0].detail)).not.toContain("operator secret");
+  });
+
+  it("keeps the digest internal after text clearing without changing duplicate or status behavior", async () => {
+    const jwt = await token(), nodeId = await enroll(await newKey(), "digest-metadata-node");
+    await registry().updateRegistration(nodeId, FACTS, [], ["messaging.v1"]);
+    const sent = await api(`/api/nodes/${nodeId}/messages`, { method: "POST", body: JSON.stringify({ session: "target", text: "synthetic" }) }, jwt);
+    const { messageId } = await sent.json() as { messageId: string };
+    await registry().reportMessageStatus(nodeId, { messageId, state: "accepted" });
+    const before = await registry().mcpMessageStatus("operator", messageId);
+    const stored = await runInDurableObject(registry(), (_i, state) =>
+      state.storage.sql.exec("SELECT text, message_binding FROM messages WHERE id = ?", messageId).one());
+    expect(stored.text).toBeNull();
+    expect(String(stored.message_binding)).toHaveLength(43);
+    expect((await api(`/api/messages?node=${nodeId}`)).status).toBe(403);
+    const response = await api(`/api/messages?node=${nodeId}`, {}, jwt);
+    expect(response.status).toBe(200);
+    const raw = await response.text();
+    expect(raw).not.toContain(String(stored.message_binding));
+    expect(JSON.parse(raw).messages[0]).toMatchObject({ messageId, state: "accepted" });
+    expect(JSON.parse(raw).messages[0]).not.toHaveProperty("binding");
+    expect(await registry().sendMessage({ messageId, from: { nodeId: "operator", session: "operator@example.com" },
+      to: { nodeId, session: "target" }, text: "changed" }, "operator@example.com"))
+      .toEqual({ ok: false, error: "conflicting message binding" });
+    expect(await registry().mcpMessageStatus("operator", messageId)).toEqual(before);
   });
 
   it("refuses operator messages to unknown or revoked nodes like the commands endpoint", async () => {

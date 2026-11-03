@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { BUSY_OWNER, BUSY_BODY, busyFixture } from "./codex-busy-fixture.mts";
+import { nodePaths } from "./config.mts";
+import { acknowledgeCodexOffer, prepareCodexOffers } from "./codex-inbox-ack.mts";
 import { deliverForCodex } from "./deliver-codex.mts";
-import { getMessage, markReported, unreportedStatuses, writeJsonAtomic } from "./inbox.mts";
+import { getMessage, markReported, unreportedStatuses, writeJsonAtomic, type InboxRecord } from "./inbox.mts";
 import { runMsg } from "./msg-cli.mts";
 
 function client(t: test.TestContext, count = 1) {
@@ -48,11 +51,12 @@ test("interrupted offers recover immediately without consuming attempts; exact A
   assert.equal((await c.receive()).text.includes(BUSY_BODY), false);
 });
 
-test("ACK fails closed for wrong owner, stale generation, readdressed, refused and never offered", async t => {
-  for (const kind of ["owner", "generation", "address", "refused", "never"] as const) await t.test(kind, async sub => {
+test("ACK fails closed for wrong owner, stale generation, readdressed, changed origin, refused and never offered", async t => {
+  for (const kind of ["owner", "generation", "address", "origin", "refused", "never"] as const) await t.test(kind, async sub => {
     const c = client(sub), token = receiptOf((await c.receive()).text), file = path.join(c.paths.inbox, `${c.ids[0]}.json`);
     const record = getMessage(c.paths.inbox, c.ids[0])!;
     if (kind === "generation") writeJsonAtomic(file, { ...record, offeredAt: new Date(0).toISOString() });
+    if (kind === "origin") writeJsonAtomic(file, { ...record, senderOrigin: { nodeId: record.from.nodeId, sentAt: new Date(0).toISOString() } });
     if (kind === "address") writeJsonAtomic(file, { ...record, toSession: "other" });
     if (kind === "refused") writeJsonAtomic(file, { ...record, state: "refused" });
     if (kind === "never") writeJsonAtomic(file, { ...record, state: "accepted", codexOffer: undefined });
@@ -112,4 +116,96 @@ test("ACK and receive reject unrelated option combinations", async t => {
     ["--from", BUSY_OWNER, "--ack", token, "--to", "another/owner"],
     ["--from", BUSY_OWNER, "--receive", "--wait", "1"],
   ]) assert.equal((await c.call(args)).status, 1);
+});
+
+// Frozen actual v1 production output from kherep@a0062625f68fb0b68bdab2a24c59506db8461eb5.
+// It was prepared and successfully ACKed by that baseline before testing upgrade.
+// Keep the stored token/hash unchanged; recomputing it with current code hides regressions.
+const V1_UPGRADE = {
+  "owner": "01a0db74-0000-7000-8000-000000000001",
+  "token": "00000000-0000-4000-8000-000000000002",
+  "record": {
+    "messageId": "00000000-0000-4000-8000-000000000001",
+    "from": {
+      "nodeId": "00000000-0000-4000-8000-000000000003",
+      "session": "synthetic-sender"
+    },
+    "toSession": "01a0db74-0000-7000-8000-000000000001",
+    "text": "PUBLIC SYNTHETIC UPGRADE\nComplete body.",
+    "createdAt": "2026-01-01T00:00:00.000Z",
+    "receivedAt": "2026-01-01T00:00:01.000Z",
+    "state": "offered",
+    "depth": 0,
+    "offers": 1,
+    "offeredAt": "2026-01-01T00:00:02.000Z",
+    "offeredBy": "receive",
+    "codexOffer": {
+      "owner": "01a0db74-0000-7000-8000-000000000001",
+      "generation": "0f526aec-0e36-4e97-902c-6bdc099097a3",
+      "fingerprint": "e6347a50aee8a588d46dd8bed4e5f8f950aa2d5e5e67fbfc36482a13eb16d6e3"
+    }
+  },
+  "receipt": {
+    "version": 1,
+    "owner": "01a0db74-0000-7000-8000-000000000001",
+    "entries": [
+      {
+        "messageId": "00000000-0000-4000-8000-000000000001",
+        "generation": "0f526aec-0e36-4e97-902c-6bdc099097a3",
+        "fingerprint": "e6347a50aee8a588d46dd8bed4e5f8f950aa2d5e5e67fbfc36482a13eb16d6e3"
+      }
+    ]
+  }
+} satisfies { owner: string; token: string; record: InboxRecord; receipt: object };
+
+function upgradeFixture(t: test.TestContext, origin = false) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "kherep-ack-upgrade-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const paths = nodePaths(root), { owner, token } = V1_UPGRADE;
+  fs.mkdirSync(path.join(paths.inbox, "codex-offers"), { recursive: true });
+  const file = path.join(paths.inbox, `${V1_UPGRADE.record.messageId}.json`);
+  const record: InboxRecord = structuredClone(V1_UPGRADE.record);
+  if (origin) record.senderOrigin = { nodeId: record.from.nodeId, sentAt: record.createdAt };
+  writeJsonAtomic(file, record);
+  writeJsonAtomic(path.join(paths.inbox, "codex-offers", `${token}.json`), V1_UPGRADE.receipt);
+  if (origin) prepareCodexOffers(paths, [record], owner, token, Date.parse(record.offeredAt!), "receive");
+  return { paths, file, owner, token, read: () => getMessage(paths.inbox, record.messageId)! };
+}
+
+test("upgrade ACK accepts the unchanged persisted v1 token without another Receive or generation", t => {
+  const f = upgradeFixture(t), generation = f.read().codexOffer!.generation;
+  assert.match(acknowledgeCodexOffer(f.paths, f.owner, f.token, [f.owner]), /processing ACK committed/);
+  assert.equal(f.read().state, "delivered");
+  assert.deepEqual(f.read().codexOffer, V1_UPGRADE.record.codexOffer);
+  assert.equal(f.read().codexOffer!.generation, generation);
+});
+
+test("a newly prepared origin-bound token remains valid and may ACK after the admission deadline", t => {
+  const f = upgradeFixture(t, true);
+  assert.notEqual(f.read().codexOffer!.fingerprint, V1_UPGRADE.record.codexOffer.fingerprint);
+  assert.match(acknowledgeCodexOffer(f.paths, f.owner, f.token, [f.owner]), /processing ACK committed/);
+  assert.equal(f.read().state, "delivered");
+});
+
+test("upgrade ACK never falls back across origin, owner, generation or complete content changes", async t => {
+  for (const change of ["add", "legacy-null", "legacy-malformed", "remove", "time", "node", "null", "malformed", "unbound",
+    "owner", "generation", "body", "address", "legacy-owner", "legacy-generation", "legacy-body", "legacy-address"] as const) {
+    await t.test(change, sub => {
+      const f = upgradeFixture(sub, change !== "add" && !change.startsWith("legacy-")), record = f.read();
+      const kind = change.replace(/^legacy-/, "");
+      if (kind === "add") record.senderOrigin = { nodeId: record.from.nodeId, sentAt: record.createdAt };
+      if (kind === "remove") delete record.senderOrigin;
+      if (kind === "time") record.senderOrigin!.sentAt = "2026-01-01T00:00:00.001Z";
+      if (kind === "node") record.senderOrigin!.nodeId = "00000000-0000-4000-8000-000000000004";
+      if (kind === "null") (record as unknown as { senderOrigin: null }).senderOrigin = null;
+      if (kind === "malformed") record.senderOrigin = { nodeId: record.from.nodeId, sentAt: "invalid" };
+      if (kind === "unbound") record.from.nodeId = "00000000-0000-4000-8000-000000000004";
+      if (kind === "generation") record.codexOffer!.generation = "00000000-0000-4000-8000-000000000099";
+      if (kind === "body") record.text += " changed";
+      if (kind === "address") record.from.session = "other-sender";
+      writeJsonAtomic(f.file, record);
+      assert.throws(() => acknowledgeCodexOffer(f.paths, kind === "owner" ? "other-owner" : f.owner, f.token, [f.owner]));
+      assert.equal(f.read().state, "offered");
+    });
+  }
 });

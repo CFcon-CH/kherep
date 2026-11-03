@@ -124,7 +124,9 @@ export function checkPolicy(file: string): { check: Check; policy: NodePolicy | 
   if (wakeRejected) detail = "the wake section is malformed and waking is off";
   else if (forkRejected) detail = "the wake.codexFork section is malformed and the Codex fork reply is off";
   return { check: { ok: !wakeRejected && !forkRejected, source: raw ? "file" : "default", allowedCommands: policy.allowedCommands.length,
-    messagingRules: policy.messaging?.accept.length ?? 0, messagingSource, wake, wakeSource, wakeBudget: budgetReport(policy),
+    messagingRules: policy.messaging?.accept.length ?? 0, messagingSource,
+    targetResume: { selected: policy.messaging?.resumeTarget === true, resumeClosed: policy.messaging?.resumeClosed === true,
+      nativeQueue: policy.wake?.nativeQueue === true, provider: "unavailable", waitMs: 600_000 }, wake, wakeSource, wakeBudget: budgetReport(policy),
     sessions: policy.sessions?.enabled ? { enabled: true, runtimes: policy.sessions.runtimes } : { enabled: false },
     remoteMcp: policy.remoteMcp?.enabled === true, ...(detail ? { detail } : {}) }, policy };
 }

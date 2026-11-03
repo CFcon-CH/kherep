@@ -1,4 +1,11 @@
 #!/usr/bin/env node
+import {requireMessageEffect} from './message-admission.mts';
+import { decideMessageRoute } from "./target-delivery-producer.mts";
+import { beginRouteEffect } from "./target-delivery-route.mts";
+import { finishRouteEffect } from "./target-delivery-outcome.mts";
+import type { ExecutionContext } from "./target-delivery-operation.mts";
+import { readPolicy } from "./policy.mts";
+import { audit, bypassesPermissions } from "./autonomy.mts";
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -72,12 +79,25 @@ export function deliverForHook(input: unknown, deps: HookDeps): string {
   // A Stop continuation is an autonomous turn: budget and permission mode gate it.
   // A prompt that claims the wake listener's marker opened a woken turn (issue #417).
   let gated: HookDeps = deps;
+  let route:ExecutionContext|null=null;
   if (event === "Stop") {
-    gated = { ...deps, mayContinue: (ids) => mayContinue(deps.paths, sessionId, mode, ids, now, nodeWakeBudget(deps.paths)) };
+    if(bypassesPermissions(mode)){audit(deps.paths,now,sessionId,sessionInbox(deps.paths,refs).filter(r=>r.state==="accepted").map(r=>r.messageId),"continue-permission-mode");return "";}
+    const policy=readPolicy(deps.paths.policy,true);
+    gated={...deps,beforeOffer:records=>{
+      if(!records.length)return null;
+      if(!policy){audit(deps.paths,now,sessionId,records.map(r=>r.messageId),"awaiting-user-turn");return null;}
+      const result=decideMessageRoute({...deps,policy,messageRoute:{route:'claude-stop',grant:'stop',permissionMode:typeof mode==='string'?mode:undefined}},records,sessionId,"hook-continue",{runtime:"claude-code",sessionId,taskId:null},deps.messageProducer??null);
+      audit(deps.paths,now,sessionId,records.map(r=>r.messageId),result.status==="granted"?"continue":result.status==="denied-no-debit"?"continue-budget":"awaiting-user-turn");
+      route=result.status==="granted"?result.context:null;return route;
+    }};
   } else if (claimWake(deps.paths, sessionId, now)) {
     gated = { ...deps, offeredBy: "wake" };
   }
-  return contextOutput(event, deliveryContext(event, refs, { ...gated, owner: { sessionId, runtime: "claude-code" } }));
+  const text=deliveryContext(event,refs,{...gated,owner:{sessionId,runtime:"claude-code"}});
+  if(route&&text){beginRouteEffect(deps.paths,route,['hook-continue']);try{requireMessageEffect(deps,route,'continuation-output');}catch{return '';}finishRouteEffect(deps.paths,route,{kind:'hook',emitted:true});}
+  const output=contextOutput(event,text);
+  if(route&&output){deps.onContinuation?.(route);try{requireMessageEffect(deps,route,'continuation-output');}catch{return '';}}
+  return output;
 }
 
 // The runtime a command line names: --runtime codex, otherwise Claude Code.
@@ -94,8 +114,10 @@ export function runHook(stdin: string, deps: HookDeps, write: (text: string) => 
   runtime: HookRuntime = "claude"): void {
   try {
     const input: unknown = JSON.parse(stdin);
-    const output = runtime === "codex" ? deliverForCodex(input, deps) : deliverForHook(input, deps);
-    if (output) write(output);
+    let continuation:ExecutionContext|undefined;
+    const scoped={...deps,onContinuation:(context:ExecutionContext)=>{continuation=context;deps.onContinuation?.(context);}};
+    const output = runtime === 'codex' ? deliverForCodex(input, scoped) : deliverForHook(input, scoped);
+    if (output) {if(continuation)requireMessageEffect(deps,continuation,'continuation-output');write(output);}
   } catch (error) {
     warn(`kherep deliver-hook: ${String((error as Error).message ?? error)}`);
   }

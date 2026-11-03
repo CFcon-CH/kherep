@@ -12,11 +12,13 @@ const pendingFile = (paths: {dir: string}): string => path.join(paths.dir, "code
 
 test("separate processes atomically reserve exactly one immutable native owner group", async t => {
   const f = taskNode(t), script = `import { reserveNativeOwner } from ${JSON.stringify(new URL("./codex-native-pending.mts", import.meta.url).href)};
-    console.log(reserveNativeOwner(JSON.parse(process.argv[1]), process.argv[2], [process.argv[3]]));`;
+    try { console.log(reserveNativeOwner(JSON.parse(process.argv[1]), process.argv[2], [process.argv[3]])); }
+    catch (e) { if (!/native owner mutation held/.test(e.message)) throw e; console.log(false); }`;
   const run = (messageId: string) => new Promise<string>((resolve, reject) => {
     const child = spawn(process.execPath, ["--input-type=module", "-e", script, JSON.stringify(f.paths), OWNER, messageId], { windowsHide: true });
     let out = "", err = ""; child.stdout.on("data", chunk => { out += chunk; }); child.stderr.on("data", chunk => { err += chunk; });
-    child.once("error", reject); child.once("close", code => code === 0 ? resolve(out.trim()) : reject(new Error(err)));
+    const timer = setTimeout(() => child.kill("SIGKILL"), 5000);
+    child.once("error", reject); child.once("close", code => { clearTimeout(timer); code === 0 ? resolve(out.trim()) : reject(new Error(err)); });
   });
   assert.deepEqual((await Promise.all([run(id(1)), run(id(2))])).sort(), ["false", "true"]);
   const before = fs.readFileSync(pendingFile(f.paths), "utf8");

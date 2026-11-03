@@ -336,3 +336,21 @@ test("records every successful session listing in sessions.json and keeps it on 
   await assert.rejects(list());
   assert.equal(readLocalSessions(paths).length, 2);
 });
+
+
+test("sender origin survives 23 hours offline, retries and a restarted exchange; legacy stays unknown", async (t) => {
+  const paths = tempPaths(t);
+  const sentAt = new Date(1_000).toISOString();
+  writeOutbox(paths, { ...outbox(paths), senderSentAt: sentAt } as OutboxRecord);
+  const now = 1_000 + 23 * 60 * 60_000;
+  const { client } = await connected(paths, () => now);
+  const inflight = new Map<string, number>();
+  for (const frame of [poll(client, paths, inflight, true, now)[0],
+    poll(client, paths, inflight, true, now + 60_000)[0],
+    poll((await connected(paths, () => now)).client, paths, new Map(), true, now)[0]]) {
+    assert.equal((frame.body as Record<string, unknown>).senderSentAt, sentAt);
+  }
+  outbox(paths, ID_B);
+  const legacy = poll(client, paths, new Map(), true, now).find(e => (e.body as { messageId: string }).messageId === ID_B)!;
+  assert.equal(Object.hasOwn(legacy.body as object, "senderSentAt"), false);
+});

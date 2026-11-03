@@ -31,10 +31,10 @@ function setup(t: test.TestContext, sessions: Record<string, unknown> = {}, cwd?
     startedAt: new Date(T0).toISOString(), deadline: new Date(T0 + 60_000).toISOString(), updatedAt: new Date(T0).toISOString() }, T0);
   const messageId = crypto.randomUUID();
   const target = { runtime: "codex", sessionId: SESSION };
-  publishSynthetic(node.paths, [fixtureEvidence(target, "idle-loaded", T0)], T0,
+  publishSynthetic(node.paths, [{...fixtureEvidence(target, "idle-loaded", T0),lifecycle:{status:"value",value:{state:"restored",generation:7},source:"native-lifecycle",observedAt:T0,complete:true,reasonCode:"observed"}}], T0,
     [{ ...target, state: "idle-loaded" }], node.livenessAuthority);
   storeMessage(node.paths.inbox, { messageId, from: PEER, toSession: record.name, text: "synthetic peer message",
-    createdAt: new Date(T0).toISOString(), taskId: record.taskId }, T0, 0);
+    createdAt: new Date(T0).toISOString(),senderOrigin:{nodeId:PEER.nodeId,sentAt:new Date(T0).toISOString()}, taskId: record.taskId }, T0, 0);
   const order: string[] = [];
   const poll = async (options: { running?: boolean; verdict?: Verdict | null } = {}): Promise<string[]> => {
     const codex: CodexDeps = {
@@ -78,6 +78,6 @@ test("an ended previous run is read once before the readiness verdict and once b
   assert.deepEqual(await pending.poll({ verdict: null }), ["waiting", "retry-pending", "accepted"]);
   assert.deepEqual(pending.order, ["read"]);
   const ready = setup(t);
-  assert.deepEqual(await ready.poll(), ["failed", "wake-failed", "offered"]);
+  assert.deepEqual(await ready.poll(), ["waiting", "awaiting-user-turn", "accepted"]);
   assert.deepEqual(ready.order, ["read", "resume"]);
 });

@@ -1,6 +1,11 @@
+import {withRoute} from './target-delivery-route.mts';
 import { messageOwnerMatches } from "./message-owner.mts";
 import type { SelectedOwner } from "../protocol-message-binding.mts";
 import { automaticReplyDecision } from "./reply-admission.mts";
+import { offerInboxMessage, refuseInboxMessage } from "./target-delivery-inbox.mts";
+import { selectRouteMembers } from "./target-delivery-route.mts";
+import type { ExecutionContext } from "./target-delivery-operation.mts";
+import { transitionRouteMessages } from "./target-delivery-outcome.mts";
 import { codexAckInstruction, prepareCodexOffers } from "./codex-inbox-ack.mts";
 import type { DirectoryBody } from "../protocol-messages.mts";
 import type { NodePaths } from "./config.mts";
@@ -57,6 +62,12 @@ export const RECORD_LOCK_BUDGET_MS = 1_000;
 // those records again instead of the whole of sent/.
 // offeredBy: the label this call's offers carry, EVENT_OFFER of the event by default.
 export interface HookDeps {
+  livenessAuthority?:import("./session-authority.mts").AdmissionAuthority;
+  messageProducer?: import("./target-delivery-operation.mts").RouteProducer;
+  onContinuation?:(context:ExecutionContext)=>void;
+  beforeOffer?: (records:InboxRecord[])=>ExecutionContext|null;
+  selected?:InboxRecord[];
+  onCarried?:(records:InboxRecord[])=>void;
   owner?: SelectedOwner;
   paths: NodePaths; nonce?: () => string; replyCommand?: string; now?: () => number; replyFrom?: string; maxBytes?: number;
   mayContinue?: (messageIds: string[]) => boolean;
@@ -165,10 +176,10 @@ const newTag = (): string => crypto.randomUUID().slice(-12);
 // The records framed as deliveryContext frames them, each with its --reply-to
 // command, within maxBytes and without the offer bookkeeping: for a session
 // that gets them as its first prompt (closed-resume.mts startIntercom).
-export function frameRecords(paths: NodePaths, records: InboxRecord[], cli: string, maxBytes: number): { text: string; carried: InboxRecord[] } {
+export function frameRecords(paths: NodePaths, records: InboxRecord[], cli: string, maxBytes: number, completeOnly = false): { text: string; carried: InboxRecord[] } {
   const tag = newTag();
   const intro = introLine("UserPromptSubmit", tag, true);
-  const blocks = fitBlocks(paths, records, directoryOf(paths), tag, `${cli} msg send`, `${cli} msg inbox --all`, maxBytes - bytes(intro));
+  const blocks = fitBlocks(paths, records, directoryOf(paths), tag, `${cli} msg send`, `${cli} msg inbox --all`, maxBytes - bytes(intro), completeOnly);
   return { text: [intro, ...blocks].join("\n\n"), carried: records.slice(0, blocks.length) };
 }
 
@@ -185,13 +196,29 @@ export function sessionInbox(paths: NodePaths, refs: string[], owner?: SelectedO
 }
 
 // Stop runs only when the turn completed, so what that turn carried arrived.
+function explicitOffer(paths:NodePaths,r:InboxRecord):boolean {return !!r.targetAttempt&&withRoute(paths,r.targetAttempt,s=>!!s.processing);}
 export function confirmOffered(paths: NodePaths, records: InboxRecord[]): void {
-  for (const r of records) if (r.state === "offered") markDelivered(paths.inbox, r.messageId);
+  const done=new Set<string>();
+  for (const r of records) if (r.state === "offered" && !explicitOffer(paths,r)) {
+    if(!r.targetAttempt)markDelivered(paths.inbox,r.messageId);
+    else if(!done.has(r.targetAttempt.groupId)){
+      const ctx={kind:"message" as const,handle:r.targetAttempt};
+      transitionRouteMessages(paths,ctx,current=>records.some(s=>s.messageId===current.messageId&&s.state==="offered")?{...current,state:"delivered"}:current);
+      done.add(r.targetAttempt.groupId);
+    }
+  }
 }
 
 // StopFailure ends the turn on an API error: what it carried may be unread.
 export function retryOffered(paths: NodePaths, records: InboxRecord[]): void {
-  for (const r of records) if (r.state === "offered") markRetry(paths.inbox, r.messageId);
+  const done=new Set<string>();
+  for (const r of records) if (r.state === "offered" && !explicitOffer(paths,r)) {
+    if(!r.targetAttempt)markRetry(paths.inbox,r.messageId);
+    else if(!done.has(r.targetAttempt.groupId)){
+      transitionRouteMessages(paths,{kind:"message",handle:r.targetAttempt},current=>current.state==="offered"?{...current,retry:true}:current);
+      done.add(r.targetAttempt.groupId);
+    }
+  }
 }
 
 // An offered record UserPromptSubmit offers again: flagged by StopFailure, or
@@ -214,7 +241,7 @@ function contextUnderBudget(event: DeliveryEvent, refs: string[], deps: HookDeps
   const { paths } = deps;
   const now = deps.now?.() ?? Date.now();
   const maxBytes = deps.maxBytes ?? MAX_CONTEXT_BYTES;
-  const mine = deps.codexOwner && deps.codexSelected ? [deps.codexSelected].filter(r => messageOwnerMatches(r, deps.owner, refs)) : sessionInbox(paths, refs, deps.owner);
+  const mine = (deps.selected ?? (deps.codexOwner&&deps.codexSelected?[deps.codexSelected]:sessionInbox(paths,refs,deps.owner))).filter(r=>messageOwnerMatches(r,deps.owner,refs)).filter(r=>r.state!=="offered"||!explicitOffer(paths,r));
   if (event === "Stop" && !deps.codexOwner) confirmOffered(paths, mine);
   // UserPromptSubmit offers again what an ended turn carried without a Stop,
   // up to MAX_OFFERS times; Stop offers only new arrivals.
@@ -224,7 +251,7 @@ function contextUnderBudget(event: DeliveryEvent, refs: string[], deps: HookDeps
       waiting.push(r);
     } else if (r.state === "offered" && event === "UserPromptSubmit" && deps.reofferOffered !== false && (deps.codexOwner || offerEnded(r, now))) {
       if (deps.codexOwner || (r.offers ?? 0) < MAX_OFFERS) waiting.push(r);
-      else markRefused(paths.inbox, r.messageId, exhaustedOfferReason(r, MAX_OFFERS));
+      else refuseInboxMessage(paths, r.messageId, exhaustedOfferReason(r, MAX_OFFERS));
     }
   }
   const notices = deps.notices ? stillUnnoticed(paths, deps.notices) : unnoticedNotices(paths, refs, now);
@@ -232,13 +259,13 @@ function contextUnderBudget(event: DeliveryEvent, refs: string[], deps: HookDeps
   // A receipt alone never continues a turn at Stop (issue #402): it waits for
   // the next event, or rides along with messages or failures.
   if (waiting.length === 0 && failures.length === 0 && (notices.receipts.length === 0 || event === "Stop")) return "";
-  if (event === "Stop" && deps.mayContinue && !deps.mayContinue(waiting.map((r) => r.messageId))) return "";
+
 
   const directory = directoryOf(paths);
   const tag = deps.nonce?.() ?? newTag();
   const cli = deps.replyCommand ?? hookCommand(paths);
   const reply = `${cli} msg send${deps.replyFrom ? ` --from ${deps.replyFrom}` : ""}`;
-  const shown = waiting.slice(0, MAX_MESSAGES_PER_CALL - failures.length);
+  const shown = (deps.beforeOffer?selectRouteMembers(waiting):waiting).slice(0, (deps.beforeOffer?8:MAX_MESSAGES_PER_CALL) - failures.length);
   const failed = failures.length === 0 ? [] : [failures.map((r) => failureNotice(r, directory)).join("\n")];
   const partBytes = (parts: string[]): number => parts.reduce((sum, p) => sum + bytes(p) + 2, 0);
   // Receipts are low priority: they take room only if every shown message
@@ -255,15 +282,28 @@ function contextUnderBudget(event: DeliveryEvent, refs: string[], deps: HookDeps
   const room = maxBytes - bytes(intro) - FOOTER_BYTES - partBytes(parts) - (ackLine ? bytes(ackLine) + 2 : 0);
   const blocks = fitBlocks(paths, shown, directory, tag, reply, cli + " msg inbox" + (deps.replyFrom ? " --from " + deps.replyFrom : "") + " --all", room, !!deps.codexOwner);
   const offeredBy = deps.offeredBy ?? EVENT_OFFER[event];
+  const selected=shown.slice(0,blocks.length);
+  const route=deps.beforeOffer?deps.beforeOffer(selected):null;
+  if(deps.beforeOffer&&selected.length&&!route)return "";
+  if(!deps.beforeOffer&&event==="Stop"&&deps.mayContinue&&!deps.mayContinue(selected.map(r=>r.messageId)))return "";
+  let routeOffered:InboxRecord[]|null=null;
+  if(route)routeOffered=transitionRouteMessages(paths,route,r=>{
+    const {retry:_retry,...rest}=r;
+    return {...rest,state:"offered",offers:(r.offers??0)+1,offeredAt:new Date(now).toISOString(),offeredBy};
+  });
   // Marked first, shown after (#627): an offer not written (lock busy, record gone) is not shown; it waits for the next event.
   const emitted = deps.codexOwner ? prepareCodexOffers(paths, shown.slice(0, blocks.length), deps.codexOwner, receiptToken, now, offeredBy) : null;
-  const shownBlocks = blocks.filter((_, i) => emitted ? emitted.some(r => r.messageId === shown[i].messageId)
-    : markOffered(paths.inbox, waiting[i].messageId, now, offeredBy) !== null);
+  const shownBlocks=blocks.filter((_,i)=>{
+    if(emitted)return emitted.some(r=>r.messageId===shown[i].messageId);
+    if(routeOffered)return routeOffered.some(r=>r.messageId===shown[i].messageId);
+    return offerInboxMessage(paths,shown[i].messageId,now,offeredBy)!==null;
+  });
   if (shownBlocks.length === 0 && failures.length === 0 && !received) {
     if (!deps.codexOwner || waiting.length === 0) return "";
     return `Incomplete: the next message exceeds this bounded output; no offer receipt was issued. Run \`${cli} msg inbox --from ${deps.codexOwner} --receive ${waiting[0].messageId}\` for complete content. If tool output is truncated, do not ACK.`;
   }
   for (const record of received ? [...failures, ...notices.receipts] : failures) markNoticed(paths, record.messageId, now);
+  deps.onCarried?.(shown.slice(0,shownBlocks.length));
   const left = waiting.length - shownBlocks.length;
   const footer = left > 0 ? [`${left} more message(s) wait for the next turn.`] : [];
   return [intro, ...parts, ...shownBlocks, ...(shownBlocks.length && ackLine ? [ackLine] : []), ...footer].join("\n\n");

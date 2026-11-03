@@ -1,3 +1,4 @@
+import type { TargetHandle } from "./target-delivery-reservation.mts";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -15,6 +16,8 @@ import { messageIds, readJson, writeJsonAtomic, type InboxRecord } from "./inbox
 //   task-requests/<requestId>.json  task.request bodies from `task new`, with their result
 
 export interface TaskRecord {
+  targetAttempt?:TargetHandle;
+  observedSessionId?:string; mappingConflict?:"identity-or-alias";
   taskId: string; name: string; cwd: string; permissionMode: PermissionMode; state: TaskState;
   startedAt: string; deadline: string; updatedAt: string;
   // Absent in records written before issue #63: claude.

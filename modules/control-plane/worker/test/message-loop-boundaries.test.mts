@@ -66,7 +66,7 @@ it("dedup does not score; non-novel normalized repeats hold while novel content 
   for (const text of ["Result １７", " result 17 ", "RESULT 17", "A novel explanatory step 18", "ack", "ok"]) {
     const result = await send(a, b, text); if (!result.ok) throw new Error(result.error);
     expect(result.status.state).toBe("queued");
-    const retry = await send(a, b, "ack", undefined, result.status.messageId);
+    const retry = await send(a, b, text, undefined, result.status.messageId);
     expect(retry.ok && retry.status).toEqual(result.status);
     await take(a, b, result.status.messageId);
   }

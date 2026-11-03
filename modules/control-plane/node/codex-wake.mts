@@ -1,10 +1,18 @@
 import { messageOwnerMatches } from "./message-owner.mts";
 import { automaticReplyDecision } from "./reply-admission.mts";
+import {captureListedGrant,captureOwnerGrant,freezeMemberGrants} from './message-grant.mts';
+import { refuseInboxMessage } from "./target-delivery-inbox.mts";
+import { selectRouteMembers } from "./target-delivery-route.mts";
+import { prepareMessageLaunch } from "./target-delivery-launch.mts";
+import { decideMessageRoute, commandProducer } from "./target-delivery-producer.mts";
+import { finishRouteEffect } from "./target-delivery-outcome.mts";
+import { codexFiles } from "./codex-process.mts";
+import { frameRecords } from "./deliver-core.mts";
 import fs from "node:fs";
 import { livenessAdmission } from "./session-lifecycle.mts";
 
 import type { MessageProgressCode } from "../protocol-messages.mts";
-import { audit, bypassesPermissions, isPlainSessionId, takeTurn, type AutonomyAction, type WakeGrant } from "./autonomy.mts";
+import { audit, bypassesPermissions, isPlainSessionId, type AutonomyAction, type WakeGrant } from "./autonomy.mts";
 import { resumeArgs, stillRuns } from "./codex-process.mts";
 import { spawnRun } from "./codex-runner.mts";
 import type { NodePaths } from "./config.mts";
@@ -94,7 +102,8 @@ async function wakeTask(deps: RunnerDeps, record: TaskRecord, log: (line: string
   const sessionId = record.sessionId!;
   const refs = [sessionId, record.name];
   // Task grant: a task session gets the messages of its task, listed or not.
-  const listed = wakeAllowed(policy, refs);
+  const listedBasis=captureListedGrant(policy,{runtime:'codex',sessionId},{kind:'task',task:record});
+  const listed = listedBasis!==null;
   const granted = (r: InboxRecord): boolean => listed || taskGrants(record, r);
   const markRefused = (dir: string, messageId: string, reason: string): boolean => {
     effects.stale = true;
@@ -116,7 +125,7 @@ async function wakeTask(deps: RunnerDeps, record: TaskRecord, log: (line: string
   const mine = all.filter(granted).filter((message) => {
     const failure = record.state === "failed" && !record.running ? permanentFallbackFailure(record, message, record.reason) : null;
     if (message.state !== "offered" || !failure) return true;
-    markRefused(paths.inbox, message.messageId, failure);
+    refuseInboxMessage(paths, message.messageId, failure);
     return false;
   });
   const deep = mine.filter((r) => r.state === "accepted" && atReplyLimit(r));
@@ -127,9 +136,10 @@ async function wakeTask(deps: RunnerDeps, record: TaskRecord, log: (line: string
   const fresh = mine.filter((r) => r.state === "accepted" && !atReplyLimit(r));
   const ended = mine.filter((r) => r.state === "offered" && offerEnded(r, now));
   // As the delivery hook does: an offer no run confirmed MAX_OFFERS times is refused.
-  for (const r of ended) if ((r.offers ?? 0) >= MAX_OFFERS) markRefused(paths.inbox, r.messageId, exhaustedOfferReason(r, MAX_OFFERS));
+  for (const r of ended) if ((r.offers ?? 0) >= MAX_OFFERS) refuseInboxMessage(paths, r.messageId, exhaustedOfferReason(r, MAX_OFFERS));
   const stuck = ended.filter((r) => (r.offers ?? 0) < MAX_OFFERS && !atReplyLimit(r));
   const waiting = [...fresh, ...stuck];
+  const witnesses=freezeMemberGrants(waiting,waiting.map(row=>listedBasis?{...listedBasis,messageId:row.messageId}:captureOwnerGrant(record,row)!));
   const due = ids(waiting);
   if (due.length === 0) return;
   effects.stale = true;
@@ -169,35 +179,41 @@ async function wakeTask(deps: RunnerDeps, record: TaskRecord, log: (line: string
   const blocked = notReadyNow(deps.readiness, "codex");
   if (blocked === "pending") return explain(waiting, "retry-pending");
   if (blocked) {
-    for (const r of waiting) markRefused(paths.inbox, r.messageId, blocked);
+    for (const r of waiting) refuseInboxMessage(paths, r.messageId, blocked);
     return note(paths, now, sessionId, due, "runtime-not-ready");
   }
   if (livenessAdmission(paths, target, "wake", deps.now?.() ?? Date.now(), generation, deps.livenessAuthority) === null) return explain(waiting, "awaiting-user-turn");
-  const budget = takeTurn(paths, sessionId, now, wakeBudget(policy));
-  if (budget === "spacing" || budget === "locked") return explain(waiting, "retry-pending");
-  if (budget === "exhausted") {
-    explain(waiting, "budget-exhausted");
-    return note(paths, now, sessionId, due, "budget");
-  }
-
-  const context = deliveryContext("UserPromptSubmit", refs, { paths, now: () => now, offeredBy: "codex-wake", owner: { sessionId, runtime: "codex" },
+  const selection=frameRecords(paths,selectRouteMembers(waiting).slice(0,8),deps.cli??"kherep-node",6*1024).carried;
+  if(!selection.length)return;
+  const args=resumeArgs(sessionId,record.permissionMode,codexFiles(paths,record.taskId),paths.outbox);
+  let launch:Awaited<ReturnType<typeof prepareMessageLaunch>>;
+  try{launch=await prepareMessageLaunch(deps,{runtime:"codex",args,cwd:cwd.cwd,intercom:record.local==="intercom"});}
+  catch{explain(selection,"awaiting-user-turn");return note(paths,now,sessionId,ids(selection),"awaiting-user-turn");}
+  let route:import("./target-delivery-operation.mts").ExecutionContext|null=null,offered:string[]=[];
+  const context = deliveryContext("UserPromptSubmit", refs, { paths, owner:{sessionId,runtime:"codex"}, now: () => now, offeredBy: "codex-wake",selected:selection,
+    beforeOffer:carried=>{
+      const decision=decideMessageRoute({...deps,messageRoute:{route:'task-wake',grant:'members',memberGrants:carried.map(r=>witnesses.find(w=>w.messageId===r.messageId)!),taskId:record.taskId,permissionMode:record.permissionMode}},carried,sessionId,"exec-resume",{runtime:"codex",sessionId,taskId:record.taskId},launch.producer,sessionId,launch);
+      if(decision.status!=="granted"){
+        explain(carried,decision.status==="denied-no-debit"&&decision.reason==="exhausted"?"budget-exhausted":"retry-pending");
+        return null;
+      }
+      route=decision.context;return route;
+    },onCarried:carried=>{offered=carried.map(r=>r.messageId);},
     ...(deps.cli ? { replyCommand: deps.cli } : {}) });
-  const offeredAt = new Date(now).toISOString();
-  const offered = ids(sessionInbox(paths, refs, { sessionId, runtime: "codex" }).filter((r) => r.state === "offered" && r.offeredAt === offeredAt));
-  if (!context || offered.length === 0) return;
+  if (!context || offered.length === 0||!route) return;
   if (fresh.length > 0) note(paths, now, sessionId, ids(fresh), "wake");
   if (stuck.length > 0) note(paths, now, sessionId, ids(stuck), "stuck-offer");
   const prompt = `${fresh.length > 0 ? wakeText(fresh.length) : STUCK_TEXT}\n\n${context}`;
-  const run: TaskRecord = { ...record, cwd: cwd.cwd, running: true, offered,
+  const run: TaskRecord = { ...record, targetAttempt:(route as import("./target-delivery-operation.mts").ExecutionContext).kind==="message"?(route as {kind:"message";handle:import("./target-delivery-reservation.mts").TargetHandle}).handle:undefined, cwd: cwd.cwd, running: true, offered,
     deadline: new Date(now + deps.policy.sessions!.maxRuntimeMinutes * 60_000).toISOString() };
   const carried = sessionInbox(paths, refs, { sessionId, runtime: "codex" }).filter((r) => offered.includes(r.messageId));
   try {
-    await spawnRun(deps, run, (files, outbox) => resumeArgs(sessionId, record.permissionMode, files, outbox), prompt);
+    await spawnRun(deps, run, (files, outbox) => resumeArgs(sessionId, record.permissionMode, files, outbox), prompt, undefined, route);
     // The run's turn carries them: running for the sender until it confirms.
     explain(carried, "awaiting-turn-confirmation");
   } catch (error) {
     explain(carried, "wake-failed");
-    for (const id of offered) markRetry(paths.inbox, id);
+    try { finishRouteEffect(paths,route,{kind:"uncertain"}); } catch { /* pre-effect or partial write remains fenced */ }
     log(`kherep-node: could not resume task ${record.taskId} for messages: ${String((error as Error).message ?? error)}`);
   }
 }

@@ -1,10 +1,21 @@
+import {messageOwnerMatches} from './message-owner.mts';
+import {resolveTargetAddress} from './target-resume-address.mts';
+import {uuid} from './target-delivery-state.mts';
+import { pendingTargetResumes, selectTargetResume, type TargetResumeResult } from "./target-resume.mts";
 import { automaticReplyDecision } from "./reply-admission.mts";
+import { refuseInboxMessage } from "./target-delivery-inbox.mts";
+import { prepareMessageLaunch } from "./target-delivery-launch.mts";
+import { claimMessageRoute, decideMessageRoute, commandProducer } from "./target-delivery-producer.mts";
+import { transitionRouteMessages, finishRouteEffect } from "./target-delivery-outcome.mts";
+import { codexFiles, resumeArgs } from "./codex-process.mts";
+import { frameRecords } from "./deliver-core.mts";
+import { wakeText } from "./wake-hook.mts";
 import fs from "node:fs";
 import { closedFallbackGeneration } from "./session-lifecycle.mts";
 
 import { isSessionRef, OPERATOR_NODE_ID, type MessageProgressCode } from "../protocol-messages.mts";
 import { DELEGATED_PERMISSION_MODES, type PermissionMode, type TaskRuntime } from "../protocol-tasks.mts";
-import { bypassesPermissions, rememberedMode, takeTurn, wakeAudit } from "./autonomy.mts";
+import { bypassesPermissions, rememberedMode, wakeAudit } from "./autonomy.mts";
 import { stillRuns } from "./codex-process.mts";
 import { CODEX_RUNTIME, isCodexSessionId, readCodexSession } from "./codex-sessions.mts";
 import { resumeClaude, resumeCodex, skipBusy, startIntercom } from "./closed-resume.mts";
@@ -23,6 +34,8 @@ import { overLimit } from "./task-admission.mts";
 import { intercomFor, isActive, listTasks, readTask, writeTask, type TaskRecord } from "./task-records.mts";
 import { resolveCwd } from "./task-prompt.mts";
 import { killSwitch } from "./wake-hook.mts";
+import { pendingTaskHandover } from './target-delivery-selection.mts';
+import { withRoute } from './target-delivery-route.mts';
 
 // Delivery to a session that is no longer running (issue #102, operator
 // decision 2026-09-27; issue #105). Opt-in per node with
@@ -49,15 +62,16 @@ import { killSwitch } from "./wake-hook.mts";
 // A listing older than this decides nothing: a failed one is not an empty node.
 export const LISTING_FRESH_MS = 3 * 60_000;
 
-type Outcome = "reused" | "new" | "refused";
+type Outcome = "reused" | "new" | "refused" | TargetResumeResult["status"];
 
 // Refusals are audited once per message and reason, not at every round.
 const noted = new Set<string>();
 function audit(paths: NodePaths, now: number, sessionId: string, records: InboxRecord[], outcome: Outcome, reason?: string,
   taskId?: string): void {
-  const fresh = outcome === "refused" ? records.filter((r) => !noted.has(`${r.messageId} ${reason}`)) : records;
+  const deduplicate = outcome !== "reused" && outcome !== "new";
+  const fresh = deduplicate ? records.filter((r) => !noted.has(`${r.messageId} ${outcome} ${reason}`)) : records;
   if (fresh.length === 0) return;
-  if (outcome === "refused") for (const r of fresh) noted.add(`${r.messageId} ${reason}`);
+  if (deduplicate) for (const r of fresh) noted.add(`${r.messageId} ${outcome} ${reason}`);
   ensureDir(paths.dir);
   fs.appendFileSync(wakeAudit(paths), `${JSON.stringify({ ts: new Date(now).toISOString(), sessionId,
     messageIds: fresh.map((r) => r.messageId), action: "closed-session", outcome, ...(reason ? { reason } : {}),
@@ -84,17 +98,27 @@ export async function deliverToClosed(deps: RunnerDeps, log: (line: string) => v
   const { paths, policy } = deps;
   if (policy.messaging?.resumeClosed !== true) return;
   const now = deps.now?.() ?? Date.now();
+  const pending = policy.messaging?.resumeTarget === true ? await pendingTargetResumes(deps) : [];
+  for (const item of pending) {
+    if(item.result.status!=="completed-original"&&item.result.status!=="retired-original-queue")progressRecords(paths, item.records, "waiting", item.result.status==="original-processing"?"target-busy":"awaiting-user-turn", now);
+    audit(paths, now, item.sessionId, item.records, item.result.status, item.result.reason);
+  }
+  const pendingOwners = new Set(pending.filter(item=>item.result.status!=="completed-original"&&item.result.status!=="retired-original-queue").map(item => item.sessionId));
   const listedAt = Date.parse(readJson<{ updatedAt?: string }>(paths.sessions)?.updatedAt ?? "");
   if (!(now - listedAt <= LISTING_FRESH_MS)) return;
-  const live = new Set(readLocalSessions(paths).flatMap((s) => (s.name ? [s.sessionId, s.name] : [s.sessionId])));
-  const waiting = listInbox(paths.inbox).filter((r) => !Object.hasOwn(r, "binding") && r.state === "accepted" && r.closedAttempt === undefined
+  const live = new Set(readLocalSessions(paths).filter(s => s.state === "running" || s.state === "idle-loaded").flatMap((s) => (s.name ? [s.sessionId, s.name] : [s.sessionId])));
+  const waiting = listInbox(paths.inbox).filter((r) => (policy.messaging?.resumeTarget===true||!Object.hasOwn(r,"binding")) && r.state === "accepted" && r.closedAttempt === undefined
     && !live.has(r.toSession) && Date.parse(r.receivedAt) < listedAt);
   // One burst per session and sender. An unknown session is left to the
   // refusal after UNDELIVERABLE_AFTER_MS.
   const bursts = new Map<string, { target: Target; records: InboxRecord[] }>();
   for (const record of waiting) {
-    const target = resolveTarget(paths, record.toSession);
-    if (!target || live.has(target.sessionId)) continue;
+    let target:Target|null;
+    try {const selected=policy.messaging?.resumeTarget===true&&!uuid(record.toSession)?resolveTargetAddress(paths,record.toSession,now):null;
+      target=resolveTarget(paths,selected?.sessionId??record.toSession);
+      if(selected&&(!target||target.sessionId!==selected.sessionId||(target.runtime==='claude'?'claude-code':target.runtime)!==selected.runtime))continue;
+    }catch{continue;}
+    if (!target || live.has(target.sessionId) || pendingOwners.has(target.sessionId)) continue;
     // #706: retain the baseline miss/age veto and require fresh exact closure.
     // Unknown targets keep their tracking/progress, without enabling fallback.
     if (closedFallbackGeneration(paths, { runtime: target.runtime === "codex" ? "codex" : "claude-code", sessionId: target.sessionId }, now, undefined, deps.livenessAuthority) === null
@@ -154,11 +178,12 @@ async function deliver(deps: RunnerDeps, found: Target, all: InboxRecord[], now:
   if (!sessions?.enabled) return refuse("sessions are not enabled on this node", "wake-disabled");
   if (!sessions.delegate.accept) return refuse("this node does not accept delegated tasks", "wake-not-authorized");
   const local = readLocalSessions(paths);
-  const accepted = all.filter((r) => !Object.hasOwn(r, "binding") && acceptsMessage(policy, r.toSession, r.from.nodeId, local));
+  const accepted = all.filter((r) => (policy.messaging?.resumeTarget===true?messageOwnerMatches(r,{sessionId,runtime:target.runtime as "codex"|"claude-code"},[r.toSession]):!Object.hasOwn(r,"binding")) && acceptsMessage(policy, r.toSession, r.from.nodeId, local));
   if (accepted.length < all.length) refuse("not accepted by node policy", "wake-not-authorized", all.filter((r) => !accepted.includes(r)));
   const deep = accepted.filter((r) => !automaticReplyDecision(r).allowed);
   if (deep.length > 0) refuse("reply depth limit", "reply-limit", deep);
   let records = accepted.filter((r) => !deep.includes(r));
+  records=frameRecords(paths,records.slice(0,8),deps.cli??"kherep-node",6*1024).carried;
   if (records.length === 0) return false;
   if (bypassesPermissions(found.mode)) return refuse("permission mode bypassPermissions", "permission-restricted");
   // An intercom session answers with msg send, which cannot reach the operator API.
@@ -174,16 +199,33 @@ async function deliver(deps: RunnerDeps, found: Target, all: InboxRecord[], now:
     return false;
   }
   if (!stillEligible()) return false;
-  const intercom = intercomFor(paths, records[0]);
+  if (policy.messaging?.resumeTarget === true) {
+    const result = await selectTargetResume(deps, { sessionId, runtime: target.runtime as "codex" | "claude-code",
+      cwd: found.cwd, permissionMode: found.mode }, records);
+    progressRecords(paths, records, "waiting", result.reason === "permission-restricted" ? "permission-restricted" : "awaiting-user-turn", deps.now?.() ?? now);
+    audit(paths, deps.now?.() ?? now, sessionId, records, result.status, result.reason);
+    return result.status === "queued-awaiting-original";
+  }
+  let intercom = intercomFor(paths, records[0]);
+  if(intercom) {
+    const owned=pendingTaskHandover(paths,intercom,sessionId,now);
+    if(owned) {
+      intercom=owned.task;records=owned.records;
+      if(records.some(r=>!acceptsMessage(policy,r.closedTo??r.toSession,r.from.nodeId,local)))return refuse('not accepted by node policy','wake-not-authorized',records);
+    }
+  }
   if (intercom?.operatorStoppedAt !== undefined) return refuse("intercom session stopped by operator", "operator-stopped");
   const runtime = intercom ? intercom.runtime ?? "claude" : found.runtime;
   if (!sessions.runtimes.includes(runtime)) return refuse(`runtime ${runtime} is not enabled on this node`, "wake-disabled");
   if (intercom && await runs(deps, intercom)) {
     if (!stillEligible()) return false;
     // Its delivery hook, or the wake through its task grant, offers them.
-    const linked = attachDelivery(paths, intercom, records.map((r) => r.messageId));
-    if (linked !== intercom) writeTask(paths, linked, now);
-    for (const r of records) markClosedAttempt(paths.inbox, r.messageId, now, intercom.sessionId ?? intercom.name);
+    if(!isCodexSessionId(intercom.sessionId))return false;
+    const decision=decideMessageRoute(deps,records,sessionId,"handover",{runtime:runtime==="codex"?"codex":"claude-code",sessionId:intercom.sessionId,taskId:intercom.taskId},null,intercom.sessionId);
+    if(decision.status!=="granted")return refuse(decision.reason,"target-busy");
+    const route=decision.context;
+    records=transitionRouteMessages(paths,route,r=>({...r,delivery:{taskId:intercom.taskId,runtime,sessionId:intercom.sessionId},closedTo:r.closedTo??r.toSession,toSession:intercom.sessionId!,closedAttempt:new Date(now).toISOString()}));
+    finishRouteEffect(paths,route,{kind:"handover",sessionId:intercom.sessionId});
     progressRecords(paths, records, "fallback", "fallback-running", now);
     audit(paths, now, sessionId, records, "reused", "intercom session running", intercom.taskId);
     return true;
@@ -199,7 +241,7 @@ async function deliver(deps: RunnerDeps, found: Target, all: InboxRecord[], now:
     return false;
   }
   if (blocked) {
-    for (const r of records) markRefused(paths.inbox, r.messageId, blocked);
+    for (const r of records) refuseInboxMessage(paths, r.messageId, blocked);
     audit(paths, now, sessionId, records, "refused", blocked);
     return false;
   }
@@ -219,20 +261,27 @@ async function deliver(deps: RunnerDeps, found: Target, all: InboxRecord[], now:
   const before = reusable ? null : startRefusal();
   if (before) return refuse(...before);
   if (!stillEligible()) return false;
-  const budget = takeTurn(paths, reusable?.sessionId ?? sessionId, now, wakeBudget(policy));
-  if (budget === "spacing" || budget === "locked") {
-    progressRecords(paths, records, "waiting", "retry-pending", now);
-    return false;
+  let route:import("./target-delivery-operation.mts").ExecutionContext|null=null;
+  if(reusable) {
+    const nativeRuntime=reusable.runtime==="codex"?"codex":"claude-code";
+    const pending=records.filter(r=>r.state==='accepted'||r.state==='offered');
+    if(!pending.length)return false;
+    const budgetOwner=records[0].targetAttempt?withRoute(paths,records[0].targetAttempt,s=>s.group.operation.budgetOwner):reusable.sessionId!;
+    const argv=nativeRuntime==="codex"?resumeArgs(reusable.sessionId!,reusable.permissionMode,codexFiles(paths,reusable.taskId),paths.outbox)
+      :["--resume",reusable.sessionId!,"--bg","--permission-mode",reusable.permissionMode,`${wakeText(pending.length)}\n\n${frameRecords(paths,pending,deps.cli??"kherep-node",6*1024).text}`];
+    const launch=await prepareMessageLaunch(deps,{runtime:nativeRuntime,args:argv,cwd:cwd.cwd,intercom:reusable.local==="intercom"});
+    const decision=decideMessageRoute({...deps,messageRoute:{route:'closed-resume',grant:'resumeClosed',taskId:reusable.taskId,permissionMode:reusable.permissionMode}},records,sessionId,"exec-resume",{runtime:nativeRuntime,sessionId:reusable.sessionId!,taskId:reusable.taskId},launch.producer,budgetOwner,launch);
+    if(decision.status!=="granted")return refuse(decision.status==="denied-no-debit"?`budget-${decision.reason}`:decision.reason,decision.status==="denied-no-debit"&&decision.reason==="exhausted"?"budget-exhausted":"retry-pending");
+    route=decision.context;
+    records=transitionRouteMessages(paths,route,r=>({...r,closedTo:r.closedTo??r.toSession,toSession:reusable.sessionId!,closedAttempt:new Date(now).toISOString(),
+      ...(nativeRuntime==="claude-code"&&(r.state==='accepted'||r.state==='offered')?{state:"offered" as const,offers:(r.offers??0)+1,offeredAt:new Date(now).toISOString(),offeredBy:"intercom" as const}:{})}));
   }
-  if (budget === "exhausted") return refuse("budget of autonomous turns exhausted", "budget-exhausted");
-  // Issue #627: a record whose lock stays busy is left out of this round, unmarked.
-  records = records.filter((r) => marked(deps, r, now, reusable?.sessionId));
-  if (records.length === 0) return false;
   progressRecords(paths, records, "fallback", "fallback-starting", now);
   let why = intercom ? "its intercom session cannot be resumed" : undefined;
   if (reusable) {
     const resume = reusable.runtime === "codex" ? resumeCodex : resumeClaude;
-    const failed = await resume(deps, reusable, cwd.cwd, records.length, now);
+    const bound={...reusable,targetAttempt:route?.kind==="message"?route.handle:undefined};
+    const failed = await resume({...deps,executionContext:route!}, bound, cwd.cwd, records.length, now);
     if (failed === null) {
       const current = readTask(paths, reusable.taskId) ?? reusable;
       const linked = attachDelivery(paths, current, records.map((r) => r.messageId), skipBusy(deps));
@@ -241,20 +290,15 @@ async function deliver(deps: RunnerDeps, found: Target, all: InboxRecord[], now:
       audit(paths, now, sessionId, records, "reused", "intercom session resumed", reusable.taskId);
       return true;
     }
-    why = `intercom session not resumed: ${failed}`;
-    // The attempt is marked and no round tries the message again, so a start
-    // refused now is a failed delivery; the reason keeps the policy (overLimit:
-    // maxStartsPerDay, which a resume does not count).
-    const refused = startRefusal()?.[0] ?? overLimit(deps, now);
-    if (refused) {
-      refuse(`${why}; new start refused: ${refused}`, "fallback-failed");
-      return true;
-    }
+    // Any attempted resume keeps its common reservation. A second child would
+    // be an independent effect with uncertain first consumption.
+    refuse(`intercom session not resumed: ${failed}`,"fallback-failed");
+    return true;
   }
   if (!stillEligible()) return false;
   const started = await startIntercom(deps, { sessionId, runtime: found.runtime, cwd: cwd.cwd }, records, mode);
   if (started === null) {
     audit(paths, now, sessionId, records, "new", why);
-  } else refuse(`${why ? `${why}; ` : ""}no intercom session: ${started}`, "fallback-failed");
+  } else refuse(`${why ? `${why}; ` : ""}no intercom session: ${started}`,started.startsWith("budget-")?started==="budget-exhausted"?"budget-exhausted":"retry-pending":started==="producer-unknown"?"wake-not-authorized":"fallback-failed");
   return true;
 }

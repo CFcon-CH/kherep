@@ -6,8 +6,9 @@ import { LOOP_LINEAGE, LOOP_STALE, LOOP_COMPATIBILITY, MESSAGING_LOOP_BRAKE_CAPA
 import { LoopIdentity, LOOP_COLUMNS, ALL_LOOP_FIELDS, loopColumnType, parentOf, storedLoopLineage, type LoopSnapshot } from "./message-loop-identity.mts";
 import { MessageLoopStore, LOOP_QUERIES } from "./message-loop-store.mts";
 import { prepareLoopSignal, type LoopSigner, type LoopSignal } from "./message-loop-signals.mts";
+import { isSenderOrigin, senderTime, type SenderOrigin } from "../../message-origin.mts";
 import {
-  MAX_REPLY_DEPTH, MESSAGING_CAPABILITY, OPERATOR_NODE_ID, type MessageAddress, type MessageDeliverBody, type MessageProgress, type MessageReceiptBody, type MessageState,
+  MAX_REPLY_DEPTH, MESSAGING_ORIGIN_CAPABILITY, MESSAGING_CAPABILITY, OPERATOR_NODE_ID, type MessageAddress, type MessageDeliverBody, type MessageProgress, type MessageReceiptBody, type MessageState,
   type MessageStatusBody, type NodeReportedState, legacyProgress,
 } from "../../protocol-messages.mts";
 import { depthExceeded, DEPTH_QUERIES, REPLY_DEPTH_EXCEEDED, replyDepth } from "./message-depth.mts";
@@ -57,11 +58,13 @@ export interface MessageRecord {
   proxyOf: string | null; state: MessageState; reason: string | null; progress: MessageProgress | null;
   loop?: LoopAdmissionV1;
   createdAt: number; updatedAt: number; expiresAt: number;
+  senderOrigin: SenderOrigin | null; binding: string | null;
 }
 
 // proxyOf: a proxy answer (message-proxy.mts, issue #408), never with inReplyTo.
 export interface NewMessage {
-  messageId: string; from: MessageAddress; to: MessageAddress; text: string; inReplyTo?: string; taskId?: string; proxyOf?: string; connectionToken?: string;
+  messageId: string; from: MessageAddress; to: MessageAddress; text: string; inReplyTo?: string; taskId?: string; proxyOf?: string;
+  senderOrigin?: SenderOrigin; connectionToken?:string;
 }
 
 // Frames the caller must push to nodes after the SQL work is done.
@@ -78,7 +81,7 @@ type Audit = (actor: string, action: string, target: string | null, detail: unkn
 // Registered capabilities of an enrolled, non-revoked node, or null.
 type Capabilities = (nodeId: string) => string[] | null;
 
-const COLUMNS = "id, from_node, from_session, to_node, to_session, in_reply_to, proxy_of, state, reason, progress_phase, progress_code, progress_observed_at, progress_retry_at, created_at, updated_at, expires_at, depth, " + LOOP_COLUMNS + ", " + BINDING_COLUMNS;
+const COLUMNS = "sender_sent_at, message_binding, id, from_node, from_session, to_node, to_session, in_reply_to, proxy_of, state, reason, progress_phase, progress_code, progress_observed_at, progress_retry_at, created_at, updated_at, expires_at, depth, " + LOOP_COLUMNS + ", " + BINDING_COLUMNS;
 
 // The queries that run on every send, status report and sender reconnect.
 // Each names its index of SCHEMA (INDEXED BY fails the query rather than fall
@@ -104,7 +107,7 @@ export const HOT_MESSAGE_QUERIES = {
   ...DEPTH_QUERIES, ...RETENTION_QUERIES, ...PROXY_QUERIES, ...LOOP_QUERIES,
 } as const;
 
-export interface PreparedLoop { binding?: PreparedBinding; snapshot: LoopSnapshot; key: string | null; signal: LoopSignal | null; error?: string }
+export interface PreparedLoop { payload?:{fingerprint:string;from:MessageAddress;to:MessageAddress}; binding?: PreparedBinding; snapshot: LoopSnapshot; key: string | null; signal: LoopSignal | null; error?: string }
 function loopOf(row: Record<string, SqlStorageValue>): LoopAdmissionV1 | undefined {
   const lineage = storedLoopLineage(row);
   if (lineage.kind === "guarded-invalid") throw new Error(LOOP_LINEAGE);
@@ -121,6 +124,8 @@ function recordMetadata(row: Record<string, SqlStorageValue>): MessageRecord {
       observedAt: String(row.progress_observed_at),
       ...(row.progress_retry_at === null || row.progress_retry_at === undefined ? {} : { retryAt: String(row.progress_retry_at) }),
     },
+    senderOrigin: row.sender_sent_at == null ? null : { nodeId: String(row.from_node), sentAt: String(row.sender_sent_at) },
+    binding: row.message_binding == null ? null : String(row.message_binding),
     createdAt: Number(row.created_at), updatedAt: Number(row.updated_at), expiresAt: Number(row.expires_at),
   };
 }
@@ -153,6 +158,7 @@ function deliverBodyOf(row: Record<string, SqlStorageValue>): MessageDeliverBody
     ...(row.task_id === null || row.task_id === undefined ? {} : { taskId: String(row.task_id) }),
     ...(loop ? { loop } : {}),
     createdAt: new Date(Number(row.created_at)).toISOString(),
+    ...(row.sender_sent_at == null ? {} : { senderOrigin: { nodeId: String(row.from_node), sentAt: String(row.sender_sent_at) } }),
   };
 }
 
@@ -178,7 +184,7 @@ export class MessageStore {
     if (!columns.includes("task_id")) this.sql.exec("ALTER TABLE messages ADD COLUMN task_id TEXT");
     for (const [name, type] of [["progress_phase", "TEXT"], ["progress_code", "TEXT"], ["progress_observed_at", "TEXT"],
       ["progress_retry_at", "TEXT"], ["reply_message_id", "TEXT"], ["depth", "INTEGER"], ["delete_after", "INTEGER"],
-      ["deletable", "INTEGER"], ["proxy_of", "TEXT"], ["settled_state", "TEXT"], ...ALL_LOOP_FIELDS.map((name) => [name, loopColumnType(name)] as const)] as const) {
+      ["deletable", "INTEGER"], ["proxy_of", "TEXT"], ["settled_state", "TEXT"], ["sender_sent_at","TEXT"], ["message_binding","TEXT"], ...ALL_LOOP_FIELDS.map((name) => [name, loopColumnType(name)] as const)] as const) {
       if (!columns.includes(name)) this.sql.exec(`ALTER TABLE messages ADD COLUMN ${name} ${type}`);
     }
     migrateMessageBinding(this.sql);
@@ -229,10 +235,28 @@ export class MessageStore {
     return row ? recoveryOwnerError(row, nodeId, sessionId, runtime) : null;
   }
 
+  // Payload proof is separate from status-only replay and selected binding.
+  payloadReplay(message:NewMessage,prepared?:PreparedLoop):SendResult|null {
+    const row=this.sql.exec(`SELECT ${COLUMNS}, text, task_id FROM messages WHERE id=?`,message.messageId).toArray()[0];
+    if(!row)return this.tombstoneOnlyPayload(message.messageId)?{ok:false,error:'duplicate messageId'}:null;
+    const selectedError=duplicateSendError(row,message,prepared,!!prepared&&this.contextMatches(message,prepared));
+    if(selectedError)return {ok:false,error:selectedError};
+    if(message.senderOrigin!==undefined||row.sender_sent_at!==null&&row.sender_sent_at!==undefined||row.message_binding!==null&&row.message_binding!==undefined){
+      if(!prepared?.payload||!this.contextMatches(message,prepared)||row.message_binding==null)return {ok:false,error:'message binding unavailable'};
+      if(row.message_binding!==prepared.payload.fingerprint||row.sender_sent_at!==(message.senderOrigin?.sentAt??null))return {ok:false,error:'conflicting message binding'};
+    }
+    return this.replay(message.messageId,message.from.nodeId);
+  }
+
   // Records one message as queued, or as refused when the target cannot take
   // it. A bound retry proves the same exact owners before returning status.
   send(message: NewMessage, actor: string, now: number, prepared?: PreparedLoop): SendResult {
+    const origin=message.senderOrigin;
+    if(origin!==undefined&&(!isSenderOrigin(origin)||origin.nodeId!==message.from.nodeId||actor!==`node:${message.from.nodeId}`
+      ||!this.capabilities(message.from.nodeId)?.includes(MESSAGING_ORIGIN_CAPABILITY)||senderTime(origin.sentAt)!>now||!prepared?.payload||!this.contextMatches(message,prepared)))return {ok:false,error:'invalid sender origin'};
     const effects = this.expireDue(now);
+    const payloadReplay=this.payloadReplay(message,prepared);
+    if(payloadReplay)return payloadReplay.ok?{...payloadReplay,effects:{deliveries:[...effects.deliveries,...payloadReplay.effects.deliveries],statuses:[...effects.statuses,...payloadReplay.effects.statuses]}}:payloadReplay;
     const row = this.sql.exec(`SELECT ${COLUMNS}, text, task_id FROM messages WHERE id = ?`, message.messageId).toArray()[0];
     if (row) {
       const error = duplicateSendError(row, message, prepared, !!prepared && this.contextMatches(message, prepared));
@@ -304,10 +328,10 @@ export class MessageStore {
     const storedTo = binding ? { nodeId: target, session: binding.to.sessionId } : loop && current.identityBinding ? current.to! : message.to;
     // deletable = 1: a row this Worker version stored, which it may delete (#308).
     this.sql.exec(`INSERT INTO messages (id, from_node, from_session, to_node, to_session, in_reply_to, text, state, reason,
-      created_at, updated_at, expires_at, task_id, depth, deletable, proxy_of) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
+      created_at, updated_at, expires_at, task_id, depth, deletable, proxy_of, sender_sent_at, message_binding) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)`,
       message.messageId, storedFrom.nodeId, storedFrom.session, target, storedTo.session, message.inReplyTo ?? null,
       state === "queued" ? message.text : null, state, reason, now, now, now + MESSAGE_TTL_MS, message.taskId ?? null, depth,
-      message.proxyOf ?? null);
+      message.proxyOf ?? null,origin?.sentAt??null,prepared?.payload?.fingerprint??null);
     if (loop) this.sql.exec(`UPDATE messages SET loop_thread = ?, loop_pair = ?, loop_generation = ?, loop_ordinal = ?, loop_direction = ?, loop_identity = ? WHERE id = ?`,
       loop.threadId, prepared!.key, loop.generation, loop.ordinal, current.direction, current.identityBinding, message.messageId);
     if (binding) this.sql.exec("UPDATE messages SET delivery_binding=?, delivery_pair=? WHERE id=?",
@@ -319,7 +343,7 @@ export class MessageStore {
         messageId: message.messageId, from: storedFrom, toSession: storedTo.session, text: message.text,
         ...(message.inReplyTo === undefined ? {} : { inReplyTo: message.inReplyTo }),
         ...(message.proxyOf === undefined ? {} : { proxyOf: message.proxyOf }),
-        ...(message.taskId === undefined ? {} : { taskId: message.taskId }), ...(loop ? { loop } : {}), createdAt: new Date(now).toISOString(),
+        ...(message.taskId === undefined ? {} : { taskId: message.taskId }), ...(loop ? { loop } : {}), ...(origin ? { senderOrigin: { ...origin } } : {}), createdAt: new Date(now).toISOString(),
       } });
       this.markReplied(message, now, effects);
     }
@@ -556,7 +580,7 @@ export class MessageStore {
     return { ...body, progress: legacyProgress(body.progress, this.capabilities(nodeId)) };
   }
 
-  private get(messageId: string): MessageRecord | null {
+  get(messageId: string): MessageRecord | null {
     const row = this.sql.exec(`SELECT ${COLUMNS} FROM messages WHERE id = ?`, messageId).toArray()[0];
     return row ? toRecord(row) : null;
   }

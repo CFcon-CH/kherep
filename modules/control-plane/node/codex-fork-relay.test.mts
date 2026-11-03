@@ -49,12 +49,13 @@ test("a completed fork is relayed by the next sweep and sent by the gate once; r
   assert.deepEqual(n.outbox(), [`${relay}.json`]);
   const written = getOutbox(n.paths, relay)!;
   assert.deepEqual(written, { messageId: relay, fromSession: FORK_OWNER, fromSessionId: FORK_OWNER, to: record.from,
-    text: `${header(id)}\n\n${JSON.parse(ANSWER).text}`, proxyOf: id, depth: 3, createdAt: written.createdAt });
+    text: `${header(id)}\n\n${JSON.parse(ANSWER).text}`, proxyOf: id, depth: 3, createdAt: written.createdAt, senderSentAt: written.createdAt });
   const sidecar = getProxied(n.paths.inbox, id)!;
   assert.deepEqual(sidecar, { version: 1, relayMessageId: relay, forkId: FORK_ID, attemptId: attempt.attemptId, at: sidecar.at });
   assert.equal(getMessage(n.paths.inbox, id)?.state, "accepted", "never a receipt transition of the original");
+  assert.equal(written.senderSentAt, written.createdAt, "new proxy answer owns a new immutable sender timestamp");
   const sent = await n.exchange();
-  assert.deepEqual(sent, [{ messageId: relay, fromSession: FORK_OWNER, to: record.from, text: written.text, proxyOf: id }]);
+  assert.deepEqual(sent, [{ messageId: relay, fromSession: FORK_OWNER, to: record.from, text: written.text, proxyOf: id, senderSentAt: written.senderSentAt }]);
   await n.status(relay, "queued");
   assert.equal(getSent(n.paths, relay)?.state, "queued");
   await n.poll();

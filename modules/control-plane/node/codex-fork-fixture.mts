@@ -1,3 +1,4 @@
+import { publishSynthetic, fixtureEvidence } from "./session-authority-fixture.mts";
 import { EventEmitter } from "node:events";
 import fs from "node:fs";
 import path from "node:path";
@@ -219,6 +220,9 @@ export function forkNode(t: test.TestContext, scenario: Partial<ForkScenario> = 
     markStopEnded(node.paths, owner);
   };
   idle(FORK_OWNER);
+  publishSynthetic(node.paths,[{...fixtureEvidence({runtime:"codex",sessionId:FORK_OWNER},"idle-loaded",T0),
+    lifecycle:{status:"value",value:{state:"restored",generation:7},source:"native-lifecycle",observedAt:T0,complete:true,reasonCode:"observed"}}],T0,
+    [{runtime:"codex",sessionId:FORK_OWNER,state:"idle-loaded"}],node.livenessAuthority);
   const app = fakeAppServer({ cwd, ...scenario });
   const calls: string[][] = [];
   let featuresStdout = FEATURES_STDOUT, featuresCode = 0, featuresStderr = "";
@@ -232,7 +236,7 @@ export function forkNode(t: test.TestContext, scenario: Partial<ForkScenario> = 
   };
   const add = (toSession = FORK_OWNER, text = "Is the build green?"): string => {
     const id = `4080${(++serial).toString(16).padStart(4, "0")}-0000-4000-8000-000000000001`;
-    storeMessage(node.paths.inbox, { messageId: id, from: PEER, toSession, text, createdAt: new Date(T0 - serial).toISOString() }, T0 - 1000 + serial);
+    storeMessage(node.paths.inbox, { messageId: id, from: PEER, toSession, text, createdAt: new Date(T0 - serial).toISOString(),senderOrigin:{nodeId:PEER.nodeId,sentAt:new Date(T0-serial).toISOString()} }, T0 - 1000 + serial);
     return id;
   };
   // The capability as the current connection proved it (client.mts), not directory.json.

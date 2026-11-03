@@ -1,3 +1,5 @@
+import { takeTurn } from "./autonomy.mts";
+import { syntheticHookFacts } from "./target-delivery-test-support.mts";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
@@ -46,7 +48,7 @@ const id = (n: number): string => `00000000-0000-4000-8000-${n.toString(16).padS
 
 function inbox(paths: NodePaths, n: number, toSession = NAME, text = `${SECRET} ${n}`): string {
   storeMessage(paths.inbox, { messageId: id(n), from: { nodeId: PEER, session: "build" }, toSession, text,
-    createdAt: new Date(Date.UTC(2026, 5, 1, 0, 0, n)).toISOString() }, Date.UTC(2026, 5, 1, 0, 0, n));
+    senderOrigin:{nodeId:PEER,sentAt:new Date(Date.UTC(2026,5,1,0,0,n)).toISOString()},createdAt: new Date(Date.UTC(2026, 5, 1, 0, 0, n)).toISOString() }, Date.UTC(2026, 5, 1, 0, 0, n));
   return id(n);
 }
 
@@ -54,7 +56,7 @@ function inbox(paths: NodePaths, n: number, toSession = NAME, text = `${SECRET} 
 let clock = Date.UTC(2026, 5, 1, 1);
 const hook = (paths: NodePaths, event: string, extra: Record<string, unknown> = {}) =>
   deliverForCodex({ session_id: SELF, cwd: "/work/repo", hook_event_name: event, ...extra },
-    { paths, nonce: () => "t0k3n", replyCommand: CLI, now: () => clock });
+    { paths,...(fs.existsSync(paths.config)?syntheticHookFacts(paths,SELF,"codex",clock):{}), nonce: () => "t0k3n", replyCommand: CLI, now: () => clock });
 const stop = (paths: NodePaths, active = false) => hook(paths, "Stop", { stop_hook_active: active });
 
 test("SessionStart records the session and tells it its id and how to send; silent without a node config", (t) => {
@@ -167,9 +169,7 @@ test("the entry point serves Codex only with --runtime codex and prints valid JS
   const run = (event: string, args = ["--runtime", "codex"]) => spawnSync(process.execPath, [HOOK, ...args],
     { input: JSON.stringify({ session_id: SELF, cwd: "/w", hook_event_name: event, stop_hook_active: false }), env, encoding: "utf8" });
   const blocked = run("Stop");
-  assert.equal(JSON.parse(blocked.stdout).reason, CODEX_STOP_REASON);
-  assert.deepEqual([blocked.status, JSON.parse(blocked.stdout).decision, withoutTypeStrippingWarning(blocked.stderr)],
-    [0, "block", ""]);
+  assert.deepEqual([blocked.status,blocked.stdout,withoutTypeStrippingWarning(blocked.stderr)],[0,"", ""],"CLI has no native producer proof");
   const prompt = run("UserPromptSubmit");
   assert.equal(JSON.parse(prompt.stdout).hookSpecificOutput.hookEventName, "UserPromptSubmit");
   const quiet = run("Stop");
@@ -183,11 +183,11 @@ test("a configured wake.budget sets the Codex continuation spacing (issue #259)"
   const paths = setup(t);
   fs.writeFileSync(paths.policy, JSON.stringify({ version: 1, allowedCommands: [],
     wake: { enabled: true, sessions: ["unrelated"], budget: { spacingSeconds: 5 } } }));
-  inbox(paths, 1);
-  clock += 60_000;
-  assert.equal(JSON.parse(stop(paths)).decision, "block");
-  clock += 6_000;
-  assert.equal(JSON.parse(stop(paths)).decision, "block", "6 s later: past the configured 5 s, within the default 30 s");
+  inbox(paths,1);clock+=60000;
+  assert.equal(takeTurn(paths,SELF,clock,{perHour:20,perDay:100,spacingMs:5000}),"ok");
+  clock+=1000;assert.equal(stop(paths),"","first group waits within configured spacing");
+  clock+=5000;assert.equal(JSON.parse(stop(paths)).decision,"block","past configured 5 s but within default 30 s");
+  clock+=6000;assert.equal(stop(paths),"","the emitted attempt stays owned after spacing");
 });
 
 test("a Stop continuation is an autonomous turn: never in bypassPermissions, and within the budget", (t) => {
@@ -199,7 +199,7 @@ test("a Stop continuation is an autonomous turn: never in bypassPermissions, and
   clock += 1_000;
   assert.equal(stop(paths), "", "30 s spacing");
   const audit = fs.readFileSync(path.join(paths.dir, "wake.jsonl"), "utf8");
-  assert.deepEqual(audit.trim().split("\n").map((l) => JSON.parse(l).action), ["continue-permission-mode", "continue", "continue-budget"]);
+  assert.deepEqual(audit.trim().split("\n").map((l) => JSON.parse(l).action), ["continue-permission-mode", "continue", "awaiting-user-turn"]);
 });
 
 test("each delivery hook event records itself as the session's last event, Stop also its time (issue #408)", (t) => {

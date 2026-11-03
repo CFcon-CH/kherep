@@ -19,9 +19,9 @@ test("exact original-owner messages get one native pointer, without offering the
   assert.deepEqual(node.fake.runs()[0]!.argv, ["queue", "--thread", OWNER, "--message", "Kherep: 1 peer message(s) waiting in your inbox."]);
   assert.equal(getMessage(node.paths.inbox, id)?.state, "accepted");
   assert.ok(!JSON.stringify(node.fake.runs()).includes("Public synthetic peer content"));
-  const attempt = JSON.parse(fs.readFileSync(path.join(node.paths.dir, "codex-native-attempts", OWNER, `${id}.json`), "utf8"));
-  assert.equal(attempt.state, "submitted");
-  assert.ok(attempt.queueId);
+  const attempt=JSON.parse(fs.readFileSync(path.join(node.paths.dir,"codex-native-pending",`${OWNER}.json`),"utf8"));
+  assert.equal(attempt.phase,"settled");assert.equal(attempt.group.operation.kind,"queue");assert.equal(attempt.outcome.kind,"queue");
+  assert.ok(attempt.outcome.queueId);assert.deepEqual(attempt.group.binding.members.map((m:{messageId:string})=>m.messageId),[id]);
 });
 
 test("repeated polls and new hint generations do not submit the same message again", async (t) => {
@@ -65,8 +65,8 @@ test("a native success without an exact Queue ID remains uncertain and is not re
   await node.poll();
   assert.equal(node.fake.runs().length, 1);
   assert.equal(getMessage(node.paths.inbox, id)?.state, "accepted");
-  const file = path.join(node.paths.dir, "codex-native-attempts", node.owner, `${id}.json`);
-  assert.equal(JSON.parse(fs.readFileSync(file, "utf8")).state, "uncertain");
+  const file=path.join(node.paths.dir,"codex-native-pending",`${node.owner}.json`);
+  assert.equal(JSON.parse(fs.readFileSync(file,"utf8")).phase,"uncertain");
   node.add("New content during uncertain outcome");
   await node.poll();
   assert.equal(node.fake.runs().length, 1);
@@ -135,7 +135,7 @@ test("the default policy schedules no native Queue pointer while the CP hint sti
 test("a pending owner group coalesces newer accepted IDs without changing its immutable submission", async t => {
   const node = fixture(t), first = node.add();
   await node.poll();
-  const file = path.join(node.paths.dir, "codex-native-attempts", OWNER, `${first}.json`);
+  const file = path.join(node.paths.dir,"codex-native-pending",`${OWNER}.json`);
   const before = fs.readFileSync(file, "utf8");
   node.tick(TURN_SPACING_MS + 1);
   const newer = node.add("Newer accepted content");

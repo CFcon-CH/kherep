@@ -1,3 +1,4 @@
+import { syntheticHookProducer } from "./target-delivery-test-support.mts";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
@@ -6,7 +7,7 @@ import test from "node:test";
 import { listenerDir, takeTurn, TURN_SPACING_MS, TURNS_PER_HOUR } from "./autonomy.mts";
 import { planAppDelivery, startAppDelivery } from "./codex-app-delivery.mts";
 import { codexQueueIdle, pollCodexQueue } from "./codex-queue.mts";
-import { SCRIPT, waitFor, type FakeRun } from "./codex-fixture.mts";
+import { SCRIPT, codexNode, waitFor, type FakeRun } from "./codex-fixture.mts";
 import { recordCodexSession } from "./codex-sessions.mts";
 import { deliverForCodex } from "./deliver-codex.mts";
 import { getMessage, getMessageProgress, messageIds, storeMessage } from "./inbox.mts";
@@ -38,7 +39,7 @@ function fakeCodex(t: test.TestContext): { file: string; runs: () => FakeRun[] }
 }
 
 test("an explicitly selected alternate intercom receives a threaded reply without resuming the Desktop", async (t) => {
-  const node = taskNode(t, { runtimes: ["codex"], delegate: { accept: true } }, {
+  const node = codexNode(t, { runtimes: ["codex"], delegate: { accept: true } }, {}, {
     wake: { enabled: true, codexApp: true },
     messaging: { accept: [{ session: "*", from: ["*"] }], resumeClosed: true },
   });
@@ -49,10 +50,11 @@ test("an explicitly selected alternate intercom receives a threaded reply withou
   fs.writeFileSync(path.join(dir, "rollout-2026-09-28T10-00-00-" + APP + ".jsonl"),
     JSON.stringify({ type: "session_meta", payload: { id: APP, originator: "Codex Desktop", source: "vscode" } }) + "\n");
   recordCodexSession(node.paths, APP, path.join(node.workspace, "repo"), T0, "default");
+  syntheticHookProducer(node.paths,APP,'codex',T0);
   storeMessage(node.paths.inbox, { messageId: MESSAGE, from: PEER, toSession: APP, text: "what changed?",
-    createdAt: new Date(T0).toISOString() }, T0);
-  const codex = fakeCodex(t);
-  const deps = { ...node.deps(), policy: loadPolicy(node.paths.policy), codex: { findCodex: () => codex.file, home, startWaitMs: 5_000 } };
+    createdAt: new Date(T0).toISOString(),senderOrigin:{nodeId:PEER.nodeId,sentAt:new Date(T0).toISOString()} }, T0);
+  const codex={runs:node.runs};
+  const deps = { ...node.deps(), policy: loadPolicy(node.paths.policy), codex: {...node.deps().codex,home} };
   const decision = planAppDelivery(deps, [getMessage(node.paths.inbox, MESSAGE)!], path.join(node.workspace, "repo"), T0);
   assert.ok("plan" in decision);
   assert.equal(await startAppDelivery(deps, APP, decision.plan), null);
@@ -95,7 +97,7 @@ test("an explicit alternate intercom requires sessions authority and process cap
     recordCodexSession(node.paths, APP, path.join(node.workspace, "repo"), T0, "default");
     const id = "a1170000-0000-4000-8000-" + (index + 2).toString(16).padStart(12, "0");
     storeMessage(node.paths.inbox, { messageId: id, from: PEER, toSession: APP, text: "private message",
-      createdAt: new Date(T0).toISOString() }, T0);
+      createdAt: new Date(T0).toISOString(),senderOrigin:{nodeId:PEER.nodeId,sentAt:new Date(T0).toISOString()} }, T0);
     if (item.prior) writeTask(node.paths, { taskId: "a117f000-0000-4000-8000-000000000001", name: "task-a117f000",
       runtime: "codex", cwd: node.workspace, permissionMode: "auto", state: item.prior === "active" ? "running" : "done",
       startedAt: new Date(T0).toISOString(), deadline: new Date(T0 + 60_000).toISOString(), updatedAt: new Date(T0).toISOString() });
@@ -133,7 +135,7 @@ test("Desktop CP admission preserves wake guards and leaves turn budget untouche
     recordCodexSession(node.paths, APP, cwd, T0, mode);
     const id = "a1170000-0000-4000-8000-" + (index + 20).toString(16).padStart(12, "0");
     storeMessage(node.paths.inbox, { messageId: id, from: PEER, toSession: APP, text: "private message",
-      createdAt: new Date(T0).toISOString() }, T0, expected === "depth-limit" ? 6 : 0);
+      createdAt: new Date(T0).toISOString(),senderOrigin:{nodeId:PEER.nodeId,sentAt:new Date(T0).toISOString()} }, T0, expected === "depth-limit" ? 6 : 0);
     if (expected === "disabled") fs.writeFileSync(path.join(node.paths.dir, "wake.disabled"), "");
     if (item.exhaustBudget) for (let n = 0; n < TURNS_PER_HOUR; n++) {
       assert.equal(takeTurn(node.paths, APP, T0 - 50 * 60_000 + n * 2 * TURN_SPACING_MS), "ok");
@@ -147,7 +149,7 @@ test("Desktop CP admission preserves wake guards and leaves turn budget untouche
     if (turnsBefore) {
       assert.deepEqual(fs.readFileSync(ledger), turnsBefore);
       assert.equal(deliverForCodex({ hook_event_name: "Stop", session_id: APP,
-        permission_mode: "default", stop_hook_active: false }, { paths: node.paths, now: () => T0 }), "",
+        permission_mode: "default", stop_hook_active: false }, { paths: node.paths, now: () => T0,messageProducer:syntheticHookProducer(node.paths,APP,"codex",T0) }), "",
       "budget-exhausted: the same real-turn ledger still denies a genuine Desktop Stop continuation");
       assert.deepEqual(fs.readFileSync(ledger), turnsBefore);
       assert.match(fs.readFileSync(path.join(node.paths.dir, "wake.jsonl"), "utf8"), /"action":"continue-budget"/);
@@ -174,7 +176,7 @@ test("an explicit alternate intercom validates its working directory before laun
   recordCodexSession(node.paths, APP, path.join(node.workspace, "repo"), T0, "default");
   const id = "a1170000-0000-4000-8000-0000000000f1";
   storeMessage(node.paths.inbox, { messageId: id, from: PEER, toSession: APP, text: "reply please",
-    createdAt: new Date(T0).toISOString() }, T0);
+    createdAt: new Date(T0).toISOString(),senderOrigin:{nodeId:PEER.nodeId,sentAt:new Date(T0).toISOString()} }, T0);
   const deps = { ...node.deps(), policy: loadPolicy(node.paths.policy), codex: { findCodex: () => null, home } };
   for (const cwd of [undefined, os.tmpdir()]) {
     const decision = planAppDelivery(deps, [getMessage(node.paths.inbox, id)!], cwd, T0);

@@ -3,7 +3,7 @@ import { lastStderrLine, readEvents, readExit, readLastMessage, type CodexExit }
 import { codexFiles, holdsChild, startTimeOf, stillRuns, type CodexFiles } from "./codex-process.mts";
 import { reapDescendants, refreshDescendants } from "./codex-reap.mts";
 import { IDENTITY_UNKNOWN, MAX_RUNTIME_REASON, sessionOf, settleOffered, stopCodex } from "./codex-runner.mts";
-import { resolveDelivery } from "./delivery-identity.mts";
+import { finalizeMessageTaskIdentity, resolveDelivery } from "./delivery-identity.mts";
 import { held } from "./process-start.mts";
 import { failStalledCodex, NO_PROGRESS_REASON, progressOverdue } from "./run-progress.mts";
 import type { RunnerDeps } from "./session-runner.mts";
@@ -69,8 +69,11 @@ export async function watchCodexTasks(deps: RunnerDeps, log: (line: string) => v
       queueReport(deps.paths, { taskId: saved.taskId, state: "failed", reason: IDENTITY_UNKNOWN, ...sessionOf(saved) });
       continue;
     }
-    const threadId = record.sessionId ?? readEvents(files).threadId;
-    let mapped: TaskRecord = resolveDelivery(deps.paths, { ...record, ...(threadId ? { sessionId: threadId } : {}) });
+    const threadId = readEvents(files).threadId ?? record.observedSessionId ?? record.sessionId;
+    let mapped: TaskRecord = resolveDelivery(deps.paths, { ...record, ...(threadId ? { observedSessionId:record.targetAttempt?threadId:undefined,sessionId:threadId } : {}) });
+    if(mapped.targetAttempt&&(mapped.observedSessionId||mapped.mappingConflict)) {
+      writeTask(deps.paths,mapped,now);continue; // no public guessed/native ID or second effect
+    }
     // Issue #121: exit.json exists only for a run this daemon started and saw
     // end (spawnCodex removes it before each run), so such a run has ended,
     // even past its deadline or when its start time cannot be read.

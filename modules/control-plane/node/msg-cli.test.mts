@@ -180,7 +180,7 @@ test("msg send writes an outbox record from this session's name and prints the m
   const record = getOutbox(paths, sent.out);
   // fromSessionId (issue #253): the session's id beside its name, kept locally for the reply grant.
   assert.deepEqual(record, { messageId: sent.out, fromSession: "review", fromSessionId: "s-self", to: { nodeId: PEER, session: "s-b3" },
-    text: "please review", createdAt: new Date(NOW).toISOString(), depth: 0 });
+    text: "please review", createdAt: new Date(NOW).toISOString(), senderSentAt: new Date(NOW).toISOString(), depth: 0 });
 
   // Without a name in sessions.json the id is the sender; --from may name this same session by id or name.
   const sender = async (argv: string[], env?: NodeJS.ProcessEnv) => {
@@ -244,7 +244,7 @@ test("msg send --reply-to answers the sender of an inbox message and --wait repo
   const reply = await run(paths, ["send", "--reply-to", INCOMING, "yes"]);
   assert.equal(reply.code, 0, reply.err);
   assert.deepEqual(getOutbox(paths, reply.out), { messageId: reply.out, fromSession: "review", fromSessionId: "s-self",
-    to: { nodeId: PEER, session: "build" }, text: "yes", inReplyTo: INCOMING, createdAt: new Date(NOW).toISOString(), depth: 3 });
+    to: { nodeId: PEER, session: "build" }, text: "yes", inReplyTo: INCOMING, createdAt: new Date(NOW).toISOString(), senderSentAt: new Date(NOW).toISOString(), depth: 3 });
   writeDirectory(paths, DIRECTORY);
   const redirected = await run(paths, ["send", "--reply-to", INCOMING, "--to", "node-b/docs", "cc"]);
   assert.deepEqual(getOutbox(paths, redirected.out)?.to, { nodeId: PEER, session: "s-b3" });

@@ -1,3 +1,11 @@
+import {requireMessageEffect} from './message-admission.mts';
+import { verifyPreparedLaunch } from "./target-delivery-launch.mts";
+import { finishRouteEffect } from "./target-delivery-outcome.mts";
+import { finalizeMessageTaskIdentity } from "./delivery-identity.mts";
+import type { ExecutionContext, RouteProducer } from "./target-delivery-operation.mts";
+import { checkExecution, beginRouteEffect, withRoute } from "./target-delivery-route.mts";
+import { commandProducer } from "./target-delivery-producer.mts";
+import { canonical } from "./target-delivery-state.mts";
 import type { AdmissionAuthority } from "./session-authority.mts";
 import { execFile } from "node:child_process";
 
@@ -51,7 +59,8 @@ export const RUN_TIMEOUT_MS = 60_000;
 export const BACKGROUNDED = /^backgrounded · ([A-Za-z0-9]+)/m;
 
 export interface RunnerDeps {
-  paths: NodePaths; policy: NodePolicy; livenessAuthority?: AdmissionAuthority;
+  targetResumePort?: import("./target-resume-port.mts").TargetResumePort;
+  paths: NodePaths; policy: NodePolicy; messageProducer?:RouteProducer; executionContext?:ExecutionContext; livenessAuthority?: AdmissionAuthority;
   exec?: Exec; findClaude?: () => string | null; platform?: NodeJS.Platform; comSpec?: string;
   now?: () => number; realpath?: (p: string) => string; cli?: string;
   // The Codex runner's process hooks; tests replace them.
@@ -87,16 +96,29 @@ const execClaude: Exec = (file, args, options) => new Promise((resolve, reject) 
 
 // A task session (cwd given) gets the node directory first on PATH and none of
 // the daemon's own Claude Code session markers (task-env.mts).
-export async function runClaude(deps: RunnerDeps, args: string[], cwd?: string): Promise<string> {
-  const claude = (deps.findClaude ?? findClaude)();
-  if (!claude) throw new Error("claude is not installed on this node");
-  const run = claudeCall(claude, args, args[0] === "agents" ? LIST_TIMEOUT_MS : RUN_TIMEOUT_MS, deps.platform, deps.comSpec);
-  return (deps.exec ?? execClaude)(run.file, run.args, { ...run.options, ...(cwd ? { cwd, env: withoutSessionMarkers(withNodeOnPath(process.env)) } : {}) });
+export async function runClaude(deps: RunnerDeps, args: string[], cwd?: string, context?:ExecutionContext, expected?:{taskId:string|null;sessionId:string|null}): Promise<string> {
+  const saved=checkExecution(deps.paths,context,["exec-resume","task-start"]);
+  if(context?.kind==="read-only"&&args[0]!=="agents")throw Error("read-only execution context cannot launch");
+  const prepared=context?.kind==="message"?context.launch:undefined;
+  if(context?.kind==="message") {
+    if(!prepared||canonical(args)!==canonical(prepared.rawArgs)||cwd!==prepared.binding.cwd)throw Error("Claude prepared context differs");
+    if(!expected)throw Error("Claude task context missing");
+    verifyPreparedLaunch(deps.paths,context,prepared,["exec-resume","task-start"],{runtime:"claude-code",...expected,phase:"ready"});
+  }
+  const claude=prepared?.binding.executable??(deps.findClaude??findClaude)();
+  if(!claude)throw Error("claude is not installed on this node");
+  const legacy=prepared?null:claudeCall(claude,args,args[0]==="agents"?LIST_TIMEOUT_MS:RUN_TIMEOUT_MS,deps.platform,deps.comSpec);
+  const run=prepared?{file:prepared.outer.file,args:prepared.outer.args,options:{timeout:RUN_TIMEOUT_MS,...(prepared.binding.windowsVerbatimArguments?{windowsVerbatimArguments:true}:{})}}:legacy!;
+  if(context)beginRouteEffect(deps.paths,context,['exec-resume','task-start']);
+  if(context?.kind==='message')requireMessageEffect(deps,context,'outer-spawn');
+  try{return await (deps.exec??execClaude)(run.file,run.args,{...run.options,...(cwd?{cwd,env:withoutSessionMarkers(withNodeOnPath(process.env))}:{})});}
+  catch(error){if(context?.kind==="message")try{finishRouteEffect(deps.paths,context,{kind:"uncertain"});}catch{/* preserve prior fence */}throw error;}
+
 }
 
 // The rows of `claude agents --json --all`; rejects when the listing fails.
 export async function agentRows(deps: RunnerDeps): Promise<Record<string, unknown>[]> {
-  const parsed: unknown = JSON.parse(await runClaude(deps, ["agents", "--json", "--all"]));
+  const parsed: unknown = JSON.parse(await runClaude(deps, ["agents", "--json", "--all"], undefined, {kind:"read-only"}));
   if (!Array.isArray(parsed)) throw new Error("claude agents printed no session list");
   return parsed.filter((row): row is Record<string, unknown> => typeof row === "object" && row !== null);
 }
@@ -143,7 +165,7 @@ async function background(deps: RunnerDeps, launched: TaskRecord, args: string[]
     awaitingProgressSince: new Date(now).toISOString() }, now);
   let output: string;
   try {
-    output = await runClaude(deps, args, record.cwd);
+    output = await runClaude(deps, args, record.cwd, deps.executionContext, {taskId:record.taskId,sessionId:record.sessionId??null});
   } catch (error) {
     const message = String((error as Error).message);
     writeTask(deps.paths, { ...launched, state: "failed", reason: trim(message) });
@@ -165,6 +187,7 @@ async function background(deps: RunnerDeps, launched: TaskRecord, args: string[]
   } catch {
     // mapped later by the watch round
   }
+  mapped=finalizeMessageTaskIdentity(deps.paths,mapped);
   const saved = writeTask(deps.paths, mapped, deps.now?.());
   queueReport(deps.paths, { taskId: saved.taskId, state: "started", ...(saved.sessionId ? { sessionId: saved.sessionId } : {}) });
   return saved;
@@ -197,8 +220,13 @@ export async function startTask(args: SessionStartArgs, deps: RunnerDeps): Promi
       keepRefusal(args, deps, error);
       throw error;
     });
-    if (args.runtime === "codex") return startCodex(deps, record, prompt, admission);
-    const saved = await background(deps, record, ["--bg", "--name", args.name, "--permission-mode", record.permissionMode, prompt]);
+    const context=deps.executionContext??(deps.local?undefined:{kind:"operator" as const});
+    if(!context)throw Error("local message execution context missing");
+    deps={...deps,executionContext:context};
+    const members=context.kind==="message"?withRoute(deps.paths,context.handle,s=>s.group.binding.members.map(m=>m.messageId)):[];
+    const bound=context.kind==="message"?{...record,targetAttempt:context.handle,deliveryPending:members,...(args.runtime==="codex"?{offered:members}:{carried:members})}:record;
+    if (args.runtime === "codex") return startCodex(deps, bound, prompt, admission);
+    const saved = await background(deps, bound, ["--bg", "--name", args.name, "--permission-mode", record.permissionMode, prompt]);
     return { taskId: saved.taskId, state: saved.state, ...(saved.sessionId ? { sessionId: saved.sessionId } : {}) };
   }, deps.serviceOwner);
 }
@@ -208,7 +236,7 @@ export async function continueTask(args: SessionContinueArgs, deps: RunnerDeps):
   return withServiceAdmission(deps.paths, async (admission) => {
     const record = readTask(deps.paths, args.taskId);
     if (!record) throw new Error("this node did not start that task");
-    if (record.runtime === "codex") return continueCodex(args, deps, admission);
+    if (record.runtime === "codex") return continueCodex(args, {...deps,executionContext:{kind:"operator"}}, admission);
     if (!deps.policy.sessions?.enabled) throw new Error("sessions are not enabled on this node");
     if (!record.sessionId) throw new Error("the task's session id is not known yet");
     if (record.state === "started" || record.state === "running" || record.running) throw new Error("the task's session is still running");
@@ -219,7 +247,7 @@ export async function continueTask(args: SessionContinueArgs, deps: RunnerDeps):
     if (blocked) throw new Error(blocked);
     const restarted: TaskRecord = { ...record, state: "started", reason: undefined,
       deadline: new Date(now + deps.policy.sessions.maxRuntimeMinutes * 60_000).toISOString() };
-    const saved = await background(deps, restarted, ["--resume", record.sessionId, "--bg", "--permission-mode", record.permissionMode,
+    const saved = await background({...deps,executionContext:{kind:"operator"}}, restarted, ["--resume", record.sessionId, "--bg", "--permission-mode", record.permissionMode,
       frameFollowUp(args.taskId, args.prompt, deps.cli ?? taskCommand(deps.paths, { platform: deps.platform }))]);
     return { taskId: saved.taskId, state: saved.state };
   }, deps.serviceOwner);
@@ -232,7 +260,7 @@ export async function stopTask(args: SessionStopArgs, deps: RunnerDeps, reason =
   if (!record) throw new Error("this node did not start that task");
   if (record.runtime === "codex") return stopCodex(args, deps, reason);
   if (!record.shortId) throw new Error("the task's session id is not known yet");
-  await runClaude(deps, ["stop", record.shortId]);
+  await runClaude(deps, ["stop", record.shortId], undefined, {kind:"operator"});
   const saved = markClaudeStopped(deps, record, reason);
   return { taskId: saved.taskId, state: saved.state };
 }

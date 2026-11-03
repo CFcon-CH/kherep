@@ -107,7 +107,7 @@ export async function stopClaude(record: TaskRecord, runVersion: string, runner:
   // The supported stop. If it fails, nothing is signalled: the supervisor
   // would restart a session process that ended without it.
   try {
-    await runClaude(runner, ["stop", current.shortId]);
+    await runClaude(runner, ["stop", current.shortId], undefined, {kind:"operator"});
   } catch (error) {
     log(`claude stop failed: ${messageOf(error)}`);
     return refused("stop_failed");

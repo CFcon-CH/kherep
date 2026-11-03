@@ -1,3 +1,8 @@
+import {readCodexSession} from './codex-sessions.mts';
+import {bindMessageAdmission} from './message-admission.mts';
+import { prepareMessageLaunch } from "./target-delivery-launch.mts";
+import { decideMessageRoute, commandProducer } from "./target-delivery-producer.mts";
+import { finishRouteEffect } from "./target-delivery-outcome.mts";
 import path from "node:path";
 
 import { MESSAGING_PROXY_CAPABILITY } from "../protocol-messages.mts";
@@ -159,9 +164,17 @@ async function attempt(deps: RunnerDeps, owner: string, messageIds: string[], fi
     realpath: deps.realpath, postToolHook: deps.codex?.postToolHook };
   const decision = admitForkReply(admissionDeps, owner, messageId, fingerprint);
   if (!decision.ok) return noteOnce(deps, owner, [messageId], FORK_AUDIT[decision.reason]);
+  const selected=getMessage(deps.paths.inbox,messageId);
+  if(!selected)return;
+  const launch=await prepareMessageLaunch(deps,{runtime:"codex",file:guards.producer.codexExecutable,args:APP_SERVER_ARGS,cwd:decision.cwd,detached:(codex.platform??process.platform)!=="win32"});
+  const forkMode=readCodexSession(deps.paths,owner)?.permissionMode;
+  const routeDecision=decideMessageRoute({...deps,messageRoute:{route:'fork-reply',grant:'fork',permissionMode:forkMode}},[selected],owner,"fork",{runtime:"codex",sessionId:owner,taskId:null},launch.producer,owner,launch);
+  if(routeDecision.status!=="granted")return noteOnce(deps,owner,[messageId],routeDecision.status==="denied-no-debit"?routeDecision.reason==="exhausted"?"fork-budget-exhausted":"fork-budget-spacing":routeDecision.status==="owned"?"fork-in-flight":"awaiting-user-turn");
+  let context=routeDecision.context;if(context.kind!=="message")return;
   const claim = claimForkAttempt(deps.paths, { owner, messageId, attemptedAt: now(), policyFingerprint: fingerprint,
-    producer: { ...guards.producer } });
+    producer: { ...guards.producer }, targetAttempt:context.handle });
   if (!claim) return;
+  context=bindMessageAdmission(deps,context,{route:"fork-reply",grant:"fork",attemptId:claim.attemptId,permissionMode:forkMode},[selected]);
   let vetoed = false;
   const continueAllowed = (): boolean => {
     if (vetoed) return false;
@@ -175,10 +188,11 @@ async function attempt(deps: RunnerDeps, owner: string, messageIds: string[], fi
   // A record gone or read since admission: the owner was first.
   const record = getMessage(deps.paths.inbox, messageId);
   let outcome: ForkOutcome = record?.state !== "accepted" ? { state: "superseded", from: "launching" }
-    : await runForkAttempt({ codex }, { owner, cwd: decision.cwd, producer: guards.producer, features: guards.features,
+    : await runForkAttempt({ codex }, { context,paths:deps.paths,owner, cwd: decision.cwd, producer: guards.producer, features: guards.features,
       mcpNames: guards.mcpNames, record, maxAnswerBytes, admission, log, timeouts: forkTestTimeouts.value, realpath: deps.realpath,
       continueAllowed, stillAccepted: () => getMessage(deps.paths.inbox, messageId)?.state === "accepted",
       running: (lastTurnId, forkId, goalProof) => {
+        finishRouteEffect(deps.paths,context,{kind:"fork",forkId,turnId:null});
         advanceForkAttempt(deps.paths, owner, messageId, "launching", "running", { lastTurnId, forkId, goalProof }, now());
       } }).catch((): ForkOutcome => ({ state: "uncertain", from: "launching", reason: "helper-exit" }));
   if ((outcome.state === "completed" || outcome.state === "declined") && !continueAllowed()) {
@@ -186,6 +200,7 @@ async function attempt(deps: RunnerDeps, owner: string, messageIds: string[], fi
   }
   // Each outcome carries exactly its write-once fields: answer, or reason and detail.
   const { state, from, ...fields } = outcome;
+  if(state==="uncertain")finishRouteEffect(deps.paths,context,{kind:"uncertain"});
   try {
     advanceForkAttempt(deps.paths, owner, messageId, from, state, fields, now());
   } finally {

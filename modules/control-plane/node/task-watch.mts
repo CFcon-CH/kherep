@@ -1,14 +1,15 @@
+import { startTimeOf } from "./codex-process.mts";
 import { isSessionRef } from "../protocol-messages.mts";
 import type { TaskState } from "../protocol-tasks.mts";
 import { MAX_RUNTIME_REASON } from "./codex-runner.mts";
 import { watchCodexTasks } from "./codex-watch.mts";
 import { retireCopies } from "./copy-retire.mts";
-import { resolveDelivery } from "./delivery-identity.mts";
+import { finalizeMessageTaskIdentity, resolveDelivery } from "./delivery-identity.mts";
 import { RecordLockBusy } from "./inbox-record-lock.mts";
 import { claudeProgressed, failStalledClaude, progressOverdue, refuseCarried, settleCarried } from "./run-progress.mts";
-import { agentRows, findRow, mapIds, markClaudeStopped, runClaude, stopTask, type RunnerDeps } from "./session-runner.mts";
+import { agentRows, findRow, mapIds, rowPid, markClaudeStopped, runClaude, stopTask, type RunnerDeps } from "./session-runner.mts";
 import { measureClaude } from "./task-control-claude.mts";
-import { handoverTaskMessages } from "./task-handover.mts";
+import { handoverDeliveryMessages } from "./task-handover.mts";
 import { isActive, listTasks, mappingPendingAt, queueReport, readTask, writeTask, type TaskRecord } from "./task-records.mts";
 
 // The watch round for started task sessions (issue #31, item 5), run with the
@@ -90,6 +91,19 @@ export async function watchTasks(deps: RunnerDeps, log: (line: string) => void =
     if (invalid) deferred.add(record.taskId);
     const row = invalid ? { id: found!.id } : found;
     let mapped = mapIds(record, row);
+    if(mapped.targetAttempt) {
+      const pid=rowPid(row);
+      if(pid!==undefined) {
+        const pidStart=await startTimeOf(deps.codex??{},pid);
+        if(pidStart)mapped={...mapped,pid,pidStart};
+      }
+      try {mapped=finalizeMessageTaskIdentity(deps.paths,mapped,record.local==='intercom'&&record.sessionId!==row?.sessionId?record.sessionId:undefined);}
+      catch(error){deferOnBusy(error,record.taskId,'copy mapping',log);continue;}
+    }
+    if(mapped.targetAttempt&&(mapped.observedSessionId||mapped.mappingConflict)){
+      writeTask(deps.paths,mapped,now);
+      if(now<Date.parse(record.deadline))continue;
+    }
     if (now >= Date.parse(record.deadline)) {
       if (!mapped.shortId) {
         log(`kherep-node: task ${record.taskId} passed its max runtime, but its session id is not known`);
@@ -119,7 +133,7 @@ export async function watchTasks(deps: RunnerDeps, log: (line: string) => void =
         refuseCarried(deps, mapped);
         mapped = { ...mapped, awaitingProgressSince: undefined, carried: undefined };
       } else if (progressOverdue(mapped, now)) {
-        await failStalledClaude(deps, mapped, (shortId) => runClaude(deps, ["stop", shortId]), log, now);
+        await failStalledClaude(deps, mapped, (shortId) => runClaude(deps, ["stop", shortId], undefined, {kind:"operator"}), log, now);
         continue;
       }
     }
@@ -140,7 +154,7 @@ export async function watchTasks(deps: RunnerDeps, log: (line: string) => void =
     // An intercom session resumed as a copy under a new id (issue #109) takes over its waiting messages.
     if (record.local === "intercom" && record.sessionId && mapped.sessionId && mapped.sessionId !== record.sessionId) {
       try {
-        handoverTaskMessages(deps.paths.inbox, record.sessionId, mapped.sessionId,
+        handoverDeliveryMessages(deps.paths, record.sessionId, mapped.sessionId,
           { taskId: record.taskId, runtime: record.runtime ?? "claude" });
       } catch (error) {
         deferOnBusy(error, record.taskId, "readdress", log);

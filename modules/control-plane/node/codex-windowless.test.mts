@@ -1,3 +1,4 @@
+import { windowControl } from "./target-delivery-window.mts";
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
 import fs from "node:fs";
@@ -49,7 +50,7 @@ async function wrapped(t: test.TestContext, args: string[], input: string, useWr
   };
   t.after(() => { stopTree(); fs.rmSync(dir, { recursive: true, force: true }); });
   child.stdin!.on("error", () => {});
-  child.stdin!.end(input);
+  child.stdin!.end((useWrapper?windowControl({kind:"operator"},undefined,args[0]!,args.slice(1),WINDOWLESS):"")+input);
   const code = await new Promise<number | null>((resolve, reject) => {
     const timer = setTimeout(() => { stopTree(); reject(new Error("windowless probe timed out")); }, timeoutMs);
     child.once("error", (error) => { clearTimeout(timer); reject(error); });
@@ -71,7 +72,7 @@ test("the wrapper forwards stdin, stdout, stderr and the exit code", async (t) =
 test("a wrapper whose program cannot start exits 1 with the reason on stderr", async (t) => {
   const result = await wrapped(t, [path.join(os.tmpdir(), "kherep-no-such-codex.exe")], "");
   assert.equal(result.code, 1);
-  assert.match(result.err, /ENOENT/);
+  assert.match(result.err,/failed to start/);
 });
 
 test("the unwrapped control launches the supplied program", async (t) => {
@@ -123,7 +124,7 @@ function operatorTask(t: test.TestContext) {
   const record = (n: number): TaskRecord => ({ taskId: taskId(n), runtime: "codex", name: `task-${n}`, cwd: node.workspace,
     permissionMode: "auto", state: "started", startedAt: new Date(T0).toISOString(), deadline: new Date(T0 + 3_600_000).toISOString(),
     updatedAt: new Date(T0).toISOString() });
-  const start = (n: number, prompt: string) => spawnRun(deps(), record(n), (files, outbox) => startArgs(node.workspace, "auto", files, outbox), prompt);
+  const start = (n: number, prompt: string) => spawnRun(deps(), record(n), (files, outbox) => startArgs(node.workspace, "auto", files, outbox), prompt,undefined,{kind:"operator"});
   return { node, codex, deps, start };
 }
 

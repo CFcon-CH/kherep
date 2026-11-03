@@ -1,3 +1,4 @@
+import {captureOwnerGrant,replyIdentity,requestIdentity,type MemberGrant} from './message-grant.mts';
 import { isNodeId } from "../protocol.mts";
 import { isMessageId } from "../protocol-messages.mts";
 import { isTaskId } from "../protocol-tasks.mts";
@@ -6,7 +7,7 @@ import type { NodePaths } from "./config.mts";
 import { getSent, type SentRecord } from "./exchange.mts";
 import type { InboxRecord } from "./inbox.mts";
 import type { NodePolicy } from "./policy.mts";
-import { readRequest, requestIds, taskGrants, type TaskRecord, type TaskRequestRecord } from "./task-records.mts";
+import { readRequest, requestIds, type TaskRecord, type TaskRequestRecord } from "./task-records.mts";
 
 // Reply grant (issue #253, operator decisions of 2026-10-05): with wake.replies
 // a reply to a message this node sent from a session may wake that session
@@ -25,20 +26,22 @@ const ENDED: SentRecord["state"][] = ["refused", "expired", "error"];
 // clause stops a third node that knows a message id. The session binds by the
 // id the sent record keeps; only a record without one (older version) falls
 // back to its fromSession name. Any doubt or read error denies.
-export function replyGrants(paths: NodePaths, refs: string[], record: InboxRecord, now: number): boolean {
-  if (!isMessageId(record.inReplyTo) || !isNodeId(record.from?.nodeId)) return false;
+export function replyProof(paths: NodePaths, refs: string[], record: InboxRecord, now: number): SentRecord | null {
+  if (!isMessageId(record.inReplyTo) || !isNodeId(record.from?.nodeId)) return null;
   let sent: SentRecord | null;
   try {
     sent = getSent(paths, record.inReplyTo);
   } catch {
-    return false;
+    return null;
   }
-  if (!sent?.to || typeof sent.createdAt !== "string" || typeof sent.fromSession !== "string") return false;
-  if (sent.to.nodeId !== record.from.nodeId) return false;
-  if (!refs.includes(sent.fromSessionId ?? sent.fromSession)) return false;
+  if (sent?.messageId !== record.inReplyTo || !sent?.to || typeof sent.createdAt !== "string" || typeof sent.fromSession !== "string") return null;
+  if (sent.to.nodeId !== record.from.nodeId) return null;
+  if (!refs.includes(sent.fromSessionId ?? sent.fromSession)) return null;
   const age = now - Date.parse(sent.createdAt);
-  return age >= 0 && age <= REPLY_GRANT_MAX_AGE_MS && !ENDED.includes(sent.state);
+  return age >= 0 && age <= REPLY_GRANT_MAX_AGE_MS && !ENDED.includes(sent.state) ? sent : null;
 }
+
+export function replyGrants(paths:NodePaths,refs:string[],record:InboxRecord,now:number):boolean {return replyProof(paths,refs,record,now)!==null;}
 
 // Task message grant (issue #264): a task this node requested answers with
 // messages that carry its task id and no inReplyTo (task-prompt.mts tells it to
@@ -56,7 +59,8 @@ export function requestsByTask(paths: NodePaths): RequestIndex {
   try {
     for (const requestId of requestIds(paths)) {
       const request = readRequest(paths, requestId);
-      if (typeof request?.taskId === "string") index.set(request.taskId, index.has(request.taskId) ? null : request);
+      if (!request || request.requestId !== requestId || request.taskId !== undefined && !isTaskId(request.taskId)) return new Map();
+      if (typeof request.taskId === "string") index.set(request.taskId, index.has(request.taskId) ? null : request);
     }
   } catch {
     return new Map();
@@ -77,14 +81,26 @@ export function lazyRequests(paths: NodePaths): () => RequestIndex {
 // id the request keeps; a request an earlier version wrote without one binds
 // by its requestedBy name. The task's lifetime is not observable here, so the
 // bound is 24 h from the request's createdAt. Any doubt or read error denies.
-export function taskMessageGrants(paths: NodePaths, refs: string[], record: InboxRecord, now: number,
-  requests: () => RequestIndex = () => requestsByTask(paths)): boolean {
-  if (!isTaskId(record.taskId) || !isNodeId(record.from?.nodeId)) return false;
+export function taskMessageProof(paths: NodePaths, refs: string[], record: InboxRecord, now: number,
+  requests: () => RequestIndex = () => requestsByTask(paths)): TaskRequestRecord | null {
+  if (!isTaskId(record.taskId) || !isNodeId(record.from?.nodeId)) return null;
   const request = requests().get(record.taskId);
-  if (request?.state !== "dispatched" || request.nodeId !== record.from.nodeId) return false;
-  if (!refs.includes(request.requestedBySessionId ?? request.requestedBy)) return false;
+  if (request?.state !== "dispatched" || request.nodeId !== record.from.nodeId) return null;
+  if (!refs.includes(request.requestedBySessionId ?? request.requestedBy)) return null;
   const age = now - Date.parse(request.createdAt);
-  return age >= 0 && age <= REPLY_GRANT_MAX_AGE_MS;
+  return age >= 0 && age <= REPLY_GRANT_MAX_AGE_MS ? request : null;
+}
+
+export function taskMessageGrants(paths:NodePaths,refs:string[],record:InboxRecord,now:number,requests:()=>RequestIndex=()=>requestsByTask(paths)):boolean {return taskMessageProof(paths,refs,record,now,requests)!==null;}
+
+export function captureUnlistedGrant(paths:NodePaths,policy:NodePolicy,refs:string[],task:TaskRecord|undefined,row:InboxRecord,now:number,requests:()=>RequestIndex=()=>requestsByTask(paths)):MemberGrant|null {
+  const owner=task&&captureOwnerGrant(task,row);
+  if(owner)return owner;
+  if(policy.wake?.replies!==true)return null;
+  const sent=replyProof(paths,refs,row,now);
+  if(sent)return {messageId:row.messageId,kind:'reply',original:replyIdentity(sent)};
+  const request=taskMessageProof(paths,refs,row,now,requests);
+  return request?{messageId:row.messageId,kind:'task-message',original:requestIdentity(request)}:null;
 }
 
 // What a listener its listing does not cover wakes for (wake-hook.mts): the
@@ -92,18 +108,17 @@ export function taskMessageGrants(paths: NodePaths, refs: string[], record: Inbo
 // messages. kinds names the grant of each id granted that way, for the audit.
 export function unlistedGrants(paths: NodePaths, policy: NodePolicy, refs: string[], task: TaskRecord | undefined, now: number) {
   const kinds = new Map<string, WakeGrant>();
+  const witnesses = new Map<string,MemberGrant>();
   const requests = lazyRequests(paths);
   const grants = (record: InboxRecord): boolean => {
-    if (task && taskGrants(task, record)) return true;
-    if (policy.wake?.replies !== true) return false;
-    let kind: WakeGrant;
-    if (replyGrants(paths, refs, record, now)) kind = "reply";
-    else if (taskMessageGrants(paths, refs, record, now, requests)) kind = "task";
-    else return false;
-    kinds.set(record.messageId, kind);
+    const witness=captureUnlistedGrant(paths,policy,refs,task,record,now,requests);
+    if(!witness)return false;
+    witnesses.set(record.messageId,witness);
+    if(witness.kind==='reply')kinds.set(record.messageId,'reply');
+    else if(witness.kind==='task-message')kinds.set(record.messageId,'task');
     return true;
   };
-  return { grants, kinds };
+  return { grants, kinds, witnesses };
 }
 
 // One audit line for the ids woken through the listing or a task grant, one

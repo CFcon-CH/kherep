@@ -1,0 +1,41 @@
+import assert from "node:assert/strict";
+import crypto from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
+import test from "node:test";
+import { takeTurn } from "./autonomy.mts";
+import { budgetFile, debitGroup } from "./budget-store.mts";
+import { withBudgetMutation } from "./budget-lock.mts";
+import { writeLocalSessions } from "./exchange.mts";
+import { pruneListenerState, STATE_RETENTION_MS } from "./listener-prune.mts";
+import { sweepListeners } from "./listener-sweep.mts";
+import { setup, T0 } from "./wake-fixture.mts";
+const NOW = T0 + STATE_RETENTION_MS + 100000;
+const old = (f: string) => fs.utimesSync(f, (T0 - 100000) / 1000, (T0 - 100000) / 1000);
+const budget = { perHour: 1, perDay: 1, spacingMs: 0 };
+for (const group of [false, true]) test(`prune retains protected v2 budget, group=${group}`, t => {
+  const { paths } = setup(t), f = budgetFile(paths, "gone"); writeLocalSessions(paths, [], NOW);
+  if (group) debitGroup(f, { groupId: crypto.randomUUID(), reservationId: crypto.randomUUID(), groupFingerprint: "a".repeat(64) }, T0, budget);
+  else takeTurn(paths, "gone", T0);
+  const bytes = fs.readFileSync(f, "utf8"); old(f);
+  const result = pruneListenerState(paths, { now: NOW });
+  assert.ok(!("skipped" in result)); assert.equal(result.removed, 0); assert.equal(fs.readFileSync(f, "utf8"), bytes);
+});
+test("candidate selected before writer is reread under common budget ownership", t => {
+  const { paths } = setup(t), f = budgetFile(paths, "gone"); writeLocalSessions(paths, [], NOW);
+  fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, '{"turns":[]}'); old(f);
+  const result = pruneListenerState(paths, { now: NOW, beforeTake: file => { if (file === f) assert.equal(takeTurn(paths, "gone", NOW), "ok"); } });
+  assert.ok(!("skipped" in result)); assert.equal(result.removed, 0); assert.deepEqual(JSON.parse(fs.readFileSync(f, "utf8")).turns, [NOW]);
+});
+test("budget tomb recovery and writers share ownership; conflicts never get ranked away", t => {
+  const { paths } = setup(t), f = budgetFile(paths, "gone"); fs.mkdirSync(path.dirname(f), { recursive: true });
+  const tomb = path.join(path.dirname(f), `.${path.basename(f)}.${T0}-${crypto.randomUUID()}.tomb`);
+  fs.writeFileSync(tomb, '{"turns":[]}');
+  withBudgetMutation(f, () => { const result = sweepListeners(paths, { now: NOW }); assert.ok("failed" in result && result.failed.length === 1); assert.equal(fs.existsSync(f), false); });
+  assert.equal(takeTurn(paths, "gone", NOW), "locked");
+  assert.deepEqual(sweepListeners(paths, { now: NOW }), { removed: 0, kept: 0, failed: [] });
+  assert.equal(fs.existsSync(tomb), false);
+  fs.writeFileSync(tomb, '{"turns":[1]}');
+  const result = sweepListeners(paths, { now: NOW }); assert.ok("failed" in result && result.failed.length === 1);
+  assert.equal(fs.existsSync(tomb), true); assert.equal(takeTurn(paths, "gone", NOW), "locked");
+});

@@ -32,9 +32,9 @@ function revoke(n: Pick<Node, "paths">): void {
 function addBound(n: Pick<Node, "paths">): string {
   const id = crypto.randomUUID(), from = { ...PEER, session: crypto.randomUUID() };
   storeMessage(n.paths.inbox, { messageId: id, from, toSession: FORK_OWNER, text: "Synthetic S18 original",
-    createdAt: new Date(T0).toISOString(), binding: { version: 1, mode: "exact",
+    createdAt: new Date(T0).toISOString(), senderOrigin:{nodeId:from.nodeId,sentAt:new Date(T0).toISOString()}, binding: { version: 1, mode: "exact",
       from: { sessionId: from.session, runtime: "codex", lifecycleGeneration: null },
-      to: { sessionId: FORK_OWNER, runtime: "codex", lifecycleGeneration: null },
+      to: { sessionId: FORK_OWNER, runtime: "codex", lifecycleGeneration: 7 },
       leaseId: crypto.randomUUID(), localGeneration: null } }, T0);
   return id;
 }

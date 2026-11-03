@@ -4,6 +4,8 @@ import test from "node:test";
 import { takeTurn, TURN_SPACING_MS, TURNS_PER_HOUR } from "./autonomy.mts";
 import { deliverToClosed } from "./closed-delivery.mts";
 import { audits, closedNode, deliver, missListings, PEER, SESSION, turnDone, type Node } from "./closed-fixture.mts";
+import { startTask } from "./session-runner.mts";
+import { taskId } from "./task-fixture.mts";
 import { deliveryContext } from "./deliver-core.mts";
 import { writeLocalSessions } from "./exchange.mts";
 import { getMessage } from "./inbox.mts";
@@ -21,8 +23,9 @@ const claudeRuns = (node: Node) => node.calls.filter((c) => c.args[0] !== "agent
 
 // The first message: a new intercom session, still running.
 async function firstIntercom(node: Node): Promise<TaskRecord> {
-  deliver(node);
-  await deliverToClosed(node.deps());
+  // Compatibility setup: an operator-created legacy intercom has no unresolved
+  // message owner. The actual next message below must acquire the new protocol.
+  await startTask({taskId:taskId(42),runtime:"claude",name:"task-0000002a",prompt:"synthetic legacy setup",permissionMode:"auto",cwd:node.workspace,requestedBy:`${PEER.nodeId}/${PEER.session}`}, {...node.deps(),local:"intercom",executionContext:{kind:"operator"}});
   const [task] = listTasks(node.paths);
   assert.equal(task.local, "intercom");
   assert.ok(task.sessionId);
@@ -82,13 +85,16 @@ test("a listener armed after the message arrived but before it was readdressed s
 test("a second message from the same sender resumes its ended intercom session, not the closed one", async (t) => {
   const node = closedNode(t);
   const task = await firstIntercom(node);
-  writeTask(node.paths, { ...task, state: "done" });
+  for(const row of node.rows){row.state="done";delete row.pid;}
+  writeTask(node.paths, { ...task, state: "done",pid:undefined,pidStart:undefined });
   later(node);
   const id = deliver(node, { text: "and the lint?" });
   await deliverToClosed(node.deps());
   const runs = claudeRuns(node);
   assert.equal(runs.length, 2);
-  assert.deepEqual(runs[1].args, ["--resume", task.sessionId, "--bg", "--permission-mode", "auto", wakeText(1)]);
+  assert.deepEqual(runs[1].args.slice(0,5),["--resume",task.sessionId,"--bg","--permission-mode","auto"]);
+  assert.ok(runs[1].args[5].startsWith(wakeText(1)));
+  assert.ok(runs[1].args[5].includes(`--reply-to ${id}`));
   assert.ok(!runs.some((r) => r.args.includes(SESSION)), "the closed session is never resumed");
   const [resumed] = listTasks(node.paths);
   assert.equal(listTasks(node.paths).length, 1);
@@ -120,7 +126,8 @@ test("an intercom session that cannot be resumed, or continues as a copy that is
   for (const output of [null, "note: continuing as a copy\nbackgrounded · c0ffee01\n"]) {
     const node = closedNode(t);
     const task = await firstIntercom(node);
-    writeTask(node.paths, { ...task, state: "done" });
+    for(const row of node.rows){row.state="done";delete row.pid;}
+  writeTask(node.paths, { ...task, state: "done",pid:undefined,pidStart:undefined });
     later(node);
     const id = deliver(node);
     const base = node.deps();
@@ -132,12 +139,11 @@ test("an intercom session that cannot be resumed, or continues as a copy that is
     };
     await deliverToClosed({ ...base, exec });
     const runs = claudeRuns(node).map((c) => c.args[0]);
-    assert.deepEqual(runs, output === null ? ["--bg", "--resume", "--bg"] : ["--bg", "--resume", "stop", "--bg"]);
-    assert.equal(listTasks(node.paths).length, 2);
-    await turnDone(node);
-    assert.equal(getMessage(node.paths.inbox, id)?.state, "delivered");
+    assert.deepEqual(runs, output === null ? ["--bg", "--resume"] : ["--bg", "--resume", "stop"],"uncertain first resume permits no fallback child");
+    assert.equal(listTasks(node.paths).length,1);
+    assert.notEqual(getMessage(node.paths.inbox,id)?.state,"delivered");
     const last = audits(node).at(-1)!;
-    assert.equal(last.outcome, "new");
+    assert.equal(last.outcome, "refused");
     assert.match(String(last.reason), /intercom session not resumed/);
   }
 });
@@ -145,7 +151,8 @@ test("an intercom session that cannot be resumed, or continues as a copy that is
 test("failed resume and failed fallback leave no delivery task association", async (t) => {
   const node = closedNode(t);
   const task = await firstIntercom(node);
-  writeTask(node.paths, { ...task, state: "done" });
+  for(const row of node.rows){row.state="done";delete row.pid;}
+  writeTask(node.paths, { ...task, state: "done",pid:undefined,pidStart:undefined });
   later(node);
   const id = deliver(node);
   const base = node.deps();
@@ -157,15 +164,17 @@ test("failed resume and failed fallback leave no delivery task association", asy
 
   await deliverToClosed({ ...base, exec });
   const message = getMessage(node.paths.inbox, id);
-  assert.equal(message?.state, "accepted");
-  assert.equal(message?.delivery, undefined);
-  assert.equal(listTasks(node.paths).filter((record) => record.state === "failed").length, 1);
-  assert.match(String(audits(node).at(-1)?.reason), /resume failed.*fallback failed/);
+  assert.equal(message?.state,"offered");
+  assert.ok(message?.targetAttempt);
+  assert.equal(listTasks(node.paths).filter(r=>r.state==="failed").length,1);
+  assert.match(String(audits(node).at(-1)?.reason),/resume failed/);
+  assert.ok(!String(audits(node).at(-1)?.reason).includes("fallback failed"));
 });
 test("an ended intercom session is not resumed past the budget of its session", async (t) => {
   const node = closedNode(t);
   const task = await firstIntercom(node);
-  writeTask(node.paths, { ...task, state: "done" });
+  for(const row of node.rows){row.state="done";delete row.pid;}
+  writeTask(node.paths, { ...task, state: "done",pid:undefined,pidStart:undefined });
   later(node);
   for (let i = 0; i < TURNS_PER_HOUR; i++) takeTurn(node.paths, task.sessionId!, T0 - 50 * 60_000 + i * TURN_SPACING_MS * 2);
   const id = deliver(node);

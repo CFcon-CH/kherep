@@ -21,6 +21,7 @@ import { earliest, type MessageStatusView } from "./message-retention.mts";
 import { messageSummary, type MessageSummary } from "./message-summary.mts";
 import { TaskStore, type CreateResult, type NewTask, type TaskRow } from "./task-store.mts";
 import { TaskControlRegistry } from "./task-control-registry.mts";
+import { asMcpSendResult, type McpSendResult, type McpReplyResult } from "./mcp-message-result.mts";
 import { McpRegistry, type McpOutcome } from "./mcp-registry.mts";
 import { intakeRows, recordTaken } from "./node-intake.mts";
 import { SqlMeter, type SqlRows } from "./sql-meter.mts";
@@ -32,6 +33,11 @@ import {
   ENROLLMENT_TTL_DEFAULT_S, ENROLLMENT_TTL_MAX_S, ENROLLMENT_TTL_MIN_S, migrateRegistry, NODE_COLUMNS, REGISTRY_SCHEMA, toNodeRow,
   type NodeRow, type NodeStatus,
 } from "./registry-schema.mts";
+
+async function payloadFingerprint(message: NewMessage): Promise<string> {
+  return sha256(JSON.stringify([message.from.nodeId, message.from.session, message.to.nodeId,
+    message.to.session, message.text, message.inReplyTo ?? null, message.proxyOf ?? null, message.taskId ?? null]));
+}
 
 export interface EnrollRequest { code: string; publicKey: string; name: string; facts: NodeFacts; runtimes: RuntimeInfo[] }
 export type EnrollResult = { ok: true; nodeId: string } | { ok: false; reason: "invalid-code" | "expired-code" | "used-code" };
@@ -343,26 +349,27 @@ export class Registry extends DurableObject<Env> {
     return this.tx("claimMcpIntent", () => this.mcp.claim(intent, now));
   }
 
-  private async recoverMcpMessage(intent: McpIntentClaim) {
-    if (!this.messages.replay(intent.requestId, intent.nodeId, false)) return null;
-    return this.messageTx("recoverMcpMessage", () => {
-      const peek = this.mcp.peekClaimSession(intent, Date.now());
-      if (!peek.ok) return { ...peek, denied: true as const };
-      const ownerError = this.messages.recoveryOwnerError(intent.requestId, intent.nodeId, peek.sessionId, intent.runtime);
-      if (ownerError) return { ok: false as const, error: ownerError };
-      if (this.messages.tombstoneOnlyPayload(intent.requestId)) return { ok: false as const, error: "duplicate messageId" };
-      const claim = this.mcp.claim(intent, Date.now());
-      if (!claim.ok) return { ...claim, denied: true as const };
-      const effects = this.messages.expireDue(Date.now());
-      const sent = this.messages.replay(intent.requestId, intent.nodeId);
-      return sent?.ok ? { ...sent, effects: { deliveries: [...effects.deliveries, ...sent.effects.deliveries], statuses: [...effects.statuses, ...sent.effects.statuses] }, claim } : sent;
+  private async recoverMcpMessage(intent:McpIntentClaim,text:string,to?:NewMessage['to'],inReplyTo?:string):Promise<McpSendResult|null> {
+    const stored=this.messages.get(intent.requestId);
+    if(!stored)return this.messages.tombstoneOnlyPayload(intent.requestId)?{ok:false,denied:false,error:'duplicate messageId'}:null;
+    const peek=this.mcp.peekClaimSession(intent,Date.now());if(!peek.ok)return {...peek,denied:true};
+    const message:NewMessage={messageId:intent.requestId,from:{nodeId:intent.nodeId,session:peek.sessionId},to:to??{nodeId:stored.toNode,session:stored.toSession},text,inReplyTo};
+    const prepared=await this.prepareMessage(message);
+    return this.messageTx('recoverMcpMessage',()=>{
+      const current=this.mcp.peekClaimSession(intent,Date.now());if(!current.ok)return {...current,denied:true as const};
+      const ownerError=this.messages.recoveryOwnerError(intent.requestId,intent.nodeId,current.sessionId,intent.runtime);
+      if(ownerError||current.sessionId!==peek.sessionId||!this.messages.contextMatches(message,prepared))return {ok:false as const,denied:false as const,error:ownerError??LOOP_STALE};
+      const sent=this.messages.payloadReplay(message,prepared);if(!sent)return null;
+      if(!sent.ok)return asMcpSendResult(sent);
+      const claim=this.mcp.claim(intent,Date.now());if(!claim.ok)return {...claim,denied:true as const};
+      return {...sent,denied:false as const,claim};
     });
   }
 
   // A failed claim is an authorization denial; its fixed error is visible to the caller.
-  async sendMcpMessage(intent: McpIntentClaim, to: { nodeId: string; session: string }, text: string, inReplyTo?: string) {
+  async sendMcpMessage(intent: McpIntentClaim, to: { nodeId: string; session: string }, text: string, inReplyTo?: string): Promise<McpSendResult> {
     this.directoryRows = null;
-    const replay = await this.recoverMcpMessage(intent);
+    const replay = await this.recoverMcpMessage(intent, text, to, inReplyTo);
     if (replay) return replay;
     const peek = this.mcp.peekClaimSession(intent, Date.now());
     if (!peek.ok) return { ...peek, denied: true as const };
@@ -371,13 +378,13 @@ export class Registry extends DurableObject<Env> {
     return this.messageTx("sendMcpMessage", () => {
       const current = this.mcp.peekClaimSession(intent, Date.now());
       if (!current.ok) return { ...current, denied: true as const };
-      if (current.sessionId !== peek.sessionId || !this.messages.contextMatches(message, prepared)) return { ok: false as const, error: prepared.error ?? LOOP_STALE };
+      if (current.sessionId !== peek.sessionId || !this.messages.contextMatches(message, prepared)) return { ok: false as const, denied: false as const, error: prepared.error ?? LOOP_STALE };
       const claim = this.mcp.claim(intent, Date.now());
       if (!claim.ok) return { ...claim, denied: true as const };
       const sent = this.messages.send({ messageId: claim.effectId,
         from: { nodeId: intent.nodeId, session: claim.sessionId }, to, text, inReplyTo }, `mcp:${intent.nodeId}`, Date.now(), prepared);
       this.mcp.recordOutcome(intent.nodeId, intent.requestId, sent.ok ? "succeeded" : "failed");
-      return sent.ok ? { ...sent, claim } : sent;
+      return sent.ok ? { ...sent, denied: false as const, claim } : asMcpSendResult(sent);
     });
   }
 
@@ -389,27 +396,27 @@ export class Registry extends DurableObject<Env> {
   // for a lookup; the caller reads that inbox item from the replying node and
   // calls again with it (null when the node did not return it). The second
   // call recovers the same claim.
-  async replyMcpMessage(intent: McpIntentClaim, inReplyTo: string, text: string, item?: McpInboxItem | null) {
+  async replyMcpMessage(intent: McpIntentClaim, inReplyTo: string, text: string, item?: McpInboxItem | null): Promise<McpReplyResult> {
     this.directoryRows = null;
-    const replay = await this.recoverMcpMessage(intent);
+    const replay = await this.recoverMcpMessage(intent, text, undefined, inReplyTo);
     if (replay) return replay;
     const peek = this.mcp.peekClaimSession(intent, Date.now());
     if (!peek.ok) return { ...peek, denied: true as const };
     const target = this.messages.replyTarget(inReplyTo, intent.nodeId, peek.sessionId);
-    if (target === "missing" && item === undefined) return { ok: false as const, lookup: peek.sessionId };
+    if (target === "missing" && item === undefined) return { ok: false as const, denied: false as const, lookup: peek.sessionId };
     const to = target === "missing" ? this.messages.retention.inboxReplyTarget({ nodeId: intent.nodeId, session: peek.sessionId }, inReplyTo, item ?? null) : target;
-    if (!to) return { ok: false as const, error: "reply relationship or depth is not allowed" };
+    if (!to) return { ok: false as const, denied: false as const, error: "reply relationship or depth is not allowed" };
     const message: NewMessage = { messageId: intent.requestId, from: { nodeId: intent.nodeId, session: peek.sessionId }, to, text, inReplyTo };
     const prepared = await this.prepareMessage(message);
     return this.messageTx("replyMcpMessage", () => {
       const current = this.mcp.peekClaimSession(intent, Date.now());
       if (!current.ok) return { ...current, denied: true as const };
-      if (current.sessionId !== peek.sessionId || !this.messages.contextMatches(message, prepared)) return { ok: false as const, error: prepared.error ?? LOOP_STALE };
+      if (current.sessionId !== peek.sessionId || !this.messages.contextMatches(message, prepared)) return { ok: false as const, denied: false as const, error: prepared.error ?? LOOP_STALE };
       const claim = this.mcp.claim(intent, Date.now());
       if (!claim.ok) return { ...claim, denied: true as const };
       const sent = this.messages.send(message, `mcp:${intent.nodeId}`, Date.now(), prepared);
       this.mcp.recordOutcome(intent.nodeId, intent.requestId, sent.ok ? "succeeded" : "failed");
-      return sent.ok ? { ...sent, claim } : sent;
+      return sent.ok ? { ...sent, denied: false as const, claim } : asMcpSendResult(sent);
     });
   }
 
@@ -419,7 +426,10 @@ export class Registry extends DurableObject<Env> {
     const binding = await prepareMessageBinding(this.sql, message, signer,
       (nodeId, request) => sessionStub(this.env, nodeId).resolveMessageReferences(request));
     if (message.connectionToken && bindingContext(this.sql, message).nodes[0]?.token !== message.connectionToken) binding.error = LOOP_STALE;
-    return { ...prepared, binding };
+    const from=binding.binding?{nodeId:message.from.nodeId,session:binding.binding.from.sessionId}:prepared.snapshot.identityBinding&&prepared.snapshot.from?prepared.snapshot.from:message.from;
+    const to=binding.binding?{nodeId:message.to.nodeId,session:binding.binding.to.sessionId}:prepared.snapshot.identityBinding&&prepared.snapshot.to?prepared.snapshot.to:message.to;
+    const payload={fingerprint:await payloadFingerprint({...message,from,to}),from,to};
+    return { ...prepared, binding,payload };
   }
   async prepareMessageDelivery(messageId: string, phase?: "auth" | "registration") {
     const candidate = this.messages.deliveryCandidate(messageId);

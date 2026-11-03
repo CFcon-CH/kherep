@@ -1,3 +1,4 @@
+import { syntheticHookFacts } from "./target-delivery-test-support.mts";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import test from "node:test";
@@ -25,7 +26,7 @@ function parsed(t: test.TestContext, wake: unknown) {
 // One Stop of session SELF at `at`; true when the hook continued the turn.
 const stop = (paths: NodePaths, at: number): boolean =>
   deliverForHook({ session_id: SELF, hook_event_name: "Stop", permission_mode: "default" },
-    { paths, nonce: () => "t0k3n", replyCommand: "kherep-node", now: () => at }) !== "";
+    { paths,...syntheticHookFacts(paths,SELF,"claude-code",at), nonce: () => "t0k3n", replyCommand: "kherep-node", now: () => at }) !== "";
 
 // Listens until a message arriving at the second poll wakes it, or 60 s pass.
 const listenFor = (paths: NodePaths, n: number, start: number) =>
@@ -96,9 +97,12 @@ test("the listener wakes a 21st time in the hour with perHour 22, and honours pe
   const raised = setup(t, { wake: { ...WAKE, budget: { perHour: 22, perDay: 100 } } }).paths;
   spend(raised, T0 - 50 * 60_000, 2 * TURN_SPACING_MS);
   assert.equal((await listenFor(raised, 1, T0)).code, 2, "the 21st wake");
-  assert.equal((await listenFor(raised, 2, T0 + 60_000)).code, 2, "the 22nd wake");
-  assert.deepEqual(await listenFor(raised, 3, T0 + 2 * 60_000), { code: 0 }, "the 23rd is over budget");
-  assert.deepEqual(auditLines(raised).map((l) => l.action), ["wake", "wake", "budget"]);
+  assert.deepEqual(await listenFor(raised,2,T0+60_000),{code:0},"the unresolved first message owner prevents a second wake");
+  assert.deepEqual(auditLines(raised).map(l=>l.action),["wake","awaiting-user-turn"]);
+  const full=setup(t,{wake:{...WAKE,budget:{perHour:22,perDay:100}}}).paths;
+  for(let n=0;n<22;n++)assert.equal(takeTurn(full,SELF,T0-50*60_000+n*60_000,{perHour:22,perDay:100,spacingMs:30000}),"ok");
+  assert.deepEqual(await listenFor(full,3,T0),{code:0},"23rd refuses with no previously claimed owner");
+  assert.equal(auditLines(full).at(-1)?.action,"budget");
 
   // perDay 6: six turns hours ago leave none today, though the hour is empty.
   const daily = setup(t, { wake: { ...WAKE, budget: { perDay: 6 } } }).paths;
@@ -129,13 +133,10 @@ test("the listener follows a budget change at its next poll", async (t) => {
 
 test("Stop continuations draw on the configured budget", (t) => {
   const { paths } = setup(t, { wake: { ...WAKE, budget: { perHour: 8, perDay: 100, spacingSeconds: 5 } } });
-  for (let n = 1; n <= 8; n++) {
-    arrive(paths, n, T0);
-    assert.equal(stop(paths, T0 + n * 5_000), true, `continuation ${n}`);
-  }
-  arrive(paths, 9, T0);
-  assert.equal(stop(paths, T0 + 9 * 5_000), false);
-  assert.deepEqual(auditLines(paths).map((l) => l.action), [...Array(8).fill("continue"), "continue-budget"]);
+  for(let n=0;n<8;n++)assert.equal(takeTurn(paths,SELF,T0-50000+n*5000,{perHour:8,perDay:100,spacingMs:5000}),"ok");
+  arrive(paths,9,T0);
+  assert.equal(stop(paths,T0),false);
+  assert.deepEqual(auditLines(paths).map(l=>l.action),["continue-budget"]);
 
   // Without the section the hook keeps the default budget, 30 s apart.
   const fallback = setup(t, { wake: undefined }).paths;
@@ -143,7 +144,7 @@ test("Stop continuations draw on the configured budget", (t) => {
   assert.equal(stop(fallback, T0), true);
   arrive(fallback, 2, T0);
   assert.equal(stop(fallback, T0 + 5_000), false, "within the default 30 s");
-  assert.deepEqual(auditLines(fallback).map((l) => l.action), ["continue", "continue-budget"]);
+  assert.deepEqual(auditLines(fallback).map((l) => l.action), ["continue", "awaiting-user-turn"]);
   assert.equal(id(2), auditLines(fallback).at(-1)?.messageIds[0]);
 });
 
@@ -152,11 +153,11 @@ test("a Stop continuation with an unreadable policy file keeps the default budge
     const { paths } = setup(t, { wake: undefined });
     fs.writeFileSync(paths.policy, garbage);
     arrive(paths, 1, T0);
-    assert.equal(stop(paths, T0), true, JSON.stringify(garbage));
+    assert.equal(stop(paths, T0), false, "missing valid policy denies before debit: "+JSON.stringify(garbage));
     arrive(paths, 2, T0);
     assert.equal(stop(paths, T0 + 5_000), false, "default 30 s spacing: " + JSON.stringify(garbage));
     arrive(paths, 3, T0);
-    assert.equal(stop(paths, T0 + 30_000), true, "default spacing passed: " + JSON.stringify(garbage));
+    assert.equal(stop(paths, T0 + 30_000), false, "unreadable policy remains denied: " + JSON.stringify(garbage));
   }
 });
 

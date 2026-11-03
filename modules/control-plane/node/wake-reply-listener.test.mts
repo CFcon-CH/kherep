@@ -1,12 +1,16 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import path from "node:path";
 import test from "node:test";
 
 import { listenerScope, TURN_SPACING_MS, TURNS_PER_HOUR } from "./autonomy.mts";
 import type { NodePaths } from "./config.mts";
-import { MAX_REPLY_DEPTH, readJson } from "./inbox.mts";
+import { MAX_REPLY_DEPTH, readJson, getMessage } from "./inbox.mts";
+import { runHook } from "./deliver-hook.mts";
+import { budgetFile } from "./budget-store.mts";
+import type { RouteReservation } from "./target-delivery-operation.mts";
 import { WAKE_BACKLOG_AFTER_MS, WAKE_POLL_MS, wakeText } from "./wake-hook.mts";
-import { arrive, arriveReply, auditLines, listen, lockFile, SELF, sentOriginal, setup, T0 } from "./wake-fixture.mts";
+import { completeWakeCycle,arrive, arriveReply, auditLines, listen, lockFile, SELF, sentOriginal, setup, T0 } from "./wake-fixture.mts";
 import { REPLY_GRANT_MAX_AGE_MS } from "./wake-reply.mts";
 
 // The wake listener with wake.replies (issue #253): a session the allowlist
@@ -40,6 +44,28 @@ test("with wake.replies a reply to the session's own message wakes it unlisted; 
     assert.deepEqual(result, { code: 2, text: wakeText(1) }, JSON.stringify(wake));
     assert.deepEqual(auditLines(paths).map((l) => [l.action, l.messageIds, l.grant]), [["wake", [message], "reply"]]);
     assert.deepEqual(scope, { token: "listener-1", listed: false, replies: true, order: T0 });
+    const ownerFile=path.join(paths.dir,'codex-native-pending',SELF+'.json');
+    const reservation=():RouteReservation=>JSON.parse(fs.readFileSync(ownerFile,'utf8'));
+    const initial=reservation(),budget=fs.readFileSync(budgetFile(paths,SELF));
+    assert.deepEqual(getMessage(paths.inbox,message)!.targetAttempt,initial.handle);
+    assert.equal(initial.transitions.length,1);
+    const hook=(event:string)=>{
+      const writes:string[]=[],warnings:string[]=[];
+      runHook(JSON.stringify({session_id:SELF,hook_event_name:event,permission_mode:'default'}),
+        {paths,now:()=>T0+2*WAKE_POLL_MS+250,replyCommand:'synthetic'},text=>writes.push(text),line=>warnings.push(line));
+      assert.deepEqual(warnings,[]);return writes;
+    };
+    assert.equal(hook('UserPromptSubmit').length,1);
+    assert.equal(getMessage(paths.inbox,message)!.state,'offered');
+    assert.equal(reservation().transitions.length,2);
+    assert.deepEqual(hook('Stop'),[]);
+    assert.equal(getMessage(paths.inbox,message)!.state,'delivered');
+    assert.equal(reservation().transitions.length,3);
+    assert.deepEqual(reservation().group,initial.group);
+    assert.deepEqual(reservation().handle,initial.handle);
+    assert.deepEqual(reservation().budget,initial.budget);
+    assert.deepEqual(fs.readFileSync(budgetFile(paths,SELF)),budget);
+
   }
 });
 
@@ -134,7 +160,11 @@ test("the budget and the bypassPermissions exclusion still apply", async (t) => 
   sentOriginal(paths);
   let start = T0;
   for (let n = 1; n <= TURNS_PER_HOUR; n++) {
-    assert.equal((await replyAt(paths, { start })).code, 2, `wake ${n}`);
+    const result=await replyAt(paths, { start });
+    assert.equal(result.code, 2, `wake ${n}`);
+    const budget=fs.readFileSync(budgetFile(paths,SELF));
+    assert.equal(completeWakeCycle(result).status,'retired',`completion ${n}`);
+    assert.deepEqual(fs.readFileSync(budgetFile(paths,SELF)),budget,'retirement never refunds/recharges');
     start += TURN_SPACING_MS + 10 * WAKE_POLL_MS;
   }
   assert.deepEqual(await replyAt(paths, { start }), { code: 0 });

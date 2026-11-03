@@ -1,3 +1,6 @@
+import { releaseReconciledRouteQueue } from "./target-delivery-queue.mts";
+import { readTargetRecord } from "./target-delivery-files.mts";
+import path from "node:path";
 import { readConfig, type NodePaths } from "./config.mts";
 import { releaseNativeOwner } from "./codex-native-pending.mts";
 import { getMessage } from "./inbox.mts";
@@ -48,5 +51,7 @@ async function reconcileAdmitted(paths: NodePaths, owner: string,
           retireNativeQueue(paths, binding);
         } });
   }
-  releaseNativeOwner(paths, owner);
+  const saved=readTargetRecord(path.join(paths.dir,"codex-native-pending",`${owner}.json`));
+  if(saved && typeof saved==="object" && (saved as {version?:unknown}).version===3) releaseReconciledRouteQueue(paths,owner);
+  else releaseNativeOwner(paths, owner);
 }

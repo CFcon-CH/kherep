@@ -1,4 +1,6 @@
-import { inboxRecordLocationSteps, locateInboxRecord, BOUND_NAMESPACE } from "./inbox-storage.mts";
+import type {NodePaths} from './config.mts';
+import {refuseInboxMessage} from './target-delivery-inbox.mts';
+import { inboxRecordLocationSteps, locateInboxRecord, BOUND_NAMESPACE, PROCESSING_NAMESPACE } from "./inbox-storage.mts";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -14,7 +16,7 @@ function temporaryStat(file: string): fs.Stats | null {
     return stat;
   } catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return null; throw error; }
 }
-function purgeParents(dir: string): [fs.Stats | null, fs.Stats | null] {
+function purgeParents(dir: string): [fs.Stats | null, fs.Stats | null,fs.Stats|null] {
   const directory = (file: string): fs.Stats | null => {
     try {
       const stat = fs.lstatSync(file);
@@ -23,7 +25,7 @@ function purgeParents(dir: string): [fs.Stats | null, fs.Stats | null] {
     } catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return null; throw error; }
   };
   const root = directory(dir);
-  return [root, root ? directory(path.join(dir, BOUND_NAMESPACE)) : null];
+  return [root, root ? directory(path.join(dir, BOUND_NAMESPACE)) : null,root?directory(path.join(dir,PROCESSING_NAMESPACE)):null];
 }
 function checkPurgeParents(dir: string, before: ReturnType<typeof purgeParents>): void {
   const after = purgeParents(dir);
@@ -48,13 +50,13 @@ function checkPurgeParents(dir: string, before: ReturnType<typeof purgeParents>)
 // leaves a record another writer changed during the pass, such as a refusal
 // not yet reported (#195), to the next start.
 export function* purgeInboxSteps(dir: string, now: number = Date.now(), maxAgeMs: number = INBOX_RETENTION_MS,
-  touchedSince: number = Infinity): Generator<void, number> {
+  touchedSince: number = Infinity,paths?:NodePaths): Generator<void, number> {
   yield;
   const parents = purgeParents(dir);
   if (!parents[0]) return 0;
   const locations = yield* inboxRecordLocationSteps(dir); // complete read-only preflight first
   const entries: { file: string; stat: fs.Stats }[] = [];
-  for (const parent of [dir, path.join(dir, BOUND_NAMESPACE)]) {
+  for (const parent of [dir, path.join(dir, BOUND_NAMESPACE),path.join(dir,PROCESSING_NAMESPACE)]) {
     yield;
     checkPurgeParents(dir, parents);
     let names: string[];
@@ -78,6 +80,7 @@ export function* purgeInboxSteps(dir: string, now: number = Date.now(), maxAgeMs
     const received = Date.parse(current.record.receivedAt);
     if (!Number.isFinite(received)) throw new Error("invalid inbox retention time");
     if (now - received <= maxAgeMs) continue;
+    if(current.record.targetAttempt){if(paths)refuseInboxMessage(paths,current.record.messageId,'not delivered within the inbox retention period');continue;}
     if (markRefused(dir, current.record.messageId, "not delivered within the inbox retention period")) continue;
     if (removeSettled(dir, current.record.messageId, received, now, maxAgeMs, touchedSince)) removed++;
   }
@@ -131,6 +134,6 @@ export function drain<T>(steps: Generator<void, T>): T {
   }
 }
 
-export function purgeInbox(dir: string, now: number = Date.now(), maxAgeMs: number = INBOX_RETENTION_MS): number {
-  return drain(purgeInboxSteps(dir, now, maxAgeMs));
+export function purgeInbox(dir: string, now: number = Date.now(), maxAgeMs: number = INBOX_RETENTION_MS,paths?:NodePaths): number {
+  return drain(purgeInboxSteps(dir, now, maxAgeMs,Infinity,paths));
 }

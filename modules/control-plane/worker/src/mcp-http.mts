@@ -97,7 +97,7 @@ function server(env: Env, principal: Principal): McpServer {
     const prepared = await prepareIntentClaim(principal, "send", id, args, ctx.mcpReq._meta);
     if (!prepared.ok) return error(prepared.error);
     const sent = await registryStub(env).sendMcpMessage(prepared.intent, to, text);
-    if (!sent.ok) return error("denied" in sent ? sent.error : "message was not accepted");
+    if (!sent.ok) return error(sent.denied === true ? sent.error : "message was not accepted");
     try {
       await routeEffects(env, sent.effects);
     } catch {
@@ -145,7 +145,7 @@ function server(env: Env, principal: Principal): McpServer {
       sent = await registryStub(env).replyMcpMessage(prepared.intent, inReplyTo, text,
         inbox.ok ? inbox.items.find((item) => item.messageId === inReplyTo) ?? null : null);
     }
-    if (!sent.ok) return error("denied" in sent ? sent.error : "reply was not accepted");
+    if (!sent.ok) return error(sent.denied === true ? sent.error : "reply was not accepted");
     try {
       await routeEffects(env, sent.effects);
     } catch {

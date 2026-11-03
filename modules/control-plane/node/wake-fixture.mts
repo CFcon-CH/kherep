@@ -1,3 +1,4 @@
+import { syntheticHookFacts,syntheticHookCompletion } from "./target-delivery-test-support.mts";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -9,13 +10,13 @@ import type { RunMode } from "./headless-mode.mts";
 import { storeMessage } from "./inbox.mts";
 import type { LaunchVerdict } from "./launch-mode.mts";
 import { writeRequest, type TaskRequestRecord } from "./task-records.mts";
-import { listenerDir, runWake, wakeAudit, type WakeDeps } from "./wake-hook.mts";
+import { listenerDir, runWake, emitWakeResult,retireCompletedWakeResult,wakeAudit, type WakeDeps } from "./wake-hook.mts";
 
 // Shared fixture of the wake listener tests (wake-hook.test.mts,
 // wake-guards.test.mts): a throwaway node directory, a fake clock and sleep.
 
 export const PEER = "00000000-0000-4000-8000-0000000000cc";
-export const SELF = "s-self";
+export const SELF = "00000706-0000-4000-8000-000000000001";
 export const SECRET = "peer text that must never reach the audit";
 export const T0 = Date.UTC(2026, 8, 25, 12);
 export const id = (n: number): string => `00000000-0000-4000-8000-${n.toString(16).padStart(12, "0")}`;
@@ -38,7 +39,7 @@ export function setup(t: test.TestContext, options: { wake?: unknown; enrolled?:
 
 export function arrive(paths: NodePaths, n: number, at: number, toSession = "review", depth = 0): string {
   storeMessage(paths.inbox, { messageId: id(n), from: { nodeId: PEER, session: "build" }, toSession, text: `${SECRET} ${n}`,
-    createdAt: new Date(at).toISOString() }, at, depth);
+    senderOrigin:{nodeId:PEER,sentAt:new Date(at).toISOString()},createdAt: new Date(at).toISOString() }, at, depth);
   return id(n);
 }
 
@@ -54,7 +55,7 @@ export function sentOriginal(paths: NodePaths, overrides: Partial<OutboxRecord> 
 }
 export function arriveReply(paths: NodePaths, n: number, at: number, options: { from?: string; depth?: number; toSession?: string } = {}): string {
   storeMessage(paths.inbox, { messageId: id(n), from: { nodeId: options.from ?? PEER, session: "build" }, toSession: options.toSession ?? "review",
-    text: `${SECRET} ${n}`, inReplyTo: ORIGINAL, createdAt: new Date(at).toISOString() }, at, options.depth ?? 1);
+    text: `${SECRET} ${n}`, inReplyTo: ORIGINAL, senderOrigin:{nodeId:options.from??PEER,sentAt:new Date(at).toISOString()},createdAt: new Date(at).toISOString() }, at, options.depth ?? 1);
   return id(n);
 }
 
@@ -70,7 +71,7 @@ export function dispatchedRequest(paths: NodePaths, overrides: Partial<TaskReque
 }
 export function arriveTaskMessage(paths: NodePaths, n: number, at: number, options: { from?: string; taskId?: string } = {}): string {
   storeMessage(paths.inbox, { messageId: id(n), from: { nodeId: options.from ?? PEER, session: "task-00000000" }, toSession: "review",
-    text: `${SECRET} ${n}`, taskId: options.taskId ?? REQUESTED_TASK, createdAt: new Date(at).toISOString() }, at, 0);
+    text: `${SECRET} ${n}`, taskId: options.taskId ?? REQUESTED_TASK, senderOrigin:{nodeId:PEER,sentAt:new Date(at).toISOString()},createdAt: new Date(at).toISOString() }, at, 0);
   return id(n);
 }
 
@@ -86,10 +87,11 @@ export interface ListenOptions {
 // permission_mode out, as a SessionStart input does. The settings and launch
 // flags check (launch-mode.mts) finds no bypass unless launch says otherwise,
 // and the session runs interactive (headless-mode.mts) unless runMode says so.
+const completedWakeDeps=new WeakMap<object,WakeDeps>();
 export function listen(paths: NodePaths, options: ListenOptions = {}) {
   let clock = options.start ?? T0;
   const deps: WakeDeps = {
-    paths, pid: 4242, maxWaitMs: options.maxWaitMs ?? 60_000, now: () => clock, parentAlive: options.parentAlive ?? (() => true),
+    paths,...(fs.existsSync(paths.config)&&!fs.existsSync(path.join(paths.dir,"wake.disabled"))?syntheticHookFacts(paths,SELF,"claude-code",clock):{}), pid: 4242, maxWaitMs: options.maxWaitMs ?? 60_000, now: () => clock, parentAlive: options.parentAlive ?? (() => true),
     sleep: async (ms) => { clock += ms; options.tick?.(clock); }, ...(options.token ? { token: () => options.token as string } : {}),
     launchMode: options.launch ?? (async () => "ok"), runMode: options.runMode ?? (async () => "interactive"),
     ...(options.readTranscript ? { transcriptMode: options.readTranscript } : {}),
@@ -97,9 +99,24 @@ export function listen(paths: NodePaths, options: ListenOptions = {}) {
   return runWake({ session_id: SELF, hook_event_name: options.event ?? "Stop", stop_hook_active: true, cwd: paths.dir,
     ...(options.mode === null ? {} : { permission_mode: options.mode ?? "default" }),
     ...(options.source === undefined ? {} : { source: options.source }),
-    ...(options.transcript === undefined ? {} : { transcript_path: options.transcript }) }, deps);
+    ...(options.transcript === undefined ? {} : { transcript_path: options.transcript }) }, deps).then(result=>{completedWakeDeps.set(result,deps);return result;});
 }
 
 export const auditLines = (paths: NodePaths) =>
   fs.existsSync(wakeAudit(paths)) ? fs.readFileSync(wakeAudit(paths), "utf8").trim().split("\n").map((l) => JSON.parse(l)) : [];
 export const lockFile = (paths: NodePaths) => path.join(listenerDir(paths), `${SELF}.json`);
+
+import {runHook} from './deliver-hook.mts';
+import {parseRouteReservation} from './target-delivery-operation.mts';
+// Completes the real synthetic lifecycle; no owner deletion/refund or context reconstruction.
+export function completeWakeCycle(result:Awaited<ReturnType<typeof listen>>) {
+ const deps=completedWakeDeps.get(result);if(!deps)throw Error('original synthetic wake required');
+ const completion=syntheticHookCompletion(deps.paths);
+ const emitted=emitWakeResult(result,deps,()=>completion.register(parseRouteReservation(JSON.parse(fs.readFileSync(path.join(deps.paths.dir,'codex-native-pending',SELF+'.json'),'utf8')))));
+ if(!emitted)throw Error('synthetic writer refused');
+ const hook=(event:string)=>{const output:string[]=[];runHook(JSON.stringify({session_id:SELF,hook_event_name:event,permission_mode:'default'}),
+  {paths:deps.paths,now:deps.now,replyCommand:'synthetic'},text=>output.push(text),()=>{throw Error('synthetic hook warning');});return output;};
+ if(hook('UserPromptSubmit').length!==1)throw Error('synthetic prompt delivery missing');
+ hook('Stop');if(!completion.complete())throw Error('synthetic processing/completion missing');
+ return retireCompletedWakeResult(result,deps,completion.provider);
+}

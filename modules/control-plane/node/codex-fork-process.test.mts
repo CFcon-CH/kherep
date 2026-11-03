@@ -27,7 +27,7 @@ test("the happy path: exact sequence, exact fork request, persisted running, the
   assert.deepEqual(r.methods(), SEQUENCE);
   assert.deepEqual(r.running, [[LAST_TURN, FORK_ID, "ephemeral-gate"]], "T16: the ephemeral proof goes with running");
   assert.deepEqual([r.run.args, r.run.cwd, r.run.detached, r.run.env.KHEREP_CODEX_FORK, r.run.env.CODEX_HOME],
-    [["app-server", "--listen", "stdio://"], r.cwd, true, "1", "/synthetic/codex-home"]);
+    [["app-server", "--listen", "stdio://"], r.cwd, true, "1", r.home]);
   const request = (method: string) => r.run.requests.find((m) => m.method === method)!.params;
   assert.deepEqual(request("initialize"), { clientInfo: { name: "kherep_fork_reply", version: VERSION }, capabilities: { experimentalApi: true } });
   assert.deepEqual(request("thread/read"), { threadId: FORK_OWNER, includeTurns: false });
@@ -212,8 +212,9 @@ test("a failure kills the process group even after the direct child ended on SIG
 });
 
 test("an unexpected failure after running is uncertain from running, never a launching record", async (t) => {
-  const record = { ...RECORD, get text(): string { throw new Error("synthetic"); } };
-  const r = await runFork(t, {}, { record });
+  let running=false;
+  const record={...RECORD,depth:0,senderOrigin:{nodeId:RECORD.from.nodeId,sentAt:RECORD.createdAt},get text():string{if(running)throw Error("synthetic");return RECORD.text;}};
+  const r=await runFork(t,{}, {record,running:()=>{running=true;}});
   assert.deepEqual(r.outcome, { state: "uncertain", from: "running", reason: "helper-exit" });
   assert.equal(r.running.length, 1);
 });

@@ -1,3 +1,4 @@
+import { senderTime } from "../../message-origin.mts";
 import { isResolveRequest, SELECTED_BINDING_CAPABILITY, type ResolveRequest, type ResolveResponse } from "../../protocol-message-binding.mts";
 import { NodeReferenceRpc } from "./node-reference-rpc.mts";
 import { isIdentitySnapshot } from "../../protocol-session-identity.mts";
@@ -9,7 +10,7 @@ import {
   makeEnvelope, NONCE_TTL_MS, parseEnvelope, PING_FRAME, PONG_FRAME, type Envelope, type MessageType, type NodeCommand,
 } from "../../protocol.mts";
 import {
-  isDirectoryGetBody, isMessageSendBody, isMessageStatusAckBody, isNodeMessageStatusBody, MESSAGE_STATUS_ACK,
+  MESSAGING_ORIGIN_CAPABILITY, MESSAGING_PROXY_CAPABILITY, isDirectoryGetBody, isMessageSendBody, isMessageStatusAckBody, isNodeMessageStatusBody, MESSAGE_STATUS_ACK,
 } from "../../protocol-messages.mts";
 import { isCommandArgs } from "../../protocol-tasks.mts";
 import {
@@ -189,7 +190,8 @@ export class NodeSession extends DurableObject<Env> {
 
     // Resume: drop what the node already processed, resend the rest in order.
     if (envelope.ack > 0) this.store.ackThrough(envelope.ack);
-    this.sendControl(ws, "event", { name: "auth.ok", nodeId: attachment.nodeId });
+    this.sendControl(ws, "event", { name: "auth.ok", nodeId: attachment.nodeId,
+      worker: { capabilities: [MESSAGING_PROXY_CAPABILITY, MESSAGING_ORIGIN_CAPABILITY] } });
     for (const pending of this.store.pendingEnvelopes(0)) ws.send(JSON.stringify(pending));
     // Messages queued while the node was away, oldest first.
     const registry = registryStub(this.env);
@@ -290,10 +292,17 @@ export class NodeSession extends DurableObject<Env> {
       }
       case "message.send": {
         if (!isMessageSendBody(body)) return this.sendControl(ws, "error", { error: "invalid message.send body" });
+        const sender = body.senderSentAt === undefined ? null : await registry.getNode(nodeId);
+        if (body.senderSentAt !== undefined && senderTime(body.senderSentAt)! > Date.now()) {
+          return this.sendControl(ws, "error", { error: "invalid message.send body", messageId: body.messageId });
+        }
         // The sender is the authenticated connection, never a field of the body.
+        // Old senders keep manual delivery without gaining autonomous origin.
+        const senderOrigin = body.senderSentAt !== undefined && sender?.revokedAt === null
+          && sender.capabilities.includes(MESSAGING_ORIGIN_CAPABILITY) ? { nodeId, sentAt: body.senderSentAt } : undefined;
         const result = await registry.sendMessage({ messageId: body.messageId, from: { nodeId, session: body.fromSession },
           to: { nodeId: body.to.nodeId, session: body.to.session }, text: body.text, inReplyTo: body.inReplyTo, taskId: body.taskId,
-          proxyOf: body.proxyOf, connectionToken: (ws.deserializeAttachment() as Attachment).connectionToken },
+          proxyOf: body.proxyOf, connectionToken:(ws.deserializeAttachment() as Attachment).connectionToken, ...(senderOrigin ? { senderOrigin } : {}) },
         `node:${nodeId}`);
         if (!result.ok) return this.sendControl(ws, "error", { error: result.error, messageId: body.messageId });
         this.sendControl(ws, "message.status", { ...result.status });

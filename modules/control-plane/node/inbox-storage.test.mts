@@ -43,7 +43,7 @@ test("unknown namespace and cached collision cannot choose a body or resurrect o
   const f = fixture(t); const record = storeMessage(f.paths.inbox, f.body); const index = inboxIndex(f.paths.inbox);
   assert.equal(index.records().length, 1); fs.rmSync(f.bound); assert.deepEqual(index.records(), []);
   fs.writeFileSync(f.bound, JSON.stringify(record)); index.records(); fs.writeFileSync(f.flat, JSON.stringify(record));
-  assert.throws(() => index.records()); fs.rmSync(f.flat); fs.mkdirSync(path.join(f.paths.inbox, "bound-v2"));
+  assert.throws(() => index.records()); fs.rmSync(f.flat); fs.mkdirSync(path.join(f.paths.inbox, "bound-v3"));
   assert.throws(() => listInbox(f.paths.inbox));
 });
 test("bound creation uses the common root UUID lock", t => {

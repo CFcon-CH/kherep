@@ -2,6 +2,8 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
+import { withBudgetMutation } from "./budget-lock.mts";
+import { recoverBudget } from "./budget-store.mts";
 import { listenerDir, listenerLock, listenerScope, type ListenerLock, type ListenerScope } from "./autonomy.mts";
 import type { NodePaths } from "./config.mts";
 import { pidAlive as processAlive } from "./daemon-state.mts";
@@ -129,6 +131,7 @@ export function takeIfUnchanged(file: string, seen: Buffer, now: number, deps: S
     }
   } finally {
     if (same) fs.rmSync(tomb, { force: true });
+    else if (file.endsWith(".turns.json")) recoverBudget(file);
     else restore(tomb, file, now, deps);
   }
   return same;
@@ -174,7 +177,11 @@ export function sweepListeners(paths: NodePaths, deps: SweepDeps = {}): SweepRes
     for (const name of names) {
       const tomb = TOMB_NAME.exec(name);
       if (!tomb || now - Number(tomb[2]) <= TOMB_RECOVER_AFTER_MS) continue;
-      try { restore(path.join(dir, name), path.join(dir, tomb[1]), now, deps); } catch (error) { failed(error); }
+      try {
+        const file = path.join(dir, tomb[1]);
+        if (file.endsWith(".turns.json")) withBudgetMutation(file, () => recoverBudget(file));
+        else restore(path.join(dir, name), file, now, deps);
+      } catch (error) { failed(error); }
     }
     // Read again, so a dead lock just linked back is swept now, not in an hour.
     names = list();

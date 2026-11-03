@@ -73,7 +73,7 @@ const readiness = (verdict: { ready: boolean; cause?: string } | null): Readines
 test("an idle opted-in owner with an accepted exact-addressed message is admitted and spends one turn", (t) => {
   const f = fixture(t);
   assert.deepEqual(admit(f), { ok: true, cwd: f.work });
-  assert.deepEqual(turns(f), { turns: [NOW] });
+  assert.equal(turns(f),null,"pure eligibility cannot book a turn; the scheduler books the common group");
 });
 
 test("an owner listed in uppercase in codexFork.sessions is opted in (L3)", (t) => {
@@ -147,10 +147,10 @@ for (const [name, reason, arrange] of CASES) {
 test("the turn budget is checked last: spacing and an exhausted budget refuse after every other guard passed", (t) => {
   const f = fixture(t);
   assert.equal(takeTurn(f.paths, OWNER, NOW - 1_000), "ok");
-  assert.deepEqual(admit(f), { ok: false, reason: "budget-spacing" });
+  assert.deepEqual(admit(f),{ok:true,cwd:f.work},"pure preflight does not claim or debit");
   rewritePolicy(f, (p) => { p.wake.budget = { perHour: 1 }; });
-  assert.deepEqual(admit(f), { ok: false, reason: "budget-exhausted" });
-  assert.deepEqual(turns(f), { turns: [NOW - 1_000] }, "a refused budget spends nothing");
+  assert.deepEqual(admit(f),{ok:true,cwd:f.work},"budget belongs to the actual shared scheduler");
+  assert.deepEqual((turns(f) as {turns:number[]}).turns,[NOW-1000],"preflight never changes existing budget state");
 });
 
 test("an explicit wake.sessions entry admits an unknown permission mode", (t) => {

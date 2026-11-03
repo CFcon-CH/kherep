@@ -30,3 +30,13 @@ for (const phase of ["address", "identity"] as const) {
       await finish();
     }));
 }
+
+for(const phase of [undefined,'address','identity'] as const)test(`strict immutable handover resumes M1/M2 once and leaves later Q separate (${phase??'normal'})`,t=>
+  withDiagnostics(`strict-immediate-resume/${phase??'normal'}`,async d=>{
+    const {afterResume:r,entry,finish}=await resumedHandover(t,d,phase,true);
+    assert.equal(r.q.targetAttempt,undefined);assert.equal(r.q.delivery,undefined);
+    assert.deepEqual(r.records.map(m=>m.targetAttempt),entry.map(m=>m.targetAttempt));
+    if(!phase)assert.equal(r.task.sessionId,S3);
+    else assert.ok(r.task.mappingPendingSince);
+    await finish();
+  }));

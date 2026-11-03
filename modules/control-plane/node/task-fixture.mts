@@ -55,6 +55,7 @@ export function taskNode(t: test.TestContext, sessions: Record<string, unknown> 
   const rows: Record<string, unknown>[] = [];
   let clock = T0;
   let next = 0;
+  let messageFacts=false;
   let failWith: string | null = null;
   let livePid: number | null = null;
   let stopFailure: string | null = null;
@@ -78,7 +79,7 @@ export function taskNode(t: test.TestContext, sessions: Record<string, unknown> 
     const name = args[args.indexOf("--name") + 1];
     // A resume continues the session under its own id (a copy is set up by the test).
     const resumed = args[0] === "--resume" ? args[1] : undefined;
-    rows.push({ id: short, sessionId: resumed ?? `5e55${short}-0000-4000-8000-000000000000`, ...(args.includes("--name") ? { name } : {}),
+    rows.push({ id: short, sessionId: resumed ?? (messageFacts?`5e550000-0000-4000-8000-${String(next).padStart(12,"0")}`:`5e55${short}-0000-4000-8000-000000000000`), ...(args.includes("--name") ? { name } : {}),
       state: "working", kind: "background", cwd: options.cwd, startedAt: clock,
       ...(livePid === null ? {} : { pid: livePid++, status: "busy" }) });
     return `Starting background service…\nbackgrounded · ${short}${args.includes("--name") ? ` · ${name}` : ""}\n  claude agents   list sessions\n`;
@@ -95,6 +96,11 @@ export function taskNode(t: test.TestContext, sessions: Record<string, unknown> 
   });
   return {
     root, workspace, paths, calls, rows, deps, reports, livenessAuthority,
+    messageDeps:():RunnerDeps=>{
+      messageFacts=true;if(livePid===null)livePid=50000;
+      const file=path.join(root,"synthetic-claude");if(!fs.existsSync(file))fs.writeFileSync(file,"public synthetic Claude command");
+      return {...deps(),findClaude:()=>file,codex:{processStart:pid=>rows.some(r=>r.pid===pid&&!["done","failed","stopped"].includes(String(r.state)))?`synthetic-start:${pid}`:null,processRelations:()=>[],signal:pid=>{for(const row of rows)if(row.pid===pid)delete row.pid;}}};
+    },
     tick: (ms: number) => { clock += ms; },
     failNext: (message: string | null) => { failWith = message; },
     livePids: (first: number | null) => { livePid = first; },

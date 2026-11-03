@@ -45,7 +45,7 @@ export function* inboxMaintenanceSteps(paths: NodePaths, log: (line: string) => 
     log(`kherep-node: sent settle at start failed: ${String(error)}`);
   }
   try {
-    const purged = yield* purgeInboxSteps(paths.inbox, now, undefined, touchedSince);
+    const purged = yield* purgeInboxSteps(paths.inbox, now, undefined, touchedSince,paths);
     if (purged > 0) log(`kherep-node: removed ${purged} inbox message(s) older than 7 days`);
   } catch (error) {
     log(`kherep-node: inbox purge failed: ${String(error)}`);

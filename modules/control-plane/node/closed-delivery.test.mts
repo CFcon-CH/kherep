@@ -1,3 +1,7 @@
+import { publishSynthetic, fixtureEvidence } from "./session-authority-fixture.mts";
+import { syntheticHookProducer } from "./target-delivery-test-support.mts";
+import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
@@ -93,12 +97,35 @@ test("a fresh Codex intercom start reports its running fallback while the turn a
   const node = closedNode(t, { runtimes: ["claude", "codex"] });
   const id = deliver(node, { text: "[no-reply]" });
   const fake = fakeCodexBin(t);
-  const deps = { ...node.deps(), codex: { findCodex: () => fake.file, startWaitMs: 5_000, graceMs: 300 } };
+  publishSynthetic(node.paths, [{ ...fixtureEvidence({ runtime: "codex", sessionId: SESSION }, "closed", T0),
+    lifecycle: { status: "value", value: { state: "restored", generation: 7 }, source: "native-lifecycle", observedAt: T0, complete: true, reasonCode: "observed" } }], T0, [], node.livenessAuthority);
+  let launches = 0, prompts = "", releases = 0;
+  const input = new PassThrough(); input.on("data", bytes => { releases++; prompts += bytes; });
+  const deps = { ...node.deps(), codex: { home:node.root,findCodex: () => fake.file,mcpList:async()=>({code:0,stdout:"[]",stderr:""}),processStart:()=>"synthetic",startWaitMs: 10, graceMs: 300,
+    spawn:(()=>{launches++;const child=Object.assign(new EventEmitter(),{pid:4242,stdin:input,unref(){}});queueMicrotask(()=>child.emit("spawn"));return child;}) as never } };
   const reason = await startIntercom(deps, { sessionId: SESSION, runtime: "codex", cwd: repo(node) },
     [getMessage(node.paths.inbox, id)!], "auto");
   assert.equal(reason, null);
+  assert.equal(launches, 1); assert.equal(releases, 1); assert.ok(prompts.length > 0);
+  const row = getMessage(node.paths.inbox, id)!;
+  assert.ok(row.targetAttempt);
+  const owner = JSON.parse(fs.readFileSync(path.join(node.paths.dir, "codex-native-pending", `${SESSION}.json`), "utf8"));
+  assert.equal(owner.handle.groupId, row.targetAttempt.groupId);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(node.paths.dir, "listeners", `${SESSION}.turns.json`), "utf8")).groupDebits.length, 1);
   assert.equal(getMessage(node.paths.inbox, id)?.state, "offered");
   assert.equal(getMessageProgress(node.paths.inbox, id)?.code, "fallback-running");
+});
+
+test("a fresh Codex fallback without current runtime Authority releases no launch or prompt", async t => {
+  const node = closedNode(t, { runtimes: ["claude", "codex"] }), id = deliver(node), fake = fakeCodexBin(t);
+  syntheticHookProducer(node.paths, SESSION, "codex", T0);
+  let launches = 0;
+  const input = new PassThrough(); let prompts = ""; input.on("data", bytes => { prompts += bytes; });
+  const deps = { ...node.deps(), codex: { home: node.root, findCodex: () => fake.file,
+    processStart: () => "synthetic", mcpList: async () => ({ code: 0, stdout: "[]", stderr: "" }),
+    spawn: (() => { launches++; return Object.assign(new EventEmitter(), { pid: 4242, stdin: input, unref() {} }); }) as never } };
+  assert.notEqual(await startIntercom(deps, { sessionId: SESSION, runtime: "codex", cwd: repo(node) }, [getMessage(node.paths.inbox, id)!], "auto"), null);
+  assert.equal(launches, 0); assert.equal(prompts.length, 0);
 });
 
 test("a failed task result is not treated as a started delivery", async (t) => {
@@ -133,11 +160,14 @@ test("failed Claude intercom starts keep the message accepted and unassociated",
     const id = deliver(node, { text: name });
     await deliverToClosed(deps(node));
     const message = getMessage(node.paths.inbox, id);
-    assert.equal(message?.state, "accepted", name);
-    assert.equal(message?.delivery, undefined, name);
-    assert.equal(listTasks(node.paths).at(-1)?.state, "failed", name);
-    assert.equal(getMessageProgress(node.paths.inbox, id)?.code, "fallback-failed", name);
-    assert.match(String(audits(node).at(-1)?.reason), reason, name);
+    if(name==="missing binary"){
+      assert.equal(message?.state,"accepted");assert.equal(message?.delivery,undefined);assert.equal(listTasks(node.paths).length,0);
+      assert.equal(getMessageProgress(node.paths.inbox,id)?.code,"wake-not-authorized");assert.match(String(audits(node).at(-1)?.reason),/producer-unknown/);
+    }else{
+      assert.equal(message?.state,"offered");assert.ok(message?.targetAttempt);assert.ok(message?.delivery);
+      assert.equal(listTasks(node.paths).at(-1)?.state,"failed");assert.equal(getMessageProgress(node.paths.inbox,id)?.code,"fallback-failed");
+      assert.match(String(audits(node).at(-1)?.reason),reason);
+    }
   }
 });
 test("a message addressed by the closed session's name starts an intercom session too", async (t) => {

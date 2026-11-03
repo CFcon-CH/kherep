@@ -96,6 +96,9 @@ flowchart LR
   runtimes --> bridge --> mcp
   nodeDaemon -->|five-minute coalesced pass| liveness
   liveness -->|truthful listing and deny-only admission| nodeDaemon
+  nodeDaemon <-->|Authenticated messages and immutable sender origin| worker
+  worker <--> peers
+
   nodeDaemon -->|coherent Node-attested canonical identity, separate from availability| worker
   nodeDaemon -->|selected references after bound-v1 storage initialization| selectedBinding["Deny-only held-pair resolution"]
   nodeDaemon --> boundInbox["Exact bound inbox/bound-v1/UUID.json"]
@@ -106,6 +109,10 @@ flowchart LR
   nodeDaemon -.->|delivers peer messages| runtimes
   nodeDaemon -.->|Codex CP admission and original-owner intake| codex
   codex -.->|Processing ACK, then exact Queue reconciliation| queueRetire
+  nodeDaemon -.->|Source candidate: immutable groups and copy adoption| messageJournal["Message operation journal<br/>passive transitions, one debit"]
+  nodeDaemon -.->|Source candidate: live exclusion and guarded local input| originalResume["Original background resume<br/>exact result and completion receipt"]
+  originalResume -.->|One group, one debit, owner-last retirement| messageJournal
+  codex -.->|Source candidate: exact processing transitions| messageJournal
   queueRetire -.->|Exact owned Queue list/delete/readback| codex
 ```
 
@@ -138,6 +145,16 @@ Sessions are asked to search the space before answering, and a substantial turn 
 [![Relief: two temples on opposite banks exchange sealed scrolls by boat through a central obelisk, where waiting messages are kept in jars.](assets/illustrations/kherep-control-plane-relief.svg)](https://raw.githubusercontent.com/cfaysal/kherep/main/assets/illustrations/kherep-control-plane.svg)
 
 Phase 1 session liveness uses metadata and local lifecycle tombstones, with UNKNOWN
+native adapters. UNKNOWN identities remain addressable without granting native
+MCP registration or claim permission. Phase 1 alone does not establish native acceptance or wire the
+24-hour final admission deadline. Phase 2A adds authenticated immutable sender-origin
+transport. The source candidate now shares operation ownership, passive transition
+journals and bounded copy adoption across message routes. Its in-process effect
+guard now rechecks current policy, current-run Authority, lifecycle, exact producer
+and every immutable sender deadline immediately before submission or prompt release.
+Cross-process Windows/hook Authority bindings and native acceptance remain open.
+Native turn start can follow timely admission after expiry. See the [liveness contract](modules/control-plane/ARCHITECTURE.md#session-liveness-metadata-phase-1-706).
+
 native adapters. Current supported source identities can qualify a fresh pair-brake root even when availability is UNKNOWN, using enrolled-Node attestation and runtime/lifecycle binding. This does not cryptographically authenticate a native session. Historical legacy chains require a fresh root.
 
 UNKNOWN identities remain addressable without granting native
@@ -264,3 +281,14 @@ Kherep's approach to session memory and observations was inspired by [claude-mem
 Kherep is licensed under the [Apache License 2.0](LICENSE); see [NOTICE](NOTICE). Bundled and adapted third-party material keeps its own license, listed in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
 
 Claude, Claude Code, Codex, Atlassian, Jira, Confluence and other product names are trademarks of their respective owners; Kherep is an independent project and is not affiliated with or endorsed by Anthropic, OpenAI or Atlassian.
+
+The #706 cross-route source integration uses one durable original-session owner,
+explicit execution aliases and one debit across message-driven routes. Distinct
+queue/exec/fork/hook outcomes preserve uncertain starts. Current in-process effects
+use synchronous final admission. Cross-process authority, original-target resume,
+installation and native same-original-chat verification remain separately gated;
+see the [Control Plane architecture](modules/control-plane/ARCHITECTURE.md#cross-route-owner-protocol-706-source-integration).
+
+The inactive #706 control-plane source candidate shares message ownership and debit history across consuming routes, including prepared commands, durable no-debit cancellation, exact transition replay, and late task identity bookkeeping. It has no installation or native original-session/original-chat acceptance claim; see the control-plane source documentation and the task's verification receipt.
+
+The default-off #706 strict-original source contract now carries the fixed ten-minute Codex Queue wait through live-excluded original background resume, local framed input, and exact original-result completion cleanup. It keeps one original group and debit. Source adapters exercise Codex and direct Claude contracts; the production provider remains unavailable. Restart rebind, search/restore, Windows current-run binding, legacy Claude argv repair and native original-chat delivery remain open. See the [Control Plane source contract](modules/control-plane/ARCHITECTURE.md#strict-original-selection-and-queue-prefix-706-partial-source-tranche).

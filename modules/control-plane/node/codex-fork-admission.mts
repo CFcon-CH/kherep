@@ -1,11 +1,14 @@
 import { automaticReplyDecision } from "./reply-admission.mts";
+import {canonical} from './target-delivery-state.mts';
+import {checkExecution} from './target-delivery-route.mts';
+import type {ExecutionContext} from './target-delivery-operation.mts';
 import path from "node:path";
 
 import { MESSAGING_PROXY_CAPABILITY, OPERATOR_NODE_ID, type MESSAGE_PROGRESS_CODES } from "../protocol-messages.mts";
-import { bypassesPermissions, takeTurn, type AutonomyAction } from "./autonomy.mts";
+import { bypassesPermissions, type AutonomyAction } from "./autonomy.mts";
 import { codexHome } from "./codex-app.mts";
 import { busyPolicyFingerprint, busyWakeDisabled } from "./codex-busy-policy.mts";
-import { forkAttempts, MAX_FORK_ATTEMPTS, type ForkAttempt } from "./codex-fork-attempts.mts";
+import { forkAttempts, readForkAttempt, MAX_FORK_ATTEMPTS, type ForkAttempt } from "./codex-fork-attempts.mts";
 import { CODEX_ACTIVE_MS, CODEX_RUNTIME, idleEvidence, readCodexSession, type CodexSessionRecord } from "./codex-sessions.mts";
 import { readConfig, type NodePaths } from "./config.mts";
 import { codexPostToolHookInstalled } from "./doctor-hooks.mts";
@@ -171,12 +174,8 @@ function decide(f: Facts, purpose: Purpose): ForkAdmission {
 
 // fingerprint: busyPolicyFingerprint of the policy the message was admitted under.
 export function admitForkReply(deps: ForkAdmissionDeps, owner: string, messageId: string, fingerprint: string): ForkAdmission {
-  const facts = gather(deps, owner, messageId, fingerprint, "admit");
-  const decision = decide(facts, "admit");
-  if (!decision.ok) return decision;
-  const budget = takeTurn(deps.paths, owner, facts.now, forkBudget(facts.policy!));
-  if (budget === "ok") return decision;
-  return { ok: false, reason: budget === "exhausted" ? "budget-exhausted" : "budget-spacing" };
+  // Eligibility only; the exact shared group owns the debit.
+  return decide(gather(deps,owner,messageId,fingerprint,"admit"),"admit");
 }
 
 // Read-only lifetime permission check: no capacity check, claim or budget debit.
@@ -216,4 +215,22 @@ export function relayRefusal(deps: RelayGuardDeps, owner: string, attempt: ForkA
   if (session) return session;
   if (!f.postToolHook) return "post-tool-hook-missing";
   return idleEvidence(f.session, now, fork.idleAfterSeconds * 1000) ? null : "fork-not-idle";
+}
+
+// Final validation of the sole already-owned attempt. The pre-claim evaluator
+// remains unchanged; only its exact current record is excluded from that veto.
+export function currentForkAdmission(deps:ForkAdmissionDeps,context:ExecutionContext,fingerprint:string,attemptId:string):boolean {
+  try {
+    if(context.kind!=='message')return false;
+    const s=checkExecution(deps.paths,context,['fork'])!,op=s.consumer??s.group.operation;
+    if(s.owner!==op.execution.sessionId||s.group.binding.members.length!==1)return false;
+    const messageId=s.group.binding.members[0].messageId;
+    const facts=gather(deps,s.owner,messageId,fingerprint,"continue");
+    const current=readForkAttempt(deps.paths,s.owner,messageId);
+    if(!current)return false;
+    if(current.attemptId!==attemptId||!['launching','running'].includes(current.state)||canonical(current.targetAttempt)!==canonical(context.handle)
+      ||current.policyFingerprint!==fingerprint||!op.producer||current.producer.codexExecutable!==op.producer.launch?.executable
+      ||canonical(current.producer.approvedFiles)!==canonical(op.producer.files)||current.producer.resolvedCodexHome!==op.producer.home)return false;
+    return decide(facts,"continue").ok;
+  }catch{return false;}
 }

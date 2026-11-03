@@ -1,3 +1,4 @@
+import { answerInboxMessage } from "./target-delivery-inbox.mts";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 
@@ -53,7 +54,8 @@ export const MSG_USAGE = `usage:
   kherep-node msg send <node>/<session> [--from <session>] [--wait <seconds>] [--] <text...>
   kherep-node msg send <node> --new claude|codex --directive <the operator's answer, verbatim> [--cwd <dir>] [--from <session>] [--wait <seconds>] [--] <text...>
   kherep-node msg send --reply-to <messageId> [--to <node>/<session>] [--from <session>] [--wait <seconds>] [--] <text...>
-  kherep-node msg inbox [--from <codex-session-id>] [--all | --receive [<messageId>] | --ack <receipt>]
+  kherep-node msg inbox [--from <codex-session-id>] [--all | --receive [<messageId>]]
+  kherep-node msg inbox --ack <receipt> --from <recorded-codex-id|exact-current-claude-id>
   kherep-node msg inbox --message-id <incoming-UUID> --from <owner-UUID> --expect-node <sender-node-UUID> --expect-session <exact-sender-ref> --expect-target-session <exact-target-ref> --expect-reply-to <sent-root-UUID> --expect-text-sha256 <safe-text-SHA256>
   kherep-node msg status <messageId>
   kherep-node msg stop <taskId | sent messageId | owned requestId> [--expected-run-version <run version>] [--wait <seconds>]
@@ -220,11 +222,12 @@ async function send(io: Io, rest: string[], values: MsgArgs["values"]): Promise<
   // A task the Worker does not know (issue #102) tags nothing.
   const own = taskForSession(io.paths, sessionIdFromEnv(io.paths, io.env, io));
   taskId = (own && !own.local ? own.taskId : undefined) ?? taskId;
+  const senderSentAt = new Date(io.now()).toISOString();
   const record: OutboxRecord = { messageId: crypto.randomUUID(), fromSession: from.value,
     fromSessionId: senderSessionId(io.paths, io.env, from.value, io), to, text,
-    ...(replyTo ? { inReplyTo: replyTo } : {}), ...(taskId ? { taskId } : {}), createdAt: new Date(io.now()).toISOString(), depth, ...(guarded ? { guarded: true as const } : {}) };
+    ...(replyTo ? { inReplyTo: replyTo } : {}), ...(taskId ? { taskId } : {}), createdAt: senderSentAt, senderSentAt, depth, ...(guarded ? { guarded: true as const } : {}) };
   writeOutbox(io.paths, record);
-  if (replyTo) markAnswered(io.paths.inbox, replyTo);
+  if (replyTo) answerInboxMessage(io.paths, replyTo);
   io.out(record.messageId);
   return wait > 0 ? waitForAnswer(io, record.messageId, wait * 1000) : 0;
 }

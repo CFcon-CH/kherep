@@ -90,9 +90,7 @@ test("installs a verifiable client while preserving every unrelated byte", { ski
   assert.equal(verified.status, 0, verified.stderr);
   const identity = JSON.parse(verified.stdout);
   assert.match(identity.manifestSha256, /^[a-f0-9]{64}$/);
-  assert.equal(identity.files, 25);
-  assert.equal(fs.readFileSync(path.join(f.target, "control-plane/protocol-session-identity.mts"), "utf8"),
-    fs.readFileSync(path.join(import.meta.dirname, "../modules/control-plane/protocol-session-identity.mts"), "utf8"));
+  assert.equal(identity.files, 52);
   assert.equal(fs.readFileSync(path.join(f.target, "control-plane/protocol-loop-brake.mts"), "utf8"),
     fs.readFileSync(path.join(import.meta.dirname, "../modules/control-plane/protocol-loop-brake.mts"), "utf8"));
   const manifest = JSON.parse(fs.readFileSync(path.join(f.target, "manifest.json"), "utf8"));

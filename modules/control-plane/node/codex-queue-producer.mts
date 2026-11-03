@@ -1,9 +1,20 @@
 import { automaticReplyDecision } from "./reply-admission.mts";
+import {captureListedGrant,freezeMemberGrants} from './message-grant.mts';
+import {queueRouteEligible} from './message-admission-policy.mts';
+import { prepareMessageLaunch } from "./target-delivery-launch.mts";
+import { commandProducer, decideMessageRoute } from "./target-delivery-producer.mts";
+import { finishRouteEffect } from "./target-delivery-outcome.mts";
+import { checkExecution } from "./target-delivery-route.mts";
+import type { ExecutionContext } from "./target-delivery-operation.mts";
 import fs from "node:fs";
+import { beginTargetSubmission, finishTargetSubmission } from "./target-delivery.mts";
+import type { TargetHandle, TargetReservation } from "./target-delivery-reservation.mts";
+import type { QueueProducerIdentity } from "./codex-queue-binding.mts";
+import type { NodePaths } from "./config.mts";
 import { livenessAdmission } from "./session-lifecycle.mts";
 import path from "node:path";
 
-import { bypassesPermissions, takeTurn, type WakeGrant } from "./autonomy.mts";
+import { bypassesPermissions, type WakeGrant } from "./autonomy.mts";
 import { codexHome, currentCodexApp } from "./codex-app.mts";
 import { findCodex } from "./codex-binary.mts";
 import { busyPolicyFingerprint, busyWakeDisabled } from "./codex-busy-policy.mts";
@@ -72,24 +83,8 @@ function admitted(deps: RunnerDeps, owner: string, messageIds: string[], fingerp
   { ids: string[]; budget: ReturnType<typeof wakeBudget> } | null {
   const now = deps.now?.() ?? Date.now();
   if (livenessAdmission(deps.paths, { runtime: "codex", sessionId: owner }, "queue", now, undefined, deps.livenessAuthority) === null) return null;
-  const policy = readPolicy(deps.paths.policy, true);
-  const session = readCodexSession(deps.paths, owner);
-  const seen = Date.parse(session?.lastSeen ?? "");
-  if (!readConfig(deps.paths.config) || !policy || busyPolicyFingerprint(policy) !== fingerprint
-    || !policy.wake || !policy.wake.nativeQueue || busyWakeDisabled(deps.paths) || !session || session.sessionId !== owner
-    || !Number.isFinite(seen) || seen > now || now - seen > CODEX_ACTIVE_MS
-    || listTasks(deps.paths).some((task) => task.sessionId === owner)) return null;
-  if (bypassesPermissions(session.permissionMode)
-    || (session.permissionMode === undefined && !explicitlyListed(policy, [owner]))) return null;
-  if (!wakeAllowed(policy, [owner])) {
-    if (grant !== "codexApp" || !policy.wake.codexApp) return null;
-    const home = deps.codex?.home ?? codexHome();
-    // Both a reachable TUI and an unresolved marker exclude automatic App
-    // authorization. Full-id policy authorization remains independent of it.
-    if (fs.existsSync(tuiMarker(home, owner))) return null;
-    const live = listCodexSessions(deps.paths, now).map((record) => record.sessionId);
-    if (currentCodexApp(deps.paths, live, home) !== owner) return null;
-  }
+  const policy=queueRouteEligible(deps,owner,fingerprint,now,grant);
+  if(!policy)return null;
   const ids = messageIds.filter((id) => {
     const record = getMessage(deps.paths.inbox, id);
     return record?.messageId === id && record.toSession === owner && record.state === "accepted"
@@ -125,41 +120,44 @@ async function produce(deps: RunnerDeps, owner: string, messageIds: string[], fi
   const producer = queueProducerIdentity(file, queueArgs(owner, ids.length), deps);
   if (producer.route !== "local" || producer.approvedFiles.length === 0) return;
   const now = deps.now?.() ?? Date.now();
-  if (!reserveNativeOwner(deps.paths, owner, ids)) return;
-  if (takeTurn(deps.paths, owner, now, admission.budget) !== "ok") {
-    releaseNativeOwner(deps.paths, owner, ids);
-    return;
-  }
-  const claimed: string[] = [];
-  for (const messageId of ids) {
-    try {
-      fs.writeFileSync(path.join(dir, `${messageId}.json`), JSON.stringify({ version: 1, owner, messageId,
-        attemptedAt: now, state: "attempted", producer }), { flag: "wx", mode: 0o600 });
-      claimed.push(messageId);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-    }
-  }
-  if (!claimed.length) return;
-  const expectedInput = nativeQueueInput(owner, claimed.length);
-  const settle = (state: string, queueId?: string): void => {
-    for (const messageId of claimed) writeJsonAtomic(path.join(dir, `${messageId}.json`),
-      { version: 1, owner, messageId, attemptedAt: now, state, producer,
-        groupMessageIds: claimed, expectedInput,
-        ...(queueId ? { queueId } : {}) });
-  };
-  const current = admitted(deps, owner, claimed, fingerprint, grant);
-  if (!current || current.ids.length !== claimed.length) {
-    settle("cancelled-before-submit");
-    releaseNativeOwner(deps.paths, owner, ids);
-    return;
-  }
-  try {
-    const result = await runQueue({ ...deps, codex: { ...deps.codex,
-      findCodex: () => file, home: producer.resolvedCodexHome } }, queueArgs(owner, claimed.length), producer, serviceAdmission);
-    settle(result.queueId ? "submitted" : "uncertain", result.queueId);
-  } catch { settle("uncertain"); return; }
+  const records=ids.map(id=>getMessage(deps.paths.inbox,id)!);
+  const policy=readPolicy(deps.paths.policy,true);
+  const basis=policy&&captureListedGrant(policy,{runtime:'codex',sessionId:owner});
+  if(grant!=='codexApp'&&!basis)return;
+  const memberGrants=basis?freezeMemberGrants(records,records.map(r=>({...basis,messageId:r.messageId}))):undefined;
+  const launch=await prepareMessageLaunch(deps,{runtime:"codex",file,args:queueArgs(owner,ids.length),cwd:process.cwd(),detached:(deps.codex?.platform??process.platform)!=="win32"});
+  const decision=decideMessageRoute({...deps,messageRoute:{route:'native-queue',grant:grant==='codexApp'?'codexApp':'members',memberGrants,permissionMode:readCodexSession(deps.paths,owner)?.permissionMode}},records,owner,"queue",{runtime:"codex",sessionId:owner,taskId:null},launch.producer,owner,launch);
+  if(decision.status!=="granted")return;
+  const context=decision.context;if(context.kind!=="message")return;
+  await submitTargetQueueGroup(deps.paths,context.handle,()=>deps.now?.()??Date.now(),async()=>
+    runQueue({...deps,codex:{...deps.codex,findCodex:()=>file,home:producer.resolvedCodexHome}},
+      queueArgs(owner,ids.length),producer,serviceAdmission,context),context);
   // Explicit processing ACK may have delivered content while native admission was in flight.
   // Cleanup failure must never overwrite the successfully persisted queue ID.
   await reconcile(deps, owner, serviceAdmission);
+}
+
+// Shared queue submission. The version2 core adapter remains compatible;
+// production uses the explicit version3 operation context.
+export function submitTargetQueueGroup(paths:NodePaths,handle:TargetHandle,now:()=>number,
+  submit:(request:{owner:string;input:ReturnType<typeof nativeQueueInput>;producer:QueueProducerIdentity})=>Promise<{queueId?:string}>):Promise<TargetReservation>;
+export function submitTargetQueueGroup(paths:NodePaths,handle:TargetHandle,now:()=>number,
+  submit:(request:{owner:string;input:ReturnType<typeof nativeQueueInput>;producer:QueueProducerIdentity})=>Promise<{queueId?:string}>,context:ExecutionContext):Promise<void>;
+export async function submitTargetQueueGroup(paths: NodePaths,
+  handle: TargetHandle, now: () => number,
+  submit: (request: { owner: string; input: ReturnType<typeof nativeQueueInput>; producer: QueueProducerIdentity }) => Promise<{ queueId?: string }>, context?:ExecutionContext): Promise<TargetReservation | void> {
+  if(context) {
+    const state=checkExecution(paths,context,["queue"],handle.owner)!;
+    const p=(state.consumer??state.group.operation).producer!;
+    const producer:QueueProducerIdentity={codexExecutable:p.files[0].path,launchFile:p.launchFile,launchPrefix:p.launchPrefix,approvedFiles:p.files,resolvedCodexHome:p.home!,route:p.route};
+    try { const result=await submit({owner:handle.owner,input:nativeQueueInput(handle.owner,state.group.binding.members.length),producer});
+      finishRouteEffect(paths,context,result.queueId?{kind:"queue",queueId:result.queueId}:{kind:"uncertain"});
+    } catch {finishRouteEffect(paths,context,{kind:"uncertain"});}
+    return;
+  }
+  const saved = beginTargetSubmission(paths, handle, now());
+  let result: { queueId?: string };
+  try { result = await submit({ owner: saved.owner, input: nativeQueueInput(saved.owner, saved.group.members.length), producer: saved.group.producer! }); }
+  catch { return finishTargetSubmission(paths, handle); }
+  return finishTargetSubmission(paths, handle, result.queueId);
 }

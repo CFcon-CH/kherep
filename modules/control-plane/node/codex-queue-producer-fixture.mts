@@ -25,6 +25,7 @@ export function nativeQueueNode(t: test.TestContext, owner = NATIVE_OWNER) {
   recordCodexSession(node.paths, owner, node.workspace, T0, "default");
   // Synthetic exact-holder observation, independent of the historical hook.
   const livenessAuthority = publishSynthetic(node.paths, [{ runtime: "codex", sessionId: owner,
+    lifecycle:{status:"value",value:{state:"restored",generation:7},source:"native-lifecycle",observedAt:T0,complete:true,reasonCode:"observed"},
     holder: { status: "value", value: { present: true, creationIdentity: "synthetic-created-1" }, source: "native-holder", observedAt: T0, complete: true, reasonCode: "observed" },
     turn: { status: "value", value: "running", source: "native-turn", observedAt: T0, complete: true, reasonCode: "observed" },
   }], T0, [{ runtime: "codex", sessionId: owner, state: "running" }]);
@@ -32,10 +33,10 @@ export function nativeQueueNode(t: test.TestContext, owner = NATIVE_OWNER) {
   // A bound for a hung fake, not a timing assumption: under the parallel suite a
   // freshly written fake boots in up to ~1.1 s (issue #452), the production
   // default stays QUEUE_TIMEOUT_MS.
-  const deps = () => ({ ...node.deps({ findCodex: () => fake.file, home, queueTimeoutMs: 10_000 }), livenessAuthority });
+  const deps = () => ({ ...node.deps({ findCodex: () => fake.file, home, queueTimeoutMs: 10_000,loadedThreads:async()=>null,reconcileQueue:async()=>{} }), livenessAuthority });
   const add = (text = "Public synthetic peer content", toSession = owner) => {
     const id = `4080${(++serial).toString(16).padStart(4, "0")}-0000-4000-8000-000000000001`;
-    storeMessage(node.paths.inbox, { messageId: id, from: PEER, toSession, text, createdAt: new Date(T0).toISOString() }, T0);
+    storeMessage(node.paths.inbox, { messageId: id, from: PEER, toSession, text, createdAt: new Date(T0).toISOString(),senderOrigin:{nodeId:PEER.nodeId,sentAt:new Date(T0).toISOString()} }, T0);
     return id;
   };
   const poll = async () => { pollCodexQueue(deps()); await codexQueueIdle(); };

@@ -7,7 +7,8 @@ import { directoryVisibility, observationReason, targetKey } from "./session-liv
 import type { SessionEvidence } from "./session-liveness.mts";
 import type { SessionInfo } from "../protocol.mts";
 import { ensureDir, type NodePaths } from "./config.mts";
-import { readJson, refuseUndeliverable, UNDELIVERABLE_AFTER_MS, writeJsonAtomic, type InboxRecord } from "./inbox.mts";
+import { readJson, UNDELIVERABLE_AFTER_MS, writeJsonAtomic, type InboxRecord } from "./inbox.mts";
+import {refuseUndeliverableInbox} from './target-delivery-inbox.mts';
 import { markUnseen, rememberSessions, unlistedRuntimes } from "./known-sessions.mts";
 
 // sessions.json, the node's sessions from the last successful listing, and the
@@ -121,7 +122,7 @@ export function recordingSessions(paths: NodePaths, list: (signal?: AbortSignal)
       log(`kherep-node: could not write known-sessions.json: ${String(error)}`);
     }
     try {
-      const refused = refuseUndeliverable(paths.inbox, sessions, observedAt, undeliverableAfterMs, records?.(), ref => terminalReference(paths, ref, undefined, now()), ref => closedReference(paths, ref, now(), authority));
+      const refused = refuseUndeliverableInbox(paths, sessions, observedAt, undeliverableAfterMs, records?.(), ref => terminalReference(paths, ref, undefined, now()), ref => closedReference(paths, ref, now(), authority));
       if (refused.length > 0) log(`kherep-node: refused ${refused.length} message(s) for sessions that are not running`);
     } catch (error) {
       log(`kherep-node: could not check the inbox for ended sessions: ${String(error)}`);

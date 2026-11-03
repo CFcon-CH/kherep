@@ -202,3 +202,16 @@ test("offeredBy names the path of the last offer and survives confirmation; lega
   assert.deepEqual([getMessage(dir, legacy)?.state, getMessage(dir, legacy)?.offeredBy], ["offered", undefined]);
   assert.ok(listInbox(dir).some((r) => r.messageId === legacy));
 });
+
+
+test("inbox origin survives redelivery without a receipt-time renewal", t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "kherep-origin-inbox-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const nodeId = "00000000-0000-4000-8000-000000000001";
+  const origin = { nodeId, sentAt: new Date(0).toISOString() };
+  const body = { messageId: nodeId, from: { nodeId, session: "source" }, toSession: "target", text: "synthetic",
+    createdAt: new Date(23 * 60 * 60_000).toISOString(), senderOrigin: origin };
+  assert.deepEqual(storeMessage(root, body, 23 * 60 * 60_000).senderOrigin, origin);
+  assert.deepEqual(storeMessage(root, { ...body, senderOrigin: { ...origin, sentAt: new Date(1_000).toISOString() } }, 24 * 60 * 60_000).senderOrigin, origin);
+  assert.deepEqual(getMessage(root, nodeId)?.senderOrigin, origin);
+});

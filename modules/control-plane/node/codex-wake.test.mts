@@ -13,7 +13,7 @@ import { pollCodexInbound } from "./codex-wake.mts";
 import { readLocalSessions } from "./exchange-sessions.mts";
 import { fixtureEvidence, publishSynthetic } from "./session-authority-fixture.mts";
 import { getOutbox } from "./exchange.mts";
-import { getMessage, messageIds, storeMessage } from "./inbox.mts";
+import { getMessage, getMessageProgress, markOffered, markRetry, messageIds, storeMessage } from "./inbox.mts";
 import { continueTask, startTask, stopTask } from "./session-runner.mts";
 import { listSessions } from "./sessions.mts";
 import { startArgs, T0, TASK } from "./task-fixture.mts";
@@ -40,7 +40,8 @@ function enableWake(node: Node): void {
 }
 function loaded(node: Node): void {
   const now = node.deps().now!();
-  publishSynthetic(node.paths, [fixtureEvidence({ runtime: "codex", sessionId: THREAD }, "idle-loaded", now)],
+  publishSynthetic(node.paths, [{...fixtureEvidence({ runtime: "codex", sessionId: THREAD }, "idle-loaded", now),
+    lifecycle:{status:'value',value:{state:'restored',generation:7},source:'native-lifecycle',observedAt:now,complete:true,reasonCode:'observed'}}],
     now, listCodexTaskSessions(node.paths, now).map(row => ({ ...row, state: "idle-loaded" })), node.livenessAuthority);
 }
 
@@ -62,6 +63,7 @@ function deliver(node: Node, text: string, extra: { taskId?: string; toSession?:
   // No taskId means the task's own; an empty one means none.
   const taskId = extra.taskId ?? TASK;
   storeMessage(node.paths.inbox, { messageId: id, from: PEER, toSession: extra.toSession ?? NAME, text, createdAt: new Date(T0).toISOString(),
+    senderOrigin:{nodeId:PEER.nodeId,sentAt:new Date(node.deps().now!()).toISOString()},
     ...(taskId ? { taskId } : {}) }, T0, extra.depth ?? 0);
   return id;
 }
@@ -152,7 +154,8 @@ test("the wake guards: allowlist or task grant, reply depth, kill switch, budget
   for (let n = 0; n < TURNS_PER_HOUR; n++) assert.equal(takeTurn(node.paths, THREAD, T0 - 50 * 60_000 + n * TURN_SPACING_MS * 2), "ok");
   await pollCodexInbound(node.deps());
   assert.equal(node.runs().length, 1);
-  assert.equal(auditLines(node).at(-1)?.action, "budget");
+  assert.equal(getMessageProgress(node.paths.inbox,granted)?.code,'budget-exhausted');
+  assert.equal(fs.existsSync(path.join(node.paths.dir,'codex-native-pending',`${THREAD}.json`)),false,'positive no-debit refusal cancels its exact unreferenced owner');
   assert.equal(getMessage(node.paths.inbox, granted)?.state, "accepted", "it waits");
 });
 
@@ -198,7 +201,7 @@ test("a message run past the max runtime keeps the task's state and sends no rep
   node.reports();
   enableWake(node);
   loaded(node);
-  const id = deliver(node, "take your time [sleep]");
+  const id = deliver(node, "take your time [sleep] [no-reply]");
   await pollCodexInbound(node.deps());
   await waitFor(() => node.runs().length === 2, "the message run");
   node.tick(30 * 60_000);
@@ -210,9 +213,9 @@ test("a message run past the max runtime keeps the task's state and sends no rep
   await waitFor(() => readExit(codexFiles(node.paths, TASK)) !== null, "the stopped run");
 });
 
-test("one run at a time; a system-stopped or failed run offers its messages again within the limits", posix, async (t) => {
+test("one run at a time; a system-stopped strict group remains fenced without merging later messages or debiting again", posix, async (t) => {
   const node = await doneTask(t);
-  const slow = deliver(node, "take your time [sleep]");
+  const slow = deliver(node, "take your time [sleep] [no-reply]");
   await pollCodexInbound(node.deps());
   await waitFor(() => node.runs().length === 2, "the message run");
   const waiting = deliver(node, "second");
@@ -227,20 +230,30 @@ test("one run at a time; a system-stopped or failed run offers its messages agai
   assert.equal(getMessage(node.paths.inbox, slow)?.retry, true);
   await waitFor(() => readExit(codexFiles(node.paths, TASK)) !== null, "the stopped run");
 
-  // Both go in the next run, which fails: they stay offered for a retry.
+  // The failed/uncertain consumer is retained. No row deletion, owner release,
+  // later-member merge or second autonomous effect is a recovery proof.
   node.tick(TURN_SPACING_MS + 1);
   loaded(node);
-  fs.rmSync(path.join(node.paths.inbox, `${slow}.json`));
   const failing = deliver(node, "this one fails [fail]");
   await pollCodexInbound(node.deps());
-  await runEnds(node, 3);
-  await watchTasks(node.deps());
-  for (const id of [waiting, failing]) assert.deepEqual([getMessage(node.paths.inbox, id)?.state, getMessage(node.paths.inbox, id)?.retry], ["offered", true]);
+  assert.equal(node.runs().length,2);
+  for (const id of [waiting, failing]) assert.equal(getMessage(node.paths.inbox,id)?.state,'accepted');
+  const handle=getMessage(node.paths.inbox,slow)!.targetAttempt;
+  assert.ok(handle);assert.equal(getMessage(node.paths.inbox,slow)?.retry,true);
   node.tick(TURN_SPACING_MS + 1);
   loaded(node);
   await pollCodexInbound(node.deps());
-  await runEnds(node, 4);
-  assert.equal(auditLines(node).at(-1)?.action, "stuck-offer");
+  assert.equal(node.runs().length,2);
+  assert.deepEqual(getMessage(node.paths.inbox,slow)!.targetAttempt,handle);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(node.paths.dir,'listeners',`${THREAD}.turns.json`),'utf8')).groupDebits.length,1);
+});
+
+test('a legacy retry offer is converted into one first strict consumer without deleting its row',posix,async t=>{
+  const node=await doneTask(t),id=deliver(node,'legacy retry [no-reply]');
+  markOffered(node.paths.inbox,id,T0,'codex-wake');markRetry(node.paths.inbox,id);
+  await pollCodexInbound(node.deps());await runEnds(node,2);await watchTasks(node.deps());
+  assert.equal(getMessage(node.paths.inbox,id)?.state,'delivered');assert.ok(getMessage(node.paths.inbox,id)?.targetAttempt);
+  assert.equal(auditLines(node).at(-1)?.action,'stuck-offer');
 });
 
 test("an operator stop blocks message auto-resume until an explicit continue", posix, async (t) => {

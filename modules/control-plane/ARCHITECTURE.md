@@ -83,6 +83,145 @@ The accepted later deadline design checks an immutable authenticated sender
 not implement it. Native scheduling may start a turn after expiry following
 timely admission; actual-native-start expiry is not guaranteed.
 
+## Authenticated sender origin (Phase 2A, #706)
+
+New CLI and proxy-answer outbox records set `senderSentAt` once alongside their
+local `createdAt`. Exchange retries and process restarts copy that literal value;
+old records remain unknown. The authenticated `NodeSession` alone creates
+`senderOrigin: { nodeId, sentAt }` when the enrolled sender advertises
+`messaging.origin.v1`. This authenticates a node's clock assertion, not a session
+or an independently measured send time. Present malformed or future timestamps
+are refused. Operator HTTP and direct MCP sends keep origin unknown.
+
+The Registry adds nullable origin and SHA-256 content/address binding columns.
+The content/address digest is internal duplicate-verification metadata; the
+Access-authenticated operator list projects it out, and the existing MCP status
+projection stays unchanged. Storage lifetime and sender/target checks are unchanged.
+Replay retains the stored origin. Conflicting same-ID origin, target, sender
+session, content or lineage cannot refresh an existing row; a legacy null origin
+is never upgraded. Tombstones still return settled status without recreating a
+message. Worker transport retention remains based on receipt time. Accepted work
+may finish and ACK after the sender's admission deadline.
+
+```mermaid
+flowchart LR
+  outbox[New outbox: immutable senderSentAt] --> node[Authenticated node connection]
+  node --> worker[Worker: capability + source binding]
+  worker --> registry[Registry: nullable origin + content digest]
+  registry --> intake[Authenticated target intake]
+  intake --> inbox[Inbox: preserve origin, bind processing ACK]
+```
+
+Worker `auth.ok` advertises capabilities before pending deliveries replay, and
+live directory frames refresh them. The target stores origin only with a current
+authenticated capability assertion; old/missing capability stays unknown. Both
+staged messaging-client import inventories include `message-origin.mts`.
+Unchanged origin-absent v1 processing offers retain their pre-upgrade fingerprint
+and ACK token. Present origins use a single bound fingerprint; malformed/unbound
+origins refuse ACK, and adding, removing or changing origin cannot reuse a token.
+No receipt migration or additional Receive is required for unchanged v1 offers.
+
+The pure origin helper defines `now < sentAt + 86_400_000` with canonical UTC
+milliseconds, nonnegative safe arithmetic and no future-clock grace. **Final
+queue/launch admission is not wired in this slice.** It requires Phase 2C's shared
+immutable message group and owner reservation across queue, task, wake, fork and
+closed-session routes. No new target coordinator or native capability is claimed;
+`wake.nativeQueue` remains off by default and no `resumeTarget` policy is enabled.
+Synthetic transport tests do not establish native continuation or installation.
+
+## Shared budget mutation prerequisite (#706 source)
+
+`autonomy.takeTurn` delegates every existing autonomous caller to `budget-store`.
+`budget-lock` keeps synchronous read, validation, decision, flushed replacement
+and exact target readback under one `acquireServiceOwnerFile` owner. Its injected
+probe treats only ESRCH as absence; live, reused and unknown PIDs fence regardless
+of age. Reclaim is bounded, serialized and token-bound. Global service and inbox
+lock behavior is unchanged.
+
+Legacy duplicate timestamps migrate literally to v2: budget UUID, revision,
+rolling turns and at most 1024 immutable group debit receipts in one bounded
+record. Exact repeated group/reservation keys return the original receipt before
+limits; conflicts, full history, malformed state and uncertain I/O refuse.
+Legacy spends preserve all group receipts. A protected initialization marker
+makes missing or reverted canonical state a fence. A crash after marker creation
+can require separately authorized quiescent recovery; no automatic reset exists.
+
+Only budget cleanup branches join the same lock and reread retention/session
+conditions. Conflicting budget tombstones remain fences instead of being ranked
+as listener locks. Protected v2 canonical budgets and their markers remain
+retained, including budgets without group receipts. Other state cleanup is unchanged.
+
+```mermaid
+flowchart LR
+  legacy[Existing takeTurn callers] --> lock[Shared budget owner]
+  debit[Internal idempotent debit API] --> lock
+  cleanup[Budget prune and tomb recovery] --> lock
+  lock --> record[Marker plus v2 turns and debit receipts]
+```
+
+A missing marker/canonical record also cannot initialize over an existing owner
+scope in `target-delivery-groups`. A persisted core debit receipt is recovery
+evidence even when both budget files vanished; legacy spends share this refusal.
+Later installation must deliver all consuming writer and cleanup artifacts with
+a measured quiescent old-writer cutover. Mixed old/new writers are unsupported;
+service drain alone does not cover hooks. Local cooperative tests establish no
+native consumer exclusion, general power-loss guarantee or installed capability.
+The staged messaging clients do not import these budget modules.
+
+## Initial shared target-delivery core (#706 historical phase)
+
+`target-delivery-state` strictly parses a frozen group of at most eight original
+messages. It records exact runtime/full original ID, raw source/destination,
+authenticated sender assertion, content/lineage digests, existing offer generation,
+minimum immutable deadline, policy/lifecycle binding and the captured producer
+identity (or explicit unknown). Bodies are not copied. Publication refresh remains
+separate from the immutable group/lifecycle/offer generations.
+
+`codex-native-pending` keeps the existing leading-dot owner mutex pathname and
+uses `acquireServiceOwnerFile` with a fresh absence-only bounded probe for both
+reservation and release. Legacy `{pid,at}`, create gaps and corrupt owner locks
+remain fences. Global inbox and service owner primitives are unchanged. A v2
+reservation binds the complete group, reservation UUID, exclusive attempt token,
+phase and recorded debit. The old IDs-only release cannot release it.
+
+`target-delivery` holds that owner boundary before the budget lock and advances
+reserve -> debit -> complete immutable group history and all original per-message
+attempt references -> ready. Exact debit recovery reuses the original timestamp;
+a stored receipt cannot initialize a missing budget. Conflicting/partial writes
+fence submission. History and attempts remain after release. Only the ready phase
+can atomically claim submitting; another route/token cannot claim it twice.
+
+At this initial phase, `codex-queue-producer.submitTargetQueueGroup` required an
+explicit injected transport and had no scheduler caller. The later version-3
+production callers are described in the cross-route owner protocol below.
+A lost response keeps the same attempt uncertain. A late exact Queue ID can
+settle that attempt without another transport call. ACK during an awaited
+submission or completion after expiry does not erase its queue identity. A real
+processing offer/ACK may advance offer facts after submission without adopting
+those facts into the group: pre-submit comparison includes the exact captured
+offer, while post-processing reconciliation preserves the stable original
+content/address/lineage/origin and requires delivered records. Release
+requires the exact group/token and complete cancelled-before-submit rows, or
+complete delivered membership plus the existing exact bound queue reconciliation
+receipt. Neither absence nor a processing ACK alone proves native non-consumption.
+
+```mermaid
+flowchart LR
+  group[Immutable target group] --> owner[Existing pending-owner mutex and v2 reservation]
+  owner --> debit[Shared idempotent budget debit]
+  debit --> history[Complete group and all original attempt references]
+  history --> ready[Durable ready-to-submitting transition]
+  ready --> injected[Explicit injected transport only]
+  injected --> result[Submitted or uncertain, exact late ID]
+```
+
+This describes the historical version-2-only phase. The current source candidate
+uses version-3 operation contexts from production queue/task-wake/closed/fork/hook
+callers and adds the final in-process admission guard described below. Installation,
+native consumer exclusion, strict original-session resume and original-chat answer
+acceptance remain separate requirements; #727 integration remains future work.
+
+
 ## Managed daemon service
 
 `node/service-cli.mts` dispatches `service install|upgrade|status|rollback`
@@ -248,19 +387,20 @@ Each executing Codex intake-window frame or coalesced tick starts its own
 handover, or a busy record in a task's `deliveryPending`, logs the task and
 message and leaves its task mapping for the next watch without blocking later
 tasks. Shared `node/task-handover.mts` serves both the watch and immediate
-Claude resume-copy adoption (issue #635). In one oldest-first address pass,
+Claude resume-copy adoption (issue #635). For legacy rows, in one oldest-first address pass,
 every accepted/offered record at the previous address moves as before, whatever
 its delivery owner. Additional pending records at intermediate addresses move
 only with the exact task/runtime association. Each predicate is checked again
 under the record lock, preserving older `closedTo`, `closedAttempt` and all
 offer/retry evidence. A separate phase corrects only exact-owned delivery
 session metadata at the actual target, including terminal records already there;
-terminal records elsewhere never move. General inbox and identity APIs keep their
-contracts. Other errors still propagate; the watcher saves its mapping after both
+terminal records elsewhere never move. Raw legacy inbox writers refuse strict
+attempt-bound rows. Other errors still propagate; the watcher saves its mapping after both
 phases and deliveryPending resolution succeed. An immediate resume already ran:
 on typed busy it preserves the pending old-session mapping with the new short ID,
 so the watcher retries without another launch. This is per-record recovery during
 an adoption, not a transaction across task/inbox files or a historical sweep.
+Strict rows instead use the append-only group-copy journal described below.
 Unowned intermediates retain existing closed-session fallback limits, including
 `messaging.resumeClosed` opt-in, accepted/unattempted state, a known closed target
 and policy/readiness/budget guards. A process crash after immediate resume's early
@@ -966,6 +1106,14 @@ An unverified `--from` is refused, never used as typed. This prevents mistaken o
 unknown senders; it is not authentication, since the node's processes still assert
 the session. Native MCP binds the session in the Worker instead.
 
+For `msg inbox --ack` only, a resolved current Claude identity must match
+`--from` by exact full id; a mismatch fails immediately even if the typed id
+has a Codex record. Its refs contain only that exact id, without alias expansion.
+All remaining cases retain the recorded-Codex path above. This reuses local
+process-reported identity, not authentication. Receipt owner, generation,
+fingerprint and addressing checks are unchanged. Read-only inbox and
+`--receive` do not gain this Claude exception.
+
 `msg status` lists threaded replies from the local inbox by the Worker's `replied`
 rule, so the sender reads reply ids without another Worker query. The Registry's
 `reply_message_id` (MCP `replyMessageId`) names only the reply that marked the
@@ -1217,6 +1365,195 @@ Guarded MCP reply provenance is preserved by the common trusted Claude/Codex `Pr
 The marker count and write use a non-stealable, exclusive directory mutex at the existing index record-lock pathname. Atomic nonrecursive directory creation shares the namespace with older file-lock writers; a file or directory already there is bounded contention, never an age-based takeover. Only the successful owner removes its own empty directory after checking its identity. A paused live holder cannot lose this capacity mutex. A crash or uncertain ownership leaves a conservative fence. Existing offline operator maintenance must stop all marker writers before inspecting or removing orphan lock state; automatic hook execution never cleans it up. The shared inbox record-lock helper and marker retention rules are unchanged.
 
 One complete stored-lineage classifier gates parent lookup, delivery projection, replay and queued push. Only an all-NULL loop tuple is legacy. Invalid pair format, absent fields or invalid direction/generation/ordinal/depth refuse queued rows with the existing `loop-lineage-unavailable` status. Corrupt proof remains unchanged for diagnosis and can never become legacy; terminal status readback carries no authoritative loop context.
+
+### Cross-route owner protocol (#706, source integration)
+
+Autonomous message routes use the existing `codex-native-pending/<UUID>` namespace
+and its ordered mutation locks. The generalized operation group is explicitly
+version 2 and its owner record version 3; legacy records remain conservative
+fences. Original identity, sender origin, bounded membership and the initial
+lineage are immutable. Exact local offer/address transitions carry the original
+attempt reference. A known reused executor claims an alias in that same
+namespace. A new child's measured identity must bind there before handover.
+
+Queue, exec, fork and hook results have distinct tags. Only queue outcomes contain
+a queue ID. A lost start/result keeps the owner and debit. Late exact identities
+update that attempt; conflicting identities fence. A pure handover takes no turn;
+its downstream consuming operation verifies the stored reference and books the
+existing route's budget key once. Runner calls require an explicit trusted
+operator/read-only context or a complete message context. The Windows detached
+wrapper reads a bounded command-bound control input before its inner spawn.
+
+`target-delivery-adoption` records at most sixteen locally measured task-copy
+observations without replacing a known exec result or charging another turn.
+The intent binds the complete current group, task mapping, old and new full IDs;
+it precedes a same-namespace alias reservation. Address and delivery-identity
+phases replay exact field patches. Contention retains the old published task
+mapping until every member converges. An interrupted alias creation can retry
+only that exact intent; foreign owners and changed mapping identities refuse.
+An unconsumed handover resumes its complete original M1/M2 group before later Q;
+Q cannot join its immutable membership or create a second debit.
+
+`target-delivery-inbox` journals strict passive offers, answers, retries and
+refusals over complete groups, changing only the requested subset. After beginning
+its hook effect, the wake listener attaches the original attempt reference to every
+selected member through that journal before releasing output. Prompt offers and
+Stop delivery confirmations then extend the same journal without changing the
+immutable membership, origin or debit. Settled hook output and delivered rows do
+not prove native consumer exclusion or retire the owner; the supported native
+completion/exclusion provider remains UNKNOWN. Prompt/tool intake and Codex
+handover ACKs need no autonomous consumer or debit. Actual reply/watch and
+maintenance paths preserve already terminal rows. Retention cannot erase strict
+member evidence while the owner remains unresolved. The two optional messaging
+clients share one explicit 49-file runtime import list in `messaging-client-graph`,
+plus three generated activation files, for 52 staged manifest files; their copied
+imports are checked independently and covered by installer full-file regressions.
+
+Actual Codex task environments use the prepared absolute `CODEX_HOME`; low-level
+spawn and Windows inner/input boundaries compare it with that same binding.
+The common claim entry can finish only an exact journaled positive no-debit
+cancellation after fresh locked no-debit proof and a complete current inbox/task
+reference-absence proof, including alias-only recovery. Unreadable, malformed,
+changing or capped metadata populations remain fenced. Task-owned execution sessions
+remain ineligible for ordinary Queue before claim; generalized alias Queue
+consumption is not implemented or enabled.
+
+This protocol supplies source-level owner/history/debit coherence. `message-admission`
+adds an opaque process-local context carrying the original route grant, exact operation,
+current-run Authority and clock. `message-admission-policy` reuses route predicates;
+the fork evaluator excludes only the exact owned attempt ID/handle/producer while
+retaining competing-attempt and dynamic vetoes. New coherent publications may pass
+with the same lifecycle generation; changed policy, lifecycle, producer, membership,
+offer or sender-origin evidence refuses. Every member's SEND + 24 hours is checked
+with strict `now < min(deadline)` after synchronous policy/producer reads. Queue,
+Codex outer/stdin, Claude exec, fork helper/thread/turn and continuation writers
+validate in the effect's synchronous continuation, after prior awaits. Late identities,
+ACKs, result settlement and cleanup retain their separate structural guard.
+
+The internal hook-only `withAdmittedHookEffect` composition validates the original
+opaque admission inside one existing ordered owner-lock interval. Its route
+composition reads and validates the reservation itself; callers cannot supply a
+reservation or serialized admission as lock evidence. After all current grant,
+Authority, lifecycle, producer, debit and final-clock checks, it calls only a
+synchronous body returning `undefined`. Body exceptions propagate to the caller;
+lock/admission refusal does not invoke the body. Existing command and fork
+admission paths retain their prior evaluation flow. This callback supplies no
+native completion capability. The separate hook-completion composition below uses it
+for an explicitly completed, fully processed route; ordinary output/Stop does not retire it.
+
+Windows inner spawn/input and independent hooks still need a supported current-run
+Authority source in the effect host. The wrapper exposes an explicit unavailable
+adapter seam; serialized handles/disk cache cannot reconstruct Authority. Synthetic
+same-process adapters exercise it, but production cross-process delivery remains
+unavailable pending that binding. Listener-only rearm keeps its existing budget
+path. Timely native submission may start later in the runtime; no actual-turn-start
+expiry check is claimed. Defaults, permissions, installation and activation are unchanged.
+
+The inactive #706 source candidate prepares final inner and outer launch arguments before reserving an immutable message operation. The runners compare its runtime, task, session, command digests and exact member state before effects, and Codex rechecks that binding after process identity awaits before prompt stdin. Windows control binds the inner command and outer Node/wrapper to the same operation and records one inner start. A definite spacing/exhaustion refusal can cancel only an exact untouched, positively uncharged owner under the existing owner and budget locks, retaining a durable cancellation receipt. Unknown debit persistence remains fenced. Bounded per-member field patches replay only exact before or after states; late measured identities extend the original result and alias, while conflicting identities remain quarantined. Task/watch settlement uses the exact persisted carried/offered set. These structural checks now feed the in-process final guard above. They do not establish complete cross-process 2B authority, native consumer exclusion, or an answer in the original chat.
+
+
+### Per-message grant provenance at submission
+
+Message-driven Queue, task-wake and Claude wake producers capture one immutable
+witness per selected member before settling or launch-preparation awaits. Each
+witness retains the exact allowlist literal and reference source, owner-task
+branch, sent original, or dispatched request selected by the existing precedence.
+Task names remain task-record references; directory names require a coherent
+current publication and unique local target/name resolution. Full-ID and wildcard
+entries, and UUID-bound sent/request proofs, do not depend on directory aliases.
+
+The process-local admission context deep-copies and freezes the exact complete
+witness set. Every effect boundary rechecks only the selected basis and immutable
+identity; another matching grant or replacement request cannot substitute for it.
+Sent accepted-to-delivered progress remains valid. Current proof reads return the
+original reply/request age bounds, checked again with pure arithmetic after slow
+producer reads at the final clock sample. Sender SEND deadlines remain separately
+strict at submission. No disk read or await follows that sample before admission
+returns to the immediate effect. Settlement and late ACK do not acquire this new
+launch requirement. Witnesses are provenance, never transferable Authority.
+
+These source checks do not establish native hook or Windows inner Authority,
+installation, background continuation in the original session, or answer delivery
+in its original chat on either platform. Their existing unsupported/default
+refusal and open native verification requirements remain unchanged.
+
+### Exact hook completion commit and structural recovery (#706)
+
+`target-delivery-hook-completion.mts` requires a synchronous trusted composition
+`HookCompletionProvider.withCompletedTurnFence`. It binds the original handle,
+consumer operation and producer identity, lifecycle and exact completed thread/turn.
+There is no payload/environment/provider selection and no production binding: without
+a qualified native provider the path remains unavailable (#741). Synthetic providers
+register only at actual writer output and qualify completion separately after real
+prompt delivery and processing acknowledgement. The original emitted WakeResult and
+its private admission reference are required by `retireCompletedWakeResult`; JSON and
+copied results cannot attach them. Emission alone never establishes completion.
+
+A fresh decision invokes the original opaque admission under the existing ordered
+owner locks inside the provider fence. It verifies complete processed membership,
+applied transitions, converged adoption, settled hook output and the unchanged debit.
+A bounded, strict receipt lives separately under
+`target-delivery-hook-completions/<owner>/<groupId>.json`. Prepared exclusive-create
+and readback precede the committed replacement through the existing fsync/rename/
+readback writer. Committed rename is the decision point; a subsequent error remains
+uncertain until exact readback. Prepared, partial, foreign and unreadable records
+never authorize recovery. No new lock, grant, consumer, debit or generic journal is added.
+
+Recovery takes an explicit known handle, never sweeps, and requires a newly qualified
+fence for the exact original completed turn. It rereads the committed receipt under
+the same alias/owner locks, checks both owner and budget-owner route histories and
+all current members/transitions/debit, then revalidates before every removal. Exact
+aliases are removed first and the original owner last; histories, member references,
+origin and budget remain. A repeated cleanup is debit-neutral. Revocation before a
+fresh decision blocks it; revocation after commit cannot recall output or turn an
+already decided structural cleanup into a new effect/admission.
+
+This is cooperative process-abort/restart recovery using the existing store writer,
+not a new power-loss or cryptographic guarantee. Fingerprints/readback check store
+consistency; a fully coherent rewrite by the same OS owner is outside this trust
+boundary. A receipt cannot construct native exclusion or reconstruct private Admission.
+Actual native lifecycle/parent/turn qualification remains unimplemented or unverified.
+
+### Strict original selection and Queue prefix (#706, partial source tranche)
+
+`messaging.resumeTarget=true`, together with `resumeClosed=true`, selects the
+original target before any intercom lookup. It is off by default; malformed
+`resumeTarget` disables the messaging section. Strict selection keeps the full
+original ID, runtime, recorded permission mode and cwd. The current live set
+contains only proven running or idle-loaded rows; fresh current-run closure and
+the existing miss/age veto still apply. Unknown rows do not prove closure.
+
+`target-resume.mts` and the trusted `RunnerDeps.targetResumePort` preparation seam
+have an explicitly unavailable production provider. An injected source provider
+can submit a Codex fixed Queue pointer through the real shared owner, immutable
+group, one debit and final process-local admission. Its physical adapter must
+invoke the one-shot synchronous guard immediately before submission after any
+await. Peer bodies are absent from pointer and prepared argv. Unknown submission,
+missing callback and invalid/future acknowledgement time retain ownership and
+uncertainty. Passive `targetResume` metadata binds the exact queue outcome and
+`dueAt = submittedAt + TARGET_RESUME_WAIT_MS`, where the constant is 600,000 ms.
+There is no configurable delay. Later Q cannot join the original member group.
+Existing rounds inspect the complete original pending group before fresh rows.
+
+After 599,999 ms the group still waits. At 600,000 ms a qualified injected source adapter may acquire an exact live native lease excluding both the Queue pointer and already-dequeued consumers. A one-shot opaque token authorizes the specialized Queue-to-exec transition under the original owner locks. The immutable `targetResume` facts remain unchanged; the separate bounded `originalResume` record tracks prepared, committed, started, observed or unknown state. Original group, member order, provenance, aliases and debit stay fixed, and both history roles are verified. Generic save/prepare/admission cannot mint a successor.
+
+`target-resume-state.mts` coalesces current-process rounds. `target-resume-run.mts` retains the prepared adapter, frames complete members for a local input channel, and requires current admission and a live lease immediately before outer spawn, prompt release and the applicable Windows inner seams. Complete-only framing refuses an oversized or partial group before a native effect. The exact provided input includes bounded complete offers and their processing ACK command for both runtimes; completion needs no independent inbox fetch. Explicit no-effect original-processing/unavailable direct Claude results may retry with fresh guards; unknown execution or exclusion keeps its owner and debit and cannot retry. A retained exact native result can reconcile an observation persistence failure without another effect. No body enters argv, environment or passive state. A source-qualified direct Claude claim uses the same runner and completion protocol without a Codex Queue.
+
+`target-resume-completion.mts` binds the original returned object to its private admission and exact native turn. Completion requires actual processed members and transitions, unchanged current selected resumeTarget policy/permission, coherent Authority and lifecycle, and an exact completed-turn fence. It can complete while the original is running and after SEND+24h because submission/input already passed their final deadlines. The completion store writes and reads back prepared then committed receipts, verifies both histories and the original debit, and removes aliases before the original owner. Only committed receipts permit structural recovery with a fresh exact native fence. Natural Queue retirement frees cache only after positive reconciliation, complete processing and measured owner absence.
+
+Fresh target-queue/target-resume claims persist a strictly parsed immutable explicit-ACK processing marker before debit/effect. New original successors require it; an old uncertain claim cannot acquire it through save or infer processing from a delivered row. Unaffected ordinary routes and v1 receipt behavior remain unchanged. The marker is settlement protocol metadata, not an authority grant. Frozen strict v3 route parsers reject the extra field, frozen v1 ACK rejects the v2 receipt and frozen legacy native releases reject the reservation version; actual old Stop/claim/reconciliation calls therefore remain fenced.
+
+`target-delivery-processing.mts` preserves the existing offer fingerprint and validates the complete v2 receipt against the exact handle/owner/runtime, immutable member order and each original address. `msg-inbox.mts` forwards runtime only from its already selected exact-Claude or validated recorded-Codex branch; v2 requires a known exact matching runtime. It adds no alias to ACK refs and changes no runtime-identity or fallback rule. Current CLI identity remains process-reported, not authentication. Names are never re-resolved at ACK.
+
+The specialized ACK route writer reloads the actual receipt under the existing owner locks. Only its receipt-bound save can append per-member `{version, token, owner, generation, fingerprint}` evidence to the existing transition intent. The state-only delivered patch and tag are persisted together; replay compares before/after snapshots, reads back the actual row and only then records applied. Applied ACK is idempotent and cannot be replaced by another token. Ordinary journal writers cannot add tags, settle marked offers, retarget their addresses, retry or reoffer them. Hook Stop/StopFailure/prompt explicitly skip marked offers; malformed route reads throw rather than invoke legacy delivery. No extra processing journal, body retention or ACK-as-native-authority is introduced.
+
+Both original completion/committed recovery and marked Queue owner retirement require the shared exact applied-ACK predicate, the complete current route/member/debit histories and their existing independent native/transport fences. Untagged delivered rows, stale receipts, incomplete application and conflicting histories retain ownership. Recovery never launches another processing attempt.
+
+`target-resume-address.mts` reads bounded strict relevant task, known-session and current-listing populations. Same-owner corroboration is allowed; competing identities/runtimes, malformed or unreadable entries, capped populations, missing/partial/stale listings and inconsistent publication generation refuse. Full IDs do not need name discovery. Named members are compared to the selected original owner before claim, after async preparation and before every final queue/spawn/input boundary through existing Admission. The immutable original address is preserved. Later ACK/completion follows that pinned route, not a reassigned name. Historical ownership at send time and an atomic cross-process name lease remain UNKNOWN; the source claims only fresh admission checks under the existing local routing contract.
+
+The optional client runtime graph contains only the new low-level fence dependency; admission and coordinator references remain erased types. AST-derived runtime closure, actual Claude staging/verification and actual Codex candidate copying exercise bytes, modes and importability. Source doubles and isolated candidates establish no installed/native availability.
+
+Production provider qualification, restart rebind, search/restore, Windows current-run binding, legacy Claude argv repair, newer-main composition and native original-session/background/original-chat delivery remain OPEN. No fallback, fork, new chat, foreground execution, persisted JSON authority or second debit is introduced.
 
 
 ### Canonical identity and UNKNOWN availability (#727)

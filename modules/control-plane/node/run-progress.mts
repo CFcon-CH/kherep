@@ -1,3 +1,6 @@
+import { refuseInboxMessage } from "./target-delivery-inbox.mts";
+import { transitionRouteMessages } from "./target-delivery-outcome.mts";
+import { withRoute } from "./target-delivery-route.mts";
 import { settleOffered } from "./codex-runner.mts";
 import { listInbox, markRefused, setMessageProgress } from "./inbox.mts";
 import type { RunnerDeps } from "./session-runner.mts";
@@ -55,8 +58,13 @@ export function settleCarried(deps: RunnerDeps, record: TaskRecord, row: Record<
 // The waiting messages this run delivers (delivery identity) are refused with
 // the fixed reason: their one closed-session attempt went to this run.
 export function refuseCarried(deps: RunnerDeps, record: TaskRecord): void {
+  if(record.targetAttempt){
+    withRoute(deps.paths,record.targetAttempt,s=>{const op=s.consumer??s.group.operation;if(op.execution.taskId!==record.taskId)throw Error("refusal task group differs");});
+    transitionRouteMessages(deps.paths,{kind:"message",handle:record.targetAttempt},r=>r.state==='accepted'||r.state==='offered'?{...r,state:"refused",reason:NO_PROGRESS_MESSAGE}:r);return;
+  }
   for (const message of listInbox(deps.paths.inbox)) {
-    if (message.delivery?.taskId === record.taskId) markRefused(deps.paths.inbox, message.messageId, NO_PROGRESS_MESSAGE);
+    if (message.delivery?.taskId === record.taskId) refuseInboxMessage(deps.paths, message.messageId, NO_PROGRESS_MESSAGE,
+      r=>(r.state==='accepted'||r.state==='offered')&&r.delivery?.taskId===record.taskId&&r.delivery.runtime===(record.runtime??'claude'));
   }
 }
 

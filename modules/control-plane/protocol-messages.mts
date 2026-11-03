@@ -6,11 +6,13 @@ import { isDeliveryBinding, type DeliveryBinding } from "./protocol-message-bind
 import { isLoopAdmissionV1, type LoopAdmissionV1 } from "./protocol-loop-brake.mts";
 export { isLoopAdmissionV1, type LoopAdmissionV1 } from "./protocol-loop-brake.mts";
 
+import { isSenderOrigin, senderTime, type SenderOrigin } from "./message-origin.mts";
 import { isNodeId, isSessionInfo, type SessionInfo } from "./protocol.mts";
 
 // A node advertises this capability when it can take message.deliver. The
 // Worker routes only to nodes that registered it.
 export const MESSAGING_CAPABILITY = "messaging.v1";
+export const MESSAGING_ORIGIN_CAPABILITY = "messaging.origin.v1";
 // Issue #408, PR 4: a Worker that validates proxyOf names this in the directory
 // frame's worker.capabilities; a node relays a proxy answer only to such a Worker.
 export const MESSAGING_PROXY_CAPABILITY = "messaging.proxy.v1";
@@ -90,11 +92,12 @@ export interface MessageAddress { nodeId: string; session: string }
 // a reply; never together with inReplyTo.
 export interface MessageSendBody {
   messageId: string; fromSession: string; to: MessageAddress; text: string; inReplyTo?: string; taskId?: string; proxyOf?: string;
+  senderSentAt?: string;
 }
 // Worker -> target node.
 export interface MessageDeliverBody {
   messageId: string; from: MessageAddress; toSession: string; text: string; inReplyTo?: string; createdAt: string; taskId?: string;
-  proxyOf?: string; loop?: LoopAdmissionV1; binding?: DeliveryBinding;
+  proxyOf?: string; loop?: LoopAdmissionV1; senderOrigin?: SenderOrigin; binding?:DeliveryBinding;
 }
 // node -> Worker (target reports progress) and Worker -> sending node.
 export interface MessageStatusBody { messageId: string; state: MessageState; reason?: string; progress?: MessageProgress }
@@ -169,7 +172,8 @@ function isLineage(body: Record<string, unknown>): boolean {
 export function isMessageSendBody(body: unknown): body is MessageSendBody {
   return isObject(body) && !Object.keys(body).some((k) => k === "loop" || k.startsWith("loop_") || k === "binding" || k.startsWith("delivery_") || k === "denyPairKey")
     && isMessageId(body.messageId) && isSessionRef(body.fromSession) && isMessageAddress(body.to)
-    && isMessageText(body.text) && isLineage(body) && isOptionalReplyTo(body.taskId);
+    && isMessageText(body.text) && isLineage(body) && isOptionalReplyTo(body.taskId)
+    && !Object.hasOwn(body,"senderOrigin") && (body.senderSentAt===undefined||senderTime(body.senderSentAt)!==null);
 }
 
 export function isMessageDeliverBody(body: unknown): body is MessageDeliverBody {
@@ -177,7 +181,8 @@ export function isMessageDeliverBody(body: unknown): body is MessageDeliverBody 
     && isMessageText(body.text) && isLineage(body) && isOptionalReplyTo(body.taskId)
     && (!Object.hasOwn(body, "loop") || isLoopAdmissionV1(body.loop))
     && (!Object.hasOwn(body, "binding") || isDeliveryBinding(body.binding) && body.binding.to.sessionId === body.toSession && body.binding.from.sessionId === body.from.session)
-    && typeof body.createdAt === "string" && !Number.isNaN(Date.parse(body.createdAt));
+    && typeof body.createdAt === "string" && !Number.isNaN(Date.parse(body.createdAt))
+    && (body.senderOrigin===undefined||(isSenderOrigin(body.senderOrigin)&&body.senderOrigin.nodeId===body.from.nodeId));
 }
 
 export function isMessageProgress(value: unknown): value is MessageProgress {
@@ -250,10 +255,15 @@ export function isDirectoryNodeIntake(value: unknown): value is DirectoryNodeInt
     && Number.isSafeInteger(value.queued) && (value.queued as number) >= 0 && (value.queued as number) <= MAX_INTAKE_QUEUED;
 }
 export type DirectorySession = Omit<SessionInfo, "startedAt"> & { nodeId: string };
+export interface WorkerInfo { capabilities: string[] }
+export function isWorkerInfo(value: unknown): value is WorkerInfo {
+  return isObject(value) && Array.isArray(value.capabilities) && value.capabilities.length <= 64
+    && value.capabilities.every((c) => isText(c, 64));
+}
 // truncated is set when the Worker left sessions out to stay within one frame.
 // worker (issue #408): what the Worker itself supports; an older node ignores it.
 export interface DirectoryBody {
-  nodes: DirectoryNode[]; sessions: DirectorySession[]; fetchedAt: string; truncated?: boolean; worker?: { capabilities: string[] };
+  nodes: DirectoryNode[]; sessions: DirectorySession[]; fetchedAt: string; truncated?: boolean; worker?: WorkerInfo;
 }
 
 export function isDirectoryGetBody(body: unknown): body is Record<string, never> {
@@ -274,6 +284,5 @@ export function isDirectoryBody(body: unknown): body is DirectoryBody {
     && Array.isArray(body.sessions) && body.sessions.length <= MAX_DIRECTORY_SESSIONS && body.sessions.every(isDirectorySession)
     && typeof body.fetchedAt === "string" && !Number.isNaN(Date.parse(body.fetchedAt))
     && (body.truncated === undefined || typeof body.truncated === "boolean")
-    && (body.worker === undefined || (isObject(body.worker) && Array.isArray(body.worker.capabilities)
-      && body.worker.capabilities.length <= 64 && body.worker.capabilities.every((c) => isText(c, 64))));
+    && (body.worker === undefined || isWorkerInfo(body.worker));
 }

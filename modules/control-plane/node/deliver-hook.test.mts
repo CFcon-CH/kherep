@@ -1,3 +1,4 @@
+import { syntheticHookFacts } from "./target-delivery-test-support.mts";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
@@ -32,7 +33,7 @@ function setup(t: test.TestContext): NodePaths {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "kherep-hook-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const paths = nodePaths(root);
-  writeLocalSessions(paths, [{ sessionId: "s-self", runtime: "claude-code", state: "busy", name: "review" }]);
+  writeLocalSessions(paths, [{ sessionId: "00000706-0000-4000-8000-000000000001", runtime: "claude-code", state: "busy", name: "review" }]);
   writeDirectory(paths, { nodes: [{ nodeId: PEER, name: "node-b", status: "online" }], sessions: [], fetchedAt: new Date(0).toISOString() });
   return paths;
 }
@@ -44,13 +45,13 @@ function id(n: number): string {
 function inbox(paths: NodePaths, n: number, toSession = "review", text = `message ${n}`): string {
   const messageId = id(n);
   storeMessage(paths.inbox, { messageId, from: { nodeId: PEER, session: "build" }, toSession, text,
-    createdAt: new Date(Date.UTC(2026, 5, 1, 0, 0, n)).toISOString() }, Date.UTC(2026, 5, 1, 0, 0, n));
+    senderOrigin:{nodeId:PEER,sentAt:new Date(Date.UTC(2026,5,1,0,0,n)).toISOString()},createdAt: new Date(Date.UTC(2026, 5, 1, 0, 0, n)).toISOString() }, Date.UTC(2026, 5, 1, 0, 0, n));
   return messageId;
 }
 
-const hook = (paths: NodePaths, event: string, sessionId = "s-self") =>
+const hook = (paths: NodePaths, event: string, sessionId = "00000706-0000-4000-8000-000000000001") =>
   deliverForHook({ session_id: sessionId, hook_event_name: event, ...(event === "Stop" ? { stop_hook_active: false } : {}) },
-    { paths, nonce: () => "t0k3n", replyCommand: REPLY });
+    { paths,...syntheticHookFacts(paths,sessionId,"claude-code",Date.UTC(2026,5,1,1)),now:()=>Date.UTC(2026,5,1,1), nonce: () => "t0k3n", replyCommand: REPLY });
 
 test("without messages for this session the hook prints nothing", (t) => {
   const paths = setup(t);
@@ -65,7 +66,7 @@ test("without messages for this session the hook prints nothing", (t) => {
 test("UserPromptSubmit adds the framed messages as additionalContext and offers them without confirming", (t) => {
   const paths = setup(t);
   const byName = inbox(paths, 1, "review", "please look at the build");
-  const byId = inbox(paths, 2, "s-self");
+  const byId = inbox(paths, 2, "00000706-0000-4000-8000-000000000001");
   const output = JSON.parse(hook(paths, "UserPromptSubmit")) as { hookSpecificOutput: { hookEventName: string; additionalContext: string } };
   assert.deepEqual(Object.keys(output), ["hookSpecificOutput"]);
   assert.equal(output.hookSpecificOutput.hookEventName, "UserPromptSubmit");
@@ -88,7 +89,7 @@ test("UserPromptSubmit adds the framed messages as additionalContext and offers 
 // Issue #436, PR D: without a replyCommand the recipe names the stable launcher
 // when the host's launcher resolves, otherwise this checkout's CLI.
 test("the reply recipe names the launcher on a managed host and the CLI elsewhere", (t) => {
-  const context = (paths: NodePaths): string => (JSON.parse(deliverForHook({ session_id: "s-self", hook_event_name: "UserPromptSubmit" },
+  const context = (paths: NodePaths): string => (JSON.parse(deliverForHook({ session_id: "00000706-0000-4000-8000-000000000001", hook_event_name: "UserPromptSubmit" },
     { paths, nonce: () => "t0k3n" })) as { hookSpecificOutput: { additionalContext: string } }).hookSpecificOutput.additionalContext;
   const plain = setup(t);
   inbox(plain, 1);
@@ -117,8 +118,10 @@ test("Stop continues the session only for new messages, so a second Stop stays s
   inbox(paths, 2);
   // A new message continues again once the autonomy spacing has passed.
   assert.equal(hook(paths, "Stop"), "", "within TURN_SPACING_MS of the last continuation");
-  assert.notEqual(deliverForHook({ session_id: "s-self", hook_event_name: "Stop" },
-    { paths, replyCommand: REPLY, now: () => Date.now() + TURN_SPACING_MS }), "");
+  const later=Date.UTC(2026,5,1,1)+TURN_SPACING_MS;
+  assert.equal(deliverForHook({session_id:"00000706-0000-4000-8000-000000000001",hook_event_name:"Stop"},
+    {paths,...syntheticHookFacts(paths,"00000706-0000-4000-8000-000000000001","claude-code",later),replyCommand:REPLY,now:()=>later}),"","unresolved first effect is still fenced after spacing");
+  assert.match(hook(paths,"UserPromptSubmit"),new RegExp(id(2)),"a passive user prompt still receives the next message");
 });
 
 test("delivers at most 10 messages and 8 KB per call; the rest waits for the next turn", (t) => {
@@ -149,7 +152,7 @@ test("errors never fail the hook: no output, one stderr line, exit code 0", (t) 
   const err: string[] = [];
   runHook("{not json", { paths }, (text) => out.push(text), (line) => err.push(line));
   fs.writeFileSync(paths.sessions, "{broken");
-  runHook(JSON.stringify({ session_id: "s-self", hook_event_name: "Stop" }), { paths }, (text) => out.push(text), (line) => err.push(line));
+  runHook(JSON.stringify({ session_id: "00000706-0000-4000-8000-000000000001", hook_event_name: "Stop" }), { paths }, (text) => out.push(text), (line) => err.push(line));
   assert.deepEqual(out, []);
   assert.equal(err.length, 2);
   assert.match(err[0], /^kherep deliver-hook: /);
@@ -160,12 +163,12 @@ test("errors never fail the hook: no output, one stderr line, exit code 0", (t) 
   assert.deepEqual([broken.status, broken.stdout], [0, ""]);
   assert.match(broken.stderr, /kherep deliver-hook: /);
   writeLocalSessions(paths, []);
-  inbox(paths, 1, "s-self");
-  const ok = spawnSync(process.execPath, [HOOK], { input: JSON.stringify({ session_id: "s-self", hook_event_name: "UserPromptSubmit" }), env, encoding: "utf8" });
+  inbox(paths, 1, "00000706-0000-4000-8000-000000000001");
+  const ok = spawnSync(process.execPath, [HOOK], { input: JSON.stringify({ session_id: "00000706-0000-4000-8000-000000000001", hook_event_name: "UserPromptSubmit" }), env, encoding: "utf8" });
   assert.equal(ok.status, 0);
   assert.equal(JSON.parse(ok.stdout).hookSpecificOutput.hookEventName, "UserPromptSubmit");
   // The turn's Stop confirms the message and has nothing new to say.
-  const quiet = spawnSync(process.execPath, [HOOK], { input: JSON.stringify({ session_id: "s-self", hook_event_name: "Stop" }), env, encoding: "utf8" });
+  const quiet = spawnSync(process.execPath, [HOOK], { input: JSON.stringify({ session_id: "00000706-0000-4000-8000-000000000001", hook_event_name: "Stop" }), env, encoding: "utf8" });
   assert.deepEqual([quiet.status, quiet.stdout, withoutTypeStrippingWarning(quiet.stderr)], [0, "", ""]);
 });
 
@@ -178,7 +181,7 @@ test("without an enrolled node the hook exits 0 with no output at all", (t) => {
   fs.mkdirSync(path.join(root, "empty", "control-plane"), { recursive: true });
   for (const configDir of [path.join(root, "missing"), path.join(root, "empty")]) {
     for (const event of ["UserPromptSubmit", "Stop"]) {
-      const run = spawnSync(process.execPath, [HOOK], { input: JSON.stringify({ session_id: "s-self", hook_event_name: event }),
+      const run = spawnSync(process.execPath, [HOOK], { input: JSON.stringify({ session_id: "00000706-0000-4000-8000-000000000001", hook_event_name: event }),
         env: { ...process.env, KHEREP_CONFIG_DIR: configDir }, encoding: "utf8" });
       assert.deepEqual([run.status, run.stdout, withoutTypeStrippingWarning(run.stderr)], [0, "", ""], `${configDir} ${event}`);
     }

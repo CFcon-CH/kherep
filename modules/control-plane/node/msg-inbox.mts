@@ -28,7 +28,14 @@ export function inbox(io: InboxIo, values: MsgArgs["values"], selectors: string[
 
   let refs: string[];
   let owner: SelectedOwner;
-  if (values.from !== undefined) {
+  let ackRuntime:"codex"|"claude-code"|undefined;
+  const ackIdentity = values.ack !== undefined ? sessionIdentity(io.paths, io.env, io) : null;
+  if (ackIdentity?.ok && ackIdentity.runtime === "claude") {
+    if (ackIdentity.id !== values.from) return fail("ACK --from must be the exact current Claude session id");
+    refs = [ackIdentity.id];
+    ackRuntime = "claude-code";
+    owner={sessionId:ackIdentity.id,runtime:"claude-code"};
+  } else if (values.from !== undefined) {
     try {
       const session = readCodexSession(io.paths, values.from);
       if (!session || session.sessionId !== values.from || session.runtime !== "codex") {
@@ -37,6 +44,7 @@ export function inbox(io: InboxIo, values: MsgArgs["values"], selectors: string[
       owner = { sessionId: session.sessionId, runtime: "codex" };
       const verified = senderSession(io.paths, io.env, values.from, io.now(), io);
       if (!verified.ok) return fail(verified.error);
+      ackRuntime = "codex";
       // An unsuccessful listing cannot prove an alias is unambiguous.
       const live = listCodexSessions(io.paths, io.now()).map(s => s.sessionId);
       refs = codexSessionRefs(io.paths, values.from, io.now(), live).refs;
@@ -64,7 +72,7 @@ export function inbox(io: InboxIo, values: MsgArgs["values"], selectors: string[
   }
 
   if (values.ack !== undefined) {
-    try { io.out(acknowledgeCodexOffer(io.paths, values.from!, values.ack, refs)); return 0; }
+    try { io.out(acknowledgeCodexOffer(io.paths, values.from!, values.ack, refs, ackRuntime)); return 0; }
     catch (error) { return fail(error instanceof Error ? error.message : "Codex ACK failed"); }
   }
   if (values.receive) {

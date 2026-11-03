@@ -1,3 +1,9 @@
+import {requireMessageEffect} from './message-admission.mts';
+import { verifyPreparedLaunch } from "./target-delivery-launch.mts";
+import { beginRouteEffect, checkExecution } from "./target-delivery-route.mts";
+import { commandProducer } from "./target-delivery-producer.mts";
+import { canonical } from "./target-delivery-state.mts";
+import type { ExecutionContext } from "./target-delivery-operation.mts";
 import { spawn } from "node:child_process";
 
 import { codexCommand, findCodex } from "./codex-binary.mts";
@@ -53,23 +59,30 @@ export function guardQueue(args: string[]): string[] {
 // Runs codex without a shell, in its own process group on POSIX. The launcher
 // may leave stderr open, so exit has a short bounded drain grace period.
 export function runQueue(deps: RunnerDeps, args: string[], expectedProducer?: QueueProducerIdentity,
-  admission?: ServiceAdmission): Promise<QueueRunResult> {
-  return continueServiceAdmission(deps.paths, admission, active => runQueueAdmitted(deps, args, expectedProducer, active), deps.serviceOwner);
+  admission?: ServiceAdmission, context?:ExecutionContext): Promise<QueueRunResult> {
+  return continueServiceAdmission(deps.paths, admission, active => runQueueAdmitted(deps, args, expectedProducer, active, context), deps.serviceOwner);
 }
 
 function runQueueAdmitted(deps: RunnerDeps, args: string[], expectedProducer: QueueProducerIdentity | undefined,
-  admission: ServiceAdmission): Promise<QueueRunResult> {
-  const file = (deps.codex?.findCodex ?? findCodex)();
+  admission: ServiceAdmission, context?:ExecutionContext): Promise<QueueRunResult> {
+  const file = context?.kind==="message"?context.launch?.binding.executable:(deps.codex?.findCodex ?? findCodex)();
   if (!file) return Promise.reject(new Error("codex is not installed on this node"));
   const { owner, text } = queueInput(args);
   const platform = deps.codex?.platform ?? process.platform;
-  const command = codexCommand(file, args, platform);
-  const producer = queueProducerIdentity(file, args, deps);
+  const command = context?.kind==="message"?context.launch?.outer:codexCommand(file,args,platform);
+  const producer = queueProducerIdentity(file,args,{...deps,codex:{...deps.codex,findCodex:()=>file}});
   if (expectedProducer && !sameIdentity(expectedProducer, producer)) return Promise.reject(new Error("Codex queue producer changed before submission"));
+  if(context?.kind!=="message")return Promise.reject(Error("message queue context missing"));
+  const saved=checkExecution(deps.paths,context,["queue"],owner)!;
+  if(!context.launch||!command||canonical(args)!==canonical(context.launch.rawArgs))return Promise.reject(Error("queue prepared context differs"));
+  verifyPreparedLaunch(deps.paths,context,context.launch,["queue"],{runtime:"codex",taskId:null,sessionId:owner,phase:"ready"});
+
   const timeoutMs = deps.codex?.queueTimeoutMs ?? QUEUE_TIMEOUT_MS;
   return new Promise((resolve, reject) => {
-    const child = (deps.codex?.spawn ?? spawn)(command.file, command.args,
-      { stdio: ["ignore", "pipe", "pipe"], detached: platform !== "win32", windowsHide: true,
+    beginRouteEffect(deps.paths,context,['queue']);
+    requireMessageEffect(deps,context,'queue-spawn');
+    const child = (deps.codex?.spawn ?? spawn)(command!.file, command!.args,
+      { cwd:context.launch!.binding.cwd, stdio: ["ignore", "pipe", "pipe"], detached: context.launch!.binding.detached, windowsHide: true,
         env: { ...process.env, CODEX_HOME: producer.resolvedCodexHome } });
     let stdout = "";
     let stdoutBytes = 0;

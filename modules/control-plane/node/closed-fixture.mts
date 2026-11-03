@@ -7,6 +7,8 @@ import type test from "node:test";
 
 import type { SessionInfo } from "../protocol.mts";
 import { TURN_SPACING_MS } from "./autonomy.mts";
+import { startTask } from "./session-runner.mts";
+import { taskId } from "./task-fixture.mts";
 import { deliverToClosed } from "./closed-delivery.mts";
 import { SESSIONS_INTERVAL_MS } from "./daemon.mts";
 import { writeLocalSessions } from "./exchange.mts";
@@ -37,7 +39,7 @@ export function closedNode(t: test.TestContext, sessions: Record<string, unknown
   misses: number = CLOSED_AFTER_MISSES) {
   const base = taskNode(t, { delegate: { accept: true }, ...sessions }, { messaging: { ...ACCEPT_ALL, resumeClosed: true, ...messaging } });
   const livenessAuthority = createAdmissionAuthority(base.paths);
-  const node = { ...base, livenessAuthority, deps: () => ({ ...base.deps(), livenessAuthority }) };
+  const node = { ...base, livenessAuthority, deps: () => ({ ...base.messageDeps(), livenessAuthority }) };
   rememberSessions(node.paths, [{ sessionId: SESSION, runtime: "claude-code", state: "idle", name: "review",
     cwd: path.join(node.workspace, "repo") }], T0 - 3_600_000);
   missListings(node, misses);
@@ -51,6 +53,7 @@ export function missListings(node: Node, count: number, end: number = T0, spacin
   for (let i = count - 1; i >= 0; i--) rememberSessions(node.paths, listed, end - i * spacing);
   const targets = readKnownSessions(node.paths).filter(s => !listed.some(v => v.runtime === s.runtime && v.sessionId === s.sessionId));
   publishSynthetic(node.paths, targets.map(({ runtime, sessionId }) => ({ runtime, sessionId,
+    lifecycle:{status:"value" as const,value:{state:"restored" as const,generation:7},source:"native-lifecycle" as const,observedAt:end,complete:true,reasonCode:"observed" as const},
     holder: { status: "value" as const, value: { present: false }, source: "native-holder" as const, observedAt: end, complete: true, reasonCode: "observed" as const },
     app: { status: "value" as const, value: "absent" as const, source: "native-app" as const, observedAt: end, complete: true, reasonCode: "observed" as const },
   })), end, listed, node.livenessAuthority);
@@ -68,6 +71,7 @@ export function closedSince(node: Node, session: SessionInfo, end: number = T0):
 export function deliver(node: Node, extra: { toSession?: string; depth?: number; text?: string; from?: typeof PEER; inReplyTo?: string } = {}): string {
   const id = `c105ed${(++counter).toString(16).padStart(2, "0")}-0000-4000-8000-000000000000`;
   storeMessage(node.paths.inbox, { messageId: id, from: extra.from ?? PEER, toSession: extra.toSession ?? SESSION,
+    senderOrigin:{nodeId:(extra.from??PEER).nodeId,sentAt:new Date((node.deps().now?.()??T0)-5000).toISOString()},
     text: extra.text ?? "are the tests green?", createdAt: new Date(T0).toISOString(),
     ...(extra.inReplyTo ? { inReplyTo: extra.inReplyTo } : {}) }, T0 - 5_000, extra.depth ?? 0);
   return id;
@@ -97,8 +101,9 @@ export const COPY = "c0ffee00-0000-4000-8000-000000000109";
 
 // An ended intercom session and a second message from its sender.
 export async function endedIntercom(node: Node): Promise<{ task: TaskRecord; id: string }> {
-  deliver(node);
-  await deliverToClosed(node.deps());
+  // Seed a legacy operator-created intercom. New message tests must not imply
+  // that completion alone releases an unresolved strict message owner.
+  await startTask({taskId:taskId(42),runtime:"claude",name:"task-0000002a",prompt:"synthetic legacy setup",permissionMode:"auto",cwd:node.workspace,requestedBy:`${PEER.nodeId}/${PEER.session}`}, {...node.deps(),local:"intercom",executionContext:{kind:"operator"}});
   // Its turn finished: the watch round delivers the message it carried (issue #308).
   await turnDone(node);
   const [task] = listTasks(node.paths);

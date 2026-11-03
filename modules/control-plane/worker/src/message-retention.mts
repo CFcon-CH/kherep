@@ -160,6 +160,8 @@ export class MessageRetention {
     this.sql.exec(SENDER_DUE, now, nodeId);
   }
 
+  // Status metadata only: MessageStore refuses a repeated send once its binding
+  // is pruned. This accessor cannot authorize a new send or native effect.
   // A resend of a deleted message: its final status, or the duplicate error
   // when another node uses the id. null when no tombstone exists.
   resend(messageId: string, fromNode: string): { ok: true; status: MessageStatusBody } | { ok: false; error: string } | null {

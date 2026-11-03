@@ -2,7 +2,7 @@ import { MESSAGING_LOOP_BRAKE_CAPABILITY } from "../../protocol-loop-brake.mts";
 import { MAX_FRAME_BYTES } from "../../protocol.mts";
 import type { DirectoryNodeIntake } from "../../protocol-intake.mts";
 import {
-  MAX_DIRECTORY_NODES, MAX_DIRECTORY_SESSIONS, MESSAGING_PROXY_CAPABILITY, type DirectoryBody, type DirectoryNode, type DirectorySession,
+  MESSAGING_ORIGIN_CAPABILITY, MAX_DIRECTORY_NODES, MAX_DIRECTORY_SESSIONS, MESSAGING_PROXY_CAPABILITY, type DirectoryBody, type DirectoryNode, type DirectorySession,
 } from "../../protocol-messages.mts";
 
 // Leaves room for the envelope around the body.
@@ -25,7 +25,7 @@ export function directoryBody(nodeRows: Record<string, SqlStorageValue>[],
   const listed = new Set(nodes.map((n) => n.nodeId));
   const kept = sessions.filter((s) => listed.has(s.nodeId)).map(({ startedAt: _s, updatedAt: _u, ...session }) => session);
   const body: DirectoryBody = { nodes, sessions: kept.slice(0, MAX_DIRECTORY_SESSIONS), fetchedAt: new Date(now).toISOString(),
-    worker: { capabilities: [MESSAGING_PROXY_CAPABILITY, MESSAGING_LOOP_BRAKE_CAPABILITY] } };
+    worker: { capabilities: [MESSAGING_PROXY_CAPABILITY, MESSAGING_ORIGIN_CAPABILITY, MESSAGING_LOOP_BRAKE_CAPABILITY] } };
   if (body.sessions.length < kept.length || nodes.length < nodeRows.length) body.truncated = true;
   const encoder = new TextEncoder();
   const fits = () => encoder.encode(JSON.stringify(body)).length <= maxBodyBytes;

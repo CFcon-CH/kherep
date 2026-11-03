@@ -6,7 +6,7 @@ import test from "node:test";
 import { codexNode, LAST_MESSAGE, THREAD, waitFor } from "./codex-fixture.mts";
 import { lastLine, lastStderrLine, readExit } from "./codex-output.mts";
 import { nodePaths } from "./config.mts";
-import { codexEnv, codexFiles, FORBIDDEN_CODEX_FLAGS, processStart, resumeArgs } from "./codex-process.mts";
+import { codexEnv, codexFiles, FORBIDDEN_CODEX_FLAGS, resumeArgs } from "./codex-process.mts";
 import { continueTask, startTask, stopTask } from "./session-runner.mts";
 import { startArgs, T0, TASK, taskId, taskNode } from "./task-fixture.mts";
 import { readTask, writeTask } from "./task-records.mts";
@@ -20,7 +20,6 @@ const FRAMED = `Task ${TASK} from the operator via the Kherep Control Plane: fix
   + "a short summary; it is reported as the task's result. Coordinate with other sessions of this task through `kherep-node msg` "
   + "(your messages carry the task id automatically).";
 const codexArgs = (id: string = TASK, extra: Parameters<typeof startArgs>[1] = {}) => startArgs(id, { runtime: "codex", ...extra });
-const gone = async (pid: number): Promise<boolean> => await processStart(pid) === null;
 
 const posix = { skip: process.platform === "win32" ? "the fake codex is a POSIX script" : false };
 
@@ -112,7 +111,7 @@ test("continue resumes the thread with the task's sandbox in its working directo
   await startTask(codexArgs(TASK, { prompt: "work [sleep]" }), node.deps());
   await assert.rejects(continueTask({ taskId: TASK, prompt: "more" }, node.deps()), /still running/);
   await stopTask({ taskId: TASK }, node.deps());
-  await waitFor(() => gone(node.runs()[0].pid), "the stopped process");
+  await waitFor(() => node.ownedClosed(node.runs()[0].pid), "the stopped process");
   node.reports();
   const result = await continueTask({ taskId: TASK, prompt: "one more thing" }, node.deps());
   assert.deepEqual(result, { taskId: TASK, state: "started" });
@@ -140,7 +139,7 @@ test("stop ends the process group with SIGTERM, then SIGKILL after the grace per
   const began = Date.now();
   for (const n of [1, 2]) {
     assert.deepEqual(await stopTask({ taskId: taskId(n) }, node.deps()), { taskId: taskId(n), state: "stopped" });
-    assert.equal(await gone(node.runs()[n - 1].pid), true, "stop returns only after that run ended");
+    assert.equal(await node.ownedClosed(node.runs()[n - 1].pid), true, "stop returns only after that run ended");
   }
   assert.ok(Date.now() - began < 10_000, "stopped within 10 s");
   assert.deepEqual(node.reports().map((r) => [r.state, r.reason]), [["stopped", "stopped by the operator"], ["stopped", "stopped by the operator"]]);
@@ -154,10 +153,10 @@ test("a stop ends the whole process tree, codex behind a launcher included", pos
   const marker = path.join(path.dirname(node.fake), "runs.jsonl.child");
   await waitFor(() => fs.existsSync(marker), "the child");
   const child = Number(fs.readFileSync(marker, "utf8"));
-  t.after(() => { try { process.kill(child, "SIGKILL"); } catch { /* ended */ } });
-  assert.equal(await gone(child), false);
+  await waitFor(()=>node.ownedStart(child)!==null,'owned descendant IPC creation receipt');
+  assert.equal(await node.ownedClosed(child), false);
   await stopTask({ taskId: TASK }, node.deps());
-  await waitFor(async () => await gone(child) && await gone(node.runs()[0].pid), "the whole tree");
+  await waitFor(async () => await node.ownedClosed(child) && await node.ownedClosed(node.runs()[0].pid), "the whole tree");
 });
 
 test("a pid this daemon no longer holds is never signalled; the stop records the task stopped (issue #544)", posix, async (t) => {
@@ -165,7 +164,7 @@ test("a pid this daemon no longer holds is never signalled; the stop records the
   const node = codexNode(t);
   writeTask(node.paths, { taskId: TASK, runtime: "codex", name: "task-3f2a1b0c", cwd: node.workspace, permissionMode: "auto", state: "started",
     startedAt: new Date(T0).toISOString(), deadline: new Date(T0 + 60 * 60_000).toISOString(), updatedAt: new Date(T0).toISOString(),
-    sessionId: THREAD, pid: process.pid, pidStart: "Thu Jan  1 00:00:00 1970" });
+    sessionId: THREAD, pid: 4_000_001, pidStart: "Thu Jan  1 00:00:00 1970" });
   const signals: unknown[] = [];
   // A reused root is never a signal target; the stop records the task stopped
   // (issue #544). Its recorded descendants are dropped without a reap (follow-up).
@@ -222,12 +221,14 @@ test("the deadline stops a run at the policy's max runtime; a failed identity re
   node.tick(60_000);
   await watchTasks(node.deps());
   assert.deepEqual(node.reports(), [{ taskId: TASK, state: "stopped", reason: "max runtime reached", sessionId: THREAD }]);
-  await waitFor(() => gone(node.runs()[0].pid), "the process");
+  await waitFor(() => node.ownedClosed(node.runs()[0].pid), "the process");
 });
 
 test("a start time missing at spawn is read again while this daemon holds the child", posix, async (t) => {
   let calls = 0;
-  const node = codexNode(t, {}, { processStart: (pid) => { if (calls++ === 0) throw new Error("ps failed"); return processStart(pid); } });
+  let lookup:(pid:number)=>string|null=()=>null;
+  const node = codexNode(t, {}, { processStart: (pid) => { if (calls++ === 0) throw new Error("ps failed"); return lookup(pid); } });
+  lookup=node.ownedStart;
   await startTask(codexArgs(TASK, { prompt: "work [sleep]" }), node.deps());
   assert.equal(readTask(node.paths, TASK)?.pidStart, undefined);
   node.reports();
@@ -247,7 +248,7 @@ test("a held child without a readable identity is not falsely reported stopped a
   await watchTasks(node.deps(), (line) => logs.push(line));
   assert.deepEqual(node.reports(), [], "an unverified stop produces no stopped report");
   assert.equal(readTask(node.paths, TASK)?.state, "started");
-  assert.equal(await gone(node.runs()[0].pid), false, "the process is not assumed stopped");
+  assert.equal(await node.ownedClosed(node.runs()[0].pid), false, "the process is not assumed stopped");
   assert.match(logs.at(-1) ?? "", /could not stop task.*ps failed/);
 });
 

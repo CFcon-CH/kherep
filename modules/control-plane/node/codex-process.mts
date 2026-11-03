@@ -1,3 +1,11 @@
+import {requireMessageEffect} from './message-admission.mts';
+import { verifyPreparedLaunch } from "./target-delivery-launch.mts";
+import { finishRouteEffect } from "./target-delivery-outcome.mts";
+import { windowControl } from "./target-delivery-window.mts";
+import type { ExecutionContext } from "./target-delivery-operation.mts";
+import { checkExecution, beginRouteEffect } from "./target-delivery-route.mts";
+import { commandProducer } from "./target-delivery-producer.mts";
+import { canonical } from "./target-delivery-state.mts";
 import { execFileSync, spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -167,14 +175,24 @@ export function launchCommand(command: CodexCommand, platform: NodeJS.Platform, 
 // child is still held; undefined when it ended or the read failed: the watch
 // reads it again while this daemon holds the child.
 export async function spawnCodex(deps: CodexDeps, file: string, args: string[], cwd: string, files: CodexFiles,
-  env: NodeJS.ProcessEnv, prompt: string, detached = true): Promise<{ pid: number; pidStart: string | undefined }> {
+  env: NodeJS.ProcessEnv, prompt: string, detached = true, context?:ExecutionContext, paths?:NodePaths, execution?:{taskId:string|null;sessionId:string|null}): Promise<{ pid: number; pidStart: string | undefined }> {
+  if(!context)throw Error("execution context missing");
+  if(context.kind==="read-only")throw Error("read-only context cannot launch");
+  if(context.kind==="message"&&!paths)throw Error("message execution paths missing");
+  const prepared=context.kind==="message"?context.launch:undefined;
+  if(context.kind==="message") {
+    if(!prepared||!execution||file!==prepared.binding.executable||canonical(args)!==canonical(prepared.rawArgs)||cwd!==prepared.binding.cwd||detached!==prepared.binding.detached)throw Error("prepared command/task context differs");
+    verifyPreparedLaunch(paths!,context,prepared,["exec-resume","task-start"],{runtime:"codex",...execution,phase:"ready"});
+    if(!prepared.binding.home||!path.isAbsolute(prepared.binding.home)||env.CODEX_HOME!==prepared.binding.home)throw Error('message home differs');
+  }
   const platform = deps.platform ?? process.platform;
-  const command = launchCommand(codexCommand(file, args, platform), platform, detached);
+  const command = prepared?.outer??launchCommand(codexCommand(file, args, platform), platform, detached);
   ensureDir(files.dir);
   for (const f of [files.lastMessage, files.exit]) fs.rmSync(f, { force: true });
   const out = fs.openSync(files.events, "w", 0o600);
   const err = fs.openSync(files.stderr, "w", 0o600);
   try {
+    if(context.kind==='message'){beginRouteEffect(paths!,context,['exec-resume','task-start']);requireMessageEffect({paths:paths!},context,'outer-spawn');}
     const child = (deps.spawn ?? spawn)(command.file, command.args, { cwd, env, detached, stdio: ["pipe", out, err], windowsHide: true });
     child.stdin?.on("error", () => {}); // a codex that exits before reading
     child.on("exit", (code, signal) => {
@@ -197,7 +215,22 @@ export async function spawnCodex(deps: CodexDeps, file: string, args: string[], 
       // read again by the watch
     }
     if (held.get(pid) !== child) pidStart = undefined; // ended or replaced during the read
-    child.stdin?.end(prompt);
+    const inner=codexCommand(file,args,platform);
+    let payload=prompt;
+    try {
+      payload=(platform==='win32'&&detached?windowControl(context,paths,inner.file,inner.args,WINDOWLESS):'')+prompt;
+      if(context.kind==="message"){
+      verifyPreparedLaunch(paths!,context,prepared!,["exec-resume","task-start"],{runtime:"codex",...execution!,phase:"executing"});
+      if(env.CODEX_HOME!==prepared!.binding.home)throw Error('message home changed before stdin');
+      requireMessageEffect({paths:paths!},context,'prompt-release');
+      }
+    }
+    catch {
+      try{deps.onUnconfirmedShutdown?.();}catch{/* containment cannot erase measured identity */}child.stdin?.destroy();
+      try{if(paths&&context.kind==="message")finishRouteEffect(paths,context,{kind:"exec",pid,pidStart:pidStart??null,threadId:null});if(paths&&context.kind==="message")finishRouteEffect(paths,context,{kind:"uncertain"});}catch{/* the existing fence remains */}
+      const error=Object.assign(Error("message context changed before stdin"),{pid,pidStart});throw error;
+    }
+    child.stdin?.end(payload);
     child.unref();
     return { pid, pidStart };
   } finally {

@@ -1,3 +1,4 @@
+import { offerInboxMessage, answerInboxMessage } from "./target-delivery-inbox.mts";
 import { messageOwnerMatches } from "./message-owner.mts";
 import type { SelectedOwner } from "../protocol-message-binding.mts";
 import fs from "node:fs";
@@ -181,7 +182,7 @@ export function readMcpInbox(paths: NodePaths, sessionId: string, limit: number,
 export function offerMcpInbox(paths: NodePaths, messageIds: string[], now: number = Date.now(), owner?: SelectedOwner): void {
   for (const id of messageIds) {
     const record = getMessage(paths.inbox, id);
-    if (record?.state === "accepted" && messageOwnerMatches(record, owner, [record.toSession])) markOffered(paths.inbox, id, now, "mcp");
+    if (record?.state === "accepted" && messageOwnerMatches(record, owner, [record.toSession])) offerInboxMessage(paths, id, now, "mcp");
   }
 }
 
@@ -190,6 +191,6 @@ export function offerMcpInbox(paths: NodePaths, messageIds: string[], now: numbe
 export function answerMcpInbox(paths: NodePaths, messageIds: string[], owner?: SelectedOwner): void {
   for (const id of messageIds) {
     const record = getMessage(paths.inbox, id);
-    if (record && messageOwnerMatches(record, owner, [record.toSession])) markAnswered(paths.inbox, id);
+    if (record && messageOwnerMatches(record, owner, [record.toSession])) answerInboxMessage(paths, id);
   }
 }

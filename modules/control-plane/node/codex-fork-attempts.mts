@@ -1,3 +1,5 @@
+import type { TargetHandle } from "./target-delivery-reservation.mts";
+import { parseTargetHandle } from "./target-delivery-reservation.mts";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -34,12 +36,13 @@ const MAX_RECORD_BYTES = 64 * 1024;
 // detail. goalProof: how the fork was shown to hold no goal; detail: the fixed
 // code of a failed post-fork goal check (codex-fork-goal.mts).
 export interface ForkAttempt {
+  targetAttempt?:TargetHandle;
   version: 1; attemptId: string; owner: string; messageId: string; attemptedAt: number; policyFingerprint: string;
   producer: Record<string, unknown>; state: ForkAttemptState; updatedAt: number;
   lastTurnId?: string; forkId?: string; answer?: string; relayMessageId?: string; relayedAt?: number; reason?: ForkAttemptReason;
   goalProof?: ForkGoalProof; detail?: ForkGoalDetail;
 }
-export type ForkClaim = Pick<ForkAttempt, "owner" | "messageId" | "attemptedAt" | "policyFingerprint" | "producer">;
+export type ForkClaim = Pick<ForkAttempt, "owner" | "messageId" | "attemptedAt" | "policyFingerprint" | "producer" | "targetAttempt">;
 export type ForkResult = Partial<Pick<ForkAttempt, "lastTurnId" | "forkId" | "answer" | "relayMessageId" | "relayedAt" | "reason"
   | "goalProof" | "detail">>;
 const WRITE_ONCE = ["lastTurnId", "forkId", "answer", "relayMessageId", "relayedAt", "reason", "goalProof", "detail"] as const;
@@ -79,6 +82,7 @@ function readRecord(file: string, owner: string, messageId: string): ForkAttempt
   if (!stat.isFile() || stat.size > MAX_RECORD_BYTES) throw new Error("invalid fork attempt record");
   const value = JSON.parse(fs.readFileSync(file, "utf8")) as ForkAttempt | null;
   if (!valid(value, owner, messageId)) throw new Error("invalid fork attempt record");
+  if(value.targetAttempt)parseTargetHandle(value.targetAttempt);
   return value;
 }
 

@@ -1,3 +1,11 @@
+import { prepareMessageLaunch } from "./target-delivery-launch.mts";
+import { finalizeMessageTaskIdentity } from "./delivery-identity.mts";
+import { startTimeOf } from "./codex-process.mts";
+import { claimMessageRoute, decideMessageRoute, commandProducer } from "./target-delivery-producer.mts";
+import { transitionRouteMessages, finishRouteEffect, bindRouteExecutionSession } from "./target-delivery-outcome.mts";
+import { checkExecution } from "./target-delivery-route.mts";
+import { codexFiles, startArgs } from "./codex-process.mts";
+import { admitStart } from "./task-admission.mts";
 import { isSessionRef, type DirectoryBody } from "../protocol-messages.mts";
 import {
   intercomLabel, isTaskLabel, MAX_TASK_TEXT, taskSessionName, type PermissionMode, type SessionStartArgs, type TaskRuntime,
@@ -14,7 +22,7 @@ import { withServiceAdmission, type ServiceAdmission } from "./service-drain.mts
 import { taskCommand } from "./session-command.mts";
 import { agentRows, BACKGROUNDED, mapIds, runClaude, startTask, type RunnerDeps } from "./session-runner.mts";
 import { CLAUDE_RUNTIME } from "./sessions.mts";
-import { handoverTaskMessages } from "./task-handover.mts";
+import { handoverDeliveryMessages } from "./task-handover.mts";
 import { queueReport, readTask, senderOf, writeTask, type TaskRecord } from "./task-records.mts";
 import { wakeText } from "./wake-hook.mts";
 
@@ -76,16 +84,17 @@ async function resumeClaudeAdmitted(deps: RunnerDeps, task: TaskRecord, cwd: str
   if (!isSessionRef(sessionId)) return "the intercom session id is not valid";
   // The session held so far is stopped once a copy is adopted and it is idle (issue #111).
   const retire = [...(task.retire ?? []), ...(task.shortId ? [{ shortId: task.shortId, sessionId }] : [])];
-  const pending: TaskRecord = { ...rerunRecord(deps, task, cwd, now), state: "started", mappingPendingSince: new Date(now).toISOString(),
+  const selected=task.targetAttempt?checkExecution(deps.paths,{kind:"message",handle:task.targetAttempt},["exec-resume"])!.group.binding.members.map(m=>m.messageId):undefined;
+  const pending: TaskRecord = { ...rerunRecord(deps, task, cwd, now),...(selected?{carried:selected,deliveryPending:selected}:{}), state: "started", mappingPendingSince: new Date(now).toISOString(),
     awaitingProgressSince: new Date(now).toISOString(), ...(retire.length > 0 ? { retire } : {}) };
   writeTask(deps.paths, { ...pending, shortId: undefined }, now);
   const failed = (reason: string): string => {
-    writeTask(deps.paths, task, now);
+    writeTask(deps.paths, task.targetAttempt?{...pending,state:"failed",reason}:task, now);
     return reason;
   };
   let output: string;
   try {
-    output = await runClaude(deps, ["--resume", sessionId, "--bg", "--permission-mode", task.permissionMode, wakeText(count)], cwd);
+    output = await runClaude(deps, deps.executionContext?.kind==="message"?deps.executionContext.launch!.rawArgs:["--resume", sessionId, "--bg", "--permission-mode", task.permissionMode, wakeText(count)], cwd, deps.executionContext, {taskId:task.taskId,sessionId});
   } catch (error) {
     return failed(reasonOf(error));
   }
@@ -100,20 +109,31 @@ async function resumeClaudeAdmitted(deps: RunnerDeps, task: TaskRecord, cwd: str
   const row = rows?.find((r) => r.id === shortId);
   // A copy (a `note:` line) whose new id is not listed cannot be adopted.
   if (/^note:/im.test(output) && typeof row?.sessionId !== "string") {
-    await runClaude(deps, ["stop", shortId]).catch(() => undefined);
+    await runClaude(deps, ["stop", shortId], undefined, {kind:"operator"}).catch(() => undefined);
     return failed("claude continued the session as a copy under a new id it did not list");
   }
   kept.run = true;
   // A malformed listed id keeps the old one, pending, for the watch round to map.
   const invalid = malformedId(row?.sessionId);
   if (invalid) deps.log?.(`kherep-node: task ${task.taskId}: listed session id is not valid; mapping deferred`);
-  let saved = writeTask(deps.paths, mapIds({ ...pending, shortId }, invalid ? undefined : row), now);
+  const mapped=mapIds({ ...pending, shortId }, invalid ? undefined : row);
+  let saved:TaskRecord = {...mapped,sessionId,...(mapped.sessionId!==sessionId?{observedSessionId:mapped.sessionId}:{})};
   // A copy under a new id (issue #109) takes over the messages waiting for the original id.
-  const adopted = saved.sessionId ?? sessionId;
-  if (adopted !== sessionId) {
+  const adopted = mapped.sessionId ?? sessionId;
+  if(task.targetAttempt) {
+    const pid=typeof row?.pid==="number"?row.pid:undefined;
+    const pidStart=pid?await startTimeOf(deps.codex??{},pid):null;
+    try {saved=finalizeMessageTaskIdentity(deps.paths,{...saved,...(pid&&pidStart?{pid,pidStart}:{})});}
+    catch(error) {
+      if(!(error instanceof RecordLockBusy))throw error;
+      skipBusy(deps)(error);saved={...pending,shortId,observedSessionId:adopted};
+    }
+  }
+  if (adopted !== sessionId && (!task.targetAttempt||!saved.observedSessionId)) {
     try {
-      handoverTaskMessages(deps.paths.inbox, sessionId, adopted,
+      handoverDeliveryMessages(deps.paths, sessionId, adopted,
         { taskId: saved.taskId, runtime: saved.runtime ?? "claude" });
+      if(!task.targetAttempt)saved={...mapped,sessionId:adopted};
     } catch (error) {
       // Issue #627: the resume ran and cannot fail any more, or a second
       // session would start. The record is written without the adopted id,
@@ -123,8 +143,9 @@ async function resumeClaudeAdmitted(deps: RunnerDeps, task: TaskRecord, cwd: str
       saved = writeTask(deps.paths, { ...pending, shortId }, now);
     }
   }
+  saved=writeTask(deps.paths,saved,now);
   queueReport(deps.paths, { taskId: saved.taskId, state: "started", sessionId: saved.sessionId ?? sessionId });
-  addLocalSession(deps.paths, { sessionId: adopted, name: task.name });
+  if(!task.targetAttempt||!saved.observedSessionId)addLocalSession(deps.paths, { sessionId: saved.sessionId??sessionId, name: task.name });
   if (rows && !invalid) await retireCopies(deps, saved, rows);
   return null;
 }
@@ -140,18 +161,19 @@ async function resumeCodexAdmitted(
   const sessionId = task.sessionId!;
   const owner = { sessionId, runtime: "codex" };
   const refs = [sessionId, task.name];
-  const context = deliveryContext("UserPromptSubmit", refs, { paths: deps.paths, owner, now: () => now, offeredBy: "intercom",
+  const selected=task.targetAttempt?checkExecution(deps.paths,{kind:"message",handle:task.targetAttempt},["exec-resume"])!.group.binding.members.map(m=>getMessage(deps.paths.inbox,m.messageId)!):undefined;
+  const context = deliveryContext("UserPromptSubmit", refs, { paths: deps.paths, owner, now: () => now, offeredBy: "intercom",selected,
+    ...(task.targetAttempt?{beforeOffer:()=>({kind:"message" as const,handle:task.targetAttempt!})}:{}),
     ...(deps.cli ? { replyCommand: deps.cli } : {}) });
-  const offeredAt = new Date(now).toISOString();
-  const offered = sessionInbox(deps.paths, refs, owner).filter((r) => r.state === "offered" && r.offeredAt === offeredAt).map((r) => r.messageId);
+  const offered = selected?.map(r=>r.messageId)??sessionInbox(deps.paths,refs,owner).filter(r=>r.state==="offered"&&r.offeredAt===new Date(now).toISOString()).map(r=>r.messageId);
   if (offered.length === 0) return "no message left to offer";
   // As codex-wake.mts: a run for peer messages keeps the task's state; the watch round settles its offers.
   const run: TaskRecord = { ...rerunRecord(deps, task, cwd, now), running: true, offered };
   try {
     await spawnRun(deps, run, (files, outbox) => resumeArgs(sessionId, task.permissionMode, files, outbox),
-      `${wakeText(count)}\n\n${context}`, admission);
+      `${wakeText(count)}\n\n${context}`, admission, deps.executionContext);
   } catch (error) {
-    for (const id of offered) markRetry(deps.paths.inbox, id);
+    // An uncertain start retains its offers, debit and common owner.
     return reasonOf(error);
   }
   return null;
@@ -182,22 +204,36 @@ function senderLabel(deps: RunnerDeps, from: InboxRecord["from"]): string | unde
 // settleCarried, issue #308; Codex: codex-runner.mts adoptOffered, issue #119).
 export async function startIntercom(deps: RunnerDeps, target: ClosedTarget, records: InboxRecord[],
   mode: PermissionMode, directive = fallbackDirective(target.sessionId), taskId: string = crypto.randomUUID()): Promise<string | null> {
+  const existing=readTask(deps.paths,taskId);
+  if(existing)return ["started","running"].includes(existing.state)?null:existing.reason??"local task already ended";
   if (records.length === 0 || records.some(r => Object.hasOwn(r, "binding"))) return "loop-resolution-required";
   const from = records[0].from;
   const label = senderLabel(deps, from);
   let text: string;
   let carried: InboxRecord[];
   try {
-    ({ text, carried } = frameRecords(deps.paths, records, deps.cli ?? taskCommand(deps.paths, { platform: deps.platform }), MAX_TASK_TEXT));
+    ({ text, carried } = frameRecords(deps.paths, records.slice(0,8), deps.cli ?? taskCommand(deps.paths, { platform: deps.platform }), MAX_TASK_TEXT));
   } catch (error) {
     return reasonOf(error);
   }
   const args: SessionStartArgs = { taskId, runtime: target.runtime, name: taskSessionName(taskId), prompt: text, permissionMode: mode,
     cwd: target.cwd, requestedBy: senderOf(records[0]), directive,
     ...(label ? { label } : {}) };
+  const localDeps={...deps,local:"intercom" as const};
+  const admitted=admitStart(args,localDeps);
+  const runtime=target.runtime==="codex"?"codex":"claude-code";
+  const argv=runtime==="codex"?startArgs(target.cwd,mode,codexFiles(deps.paths,taskId),deps.paths.outbox)
+    :["--bg","--name",args.name,"--permission-mode",mode,admitted.prompt];
+  let launch:Awaited<ReturnType<typeof prepareMessageLaunch>>;
+  try{launch=await prepareMessageLaunch(deps,{runtime,args:argv,cwd:target.cwd,intercom:true});}catch{return "producer-unknown";}
+  const decision=decideMessageRoute({...deps,messageRoute:{route:'closed-start',grant:'resumeClosed',taskId,permissionMode:mode}},carried,target.sessionId,"task-start",{runtime,sessionId:null,taskId},launch.producer,target.sessionId,launch);
+  if(decision.status!=="granted")return decision.status==="denied-no-debit"?`budget-${decision.reason}`:decision.reason;
+  const route=decision.context;
+  carried=transitionRouteMessages(deps.paths,route,r=>({...r,closedAttempt:new Date(deps.now?.()??Date.now()).toISOString(),
+    delivery:{taskId,runtime:target.runtime},state:"offered",offers:(r.offers??0)+1,offeredAt:new Date(deps.now?.()??Date.now()).toISOString(),offeredBy:"intercom"}));
   let result: Awaited<ReturnType<typeof startTask>>;
   try {
-    result = await startTask(args, { ...deps, local: "intercom" });
+    result = await startTask(args, { ...localDeps, executionContext:route });
   } catch (error) {
     return reasonOf(error);
   }
@@ -206,12 +242,15 @@ export async function startIntercom(deps: RunnerDeps, target: ClosedTarget, reco
   if (!["started", "running"].includes(result.state) || !["started", "running"].includes(started.state)) {
     return started.reason ?? "the local delivery task did not start";
   }
-  const linked = attachDelivery(deps.paths, started, carried.map((record) => record.messageId), skipBusy(deps));
-  for (const record of carried) setMessageProgress(deps.paths.inbox, record.messageId, "fallback", "fallback-running", deps.now?.());
-  const offered = handOver(deps, args.name, carried);
-  const tracked = target.runtime === "codex" ? linked : { ...linked, carried: offered };
-  if (tracked !== started) writeTask(deps.paths, tracked, deps.now?.());
-  if (target.runtime === "codex") adoptOffered(deps, taskId, offered);
+  if(!started.sessionId||started.observedSessionId) {
+    for(const record of carried)setMessageProgress(deps.paths.inbox,record.messageId,"fallback","fallback-running",deps.now?.());
+    return null;
+  }
+  bindRouteExecutionSession(deps.paths,route,started.sessionId);
+  const mapped=transitionRouteMessages(deps.paths,route,r=>({...r,delivery:{taskId,runtime:target.runtime,sessionId:started.sessionId!},closedTo:r.closedTo??r.toSession,toSession:started.sessionId!}));
+  const linked=writeTask(deps.paths,{...started,targetAttempt:route.kind==="message"?route.handle:undefined,...(target.runtime==="codex"?{offered:mapped.map(r=>r.messageId)}:{carried:mapped.map(r=>r.messageId)})},deps.now?.());
+  for (const record of mapped) setMessageProgress(deps.paths.inbox, record.messageId, "fallback", "fallback-running", deps.now?.());
+
   return null;
 }
 

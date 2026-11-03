@@ -1,3 +1,12 @@
+import {requireMessageEffect} from './message-admission.mts';
+import { verifyPreparedLaunch } from "./target-delivery-launch.mts";
+import { routeSnapshot } from "./target-delivery-route.mts";
+import { getMessage } from "./inbox.mts";
+import { canonical } from "./target-delivery-state.mts";
+import type { ExecutionContext } from "./target-delivery-operation.mts";
+import { checkExecution, beginRouteEffect } from "./target-delivery-route.mts";
+import { finishRouteEffect } from "./target-delivery-outcome.mts";
+import type { NodePaths } from "./config.mts";
 import { spawn } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -44,6 +53,7 @@ const VERSION = ((): string => {
 })();
 
 export interface ForkRunInput {
+  context?:ExecutionContext; paths?:NodePaths;
   owner: string; cwd: string; producer: QueueProducerIdentity; features: Set<string>; mcpNames: string[]; record: InboxRecord;
   maxAnswerBytes: number; admission: ServiceAdmission;
   // Step 5: false when the owner read the message meanwhile ("original wins").
@@ -72,7 +82,19 @@ interface Session {
   client: AppServerClient; watch: ForkWatch; input: ForkRunInput; t: ForkTimeouts; gone: () => boolean; phase: Phase;
 }
 
+function verifyForkInput(input:ForkRunInput,phase:'ready'|'executing'|'settled'):void {
+  if(input.context?.kind!=='message'||!input.paths||!input.context.launch)throw Error('fork message context missing');
+  const launch=input.context.launch,p=input.producer;
+  verifyPreparedLaunch(input.paths,input.context,launch,['fork'],{runtime:'codex',taskId:null,sessionId:input.owner,phase});
+  const current=getMessage(input.paths.inbox,input.record.messageId);
+  if(!current||routeSnapshot(current)!==routeSnapshot(input.record)||input.record.toSession!==input.owner
+    ||p.codexExecutable!==launch.binding.executable||p.launchFile!==launch.inner.file||canonical([...p.launchPrefix,...APP_SERVER_ARGS])!==canonical(launch.inner.args)
+    ||p.resolvedCodexHome!==launch.binding.home||canonical(p.approvedFiles)!==canonical(launch.producer.files)||input.cwd!==launch.binding.cwd)throw Error('fork supplied member/producer differs');
+}
+
 export async function runForkAttempt(deps: { codex?: CodexDeps }, input: ForkRunInput): Promise<ForkOutcome> {
+  if(input.context?.kind!=="message"||!input.paths)throw Error("fork message context missing");
+  verifyForkInput(input,"ready");
   if (!allowed(input)) return { state: "superseded", from: "launching" };
   const t = { ...TIMEOUTS, ...input.timeouts };
   const platform = deps.codex?.platform ?? process.platform;
@@ -80,8 +102,10 @@ export async function runForkAttempt(deps: { codex?: CodexDeps }, input: ForkRun
   const start = (deps.codex?.spawn ?? spawn) as unknown as AppServerSpawn;
   let child: ReturnType<AppServerSpawn>;
   try {
-    child = start(producer.launchFile, [...producer.launchPrefix, ...APP_SERVER_ARGS], { cwd: input.cwd, stdio: "pipe",
-      windowsHide: true, detached: platform !== "win32",
+    beginRouteEffect(input.paths,input.context,['fork']);
+    requireMessageEffect({paths:input.paths},input.context,'fork-helper');
+    child = start(input.context.launch!.outer.file, input.context.launch!.outer.args, { cwd: input.cwd, stdio: "pipe",
+      windowsHide: true, detached: input.context.launch!.binding.detached,
       env: { ...process.env, CODEX_HOME: producer.resolvedCodexHome, [CODEX_FORK_ENV]: "1" } });
   } catch {
     return { state: "failed", from: "launching", reason: "helper-exit" };
@@ -194,7 +218,10 @@ async function converse(s: Session): Promise<ForkOutcome> {
     if (s.watch.violation) return failed(s.watch.violation);
     if (!input.stillAccepted()) return { state: "superseded", from: "launching" };
     if ((veto = continuation(s))) return veto;
-    const fork = await ask(s, "thread/fork", forkParams(owner, newest.id, input.cwd, input.features, input.mcpNames), s.t.forkMs,
+    verifyForkInput(input,"executing");
+    const params=forkParams(owner,newest.id,input.cwd,input.features,input.mcpNames);
+    requireMessageEffect({paths:input.paths!},input.context,'thread-fork');
+    const fork = await ask(s, "thread/fork", params, s.t.forkMs,
       "fork-rejected", newest.id);
     const forkThread = object(fork) && object(fork.thread) ? fork.thread : null;
     const forkId = forkThread?.id;
@@ -209,6 +236,7 @@ async function converse(s: Session): Promise<ForkOutcome> {
     if (!forkGoal.ok) return { state: "failed", from: "launching", reason: "fork-goal", detail: forkGoal.detail };
     if ((veto = continuation(s))) return veto;
     try { input.running(newest.id, forkId, forkGoal.proof); } catch { return { state: "uncertain", from: "launching", reason: "helper-exit" }; }
+    finishRouteEffect(input.paths!,input.context!,{kind:"fork",forkId,turnId:null});
     s.phase = "running";
     return await turn(s, forkId);
   } catch (error) {
@@ -251,6 +279,8 @@ async function turn(s: Session, forkId: string): Promise<ForkOutcome> {
   s.watch.turnRequested();
   let started: unknown;
   try {
+    verifyForkInput(s.input,"executing");
+    requireMessageEffect({paths:s.input.paths!},s.input.context,'turn-start');
     started = await s.client.request("turn/start", { threadId: forkId, input: [{ type: "text", text: prompt, text_elements: [] }],
       outputSchema: forkOutputSchema }, s.t.requestMs);
   } catch {
@@ -258,6 +288,7 @@ async function turn(s: Session, forkId: string): Promise<ForkOutcome> {
   }
   const turnId = object(started) && object(started.turn) && typeof started.turn.id === "string" ? started.turn.id : null;
   if (!turnId) return uncertain("turn-failed");
+  finishRouteEffect(s.input.paths!,s.input.context!,{kind:"fork",forkId,turnId});
   s.watch.setTurn(turnId);
   const interrupt = (): Promise<unknown> => s.client.request("turn/interrupt", { threadId: forkId, turnId }, s.t.interruptMs)
     .catch(() => undefined);

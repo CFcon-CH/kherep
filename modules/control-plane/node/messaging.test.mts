@@ -6,7 +6,7 @@ import path from "node:path";
 import test from "node:test";
 
 import { makeEnvelope, parseEnvelope, type Envelope } from "../protocol.mts";
-import { MESSAGING_ACK_CAPABILITY, MESSAGING_CAPABILITY, MESSAGING_PROGRESS_V2_CAPABILITY, type MessageDeliverBody } from "../protocol-messages.mts";
+import { MESSAGING_ORIGIN_CAPABILITY, MESSAGING_ACK_CAPABILITY, MESSAGING_CAPABILITY, MESSAGING_PROGRESS_V2_CAPABILITY, type MessageDeliverBody } from "../protocol-messages.mts";
 import { NodeClient } from "./client.mts";
 import { generateIdentity } from "./identity.mts";
 import { getMessage, storeMessage } from "./inbox.mts";
@@ -64,10 +64,10 @@ test("accept rules match the session exactly or by wildcard, and the sender by i
 
 test("messaging.v1 is advertised only when an accept rule exists", async () => {
   assert.deepEqual(advertisedCapabilities(NO_MESSAGING), [...DEFAULT_POLICY.allowedCommands, MESSAGING_ACK_CAPABILITY,
-    MESSAGING_PROGRESS_V2_CAPABILITY, MESSAGING_LOOP_BRAKE_CAPABILITY]);
+    MESSAGING_PROGRESS_V2_CAPABILITY, MESSAGING_ORIGIN_CAPABILITY, MESSAGING_LOOP_BRAKE_CAPABILITY]);
   const policy: NodePolicy = { ...DEFAULT_POLICY, messaging: { accept: [{ session: "*", from: ["operator"] }] } };
   assert.deepEqual(advertisedCapabilities(policy), [...DEFAULT_POLICY.allowedCommands, MESSAGING_CAPABILITY, MESSAGING_ACK_CAPABILITY,
-    MESSAGING_PROGRESS_V2_CAPABILITY, MESSAGING_LOOP_BRAKE_CAPABILITY]);
+    MESSAGING_PROGRESS_V2_CAPABILITY, MESSAGING_ORIGIN_CAPABILITY, MESSAGING_LOOP_BRAKE_CAPABILITY]);
   const { frames } = await authed(policy);
   const [register] = frames;
   assert.deepEqual((register.body as { capabilities: string[] }).capabilities, advertisedCapabilities(policy));
@@ -120,4 +120,22 @@ test("a store failure sends no status, so the Worker delivers again later", asyn
   const { client, log } = await authed(REVIEW_POLICY, () => { throw new Error("ENOSPC"); });
   assert.deepEqual(await client.onFrame(deliverFrame(PEER)), []);
   assert.match(log.join("\n"), new RegExp(`could not store message ${MESSAGE_ID}: ENOSPC`));
+});
+
+
+test("only a current authenticated Worker capability preserves sender origin, including initial replay", async () => {
+  const origin = { nodeId: PEER, sentAt: new Date(0).toISOString() };
+  const stored: MessageDeliverBody[] = [];
+  const { client } = await authed(DEFAULT_POLICY, body => stored.push(body));
+  const incoming = (type: "event" | "message.deliver", body: object) => JSON.stringify(makeEnvelope(type, body, 0, 0));
+  const body = { messageId: MESSAGE_ID, from: { nodeId: PEER, session: "sender" }, toSession: "target", text: "synthetic",
+    createdAt: new Date(1_000).toISOString(), senderOrigin: origin };
+  await client.onFrame(incoming("message.deliver", body));
+  assert.equal(stored[0]?.senderOrigin, undefined, "old Worker has no origin contract");
+  await client.onFrame(incoming("event", { name: "auth.ok", worker: { capabilities: [MESSAGING_ORIGIN_CAPABILITY] } }));
+  await client.onFrame(incoming("message.deliver", body));
+  assert.deepEqual(stored[1]?.senderOrigin, origin, "pending replay precedes directory but follows authenticated capability");
+  client.connectionClosed();
+  await client.onFrame(incoming("message.deliver", body));
+  assert.equal(stored.length, 2, "a closed connection never stores");
 });

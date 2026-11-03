@@ -64,6 +64,9 @@ export function publishLiveness(paths: NodePaths, evidence: SessionEvidence[], n
       else capped = true;
     }
     let verdict = judgeSession(rejected ? { ...e, lifecycle: undefined } : e, now);
+    // Preserve the generation of this exact measured lifecycle event also for
+    // nonterminal holder verdicts. Snapshot generation is never a substitute.
+    if(validEvent&&!rejected)verdict={...verdict,lifecycleGeneration:event.value.generation};
     if (contradictory) verdict = { runtime: e.runtime, sessionId: e.sessionId, state: "unknown", reasonCode: "conflict",
       observedAt: event.observedAt, lifecycleGeneration: old.generation };
     const terminal = tombstones.get(key);

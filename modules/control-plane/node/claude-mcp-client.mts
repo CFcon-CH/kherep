@@ -1,15 +1,12 @@
+import { MESSAGING_CLIENT_GRAPH as CLAUDE_CLIENT_GRAPH } from "./messaging-client-graph.mts";
+export { CLAUDE_CLIENT_GRAPH };
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 export const CLAUDE_TOOL_MATCHER = "^mcp__kherep_messaging__(sessions|send|inbox|reply|status)$";
-export const CLAUDE_CLIENT_GRAPH = [
-  "protocol.mts", "protocol-mcp.mts", "protocol-messages.mts", "protocol-loop-brake.mts", "protocol-session-identity.mts", "protocol-message-binding.mts", "protocol-task-control.mts", "protocol-tasks.mts",
-  "node/config.mts", "node/inbox.mts", "node/inbox-storage.mts", "node/inbox-selected-read.mts", "node/inbox-record-lock.mts", "node/mcp-local.mts", "node/mcp-credential-file.mts",
-  "node/guarded-replies.mts", "node/message-owner.mts", "node/session-publication.mts", "node/policy.mts", "node/session-policy.mts", "node/mcp-intent-hook.mts",
-  "node/mcp-stdio-bridge.mts",
-] as const;
+
 
 const CLIENT_NAME = "kherep-claude-messaging-client";
 const MANIFEST = "manifest.json";

@@ -1,3 +1,10 @@
+import {requireMessageEffect} from './message-admission.mts';
+import { selectRouteMembers } from "./target-delivery-route.mts";
+import { decideMessageRoute } from "./target-delivery-producer.mts";
+import { beginRouteEffect } from "./target-delivery-route.mts";
+import { finishRouteEffect } from "./target-delivery-outcome.mts";
+import { readPolicy } from "./policy.mts";
+import { audit, bypassesPermissions } from "./autonomy.mts";
 import fs from "node:fs";
 
 import { mayContinue } from "./autonomy.mts";
@@ -79,11 +86,25 @@ export function deliverForCodex(input: unknown, deps: HookDeps): string {
   if (continued === true || arrived.length === 0) return stopEnded(deps, sessionId);
   // A continuation is an autonomous turn: the same budget and bypass check as
   // the Claude Stop path (autonomy.mts).
-  const allowed = deps.mayContinue ?? ((ids: string[]) => mayContinue(deps.paths, sessionId, mode, ids, deps.now?.() ?? Date.now(),
-    nodeWakeBudget(deps.paths)));
-  if (!allowed(arrived)) return stopEnded(deps, sessionId);
+  if(bypassesPermissions(mode)){audit(deps.paths,deps.now?.()??Date.now(),sessionId,arrived,"continue-permission-mode");return stopEnded(deps,sessionId);}
+  const policy=readPolicy(deps.paths.policy,true);
+  if(!policy){audit(deps.paths,deps.now?.()??Date.now(),sessionId,arrived,"awaiting-user-turn");return stopEnded(deps,sessionId);}
+  let context;
+  try {
+    const selected=selectRouteMembers(mine.filter(r=>arrived.includes(r.messageId))).slice(0,8);
+    const result=decideMessageRoute({...deps,policy,messageRoute:{route:'codex-stop',grant:'stop',permissionMode:typeof mode==='string'?mode:undefined}},selected,sessionId,"hook-continue",{runtime:"codex",sessionId,taskId:null},deps.messageProducer??null);
+    audit(deps.paths,deps.now?.()??Date.now(),sessionId,selected.map(r=>r.messageId),result.status==="granted"?"continue":result.status==="denied-no-debit"?"continue-budget":"awaiting-user-turn");
+    context=result.status==="granted"?result.context:null;
+    if(!context)return stopEnded(deps,sessionId);
+    beginRouteEffect(deps.paths,context,["hook-continue"]);
+    requireMessageEffect(deps,context,'continuation-output');
+    finishRouteEffect(deps.paths,context,{kind:'hook',emitted:true});
+  } catch {return stopEnded(deps,sessionId);}
   // The turn goes on: the record stays a Stop not marked as ended, never idle (issue #408).
-  return JSON.stringify({ decision: "block", reason: CODEX_STOP_REASON });
+  const output=JSON.stringify({decision:'block',reason:CODEX_STOP_REASON});
+  deps.onContinuation?.(context!);
+  try{requireMessageEffect(deps,context!,'continuation-output');}catch{return stopEnded(deps,sessionId);}
+  return output;
 }
 
 // A Stop that returns no continuation ended its turn, the only idle evidence

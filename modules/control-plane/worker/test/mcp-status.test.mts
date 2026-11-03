@@ -253,3 +253,18 @@ it("answers from the tombstone once the sender acknowledged the final status (is
   expect(hidden.isError).toBe(true);
   expect(hidden.structuredContent).toEqual({ ok: false, error: "message status is not available to this node" });
 });
+
+it("MCP status keeps its public projection while the duplicate digest remains stored internally", async () => {
+  const { source, target, messageId } = await message();
+  await registry().reportMessageStatus(target, { messageId, state: "accepted" });
+  const digest = await runInDurableObject(registry(), (_i, state) =>
+    state.storage.sql.exec("SELECT message_binding FROM messages WHERE id = ?", messageId).one().message_binding);
+  expect(String(digest)).toHaveLength(43);
+  const before = await status(source, SOURCE, messageId);
+  expect(before.structuredContent).not.toHaveProperty("binding");
+  expect(JSON.stringify(before)).not.toContain(String(digest));
+  expect(await registry().sendMessage({ messageId, from: { nodeId: source, session: SOURCE },
+    to: { nodeId: target, session: TARGET }, text: "changed synthetic content" }, "test"))
+    .toEqual({ ok: false, error: "conflicting message binding" });
+  expect((await status(source, SOURCE, messageId)).structuredContent).toEqual(before.structuredContent);
+});

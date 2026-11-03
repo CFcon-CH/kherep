@@ -191,7 +191,8 @@ export function exchangeOptions(paths: NodePaths, now: () => number = Date.now):
 function toSendBody(record: OutboxRecord): MessageSendBody | null {
   const body: MessageSendBody = { messageId: record.messageId, fromSession: record.fromSession, to: record.to, text: record.text,
     ...(record.inReplyTo ? { inReplyTo: record.inReplyTo } : {}), ...(record.proxyOf ? { proxyOf: record.proxyOf } : {}),
-    ...(record.taskId ? { taskId: record.taskId } : {}) };
+    ...(record.taskId ? { taskId: record.taskId } : {}),
+    ...(record.senderSentAt === undefined ? {} : { senderSentAt: record.senderSentAt }) };
   return isMessageSendBody(body) ? body : null;
 }
 

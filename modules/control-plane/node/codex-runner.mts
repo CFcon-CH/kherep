@@ -1,3 +1,9 @@
+import { deliverInboxMessage, refuseInboxMessage, retryInboxMessage } from "./target-delivery-inbox.mts";
+import { finalizeMessageTaskIdentity } from "./delivery-identity.mts";
+import { verifyPreparedLaunch } from "./target-delivery-launch.mts";
+import type { ExecutionContext } from "./target-delivery-operation.mts";
+import { checkExecution } from "./target-delivery-route.mts";
+import { bindRouteExecutionSession, transitionRouteMessages, finishRouteEffect } from "./target-delivery-outcome.mts";
 import type { SessionContinueArgs, SessionStopArgs } from "../protocol-tasks.mts";
 import {
   codexEnv, codexFiles, detachCodex, resumeArgs, spawnCodex, startArgs, stillRuns, type CodexFiles,
@@ -40,23 +46,34 @@ export type RunArgs = (files: CodexFiles, outbox: string) => string[];
 // the session named in its environment and the prompt on stdin, and records
 // pid and start time. Rejects when it cannot start.
 export async function spawnRun(
-  deps: RunnerDeps, record: TaskRecord, args: RunArgs, prompt: string, admission?: ServiceAdmission,
+  deps: RunnerDeps, record: TaskRecord, args: RunArgs, prompt: string, admission?: ServiceAdmission, context?:ExecutionContext,
 ): Promise<TaskRecord> {
-  return continueServiceAdmission(deps.paths, admission, (active) => spawnAdmitted(deps, record, args, prompt, active), deps.serviceOwner);
+  return continueServiceAdmission(deps.paths, admission, (active) => spawnAdmitted(deps, record, args, prompt, active, context), deps.serviceOwner);
 }
 
 async function spawnAdmitted(
-  deps: RunnerDeps, record: TaskRecord, args: RunArgs, prompt: string, admission: ServiceAdmission,
+  deps: RunnerDeps, record: TaskRecord, args: RunArgs, prompt: string, admission: ServiceAdmission, context?:ExecutionContext,
 ): Promise<TaskRecord> {
-  const codex = deps.codex ?? {};
+  context??=record.targetAttempt?{kind:"message",handle:record.targetAttempt}:undefined;
+  checkExecution(deps.paths,context,["exec-resume","task-start"],undefined,{runtime:"codex",taskId:record.taskId,sessionId:record.sessionId??null,phase:"ready"});
+  const codex = {...deps.codex,onUnconfirmedShutdown:()=>{retainServiceAdmission(admission);deps.codex?.onUnconfirmedShutdown?.();}};
   const files = codexFiles(deps.paths, record.taskId);
-  const file = (codex.findCodex ?? findCodex)();
+  const file = context?.kind==="message"?context.launch?.binding.executable:(codex.findCodex ?? findCodex)();
   if (!file) throw new Error("codex is not installed on this node");
   ensureDir(deps.paths.outbox);
   const intercom = record.local === "intercom";
   const detached = detachCodex(codex.platform ?? process.platform, intercom);
-  const { pid, pidStart } = await spawnCodex(codex, file, [...(intercom ? await mcpOff(deps, record, admission) : []), ...args(files, deps.paths.outbox)], record.cwd, files,
-    codexEnv(deps.paths, record.sessionId ?? record.name), prompt, detached);
+  const runArgs=context?.kind==="message"?context.launch!.rawArgs:[...(intercom?await mcpOff(deps,record,admission):[]),...args(files,deps.paths.outbox)];
+  if(context?.kind==="message")writeTask(deps.paths,record,deps.now?.());
+  const env=codexEnv(deps.paths,record.sessionId??record.name);
+  if(context?.kind==='message') {
+    const home=context.launch?.binding.home;
+    if(!home)throw Error('message home unknown');
+    env.CODEX_HOME=home;
+  }
+  const { pid, pidStart } = await spawnCodex(codex,file,runArgs,record.cwd,files,
+    env,prompt,detached,context,deps.paths,{taskId:record.taskId,sessionId:record.sessionId??null});
+  finishRouteEffect(deps.paths,context!,{kind:"exec",pid,pidStart:pidStart??null,threadId:null});
   const now = deps.now?.() ?? Date.now();
   return writeTask(deps.paths, { ...record, pid, pidStart, descendants: undefined, awaitingProgressSince: new Date(now).toISOString() }, now);
 }
@@ -86,10 +103,12 @@ async function launch(
   const files = codexFiles(deps.paths, record.taskId);
   let saved: TaskRecord;
   try {
-    saved = await spawnRun(deps, record, args, prompt, admission);
+    saved = await spawnRun(deps, record, args, prompt, admission, deps.executionContext);
   } catch (error) {
-    const message = String((error as Error).message);
-    writeTask(deps.paths, { ...record, state: "failed", reason: trim(message) });
+    const message = record.targetAttempt?"message launch outcome uncertain":String((error as Error).message);
+    const measured=error as {pid?:unknown;pidStart?:unknown};
+    const evidence=record.targetAttempt&&Number.isSafeInteger(measured.pid)&&(measured.pid as number)>0?{pid:measured.pid as number,...(typeof measured.pidStart==='string'?{pidStart:measured.pidStart}:{})}:{};
+    writeTask(deps.paths, { ...record,...evidence, state: "failed", reason: trim(message) });
     return refuse(deps, record.taskId, message);
   }
   const until = Date.now() + (codex.startWaitMs ?? 15_000);
@@ -98,7 +117,11 @@ async function launch(
     await sleep(POLL_MS);
     events = readEvents(files);
   }
-  if (!saved.sessionId && events.threadId) saved = writeTask(deps.paths, { ...saved, sessionId: events.threadId }, deps.now?.());
+  if (!saved.sessionId && events.threadId) {
+    saved = writeTask(deps.paths, saved.targetAttempt
+      ?finalizeMessageTaskIdentity(deps.paths,{...saved,observedSessionId:events.threadId})
+      :{...saved,sessionId:events.threadId},deps.now?.());
+  }
   queueReport(deps.paths, { taskId: saved.taskId, state: "started", ...sessionOf(saved) });
   return saved;
 }
@@ -131,7 +154,7 @@ export async function continueCodex(
   const blocked = await notReady(deps.readiness, "codex");
   if (blocked) throw new Error(blocked);
   const prompt = frameFollowUp(args.taskId, args.prompt, deps.cli ?? taskCommand(deps.paths, { platform: deps.platform }), "codex");
-  const { operatorStoppedAt: _operatorStoppedAt, taskControlRecoveryRunVersion: _taskControlRecoveryRunVersion, ...resumable } = record;
+  const { targetAttempt:_targetAttempt, offered:_offered, operatorStoppedAt: _operatorStoppedAt, taskControlRecoveryRunVersion: _taskControlRecoveryRunVersion, ...resumable } = record;
   const restarted: TaskRecord = { ...resumable, cwd: cwd.cwd, state: "started", reason: undefined, pid: undefined, pidStart: undefined,
     deadline: new Date(now + deps.policy.sessions.maxRuntimeMinutes * 60_000).toISOString() };
   const saved = await launch(deps, restarted, (files, outbox) => resumeArgs(threadId, record.permissionMode, files, outbox), prompt, admission);
@@ -179,13 +202,26 @@ export async function stopCodex(args: SessionStopArgs, deps: RunnerDeps, reason:
 // The messages a run carried: delivered when it completed its turn, otherwise
 // offered again later within the offer limits (deliver-core.mts).
 export function settleOffered(deps: RunnerDeps, record: TaskRecord, completed: boolean, reason?: string): void {
+  if(record.targetAttempt) {
+    const ctx={kind:"message" as const,handle:record.targetAttempt};
+    const saved=checkExecution(deps.paths,ctx,["exec-resume","task-start"]);
+    if(!saved||(saved.consumer??saved.group.operation).execution.taskId!==record.taskId)throw Error("task result context differs");
+    const expected=saved.group.binding.members.map(m=>m.messageId).sort();
+    if(JSON.stringify([...(record.offered??[])].sort())!==JSON.stringify(expected))throw Error("task result membership differs");
+    transitionRouteMessages(deps.paths,ctx,r=>{
+      if(r.state!=='offered')return r;
+      const failure=permanentFallbackFailure(record,r,reason);
+      return {...r,...(completed?{state:'delivered' as const}:failure?{state:'refused' as const,reason:failure}:{retry:true})};
+    });
+    return;
+  }
   for (const id of record.offered ?? []) {
     const message = getMessage(deps.paths.inbox, id);
     if (message?.state !== "offered") continue;
     const failure = permanentFallbackFailure(record, message, reason);
-    if (completed) markDelivered(deps.paths.inbox, id);
-    else if (failure) markRefused(deps.paths.inbox, id, failure);
-    else markRetry(deps.paths.inbox, id);
+    if (completed) deliverInboxMessage(deps.paths, id);
+    else if (failure) refuseInboxMessage(deps.paths, id, failure);
+    else retryInboxMessage(deps.paths, id);
   }
 }
 

@@ -111,6 +111,21 @@ describe("node client against the Worker", () => {
     ws.close(1000, "done");
   });
 
+  it("carries sender origin through authenticated node send, Worker storage and target NodeClient intake", async () => {
+    const stored: MessageDeliverBody[] = [];
+    const target = await connectClient({ storeMessage: body => { stored.push(body); } });
+    const sender = await connectClient();
+    const messageId = crypto.randomUUID();
+    const senderSentAt = new Date(Date.now() - 23 * 60 * 60_000).toISOString();
+    for (const frame of sender.client.sendMessage({ messageId, fromSession: "synthetic-sender",
+      to: { nodeId: target.nodeId, session: "synthetic-target" }, text: "synthetic origin", senderSentAt })) sender.ws.send(frame);
+    await vi.waitFor(() => expect(stored).toHaveLength(1));
+    expect(stored[0]!.senderOrigin).toEqual({ nodeId: sender.nodeId, sentAt: senderSentAt });
+    expect(stored[0]!.createdAt).not.toBe(senderSentAt);
+    await vi.waitFor(async () => expect((await registry().listMessages(target.nodeId, 10))[0]?.state).toBe("accepted"));
+    sender.ws.close(1000, "done"); target.ws.close(1000, "done");
+  });
+
   // Issue #441: isDirectoryBody as of 0d2c5d7, before node intake, vendored so an
   // older node's reading of the new frame is pinned here. It does not reject unknown keys.
   function isLegacyDirectoryBody(body: unknown): boolean {

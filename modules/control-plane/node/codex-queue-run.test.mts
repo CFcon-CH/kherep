@@ -1,3 +1,7 @@
+import { syntheticQueueContext } from "./target-delivery-test-support.mts";
+import type { RunnerDeps } from "./session-runner.mts";
+import type { QueueProducerIdentity } from "./codex-queue-binding.mts";
+import type { ServiceAdmission } from "./service-drain.mts";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import { EventEmitter } from "node:events";
@@ -8,7 +12,7 @@ import test from "node:test";
 import { codexCommand } from "./codex-binary.mts";
 import { codexNode, fakeCodexBin } from "./codex-fixture.mts";
 import { queueProducerIdentity } from "./codex-queue-context.mts";
-import { MAX_QUEUE_STDOUT_BYTES, parseQueueAdmission, queueArgs, runQueue } from "./codex-queue-run.mts";
+import { MAX_QUEUE_STDOUT_BYTES, parseQueueAdmission, queueArgs, runQueue as actualRunQueue } from "./codex-queue-run.mts";
 import { beginServiceDrain, serviceAdmissionsIdle } from "./service-drain.mts";
 import { testServiceOwner } from "./task-fixture.mts";
 
@@ -149,3 +153,8 @@ test("queue admission requires one exact owner and bounded complete stdout", () 
   assert.equal(parseQueueAdmission(line, OWNER, true), null);
   assert.equal(parseQueueAdmission("x".repeat(MAX_QUEUE_STDOUT_BYTES) + line, OWNER), null);
 });
+
+function runQueue(deps:RunnerDeps,args:string[],expected?:QueueProducerIdentity,admission?:ServiceAdmission){
+  if(!/^[0-9a-f-]{36}$/i.test(args[2]??""))return actualRunQueue(deps,args,expected,admission);
+  const fixture=syntheticQueueContext(deps,args);return actualRunQueue(fixture.deps,args,expected,admission,fixture.context);
+}

@@ -16,7 +16,7 @@ import {
   type TaskRuntime,
 } from "../protocol-tasks.mts";
 import {
-  isDirectoryBody, isFinalMessageState, isMessageDeliverBody, isMessageId, isMessageReceiptBody, isMessageStatusBody, messageStatusAck,
+  isWorkerInfo, MESSAGING_ORIGIN_CAPABILITY, isDirectoryBody, isFinalMessageState, isMessageDeliverBody, isMessageId, isMessageReceiptBody, isMessageStatusBody, messageStatusAck,
   type DirectoryBody, type MessageDeliverBody, type MessageProgress, type MessageReceiptBody, type MessageSendBody, type MessageState,
 } from "../protocol-messages.mts";
 import { signChallenge, type NodeIdentity } from "./identity.mts";
@@ -109,8 +109,8 @@ export class NodeClient {
   private lastSnapshot: string | null = null;
   authenticated = false;
   // Issue #408, PR 4 (design r3 section 3.3): what the Worker of the current
-  // authenticated connection named in a directory frame received on it; null
-  // until that frame, again at every close and every auth.ok. Never read from
+  // authenticated connection named in auth.ok or a live directory frame; null
+  // until a capability assertion, cleared at every close/authentication. Never read from
   // directory.json, so a stale file or an old connection proves nothing.
   workerCapabilities: readonly string[] | null = null;
 
@@ -199,7 +199,8 @@ export class NodeClient {
         if ((envelope.body as { name?: unknown }).name !== "auth.ok") return [];
         this.options.selectedReferences?.clear();
         this.authenticated = true;
-        this.workerCapabilities = null;
+        this.workerCapabilities = live && isWorkerInfo((envelope.body as { worker?: unknown }).worker)
+          ? [...(envelope.body as { worker: { capabilities: string[] } }).worker.capabilities] : null;
         this.lastSnapshot = null;
         this.lastRuntimes = await this.options.runtimes();
         this.registrationDirty = true;
@@ -433,7 +434,8 @@ export class NodeClient {
       return [this.frame("message.status", { messageId, state: "refused", reason: "not accepted by node policy" })];
     }
     try {
-      this.options.storeMessage(body);
+      const { senderOrigin, ...legacy } = body;
+      this.options.storeMessage(senderOrigin && this.workerCapabilities?.includes(MESSAGING_ORIGIN_CAPABILITY) ? body : legacy);
     } catch (error) {
       this.options.bindingStorageFault?.();
       this.options.selectedReferences?.clear();

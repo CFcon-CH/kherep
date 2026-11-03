@@ -109,8 +109,9 @@ test("a native rejection retains uncertainty without copying native diagnostic t
   const node = nativeQueueNode(t, "fa110001-0000-7000-8000-000000000001");
   const id = node.add();
   await node.poll();
-  const raw = fs.readFileSync(path.join(nativeAttemptDir(node.deps(), node.owner), `${id}.json`), "utf8");
-  assert.equal(JSON.parse(raw).state, "uncertain");
+  const raw = fs.readFileSync(path.join(node.paths.dir,"codex-native-pending",`${node.owner}.json`), "utf8");
+  assert.equal(JSON.parse(raw).phase, "uncertain");
+  assert.equal(JSON.parse(raw).group.binding.members[0].messageId,id);
   assert.ok(!raw.includes("Secret1"));
   assert.ok(!raw.includes("token"));
 });

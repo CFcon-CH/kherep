@@ -1,10 +1,12 @@
-import { readInboxRecord, inboxRecordIds, recordWriteLocation } from "./inbox-storage.mts";
+import type { TargetHandle } from "./target-delivery-reservation.mts";
+import { readInboxRecord, locateInboxRecord, encodeInboxRecord, PROCESSING_NAMESPACE, inboxRecordIds, recordWriteLocation } from "./inbox-storage.mts";
 import { isDeliveryBinding, stableBinding, type MessageBinding } from "../protocol-message-binding.mts";
 import { boundRecordValid, mayRetarget } from "./message-owner.mts";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
+import type { SenderOrigin } from "../message-origin.mts";
 import type { SessionInfo } from "../protocol.mts";
 import { isTaskId, SUPPORTED_RUNTIMES, type TaskRuntime } from "../protocol-tasks.mts";
 import {
@@ -31,6 +33,7 @@ export const UNDELIVERABLE_AFTER_MS = 60 * 60_000;
 export const PROGRESS_RETRY_BACKOFF_MS = 60_000;
 
 export interface InboxRecord {
+  targetAttempt?: TargetHandle;
   messageId: string;
   from: MessageAddress;
   toSession: string;
@@ -43,6 +46,7 @@ export interface InboxRecord {
   // The local task that performed delivery. Separate from the authorization grant above.
   delivery?: DeliveryTaskIdentity;
   createdAt: string;
+  senderOrigin?: SenderOrigin;
   receivedAt: string;
   state: "accepted" | "offered" | "delivered" | "refused";
   reason?: string;
@@ -152,6 +156,10 @@ export function storeMessage(dir: string, body: MessageDeliverBody, now: number 
   const existing = getMessage(dir, body.messageId);
   const binding = body.binding ? stableBinding(body.binding) : undefined;
   if (existing) {
+    if(locateInboxRecord(dir,body.messageId)?.namespace===PROCESSING_NAMESPACE){
+      const payload=(r:Pick<InboxRecord,'from'|'toSession'|'text'|'createdAt'|'inReplyTo'|'proxyOf'|'taskId'|'senderOrigin'|'loop'|'binding'>)=>JSON.stringify([r.from,r.toSession,r.text,r.createdAt,r.inReplyTo,r.proxyOf,r.taskId,r.senderOrigin,r.loop,'binding' in r?r.binding:undefined]);
+      if(payload(existing)!==payload({...body,binding}))throw Error('processing redelivery mismatch');return existing;
+    }
     if ((Object.hasOwn(existing, "binding") || binding !== undefined) && (!boundRecordValid(existing) || JSON.stringify(existing.binding) !== JSON.stringify(binding)
       || existing.toSession !== body.toSession || existing.from.nodeId !== body.from.nodeId || existing.from.session !== body.from.session
       || existing.text !== body.text || existing.inReplyTo !== body.inReplyTo || existing.proxyOf !== body.proxyOf
@@ -163,7 +171,7 @@ export function storeMessage(dir: string, body: MessageDeliverBody, now: number 
     messageId: body.messageId, from: { nodeId: body.from.nodeId, session: body.from.session }, toSession: body.toSession,
     text: body.text, ...(body.inReplyTo ? { inReplyTo: body.inReplyTo } : {}),
     ...(body.proxyOf ? { proxyOf: body.proxyOf } : {}), ...(body.taskId ? { taskId: body.taskId } : {}),
-    createdAt: body.createdAt,
+    createdAt: body.createdAt, ...(body.senderOrigin ? { senderOrigin: { ...body.senderOrigin } } : {}),
     receivedAt: new Date(now).toISOString(), state: "accepted", depth: body.loop?.depth ?? depth,
     ...(body.loop ? { loop: { ...body.loop } } : {}), ...(binding ? { binding } : {}),
   };
@@ -241,6 +249,7 @@ function updateRecord(dir: string, messageId: string, change: (record: InboxReco
   return withRecordLock(dir, messageId, () => {
     const record = getMessage(dir, messageId);
     if (!record) return null;
+    if (record.targetAttempt) throw new Error('strict inbox mutation requires route journal');
     const next = change(record);
     if (next) {
       if (Object.hasOwn(record, "binding") && (!boundRecordValid(next) || JSON.stringify(record.binding) !== JSON.stringify(next.binding)
@@ -255,7 +264,8 @@ function updateRecord(dir: string, messageId: string, change: (record: InboxReco
 // locations and immutable binding before replacing the current body.
 export function replaceInboxRecordLocked(dir: string, messageId: string, next: InboxRecord): void {
   if (!getMessage(dir, messageId)) throw new Error("missing inbox record");
-  writeJsonAtomic(recordWriteLocation(dir, messageId, next), next);
+  const file=recordWriteLocation(dir,messageId,next);
+  writeJsonAtomic(file,encodeInboxRecord(file,next));
 }
 
 // A busy record is "not written": the next event, round or read writes it
@@ -383,11 +393,25 @@ export function markReported(dir: string, messageId: string, state: ReportedStat
 export function refuseUndeliverable(dir: string, sessions: SessionInfo[], now: number = Date.now(),
   afterMs: number = UNDELIVERABLE_AFTER_MS, records: InboxRecord[] = listInbox(dir),
   terminal: (ref: string) => boolean = () => false, closed: (ref: string) => boolean = () => false): string[] {
+  const refusable=undeliverablePredicate(sessions,now,afterMs,terminal,closed);
+  return records.filter(refusable).filter((r) => markRefused(dir, r.messageId, "target session not running", refusable))
+    .map((r) => r.messageId);
+}
+export function undeliverablePredicate(sessions:SessionInfo[],now:number,afterMs:number,terminal:(ref:string)=>boolean,closed:(ref:string)=>boolean):(r:InboxRecord)=>boolean {
   const live = new Set(sessions.filter(s => !["closed", "archived", "deleted"].includes(s.state))
     .flatMap((s) => s.name ? [s.sessionId, s.name] : [s.sessionId]));
   const since = (r: InboxRecord): number => Date.parse((r.closedTo && r.closedAttempt) || r.receivedAt);
-  const refusable = (r: InboxRecord): boolean => (r.state === "accepted" || r.state === "offered") && !live.has(r.toSession)
+  return (r: InboxRecord): boolean => (r.state === "accepted" || r.state === "offered") && !live.has(r.toSession)
     && (terminal(r.toSession) || now - since(r) > afterMs && closed(r.toSession));
-  return records.filter(refusable).filter((r) => markRefused(dir, r.messageId, "target session not running", refusable))
-    .map((r) => r.messageId);
+}
+
+// Exact attempt-bound local mutation. No optional or IDs-only authorization.
+export function compareReplaceTargetMessage(dir:string, before:InboxRecord, after:InboxRecord):void {
+  const canonical=(x:unknown):string=>Array.isArray(x)?`[${x.map(canonical).join(",")}]`:x&&typeof x==="object"?`{${Object.keys(x).sort().map(k=>JSON.stringify(k)+":"+canonical((x as Record<string,unknown>)[k])).join(",")}}`:JSON.stringify(x);
+  if(before.messageId!==after.messageId)throw Error("message transition identity differs");
+  withRecordLock(dir,before.messageId,()=>{
+    const current=getMessage(dir,before.messageId);
+    if(canonical(current)!==canonical(before))throw Error("message transition source changed");
+    replaceInboxRecordLocked(dir,before.messageId,after);
+  });
 }

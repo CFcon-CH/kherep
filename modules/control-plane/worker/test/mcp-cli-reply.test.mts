@@ -44,7 +44,10 @@ it("a native MCP sender can reply to a full-ID CLI response without relaxing pro
     const b = await enrolled(TARGET);
     const to = { nodeId: b.nodeId, session: TARGET };
     const first = await intent(a, "send", { to, text: "synthetic question" });
-    expect((await registry().sendMcpMessage(first, to, "synthetic question")).ok).toBe(true);
+    expect(await registry().sendMcpMessage(first, to, "synthetic question")).toMatchObject({ ok: true, denied: false });
+    expect(await registry().sendMcpMessage(first, to, "synthetic question")).toMatchObject({ ok: true, denied: false, claim: { disposition: "recovery" } });
+    expect(await registry().sendMcpMessage({ ...first, credentialVersion: first.credentialVersion + 1 }, to, "synthetic question"))
+      .toMatchObject({ ok: false, denied: true });
     await registry().reportMessageStatus(b.nodeId, { messageId: first.requestId, state: "accepted" });
 
     const paths = nodePaths(root);
@@ -67,7 +70,7 @@ it("a native MCP sender can reply to a full-ID CLI response without relaxing pro
 
     const reply = await intent(a, "reply", { inReplyTo: answer.messageId, text: "synthetic acknowledgement" });
     expect(await registry().replyMcpMessage(reply, answer.messageId, "synthetic acknowledgement"))
-      .toMatchObject({ ok: true, status: { messageId: reply.requestId, state: "queued" } });
+      .toMatchObject({ ok: true, denied: false, status: { messageId: reply.requestId, state: "queued" } });
 
     // A short display alias is not evidence that two full session identities match.
     const aliasId = crypto.randomUUID();
@@ -77,7 +80,7 @@ it("a native MCP sender can reply to a full-ID CLI response without relaxing pro
     await registry().reportMessageStatus(a.nodeId, { messageId: aliasId, state: "accepted" });
     const denied = await intent(a, "reply", { inReplyTo: aliasId, text: "must not send" });
     expect(await registry().replyMcpMessage(denied, aliasId, "must not send"))
-      .toEqual({ ok: false, error: "reply relationship or depth is not allowed" });
+      .toEqual({ ok: false, denied: false, error: "reply relationship or depth is not allowed" });
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -97,14 +100,14 @@ it("fails an MCP reply to a deleted parent closed unless the node returns that i
 
   const reply = await intent(b, "reply", { inReplyTo: first.requestId, text: "synthetic answer" });
   const call = (item?: unknown) => registry().replyMcpMessage(reply, first.requestId, "synthetic answer", item as never);
-  expect(await call()).toEqual({ ok: false, lookup: TARGET });
+  expect(await call()).toEqual({ ok: false, denied: false, lookup: TARGET });
   const item = { messageId: first.requestId, from: { nodeId: a.nodeId, session: SOURCE }, createdAt: new Date().toISOString(),
     text: "synthetic question", depth: 0 };
-  const denied = { ok: false, error: "reply relationship or depth is not allowed" };
+  const denied = { ok: false, denied: false, error: "reply relationship or depth is not allowed" };
   expect(await call(null)).toEqual(denied);
   expect(await call({ ...item, messageId: crypto.randomUUID() })).toEqual(denied);
   expect(await call({ ...item, from: { nodeId: b.nodeId, session: SOURCE } })).toEqual(denied);
-  expect(await call(item)).toMatchObject({ ok: true, status: { messageId: reply.requestId, state: "queued" } });
+  expect(await call(item)).toMatchObject({ ok: true, denied: false, status: { messageId: reply.requestId, state: "queued" } });
   expect((await registry().listMessages(a.nodeId, 100)).find((message) => message.messageId === reply.requestId))
     .toMatchObject({ fromNode: b.nodeId, fromSession: TARGET, toNode: a.nodeId, toSession: SOURCE, inReplyTo: first.requestId });
 });

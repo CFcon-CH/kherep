@@ -1,6 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
 
+import { budgetBytes, withBudgetMutation } from "./budget-lock.mts";
+import { budgetMarker, budgetTombs, parseBudget } from "./budget-store.mts";
 import { listenerDir } from "./autonomy.mts";
 import type { NodePaths } from "./config.mts";
 import { messageIds, readJson } from "./inbox.mts";
@@ -33,7 +35,7 @@ const LISTING_FRESH_MS = 3 * 60_000;
 const STATE_NAME = /^([A-Za-z0-9_-]{1,128})\.(?:mode|turns|scope|stuck|woke|queued|busy-hint|busy-admission)\.json$/;
 const LOCK_NAME = /^([A-Za-z0-9_-]{1,128})\.json$/;
 // deliver-midturn.mts's lock, a turn or busy-hint lock, a temporary file of an atomic write.
-const IN_FLIGHT_NAME = /^\.?([A-Za-z0-9_-]{1,128})\..*\.(?:lock|tmp)$/;
+const IN_FLIGHT_NAME = /^\.?([A-Za-z0-9_-]{1,128})\..*\.(?:lock(?:\.reclaim)*|tmp)$/;
 
 export type PruneSkip = "listing-stale" | "listing-partial" | "listing-unreadable" | "known-unreadable" | "tasks-unreadable"
   | "dir-unreadable";
@@ -126,6 +128,27 @@ function takeOld(file: string, now: number, deps: SweepDeps): boolean {
   return takeIfUnchanged(file, seen, now, deps, stamp);
 }
 
+// Budget cleanup joins the writer lock and rechecks the candidate population.
+// Protected v2 state keeps its marker and canonical record together, even when
+// it has no group receipts yet; it can never be reset to an empty legacy file.
+function takeOldBudget(paths: NodePaths, id: string, file: string, now: number, deps: SweepDeps): boolean {
+  deps.beforeTake?.(file);
+  return withBudgetMutation(file, () => {
+    const keep = retained(paths, now);
+    if (typeof keep === "string" || keep.has(id) || budgetTombs(file).length || budgetBytes(budgetMarker(file)) !== null) return false;
+    const names = fs.readdirSync(listenerDir(paths));
+    if (names.some(name => name !== path.basename(`${file}.lock`)
+      && (LOCK_NAME.exec(name)?.[1] === id || IN_FLIGHT_NAME.exec(name)?.[1] === id))) return false;
+    const related = names.filter(name => STATE_NAME.exec(name)?.[1] === id);
+    if (!related.every(name => oldStamp(path.join(listenerDir(paths), name), now))) return false;
+    const bytes = budgetBytes(file);
+    if (bytes === null) return false;
+    const record = parseBudget(bytes);
+    if ("version" in record || record.turns.some(at => now - at < 86_400_000)) return false;
+    return takeOld(file, now, { ...deps, beforeTake: undefined });
+  });
+}
+
 export function pruneListenerState(paths: NodePaths, deps: SweepDeps = {}): PruneResult {
   const now = deps.now ?? Date.now();
   const candidates = pruneCandidates(paths, now);
@@ -135,7 +158,7 @@ export function pruneListenerState(paths: NodePaths, deps: SweepDeps = {}): Prun
   const files = [...candidates].flatMap(([id, list]) => list.map((file) => ({ id, file })));
   for (const { id, file } of files.slice(0, PRUNE_MAX)) {
     try {
-      if (takeOld(file, now, deps)) {
+      if (file.endsWith(".turns.json") ? takeOldBudget(paths, id, file, now, deps) : takeOld(file, now, deps)) {
         result.removed++;
         ended.add(id);
       } else result.kept++;

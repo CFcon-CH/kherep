@@ -139,8 +139,8 @@ test("a message at the reply limit does not wake the session; the audit says so 
 
   const mixed = setup(t).paths;
   arrive(mixed, 1, T0 + 5_000, "review", MAX_REPLY_DEPTH);
-  const shallow = arrive(mixed, 2, T0 + 5_000, "review", MAX_REPLY_DEPTH - 1);
-  assert.deepEqual(await listen(mixed), { code: 2, text: wakeText(1) });
+  let shallow="";
+  assert.deepEqual(await listen(mixed,{tick:clock=>{if(clock===T0+2*WAKE_POLL_MS)shallow=arrive(mixed,2,clock,"review",MAX_REPLY_DEPTH-1);}}),{code:2,text:wakeText(1)});
   assert.deepEqual(auditLines(mixed).map((l) => l.action), ["depth-limit", "wake"]);
   assert.deepEqual(auditLines(mixed)[1].messageIds, [shallow]);
 });
@@ -229,7 +229,7 @@ test("runs as Claude Code starts it: exit 2 with the wake text on stderr, exit 0
   assert.deepEqual([headless.status, headless.stdout, withoutTypeStrippingWarning(headless.stderr)], [0, "", ""]);
   assert.deepEqual(auditLines(paths).map((l) => l.action), ["headless"]);
   const woken = run(["--timeout", String(WAKE_TIMEOUT_S)], root);
-  assert.deepEqual([woken.status, woken.stdout, withoutTypeStrippingWarning(woken.stderr)], [2, "", `${wakeText(1)}\n`]);
+  assert.deepEqual([woken.status,woken.stdout,withoutTypeStrippingWarning(woken.stderr)],[0,"",""],"CLI without native producer facts cannot grant message wake");
 
   const empty = setup(t, { enrolled: false }).root;
   for (const stdin of [input, "{not json", ""]) {

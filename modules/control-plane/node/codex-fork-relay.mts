@@ -1,3 +1,4 @@
+import { checkExecution } from "./target-delivery-route.mts";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -135,7 +136,7 @@ function relayAttempt(deps: RelayDeps, owner: string, attempt: ForkAttempt, now:
   if (!getOutbox(paths, relay)) {
     // to is the inbox record's sender, never model output.
     writeOutbox(paths, { messageId: relay, fromSession: owner, fromSessionId: owner, to: { nodeId: record.from.nodeId, session: record.from.session },
-      text: proxyText(owner, a.forkId!, a.messageId, a.answer!), proxyOf: a.messageId, depth: (record.depth ?? 0) + 1, ...(record.loop ? { guarded: true as const } : {}), createdAt: iso(now) });
+      text: proxyText(owner, a.forkId!, a.messageId, a.answer!), proxyOf: a.messageId, depth: (record.depth ?? 0) + 1, ...(record.loop ? { guarded: true as const } : {}), createdAt: iso(now), senderSentAt: iso(now) });
     written.add(relay);
   }
   deps.codex?.beforeOutbox?.();
@@ -161,6 +162,12 @@ const relayable = (a: ForkAttempt): boolean => a.state === "completed" && a.answ
 export function reconcileRelay(deps: RelayDeps, owner: string, a: ForkAttempt, now: number, stale: () => void = () => {}): Pending | null {
   const { paths } = deps;
   const relay = a.relayMessageId;
+  if(a.targetAttempt) {
+    try {
+      const s=checkExecution(paths,{kind:"message",handle:a.targetAttempt},["fork"],owner);
+      if(!s||s.group.binding.members.length!==1||s.group.binding.members[0].messageId!==a.messageId||s.outcome?.kind!=="fork"||s.outcome.forkId!==a.forkId)return "blocked";
+    } catch{return "blocked";}
+  }
   if (a.state === "superseded") return relay ? heldBookkeeping(deps, owner, a, relay, now) : "none";
   if (!relayable(a) || (relay && getSent(paths, relay))) return "none";
   const record = relay ? getOutbox(paths, relay) : null;

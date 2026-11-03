@@ -43,7 +43,7 @@ export async function retireCopies(deps: RunnerDeps, record: TaskRecord, rows: R
     let why = `status ${row.status}`;
     if (row.status === "idle") {
       try {
-        await runClaude(deps, ["stop", copy.shortId]);
+        await runClaude(deps, ["stop", copy.shortId], undefined, {kind:"operator"});
         audit(deps, record, copy, "retired-copy");
         continue;
       } catch (error) {
