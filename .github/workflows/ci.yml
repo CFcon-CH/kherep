@@ -140,8 +140,9 @@ jobs:
         # the list in codex/scripts/codex-run-expected.json. No npm ci: nothing
         # under codex/ imports a package. Default node --test concurrency, as on
         # ubuntu; the step timeout turns a hang (the #535 lock-holder class) into
-        # a failure instead of the 360-minute job default.
-        timeout-minutes: 40
+        # a failure instead of the 360-minute job default. Green runs take 36-39
+        # minutes on windows-latest, so 40 minutes failed a run that did not hang.
+        timeout-minutes: 60
         run: node codex/scripts/codex-run-guard.mts run --platform win32 --tap "${{ runner.temp }}/codex-run.tap"
       - name: Bootstrap shard (TypeScript on Node, no build)
         if: matrix.suite != 'hooks' && matrix.suite != 'control-plane' && matrix.suite != 'codex'
