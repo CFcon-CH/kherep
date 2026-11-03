@@ -13,6 +13,7 @@ import { getMessage, markOffered, storeMessage } from "./inbox.mts";
 import { taskId, T0 } from "./task-fixture.mts";
 import { readTask, writeTask, type TaskRecord } from "./task-records.mts";
 
+const posix = { skip: process.platform === "win32" ? "the fake codex is a POSIX script" : false };
 const OWN = "0199a000-0000-7000-8000-000000000001";
 const FOREIGN = "0199a000-0000-7000-8000-000000000002";
 
@@ -59,7 +60,7 @@ async function ended({ node, task }: Fixture) {
   return node.runs()[0];
 }
 
-test("closed Codex resume offers its own exact-bound message", async t => {
+test("closed Codex resume offers its own exact-bound message", posix, async t => {
   const fixture = setup(t), { node, task } = fixture, own = put(node, 1, OWN, "codex");
   assert.equal(await resume(fixture, 1), null);
   const spawned = await ended(fixture);
@@ -70,7 +71,7 @@ test("closed Codex resume offers its own exact-bound message", async t => {
   assert.equal(getMessage(node.paths.inbox, own.messageId)?.state, "offered");
 });
 
-test("closed Codex resume keeps unbound task-name compatibility and permission mode", async t => {
+test("closed Codex resume keeps unbound task-name compatibility and permission mode", posix, async t => {
   const fixture = setup(t), { node, task } = fixture, legacy = put(node, 2, task.name);
   assert.equal(await resume(fixture, 1), null);
   const spawned = await ended(fixture);
@@ -82,7 +83,7 @@ test("closed Codex resume keeps unbound task-name compatibility and permission m
   assert.deepEqual(readTask(node.paths, task.taskId)?.offered, [legacy.messageId]);
 });
 
-test("mixed closed resume selects own and unbound messages while excluding foreign alias and runtime", async t => {
+test("mixed closed resume selects own and unbound messages while excluding foreign alias and runtime", posix, async t => {
   const fixture = setup(t), { node, task } = fixture;
   const own = put(node, 3, OWN, "codex"), legacy = put(node, 4, task.name);
   const foreign = put(node, 5, FOREIGN, "codex"), runtime = put(node, 6, OWN, "claude-code");
@@ -103,7 +104,7 @@ test("foreign-only bound messages cannot launch closed resume or mutate records"
   for (const record of [foreign, runtime]) assert.deepEqual(getMessage(node.paths.inbox, record.messageId), record);
 });
 
-test("final offered list excludes foreign bound offer with the same timestamp", async t => {
+test("final offered list excludes foreign bound offer with the same timestamp", posix, async t => {
   const fixture = setup(t), { node, task } = fixture, legacy = put(node, 9, task.name);
   const foreign = put(node, 10, OWN, "claude-code");
   markOffered(node.paths.inbox, foreign.messageId, T0, "intercom");
