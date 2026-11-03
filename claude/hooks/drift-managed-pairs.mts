@@ -95,14 +95,7 @@ export function fixedPairs(home: string, workspace: string): ManagedPair[] {
       live: joinPathLike(workspace, "tools/jira-transition-guard.mts"),
       source: "modules/atl-jira-brokers/jira-transition-guard.mts",
     },
-    // OP-1058. Diese drei standen seit OP-963 (2026-08-24) beziehungsweise
-    // OP-967 (2026-08-25) in drift-check.sh und fehlten hier. Der
-    // Aequivalenztest in drift-managed-path-watch.test.mts hat das die ganze
-    // Zeit gemeldet - ihn hat nur nichts ausgeloest, bis die CI aus OP-1054
-    // existierte. Die Liste bleibt bewusst wiederholt statt aus dem Shell-
-    // Skript geparst: der Hook laeuft bei jedem Tool-Call, ein Parser dort
-    // waere teurer als der Nutzen, und der Test bindet die beiden Listen
-    // aneinander, sobald ihn ein Push ausloest.
+    // Keep this runtime map independent; the equivalence test binds it to drift-check.sh.
     { live: joinPathLike(workspace, "tools/jira-config.mts"), source: "modules/atl-jira-brokers/jira-config.mts" },
     { live: joinPathLike(workspace, "tools/jira-fields.mts"), source: "modules/atl-jira-brokers/jira-fields.mts" },
     { live: joinPathLike(workspace, "tools/jira-links.mts"), source: "modules/atl-jira-brokers/jira-links.mts" },
@@ -223,6 +216,11 @@ export function fixedPairs(home: string, workspace: string): ManagedPair[] {
       live: joinPathLike(workspace, "tools/confluence-revision-staleness-git.mts"),
       source: "modules/atl-jira-brokers/confluence-revision-staleness-git.mts",
     },
+    ...["auth.mts", "broker.mts", "cli.mts", "config.mts", "contract.mts", "issues.mts",
+      "key-access.mts", "receipt.mts", "transport.mts", "windows-access.mts", "github-claude.mts", "github-codex.mts"]
+      .map((name) => ({
+        live: joinPathLike(workspace, `tools/github-broker/${name}`), source: `modules/github-broker/${name}`,
+      })),
   ]);
 }
 

@@ -7,6 +7,7 @@ import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { githubBrokerFiles, copyGithubBroker } from '../lib/github-broker-projection.mts';
 import { InstallTransaction } from '../codex/lib/install-transaction.mts';
+import { toBashPath } from './render-profile-paths.mts';
 const repo=path.resolve(import.meta.dirname,'..');
 test('shared exact projection imports both staged CLIs, idempotence and rollback',async(t)=>{
   const root=fs.mkdtempSync(path.join(os.tmpdir(),'github-broker-projection-'));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
@@ -30,10 +31,13 @@ test('missing closure dependency refuses before any copy',t=>{
 test('actual bootstrap transaction projects the closure and rolls back an interrupted broker update', async t=>{
   const root=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'github-broker-bootstrap-')));
   t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
-  const home=path.join(root,'home'), workspace=path.join(root,'workspace');
+  const home=path.join(root,'home with space'), workspace=path.join(root,'workspace');
   fs.mkdirSync(home);fs.mkdirSync(workspace);
-  const env={PATH:process.env.PATH,HOME:home,CLAUDE_HOME:path.join(home,'.claude'),KHEREP_WORKSPACE:workspace,KHEREP_CREDENTIALS_ROOT:path.join(root,'synthetic-config'),KHEREP_PROFILE:'win',KHEREP_INSTALL_PREVIEW:'1',SKIP_DEPS:'1',SKIP_SECRETS:'1',GIT_CONFIG_GLOBAL:path.join(root,'git-global'),GIT_CONFIG_SYSTEM:path.join(root,'git-system')};
-  const install=(extra:Record<string,string>={})=>spawnSync('bash',[path.join(repo,'bootstrap','install.sh')],{encoding:'utf8',env:{...env,...extra},timeout:120000});
+  const env={PATH:process.env.PATH,HOME:toBashPath(home),CLAUDE_HOME:toBashPath(path.join(home,'.claude')),
+    KHEREP_WORKSPACE:toBashPath(workspace),KHEREP_CREDENTIALS_ROOT:toBashPath(path.join(root,'synthetic-config')),
+    KHEREP_PROFILE:'win',KHEREP_INSTALL_PREVIEW:'1',SKIP_DEPS:'1',SKIP_SECRETS:'1',
+    GIT_CONFIG_GLOBAL:path.join(root,'git-global'),GIT_CONFIG_SYSTEM:path.join(root,'git-system')};
+  const install=(extra:Record<string,string>={})=>spawnSync('bash',[toBashPath(path.join(repo,'bootstrap','install.sh'))],{encoding:'utf8',env:{...env,...extra},timeout:120000});
   const first=install();assert.equal(first.status,0,first.stdout+first.stderr);
   const directory=path.join(workspace,'tools','github-broker');
   for(const file of githubBrokerFiles(repo)) assert.deepEqual(fs.readFileSync(path.join(directory,file)),fs.readFileSync(path.join(repo,'modules','github-broker',file)));

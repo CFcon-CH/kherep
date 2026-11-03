@@ -1,13 +1,6 @@
 #!/usr/bin/env node
 // Contract test for drift-managed-path-watch. Drives the hook exactly as Claude
 // Code does: JSON on stdin, JSON-or-nothing on stdout, always exit 0.
-//
-// OP-1138. Ported from the hand-rolled check() harness to node:test, like the
-// other suites of this wave. Every assertion of the JavaScript version is kept;
-// what disappeared is the private pass/fail counter and the repetition around
-// each single check. The exit code is now asserted on EVERY run instead of
-// being folded into a sentinel string: these hooks are fail-open, so an
-// internal error has to end as silence and never as a crash.
 
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -15,9 +8,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { after, test } from "node:test";
+import { githubBrokerFiles } from "../../lib/github-broker-projection.mts";
 
 const HOOK = path.join(import.meta.dirname, "drift-managed-path-watch.mts");
 const REPO = path.resolve(import.meta.dirname, "..", "..");
+const BROKER_FILES = githubBrokerFiles(REPO);
 const DRIFT_SCRIPT = path.join(REPO, "bootstrap", "drift-check.sh");
 const REAL_MANIFEST = path.join(REPO, "bootstrap", "manifest", "files.txt");
 
@@ -89,9 +84,7 @@ test("a managed live path names its versioned source", () => {
     [path.join(HOME, "hooks", "commit-guard.mts"), "claude/hooks/commit-guard.mts"],
     // A nested manifest entry keeps its full relative path.
     [path.join(HOME, "hooks", "lib", "workspace-scope.mts"), "claude/hooks/lib/workspace-scope.mts"],
-    // skills/codebase-memory is a directory entry: drift-check.sh walks it with
-    // cmp_tree, so a file below it is managed too and must name its own source
-    // file rather than the directory.
+    // A directory entry must name the nested file's source.
     [path.join(HOME, "skills", "codebase-memory", "SKILL.md"), "claude/skills/codebase-memory/SKILL.md"],
     // The live name differs from the source it is rendered from.
     [path.join(HOME, "settings.json"), "claude/settings.user.json"],
@@ -111,6 +104,14 @@ test("a managed live path names its versioned source", () => {
     [path.join(WS, "tools", "confluence-session.mts"), "modules/atl-jira-brokers/confluence-session.mts"],
   ];
   for (const [live, source] of pairs) assert.ok(names(live, source), `${live} does not name ${source}`);
+});
+
+test("GitHub broker closure members name their exact versioned sources", () => {
+  assert.ok(BROKER_FILES.length > 0);
+  for (const file of BROKER_FILES) {
+    assert.ok(contextOf(run(path.join(WS, "tools", "github-broker", file)))
+      ?.includes(`Versioned source: kherep/modules/github-broker/${file}\n`), file);
+  }
 });
 
 // OP-1425. The workspace rule files belong to the operator; only the block is Kherep's.
@@ -145,6 +146,10 @@ test("backslashes, upper case and a . segment still match", () => {
 test("an unmanaged path stays silent", () => {
   assert.equal(contextOf(run(path.join(WS, "some-app", "src", "index.js"))), null, "unmanaged repo file");
   assert.equal(contextOf(run(path.join(HOME, "not-managed", "x.js"))), null, "unmanaged file below CLAUDE_HOME");
+  for (const rel of ["github-broker/invented.mts", "github-broker/auth.test.mts", "github-broker-extra/auth.mts"]) {
+    assert.equal(contextOf(run(path.join(WS, "tools", rel))), null, rel);
+  }
+  assert.equal(contextOf(run(path.join(TMP, "foreign", "tools", "github-broker", "auth.mts"))), null);
   // The repo source itself is not a live target.
   assert.equal(contextOf(run(path.join(WS, "kherep", "claude", "CLAUDE.project.md"))), null, "repo source");
   const outside = { cwd: "C:/Users/Example/Documents" };
@@ -190,23 +195,25 @@ function invocationsOf(script: string): Invocation[] {
   return found;
 }
 
-// EQUIVALENCE with bootstrap/drift-check.sh. The two path maps live in
-// different languages and would drift apart silently, so this parses the
-// literal cmp_file/cmp_tree invocations out of the shell script and asserts the
-// hook recognises every live target they name.
+// Independently check the hook map against drift-check.sh targets.
 test("every literal cmp_ target of drift-check.sh is recognised", () => {
   const resolvable: Invocation[] = [];
+  let literalCount = 0;
   const generic = new Set<string>();
   for (const inv of invocationsOf(fs.readFileSync(DRIFT_SCRIPT, "utf8"))) {
+    if (inv.live === "$WS/tools/github-broker/$tool") {
+      assert.ok(BROKER_FILES.length > 0, "broker closure is empty");
+      for (const entry of ["github-claude.mts", "github-codex.mts"]) assert.ok(BROKER_FILES.includes(entry), entry);
+      for (const file of BROKER_FILES) resolvable.push({ ...inv, live: path.join(WS, "tools", "github-broker", file) });
+      continue;
+    }
     const live = inv.live.replace("$CLAUDE_HOME", HOME).replace("$WS", WS);
     if (live.includes("$")) generic.add(inv.live);
-    else resolvable.push({ ...inv, live });
+    else { resolvable.push({ ...inv, live }); literalCount++; }
   }
 
-  // Anti-vacuity: if the parser stops finding calls the assertions below would
-  // all pass trivially, so the floor is asserted explicitly. 8 literal live
-  // targets as of 2026-08-06 (settings.json, CLAUDE.md, 4x kherep/*, 2x project).
-  assert.ok(resolvable.length >= 8, `the parser found only ${resolvable.length} literal cmp_ invocations`);
+  // Anti-vacuity: a broken parser must not pass through an empty loop.
+  assert.ok(literalCount >= 8, `the parser found only ${literalCount} literal cmp_ invocations`);
   // The generic calls are the manifest-driven loop and cmp_tree's own recursion.
   // Any NEW variable-driven pair shows up here and fails loudly instead of being
   // skipped, which is what keeps this test honest.
@@ -237,4 +244,6 @@ test("a workspace without a checkout keeps the non-manifest pairs and drops the 
   fs.mkdirSync(bare, { recursive: true });
   assert.ok(fires(path.join(HOME, "CLAUDE.md"), { cwd: bare, workspace: bare }), "the fixed pairs need no checkout");
   assert.equal(contextOf(run(path.join(HOME, "hooks", "commit-guard.mts"), { cwd: bare, workspace: bare })), null);
+  for (const file of BROKER_FILES) assert.ok(contextOf(run(path.join(bare, "tools", "github-broker", file),
+    { cwd: bare, workspace: bare }))?.includes(`Versioned source: kherep/modules/github-broker/${file}\n`), file);
 });
