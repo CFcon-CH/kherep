@@ -136,9 +136,10 @@ export function observationLinking(ctx: LinkingContext) {
                 }) };
         },
         async related(key: string, finding: Finding, linked: Linked): Promise<string> {
-            // Encode literal > and " in accepted attribute-free prose; preserve
-            // tags, entities and backslashes. Related anchors are appended below.
-            const prose = finding.bodyStorage.replace(/(<[^>]*>)|[>"]/g, (match, tag: string | undefined) => tag ?? (match === '>' ? '&gt;' : '&quot;'));
+            // Match modeled stored text before submission; preserve tags,
+            // existing entities and backslashes. Related anchors are appended below.
+            const escaped: Record<string, string> = { '>': '&gt;', '"': '&quot;', '\u2018': '&lsquo;', '\u2019': '&rsquo;' };
+            const prose = finding.bodyStorage.replace(/(<[^>]*>)|[>"\u2018\u2019]/g, (match, tag: string | undefined) => tag ?? escaped[match]);
             return withRelated(prose, linked.approved.length ? relatedSection(key, linked.approved)
                 : `<h2>Related pages</h2><p>No related page on this topic (${linked.reviewed} candidates reviewed).</p>`);
         },

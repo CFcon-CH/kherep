@@ -166,7 +166,9 @@ function xml(value: string): string {
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
+    .replace(/"/g, "&quot;")
+    .replace(/\u2018/g, "&lsquo;")
+    .replace(/\u2019/g, "&rsquo;");
 }
 
 export function relatedSection(spaceKey: string, rows: { id: string; title: string }[]): string {

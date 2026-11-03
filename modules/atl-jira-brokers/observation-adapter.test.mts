@@ -441,3 +441,83 @@ for (const corruption of ['text', 'backslash', 'tag', 'link']) test(`exact readb
     assert.equal(f.calls.filter(call => call.method === 'POST' && call.route === '/wiki/api/v2/pages').length, 1);
     assert.equal(f.calls.filter(call => call.method === 'PUT').length, 0);
 });
+
+// Independent transport model: only stored text spans change, never metadata or tags.
+const curlyStorage = (body: string): string => body.split(/(<[^>]*>)/).map((part, index) => index % 2 ? part
+    : part.replaceAll('\u2019', '&rsquo;').replaceAll('\u2018', '&lsquo;')).join('');
+const creates = (f: Fixture) => f.calls.filter(call => call.method === 'POST' && call.route === '/wiki/api/v2/pages');
+async function terminalReplay(f: Fixture, r: ReturnType<typeof request>, result: string) {
+    const count = f.calls.length;
+    assert.equal(await publishObservations(r, f.broker, f.store), result);
+    assert.equal(f.calls.length, count, 'terminal replay performs zero transport I/O');
+}
+test('Unicode roundtrip prose POST preserves exact submitted and stored bytes', async t => {
+    const f = fixture(t, { serialize: curlyStorage }), r = await linked(f);
+    r.observations[0].bodyStorage = '<p>Origin: measured Node’s ‘input’</p>';
+    const result = await publishObservations(r, f.broker, f.store);
+    await terminalReplay(f, r, result);
+    assert.equal(creates(f).length, 1); assert.equal(f.calls.filter(c => c.method === 'PUT').length, 0);
+    assert.equal(result, 'OBS-RESULT: wrote 1 100');
+    assert.ok(creates(f)[0].body.body.value.startsWith('<p>Origin: measured Node&rsquo;s &lsquo;input&rsquo;</p>'));
+    assert.equal((await f.broker.read('100')).body, creates(f)[0].body.body.value);
+});
+test('Unicode roundtrip forward anchor POST preserves plain title escaping', async t => {
+    const f = fixture(t, { serialize: curlyStorage, peerTitle: "Synthetic journal transport Node’s ‘baseline’ &rsquo; & 'ASCII'" });
+    f.mode('stitch-ok'); const r = await linked(f, request(), ['30']);
+    const result = await publishObservations(r, f.broker, f.store); await terminalReplay(f, r, result);
+    assert.equal(creates(f).length, 1); assert.equal(result, 'OBS-RESULT: wrote 1 100');
+    assert.ok(creates(f)[0].body.body.value.includes("Node&rsquo;s &lsquo;baseline&rsquo; &amp;rsquo; &amp; 'ASCII'"));
+    assert.equal((await f.broker.read('100')).body, creates(f)[0].body.body.value);
+    assert.equal(f.calls.filter(c => c.method === 'PUT').length, 1);
+});
+test('Unicode roundtrip backlink PUT preserves literal title metadata and exact guarded update', async t => {
+    const prefix = '<p>Synthetic peer unchanged</p>';
+    const f = fixture(t, { peerBody: prefix, serialize: (body, method) => method === 'PUT' ? curlyStorage(body) : body });
+    f.mode('stitch-ok'); const r = request(); r.observations[0].title = 'Synthetic journal transport Node’s ‘input’';
+    await linked(f, r, ['30']); const result = await publishObservations(r, f.broker, f.store); await terminalReplay(f, r, result);
+    assert.equal(creates(f).length, 1); const writes = f.calls.filter(c => c.method === 'PUT'); assert.equal(writes.length, 1);
+    assert.equal(result, 'OBS-RESULT: wrote 1 100');
+    assert.equal(creates(f)[0].body.title, r.observations[0].title);
+    assert.equal((await f.broker.read('100')).title, r.observations[0].title);
+    const peer = await (await f.context.fetch('https://api.atlassian.com/ex/confluence/synthetic-cloud/wiki/api/v2/pages/30?body-format=storage')).json() as any;
+    assert.equal(peer.body.storage.value, writes[0].body.body.value); assert.ok(peer.body.storage.value.startsWith(prefix));
+    assert.ok(peer.body.storage.value.includes('Node&rsquo;s &lsquo;input&rsquo;')); assert.equal(writes[0].body.version.number, 2);
+    assert.match(peer.body.storage.value, /<li><p><a href="\/wiki\/spaces\/SYNTHETIC\/pages\/100">/);
+});
+for (const [name, body, expected] of [
+    ['right', '<p>Origin: measured Node’s input</p>', '<p>Origin: measured Node&rsquo;s input</p>'],
+    ['left', '<p>Origin: measured ‘input</p>', '<p>Origin: measured &lsquo;input</p>'],
+    ['pair', '<p>Origin: measured ‘input’</p>', '<p>Origin: measured &lsquo;input&rsquo;</p>'],
+    ['code', '<pre><code>Origin: measured ‘input’</code></pre>', '<pre><code>Origin: measured &lsquo;input&rsquo;</code></pre>'],
+    ['mixed', String.raw`<pre><code>Origin: measured Node’s ‘input’ 'ASCII' "quote" > C:\synthetic &amp; &rsquo; &lsquo; &amp;rsquo;</code></pre>`,
+        String.raw`<pre><code>Origin: measured Node&rsquo;s &lsquo;input&rsquo; 'ASCII' &quot;quote&quot; &gt; C:\synthetic &amp; &rsquo; &lsquo; &amp;rsquo;</code></pre>`],
+]) test(`Unicode text-span matrix ${name} preserves entities and backslashes`, async t => {
+    const f = fixture(t, { serialize: curlyStorage }), r = await linked(f); r.observations[0].bodyStorage = body;
+    assert.equal(await publishObservations(r, f.broker, f.store), 'OBS-RESULT: wrote 1 100');
+    assert.ok(creates(f)[0].body.body.value.startsWith(expected));
+    assert.equal((await f.broker.read('100')).body, creates(f)[0].body.body.value);
+});
+for (const corruption of ['numeric-entity', 'target-id', 'extra-runtime-label'])
+    test(`Unicode exact readback rejects independent ${corruption} and retains terminal ID`, async t => {
+        const f = fixture(t, { serialize: body => curlyStorage(body).replaceAll('&rsquo;', corruption === 'numeric-entity' ? '&#8217;' : '&rsquo;') });
+        f.mode('stitch-ok'); const transport = f.context.fetch;
+        f.context.fetch = async (url, opts) => {
+            const response = await transport(url, opts), data = structuredClone(await response.json()) as any;
+            if (corruption === 'target-id' && url.endsWith('/pages/100?body-format=storage')) data.id = '101';
+            if (corruption === 'extra-runtime-label' && url.includes('/pages/100/labels?')) data.results.push({ name: 'runtime-codex-win' });
+            return { ...response, json: async () => data, text: async () => JSON.stringify(data) };
+        };
+        const r = await linked(f, request(), ['30']); r.observations[0].bodyStorage = '<p>Origin: measured Node’s input</p>';
+        const expected = 'OBS-RESULT: failed readback-unverified created=100';
+        assert.equal(await publishObservations(r, f.broker, f.store), expected); await terminalReplay(f, r, expected);
+        assert.equal(creates(f).length, 1); assert.equal(f.calls.filter(c => c.method === 'PUT').length, 0);
+    });
+import { contentDigest } from './observation-receipt.mts';
+import { observationRequest } from './observation-policy.mts';
+test('Unicode correction never reopens a preexisting terminal readback-failure receipt', async t => {
+    const f = fixture(t, { serialize: curlyStorage }), r = request(); r.observations[0].bodyStorage = '<p>Origin: measured Node’s ‘input’</p>';
+    const held = f.store.claim(receiptKey(r.sessionId, r.turnId), contentDigest(observationRequest(r)));
+    held.receipt.ids = ['100']; held.receipt.result = 'OBS-RESULT: failed readback-unverified created=100'; held.save(); held.release();
+    assert.equal(await publishObservations(r, f.broker, f.store), 'OBS-RESULT: failed readback-unverified created=100');
+    assert.deepEqual(f.calls, []);
+});
