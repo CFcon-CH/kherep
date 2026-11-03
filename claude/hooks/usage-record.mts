@@ -76,7 +76,7 @@ export function deliverToast(text: { title: string; body: string }, env: Env = p
   }
   if (platform !== "win32" && platform !== "darwin") return "skipped:platform";
   const { command, args } = notifierArgs(platform, text.title, text.body, env);
-  const child = spawn(command, args, { detached: true, stdio: "ignore", windowsHide: platform === "win32" });
+  const child = spawn(command, args, { detached: true, stdio: "ignore", windowsHide: true });
   child.on("error", () => { /* a toast that cannot start is not worth an error */ });
   child.unref();
   return "sent";

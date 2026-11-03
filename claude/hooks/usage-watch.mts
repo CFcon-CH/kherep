@@ -26,8 +26,9 @@ export function promptNotice(stateJson: string | null, nowMs: number, timeZone?:
 // The hook's stdout: "" or one JSON object. Both texts share one gate, so neither appears alone.
 export function promptOutput(stateJson: string | null, nowMs: number, timeZone?: string): string {
   const state = parseState(stateJson);
-  const context = state ? noticeText(state, nowMs, timeZone) : "";
-  if (!state || !context) return "";
+  if (!state) return "";
+  const context = noticeText(state, nowMs, timeZone);
+  if (!context) return "";
   return JSON.stringify({
     systemMessage: userNotice(state, nowMs, timeZone),
     hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: context },
