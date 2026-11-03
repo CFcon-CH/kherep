@@ -55,12 +55,12 @@ function validSource(value: SourceIdentity | undefined, requirePin = false): val
     && (value.kind === "pin" || (!requirePin && value.kind === "checkout")));
 }
 
-function validBinding(value: ServiceBinding | undefined): value is ServiceBinding {
+function validBinding(value: ServiceBinding | undefined, legacyRollback = false): value is ServiceBinding {
   return Boolean(value && ["darwin", "win32"].includes(value.platform) && typeof value.serviceName === "string"
     && value.serviceName.length > 0 && absolute(value.workspace) && absolute(value.configRoot)
-    && absolute(value.nodeExecutable) && validSource(value.source, true)
+    && absolute(value.nodeExecutable) && validSource(value.source, !legacyRollback)
     && (value.logFile === undefined || (value.platform === "win32" && absolute(value.logFile)))
-    && (value.platform !== "win32"
+    && (value.platform !== "win32" || (legacyRollback && value.supervisorGeneration === undefined)
       || matches(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i, value.supervisorGeneration))
     && (value.taskPath === undefined || (value.platform === "win32" && typeof value.taskPath === "string")));
 }
@@ -88,16 +88,22 @@ export function removeServiceReceipt(paths: NodePaths): void { fs.rmSync(receipt
 
 export const CANDIDATE_COMMANDS = ["install", "upgrade", "rollback"] as const;
 export interface ServiceCandidate {
-  version: 1;
+  version: 1 | 2;
+  phase?: "prepared" | "attested";
+  preparedAt?: string;
   binding: ServiceBinding;
   definitionDigest: string;
   securityDigest: string;
   backupId?: string;
   command: typeof CANDIDATE_COMMANDS[number];
-  stage: string;
-  blocker: string;
-  stopCode: StopCode;
-  failedAt: string;
+  stage?: string;
+  blocker?: string;
+  stopCode?: StopCode;
+  failedAt?: string;
+  // Rollback's safety snapshot is distinct from the receipt-bound prior backup.
+  recoveryBackupId?: string;
+  recoveryBinding?: ServiceBinding;
+  receiptAnchor?: ServiceReceipt;
 }
 const candidateFile = (paths: NodePaths): string => path.join(serviceRoot(paths), "candidate.json");
 const BACKUP_ID = /^[0-9]{8,14}-[0-9a-f-]{36}$/;
@@ -111,13 +117,30 @@ function selectable(binding: ServiceBinding): boolean {
   } catch { return false; }
 }
 function validCandidate(value: ServiceCandidate | undefined): value is ServiceCandidate {
-  return Boolean(value && value.version === 1 && validBinding(value.binding) && selectable(value.binding)
+  // A rollback can restore an attested legacy definition that predates managed supervisors.
+  // This describes its backup target only; native validateManaged/process checks are never bypassed.
+  const legacyRollback = value?.version === 2 && value.command === "rollback"
+    && validReceipt(value.receiptAnchor) && validBinding(value.recoveryBinding)
+    && ["platform", "serviceName", "taskPath", "workspace", "configRoot", "nodeExecutable", "logFile"]
+      .every(key => value.binding?.[key as keyof ServiceBinding] === value.receiptAnchor!.binding[key as keyof ServiceBinding]);
+  const failed = value?.stage !== undefined || value?.blocker !== undefined || value?.stopCode !== undefined || value?.failedAt !== undefined;
+  const failure = value && matches(/^[a-z-]{1,16}$/, value.stage) && matches(/^RECOVERY_[A-Z_]{1,40}$/, value.blocker)
+    && (STOP_CODES as readonly unknown[]).includes(value.stopCode)
+    && matches(ISO_INSTANT, value.failedAt) && Number.isFinite(Date.parse(value.failedAt!));
+  const v2 = value?.version === 2 && ["prepared", "attested"].includes(value.phase!)
+    && Object.keys(value).every(key => ["version", "phase", "preparedAt", "binding", "definitionDigest", "securityDigest", "backupId",
+      "command", "stage", "blocker", "stopCode", "failedAt", "receiptAnchor", "recoveryBackupId", "recoveryBinding"].includes(key))
+    && matches(ISO_INSTANT, value.preparedAt) && Number.isFinite(Date.parse(value.preparedAt!))
+    && (!failed || failure)
+    && (value.receiptAnchor === undefined || validReceipt(value.receiptAnchor))
+    && (value.recoveryBackupId === undefined ? value.recoveryBinding === undefined
+      : value.command === "rollback" && matches(BACKUP_ID, value.recoveryBackupId)
+        && validBinding(value.recoveryBinding) && validReceipt(value.receiptAnchor));
+  return Boolean(value && (value.version === 1 ? failure && value.phase === undefined : v2)
+    && validBinding(value.binding, legacyRollback) && selectable(value.binding)
     && matches(/^[0-9a-f]{64}$/, value.definitionDigest) && matches(/^[0-9a-f]{64}$/, value.securityDigest)
     && (value.backupId === undefined ? value.command === "install" : matches(BACKUP_ID, value.backupId))
-    && (CANDIDATE_COMMANDS as readonly string[]).includes(value.command)
-    && matches(/^[a-z-]{1,16}$/, value.stage) && matches(/^RECOVERY_[A-Z_]{1,40}$/, value.blocker)
-    && (STOP_CODES as readonly string[]).includes(value.stopCode)
-    && matches(ISO_INSTANT, value.failedAt) && Number.isFinite(Date.parse(value.failedAt)));
+    && (CANDIDATE_COMMANDS as readonly string[]).includes(value.command));
 }
 // #582: ENOENT -> null; every other failure, a parse error included, is the fixed message (A2 P2-A). The record is
 // self-written, so its content is never quoted back.
@@ -135,6 +158,9 @@ export function readServiceCandidate(paths: NodePaths): ServiceCandidate | null 
 export function writeServiceCandidate(paths: NodePaths, candidate: ServiceCandidate): void {
   if (!validCandidate(candidate)) throw new Error("managed service candidate record is invalid");
   writeJson(candidateFile(paths), candidate);
+  if (JSON.stringify(readServiceCandidate(paths)) !== JSON.stringify(candidate)) {
+    throw new Error("managed service candidate persistence could not be verified");
+  }
 }
 export function removeServiceCandidate(paths: NodePaths): void { fs.rmSync(candidateFile(paths), { force: true }); }
 

@@ -45,10 +45,11 @@ const OUTLIVED = {
 } as const;
 // #582 (A2 P2-C): a failed install left its candidate loaded under the label and no receipt; only a repeated install completes it.
 const INSTALL_REPEAT = "a recorded install candidate is loaded without a receipt; repeat kherep-node service install with the same --workspace and --service-name, without --adopt, see docs/INSTALLATION.md";
+const LEGACY_RECOVERY = "unrecorded task drift requires a receipt-bound backup and an exact verified candidate checkout; the fixed CLI supports kherep-node service rollback --recover --backup <backup-id> --source <candidate-clean-checkout>; stop on any source, ownership, task or security conflict, see docs/INSTALLATION.md";
 const priorState = (paths: Paths, record: ServiceCandidate, receipt: ServiceReceipt | null): "recorded" | "unbound" | "none" =>
   !record.backupId ? "none" : recordedPriorBackup(paths, record, receipt) ? "recorded" : "unbound";
 const candidateReport = (paths: Paths, record: ServiceCandidate, receipt: ServiceReceipt | null) => ({
-  commit: record.binding.source.commit, command: record.command, stage: SERVICE_STAGE_SET.has(record.stage) ? record.stage : "unknown",
+  commit: record.binding.source.commit, command: record.command, stage: SERVICE_STAGE_SET.has(record.stage ?? "") ? record.stage : "unknown",
   blocker: record.blocker, stopCode: record.stopCode, failedAt: record.failedAt, prior: priorState(paths, record, receipt) });
 const readRecord = (paths: Paths, dependencies: StatusDependencies): ServiceCandidate | null | "invalid" => {
   try { return (dependencies.readCandidate ?? readServiceCandidate)(paths); } catch { return "invalid"; }
@@ -103,11 +104,14 @@ export async function reportServiceStatus(paths: Paths, receipt: ServiceReceipt,
   const staleDrain = drain === "stale" || drain === "unknown";
   const upgrade = "kherep-node service upgrade --source <clean checkout>";
   const installed = `(installed source ${receipt.binding.source.commit})`;
+  const driftRecovery = receipt.binding.platform === "win32" && pending === null ? LEGACY_RECOVERY
+    : "service definition drift is unbound; inspect the source and backup evidence, see docs/INSTALLATION.md";
   const recovery = !attested
     ? (receipt.binding.platform === "darwin" ? UNATTESTED.darwin[configured!] : UNATTESTED.win32)
     : drain === "unknown" ? "the service drain owner cannot be verified; inspect the service/drain owner file"
       : record ? (native?.running === "unknown" ? CANDIDATE_UNKNOWN[receipt.binding.platform] : CANDIDATE)
         : native?.running === false && state && alive(state.pid) && drain !== "active" ? OUTLIVED[receipt.binding.platform]
+        : !definitionMatch ? driftRecovery
         : drain === "stale" ? `${upgrade} reclaims the stale drain ${installed}`
           : native?.running === false && (!state || !alive(state.pid)) ? `${upgrade} ${installed}` : undefined;
   // A2 P3-3: while unattested no record can be matched, so a present record is "unattested", never "stale".

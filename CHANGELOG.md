@@ -9,6 +9,14 @@ increments the minor version; every other release increments the patch version.
 
 ## [Unreleased]
 
+### Fixed
+
+- Managed service activation (#746) binds health/settle to PID and start identity,
+  retains prepared/attested evidence before native replacement/start, and preserves
+  prior pending records during recovery. Windows consumes generation-bound stop
+  evidence and offers explicit, strictly validated rollback recovery for older
+  orphaned activations. Live host acceptance remains separate.
+
 ### Added
 
 - Topic-judged linking (issue #736): `related` and `stitch` search with the title plus

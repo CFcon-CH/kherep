@@ -252,6 +252,45 @@ An existing Codex installation can use the [observation-only updater](CODEX.md#o
 
 ## Upgrades and rollback
 
+### Failed managed service activation (#746)
+
+Upgrade and rollback distinguish a daemon instance by PID and `startedAt`. A reused
+PID is accepted only after the preceding stop proof and the unchanged source,
+service and process-ownership checks. Windows retains the native supervisor and
+daemon handles through stop and consumes one binding-specific exit/family proof.
+An unknown proof or surviving supervisor blocks replacement.
+
+After drain and stop validation, the transaction atomically writes and reads back
+a `prepared` candidate before changing the native definition. It records actual
+definition/security digests as `attested` before start. Attestation does not mean
+healthy. Failure retains evidence, or restores the verified prior definition,
+receipt and original pending record byte for byte. V1 candidate records remain
+readable. Never invent or hand-edit a candidate record.
+
+For an older Windows failure with a switched task, unchanged receipt and **no**
+candidate, ordinary upgrade and rollback still refuse drift. The fixed CLI adds:
+
+```text
+node <fix-clean-checkout>/modules/control-plane/node/cli.mts service rollback --recover --backup <backup-id> --source <candidate-clean-checkout>
+```
+
+Use the same explicitly configured node context as the failed service. The stable
+launcher may still name an older CLI that does not understand these flags. Do not
+rewrite it first. Select the exact receipt-bound backup ID from the failed
+transaction's evidence, never the newest directory. `--source` identifies the clean
+checkout of the **failed candidate**, not a new upgrade source. Under the existing
+service lock, recovery verifies both canonical source pins and the checkout,
+receipt/backup binding, task action/generation, principal/environment, exact
+retargeted definition and security, process ownership and reclaimable drain.
+Links, unknown state, conflicting bytes, active/unknown drain ownership or an
+invalid candidate refuse before a stop or native write. Native XML normalization
+preventing the exact comparison is a conflict, not permission to ignore drift.
+
+After verified recovery, normal upgrade can target the fixed checkout. Repository
+tests establish a source failure class, not the historical host's health cause.
+Authorized Windows live acceptance must separately measure `ok:true`, matching
+receipt/daemon commits, definition/source `match`, and drift checks.
+
 The enrolled Control Plane node can run as a supported per-user login service
 on macOS or Windows. Install it from a clean committed checkout and name the
 workspace in which daemon-started work should run:

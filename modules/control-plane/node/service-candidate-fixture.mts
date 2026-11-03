@@ -48,8 +48,7 @@ export const tamper = (h: Harness, edit: (record: Record<string, unknown>) => vo
 // The failed controller has exited on a real node: the kept drain's owner is a dead pid, so the next verb reclaims it.
 export function staleDrain(h: Harness): void {
   if (!fs.existsSync(drainFile(h))) return;
-  const owner = JSON.parse(fs.readFileSync(drainFile(h), "utf8")) as Record<string, unknown>;
-  fs.writeFileSync(drainFile(h), `${JSON.stringify({ ...owner, pid: 999_999 })}\n`);
+  h.advanceController();
 }
 
 // A second verb in one test: pid 42 is the loaded candidate until its first stop, pid 43 the next candidate start.
@@ -107,7 +106,8 @@ export async function status(h: Harness, extra: Partial<NonNullable<Parameters<t
   let exit: number;
   try {
     exit = await runService(["status"], { root: path.dirname(h.paths.dir), readReceipt: () => readServiceReceipt(h.paths),
-      adapterFor: () => h.adapter as unknown as ServiceAdapter, readState: () => h.adapter.state, alive: h.deps.pidAlive, ...extra });
+      adapterFor: () => h.adapter as unknown as ServiceAdapter, readState: () => h.adapter.state, alive: h.deps.pidAlive,
+      ownerProbe: h.deps.ownerProbe, ...extra });
   } finally { console.log = log; }
   assert.equal(lines.length, 1, "status prints one report");
   return { exit, text: lines[0], report: JSON.parse(lines[0]) as Record<string, any> };

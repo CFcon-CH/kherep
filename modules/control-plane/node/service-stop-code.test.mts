@@ -112,7 +112,7 @@ for (const platform of ["darwin", "win32"] as const) {
     }
     h.adapter.snapshot!.running = false;
     delete h.adapter.snapshot!.pid;
-    beginServiceDrain(h.paths);
+    beginServiceDrain(h.paths, h.deps.ownerProbe);
     staleDrain(h);
     const unlisted = await status(h);
     assert.equal(unlisted.report.running, false);
