@@ -35,7 +35,7 @@ globalThis.fetch=async(url,init)=>{
 `);
   for(const operation of ['issue.create','issue.comment','issue.update']) {
     const input={operationId:randomUUID(),repository:'example/project',operation,...(operation==='issue.create'?{title:'Synthetic',body:'Body'}:operation==='issue.comment'?{issueNumber:7,body:'Body'}:{issueNumber:7,title:'Changed'})};
-    const result=spawnSync(process.execPath,['--import',preload,path.join(import.meta.dirname,`github-${runtime}.mts`)],{input:JSON.stringify(input),encoding:'utf8',env:{PATH:process.env.PATH},timeout:30000});
+    const result=spawnSync(process.execPath,['--disable-warning=ExperimentalWarning','--import',preload,path.join(import.meta.dirname,`github-${runtime}.mts`)],{input:JSON.stringify(input),encoding:'utf8',env:{PATH:process.env.PATH},timeout:30000});
     assert.equal(result.status,0,result.stdout+result.stderr);const receipt=JSON.parse(result.stdout);assert.equal(receipt.ok,true);assert.equal(receipt.runtime,runtime);assert.equal(receipt.bot,`fixture${runtime==='claude'?0:1}[bot]`);assert.equal(result.stderr,'');
   }
   const calls=fs.readFileSync(path.join(home,'calls.jsonl'),'utf8').trim().split('\n').map(s=>JSON.parse(s));
