@@ -74,6 +74,11 @@ export function fixedPairs(home: string, workspace: string): ManagedPair[] {
     // The Codex-side rule file. Unmanaged until OP-686, which is exactly how it
     // drifted seven rules behind CLAUDE.md without anything noticing.
     { live: joinPathLike(workspace, "AGENTS.md"), source: "claude/AGENTS.project.md", block: true },
+    // Issue #758: written by codex/install.mts, compared by drift-check.sh.
+    ...["broker", "candidate", "linking", "lookup", "policy", "publisher", "receipt", "result", "stdio"].map((name) => ({
+      live: joinPathLike(workspace, `tools/observation-${name}.mts`),
+      source: `modules/atl-jira-brokers/observation-${name}.mts`,
+    })),
     { live: joinPathLike(workspace, "tools/atl-jira.mts"), source: "modules/atl-jira-brokers/atl-jira.mts" },
     {
       live: joinPathLike(workspace, "tools/atlassian-credentials.mts"),
