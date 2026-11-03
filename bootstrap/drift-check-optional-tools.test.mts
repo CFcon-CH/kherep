@@ -9,6 +9,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
+import { observationFiles } from "../codex/lib/observation-projection.mts";
 
 const HERE = import.meta.dirname;
 const BROKERS = path.join(HERE, "..", "modules", "atl-jira-brokers");
@@ -57,7 +58,7 @@ test("a stale Jira broker from a flagged install is drift even without the flag"
   assert.equal(drift.status, 1, drift.out);
   assert.match(drift.out, /^DRIFT +project\/tools\/atl-jira\.mts$/m);
   assert.match(drift.out, /^ok +project\/tools\/atl-jira-ccoder\.mts$/m);
-  assert.doesNotMatch(drift.out, /^NOT-INSTALLED /m);
+  assert.doesNotMatch(drift.out, /^NOT-INSTALLED +project\/tools\/<Jira set>/m);
   assert.match(drift.out, /^DRIFT-CHECK FOUND DRIFT \(see above\)$/m);
 });
 
@@ -88,8 +89,8 @@ test("without the Jira set or the flag the check passes and names the set once",
   assert.match(drift.out, /^DRIFT-CHECK PASS \(repo == live\)$/m);
   const allLines = drift.out.split(/\r?\n/);
   const notInstalled = allLines.filter((line) => line.startsWith("NOT-INSTALLED "));
-  assert.equal(notInstalled.length, 1, drift.out);
-  assert.match(notInstalled[0], /^NOT-INSTALLED +project\/tools\/.*\(optional; /);
+  assert.deepEqual(notInstalled.map((line) => /<(\w+) set>/.exec(line)?.[1]), ["Jira", "observation"], drift.out);
+  for (const line of notInstalled) assert.match(line, /^NOT-INSTALLED +project\/tools\/.*\(optional; /);
   // atl-jira.mjs is also a retired path, so its RETIRED-LIVE line (#33) is the
   // one expected mention; no other line may name a decoy.
   assert.match(drift.out, /^RETIRED-LIVE  project\/tools\/atl-jira\.mjs /m, "atl-jira.mjs is not reported as retired");
@@ -110,4 +111,46 @@ test("the presence list names exactly the compared Jira set", () => {
     .map(([, name]) => name).sort();
   assert.equal(compared.length, 12, compared.join(", "));
   assert.deepEqual(listed, compared);
+});
+
+// Issue #758. codex/install.mts writes the observation tools; bootstrap/install.sh
+// does not, so a Claude-only reinstall left a stale copy behind a passing check.
+const observationTools = (script: string): string[] =>
+  /^OBSERVATION_TOOLS="([^"]+)"$/m.exec(script)?.[1].split(/\s+/).sort() ?? [];
+
+test("a stale observation tool is drift and names the installer that writes it", (t) => {
+  const f = fixture(t);
+  install(f);
+  const tools = observationTools(fs.readFileSync(path.join(HERE, "drift-check.sh"), "utf8"));
+  for (const name of tools) fs.copyFileSync(path.join(BROKERS, name), path.join(f.tools, name));
+  assert.equal(run("drift-check.sh", f).status, 0, "a current set is not drift");
+  fs.appendFileSync(path.join(f.tools, "observation-linking.mts"), "// stale\n");
+  const drift = run("drift-check.sh", f);
+  assert.equal(drift.status, 1, drift.out);
+  assert.match(drift.out, /^DRIFT +project\/tools\/observation-linking\.mts$/m);
+  assert.match(drift.out, /^ok +project\/tools\/observation-stdio\.mts$/m);
+  assert.match(drift.out, /^HINT +project\/tools\/observation-\*\.mts: codex\/install\.mts writes these/m);
+  assert.match(drift.out, /^DRIFT-CHECK FOUND DRIFT \(see above\)$/m);
+});
+
+test("a partial observation set reports its absent members as missing", (t) => {
+  const f = fixture(t);
+  install(f);
+  fs.copyFileSync(path.join(BROKERS, "observation-linking.mts"), path.join(f.tools, "observation-linking.mts"));
+  const drift = run("drift-check.sh", f);
+  assert.equal(drift.status, 1, drift.out);
+  assert.match(drift.out, /^ok +project\/tools\/observation-linking\.mts$/m);
+  assert.match(drift.out, /^MISSING-LIVE +project\/tools\/observation-stdio\.mts /m);
+});
+
+// The Codex installer computes its file list from the import graph, so a new module
+// must not stay outside the check: every member is either in the list or compared above.
+test("every tool the Codex installer writes is compared", () => {
+  const script = fs.readFileSync(path.join(HERE, "drift-check.sh"), "utf8");
+  const listed = observationTools(script);
+  const written = observationFiles(path.join(HERE, ".."));
+  assert.deepEqual(listed, written.filter((name) => name.startsWith("observation-")).sort());
+  for (const name of written.filter((item) => !item.startsWith("observation-"))) {
+    assert.ok(script.includes(`modules/atl-jira-brokers/${name}`), `${name} is not compared`);
+  }
 });
