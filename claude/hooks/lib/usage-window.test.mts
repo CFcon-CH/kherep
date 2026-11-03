@@ -1,12 +1,12 @@
 #!/usr/bin/env node
-// Issue #748. Unit tests of the weekly usage rules: threshold, pace guard, parsing of
-// missing or odd fields, window identity across rollover, and the toast and notice texts.
+// Issues #748 and #757. Unit tests of the weekly usage rules: threshold, pace guard, parsing
+// of missing or odd fields, window identity across rollover, and the toast, notice and band texts.
 import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  CONDITIONS, PACE_MARGIN_POINTS, PACE_MIN_ELAPSED_PERCENT, THRESHOLD_PERCENT, WEEK_SECONDS,
-  evaluate, formatLocal, noticeText, parseState, parseWindow, toastText, windowKey, type UsageState,
+  CONDITIONS, PACE_MARGIN_POINTS, PACE_MIN_ELAPSED_PERCENT, STALE_AFTER_MS, THRESHOLD_PERCENT, WEEK_SECONDS,
+  bandView, evaluate, formatLocal, noticeText, parseState, parseWindow, toastText, userNotice, windowKey, type UsageState,
 } from "./usage-window.mts";
 
 const RESETS = 1738857600; // Thu 06 Feb 2025 16:00 UTC, the documented example
@@ -113,4 +113,51 @@ test("parseState accepts only the recorder's v1 shape", () => {
   assert.equal(parseState(JSON.stringify({ ...state(), resets_at: "soon" })), null);
   assert.equal(parseState(JSON.stringify({ ...state(), conditions: { threshold: true } })), null);
   assert.equal(parseState(JSON.stringify([state()])), null);
+});
+
+test("A5 the person's notice: one line, exactly when the model's notice speaks", () => {
+  assert.equal(userNotice(state(), at(20), "UTC"),
+    "Weekly Claude budget: 55% used, 20% of the 7-day window elapsed (reading from 01:36, resets Thu 06 Feb 16:00). Half of the budget is gone; usage runs ahead of the week.");
+  const cases: Array<[UsageState, number]> = [
+    [state(), at(20)],
+    [state({ used_percentage: 60, conditions: { threshold: true, pace: false } }), at(60)],
+    [state({ used_percentage: 35, conditions: { threshold: false, pace: true } }), at(17)],
+    [state({ used_percentage: 35, conditions: { threshold: false, pace: true } }), at(40)],
+    [state({ conditions: { threshold: false, pace: false } }), at(20)],
+    [state(), (RESETS + 1) * 1000],
+  ];
+  for (const [s, now] of cases) {
+    const person = userNotice(s, now, "UTC");
+    assert.equal(person === "", noticeText(s, now, "UTC") === "", JSON.stringify(s.conditions));
+    assert.doesNotMatch(person, /[\\<\n]/, "one plain line");
+  }
+  assert.match(userNotice(cases[2][0], cases[2][1], "UTC"), /35% used, 17% of the 7-day window elapsed .*\. Usage runs ahead of the week\.$/);
+});
+
+test("A5 the band: level per condition, local reset time, reading time, stale after 6 h", () => {
+  assert.equal(STALE_AFTER_MS, 6 * 3_600_000);
+  const both = bandView(state(), at(20), "UTC");
+  assert.deepEqual(both, {
+    text: "Weekly Claude budget 55% used · 20% of the week elapsed · resets Thu 06 Feb 16:00 · reading 01:36: half of the budget is gone; usage runs ahead of the week",
+    level: "threshold", stale: false,
+  });
+  const threshold = bandView(state({ used_percentage: 60, conditions: { threshold: true, pace: false } }), at(60), "UTC");
+  assert.equal(threshold?.level, "threshold");
+  assert.match(threshold?.text ?? "", /: half of the budget is gone$/);
+  const pace = bandView(state({ used_percentage: 35, conditions: { threshold: false, pace: true } }), at(17), "UTC");
+  assert.equal(pace?.level, "pace");
+  assert.match(pace?.text ?? "", /: usage runs ahead of the week$/);
+  const calm = bandView(state({ used_percentage: 41, conditions: { threshold: false, pace: false } }), at(8), "UTC");
+  assert.equal(calm?.level, "calm");
+  assert.match(calm?.text ?? "", /^Weekly Claude budget 41% used · 8% of the week elapsed · resets Thu 06 Feb 16:00 · reading 01:36$/);
+  // A recorded condition that no longer holds at now is calm, not a warning.
+  assert.equal(bandView(state({ used_percentage: 35, conditions: { threshold: false, pace: true } }), at(40), "UTC")?.level, "calm");
+  const observed = at(20);
+  assert.equal(bandView(state(), observed + STALE_AFTER_MS, "UTC")?.stale, false);
+  const stale = bandView(state(), observed + STALE_AFTER_MS + 1, "UTC");
+  assert.equal(stale?.stale, true);
+  assert.match(stale?.text ?? "", /reading 01:36 \(stale\): half/);
+  assert.equal(bandView(state({ observed_at: "not a time" }), at(20), "UTC")?.stale, true, "an unreadable reading time is never fresh");
+  assert.equal(bandView(state(), RESETS * 1000, "UTC"), null, "window over");
+  for (const view of [both, threshold, pace, calm, stale]) assert.doesNotMatch(view?.text ?? "", /[\\<\n]/);
 });
