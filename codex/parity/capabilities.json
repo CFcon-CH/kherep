@@ -91,6 +91,14 @@
     "atlassian-broker": {
       "source": "codex/agents/atlassian-broker.md",
       "role": "broker"
+    },
+    "kherep-lead": {
+      "source": "codex/agents/kherep-lead.md",
+      "role": "root"
+    },
+    "kherep-team-lead": {
+      "source": "codex/agents/kherep-team-lead.md",
+      "role": "root"
     }
   },
   "mcpServers": [
