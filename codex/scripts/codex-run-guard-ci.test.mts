@@ -39,7 +39,7 @@ test("the Windows codex shard runs the guard once, with its condition and timeou
   const found = guardSteps("unit-windows", "win32");
   assert.equal(found.length, 1, "unit-windows needs exactly one win32 guard step");
   assert.ok(found[0].includes("if: matrix.suite == 'codex'"), found[0].join("\n"));
-  assert.ok(found[0].includes("timeout-minutes: 40"), found[0].join("\n"));
+  assert.ok(found[0].includes("timeout-minutes: 60"), found[0].join("\n"));
 });
 
 test("the two ubuntu jobs that ran test:codex run the guard once each", () => {
