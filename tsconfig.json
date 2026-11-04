@@ -25,6 +25,5 @@
     "modules/local-inference/**/*.mts",
     "modules/mcp-auth-bridge/**/*.mts",
     "modules/twg/**/*.mts"
-  ],
-  "exclude": ["claude/mods/**"]
+  ]
 }

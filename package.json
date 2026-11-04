@@ -9,7 +9,6 @@
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",
     "test:bootstrap": "node --test \"bootstrap/*.test.mts\"",
-    "test:mods": "node bootstrap/mods-test.mts",
     "test:codex": "node --test \"codex/*.test.mts\" \"codex/lib/*.test.mts\" \"codex/hooks/*.test.mts\" \"codex/scripts/*.test.mts\"",
     "test:brokers": "node --test \"modules/atl-jira-brokers/*.test.mts\" \"modules/github-broker/*.test.mts\"",
     "test:modules": "node --test \"lib/*.test.mts\" \"modules/local-inference/*.test.mts\" \"modules/mcp-auth-bridge/*.test.mts\"",
