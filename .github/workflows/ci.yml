@@ -314,6 +314,25 @@ jobs:
       - name: Bundle check (wrangler deploy --dry-run, no credentials)
         run: npm run check:bundle
 
+  control-plane-worker-windows:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: modules/control-plane/worker
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: lts/*
+      - run: npm ci
+      - name: Type check
+        run: npm run typecheck
+      - name: Worker tests (vitest, workerd, real Node host)
+        run: npm test
+
   client-binding-probe:
     strategy:
       fail-fast: false
