@@ -9,6 +9,12 @@ on:
 permissions:
   contents: read
 
+# A newer push to the same pull request cancels the older run; pushes to main
+# are never cancelled, so every main commit keeps a complete result.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   # Issue #772. SonarQube Cloud analysis; the quality gate result appears as the
   # SonarCloud check on the pull request. Fork pull requests get no SONAR_TOKEN,
