@@ -161,6 +161,11 @@ jobs:
         if: matrix.suite == 'hooks'
         shell: bash
         run: node --test modules/twg/*.test.mts
+      - name: Windows ACL decision against real descriptors (Windows PowerShell)
+        if: matrix.suite == 'hooks'
+        timeout-minutes: 10
+        shell: bash
+        run: node --test modules/github-broker/windows-access.test.mts
       - name: Install dependencies for native Control Plane tests
         if: matrix.suite == 'control-plane'
         run: npm ci
@@ -390,19 +395,6 @@ jobs:
           path: ${{ runner.temp }}/kherep-coverage/worker
           if-no-files-found: error
           retention-days: 2
-
-  github-broker-windows:
-    runs-on: windows-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-      - uses: actions/setup-node@v7
-        with:
-          node-version: lts/*
-      - name: Windows ACL decision against real descriptors (Windows PowerShell)
-        run: node --test modules/github-broker/windows-access.test.mts
 
   client-binding-probe:
     strategy:

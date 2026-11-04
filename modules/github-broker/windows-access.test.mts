@@ -36,7 +36,7 @@ const FA=0x1F01FF,RX=0x1200A9,MODIFY_GENERIC=0xE0010000,GENERIC_RX=0xA0000000,OI
 // SE_SELF_RELATIVE|SE_DACL_PROTECTED|SE_DACL_AUTO_INHERITED|SE_DACL_PRESENT, as in the capture below.
 const CONTROL=0x9404,NO_DACL=0x9400,UNPROTECTED=0x8404;
 type Ace={flags:number;mask:number;sid:string};
-type Shape={owner:string;group?:string;control?:number;aces:Ace[]};
+type Shape={owner:string;control?:number;aces:Ace[]};
 const ace=(sid:string,flags:number,mask:number):Ace=>({flags,mask,sid});
 /**
  * Default C:\ descriptor captured read-only on a real Windows node by the Windows
@@ -57,7 +57,7 @@ function binarySid(value:string):Buffer {
   return out;
 }
 /** Self-relative SECURITY_DESCRIPTOR_RELATIVE, the binary form the product parses. */
-function descriptor({owner,group=owner,control=CONTROL,aces}:Shape):string {
+function descriptor({owner,control=CONTROL,aces}:Shape):string {
   const records=aces.map(({flags,mask,sid})=>{
     const id=binarySid(sid),header=Buffer.alloc(8);
     header[1]=flags;header.writeUInt16LE(8+id.length,2);header.writeUInt32LE(mask,4);
@@ -65,10 +65,10 @@ function descriptor({owner,group=owner,control=CONTROL,aces}:Shape):string {
   });
   const acl=Buffer.alloc(8);
   acl[0]=2;acl.writeUInt16LE(8+records.reduce((sum,record)=>sum+record.length,0),2);acl.writeUInt16LE(aces.length,4);
-  const ownerId=binarySid(owner),groupId=binarySid(group),header=Buffer.alloc(20),present=(control&4)!==0;
+  const ownerId=binarySid(owner),header=Buffer.alloc(20),present=(control&4)!==0;
   header[0]=1;header.writeUInt16LE(control,2);header.writeUInt32LE(20,4);header.writeUInt32LE(20+ownerId.length,8);
-  if(present) header.writeUInt32LE(20+ownerId.length+groupId.length,16);
-  return Buffer.concat(present?[header,ownerId,groupId,acl,...records]:[header,ownerId,groupId]).toString('base64');
+  if(present) header.writeUInt32LE(20+2*ownerId.length,16);
+  return Buffer.concat([header,ownerId,ownerId,...(present?[acl,...records]:[])]).toString('base64');
 }
 const WINDOWS='C:\\Windows',POWERSHELL=`${WINDOWS}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`,onWindows=process.platform==='win32';
 function powershell(script:string,input:string) {
@@ -86,7 +86,7 @@ $i=[Console]::In.ReadToEnd()|ConvertFrom-Json
 try { $raw=[Security.AccessControl.RawSecurityDescriptor]::new([Convert]::FromBase64String($i.sd),0) } catch { [Console]::Out.Write('unparsed'); exit 0 }
 try { Test-KherepLevel $raw $i.me $i.private $i.isRoot $i.directory $i.receiptFile; [Console]::Out.Write('ok') } catch { if ($_.Exception.Message -ceq 'refused') { [Console]::Out.Write('refused') } else { [Console]::Out.Write('error:' + $_.Exception.Message) } }
 `;
-type Level={isRoot?:boolean;private?:boolean;directory?:boolean;receiptFile?:boolean};
+type Level={isRoot?:boolean;private?:boolean;directory?:boolean;};
 function evaluate(shape:Shape|string,level:Level={}):string {
   const sd=typeof shape==='string'?shape:descriptor(shape);
   const result=powershell(HARNESS,JSON.stringify({sd,me:ME,private:false,isRoot:false,directory:true,receiptFile:false,...level}));
