@@ -84,7 +84,20 @@ selected-path stdin. It checks raw basic ACEs, protected non-null DACLs for
 policy/keys/private directories, current-SID ownership, single-link files and
 every ancestor to the drive root. Only the current SID, SYSTEM and Administrators
 may hold Allow ACEs in the private tree. Other ancestor grants may contain only
-read/traverse/metadata rights. Reparse paths, unsupported owners/ACEs, UNC/device
+read/traverse/metadata rights.
+The drive root alone may be owned by the TrustedInstaller service SID
+(`S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464`) and may hold a
+non-inheriting Allow ACE giving Authenticated Users (`S-1-5-11`) the create-folder
+right (`FILE_ADD_SUBDIRECTORY`, 0x4) in addition to read/traverse/metadata, which
+is the Windows default for `C:\`. That right adds sibling folders but cannot rename,
+delete, overwrite or redirect the existing `\Users` component: those need `DELETE`
+on the component or `FILE_DELETE_CHILD`, `WRITE_DAC` or `WRITE_OWNER` on the root,
+all still refused. TrustedInstaller is a constant service identity that only
+SYSTEM-level code can hold. Inherit-only ACEs grant nothing on the ancestor that
+carries them and are ignored outside the private tree; every child is checked on
+its own DACL. Any other ancestor, including `C:\Users`, still refuses any right
+outside read/traverse/metadata for untrusted SIDs.
+Reparse paths, unsupported owners/ACEs, UNC/device
 paths, alternate streams, missing metadata and helper failures refuse access.
 No permission is repaired. Windows receipt directories must already be safely
 provisioned; new receipt/lock/temp files inherit only trusted grants and are
@@ -96,7 +109,9 @@ separate measurement.
 
 Synthetic local tests use generated RSA keys and injected HTTP responses; both
 actual CLI subprocesses execute all three writes without reaching GitHub. Mock
-Windows outcomes establish control flow only. Native Windows ACL enforcement,
+Windows outcomes establish control flow only; descriptor-shape tests evaluate the
+per-level PowerShell decision only where a PowerShell with .NET access-control
+types runs, and are authoritative on Windows. Native Windows ACL enforcement,
 installed file identity, actual App bindings, and live bot actions require their
 own authorized measurements before operational delivery or issue closure.
 
