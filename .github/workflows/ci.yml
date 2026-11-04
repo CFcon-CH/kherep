@@ -9,6 +9,12 @@ on:
 permissions:
   contents: read
 
+# A newer push to the same pull request cancels the older run; pushes to main
+# are never cancelled, so every main commit keeps a complete result.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   # Ubuntu jobs run on ubuntu-26.04 explicitly (#670). Matrix keys stay ubuntu-latest because the
   # protect-main ruleset requires check names such as "unit (ubuntu-latest)"; runs-on maps the key.
