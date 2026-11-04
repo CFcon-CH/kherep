@@ -6,7 +6,7 @@ import test from "node:test";
 
 import {
   CONDITIONS, PACE_MARGIN_POINTS, PACE_MIN_ELAPSED_PERCENT, THRESHOLD_PERCENT, WEEK_SECONDS,
-  evaluate, formatLocal, noticeText, parseState, parseWindow, toastText, windowKey, type UsageState,
+  evaluate, formatLocal, parseState, parseWindow, toastText, windowKey, type UsageState,
 } from "./usage-window.mts";
 
 const RESETS = 1738857600; // Thu 06 Feb 2025 16:00 UTC, the documented example
@@ -85,24 +85,9 @@ test("A4 toast texts carry used, elapsed and reset time", () => {
   });
 });
 
-test("A4 notice names each condition that holds and says nothing otherwise", () => {
-  const both = noticeText(state(), at(20), "UTC");
-  const lines = both.split("\n");
-  assert.equal(lines.length, 2);
-  assert.equal(lines[0], "[usage-watch] Weekly Claude plan budget: 55% used, 20% of the 7-day window elapsed (reading from 01:36, resets Thu 06 Feb 16:00). Half of the budget is gone; usage runs ahead of the week.");
-  assert.match(lines[1], /^Spend sparingly until the reset/);
-  const thresholdOnly = noticeText(state({ used_percentage: 60, conditions: { threshold: true, pace: false } }), at(60), "UTC");
-  assert.match(thresholdOnly, /60% used, 60% of the 7-day window elapsed .*\. Half of the budget is gone\.\n/);
-  const paceOnly = noticeText(state({ used_percentage: 35, conditions: { threshold: false, pace: true } }), at(17), "UTC");
-  assert.match(paceOnly, /35% used, 17% of the 7-day window elapsed .*\. Usage runs ahead of the week\.\n/);
-  assert.equal(noticeText(state({ conditions: { threshold: false, pace: false } }), at(20), "UTC"), "", "no condition");
-  assert.equal(noticeText(state(), (RESETS + 1) * 1000, "UTC"), "", "window over");
-  assert.equal(noticeText(state(), RESETS * 1000, "UTC"), "", "at the reset itself");
-  // A recorded pace lead that time has used up is not repeated.
-  assert.equal(noticeText(state({ used_percentage: 35, conditions: { threshold: false, pace: true } }), at(40), "UTC"), "");
-  for (const text of [both, thresholdOnly, paceOnly, toastText(evaluate({ used: 55, resetsAt: RESETS }, at(20)), "pace").body]) {
-    assert.doesNotMatch(text, /[\\<]/, "nothing that breaks toast XML or hook JSON");
-  }
+test("the toast text holds nothing that breaks toast XML", () => {
+  const body = toastText(evaluate({ used: 55, resetsAt: RESETS }, at(20)), "pace").body;
+  assert.doesNotMatch(body, /[\<]/);
 });
 
 test("parseState accepts only the recorder's v1 shape", () => {

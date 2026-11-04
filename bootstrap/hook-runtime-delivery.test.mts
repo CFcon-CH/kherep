@@ -57,5 +57,5 @@ test("the template runs every managed hook through the entry, with its mode, tim
       if (event === "PreToolUse") assert.equal(hook.timeout, 30);
     }
   }
-  assert.equal(managed, 28);
+  assert.equal(managed, 27);
 });

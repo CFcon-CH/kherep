@@ -17,6 +17,11 @@ increments the minor version; every other release increments the patch version.
   evidence and offers explicit, strictly validated rollback recovery for older
   orphaned activations. Live host acceptance remains separate.
 
+### Removed
+
+- The `usage-watch` prompt hook (issue #774). Installed copies are parked with the
+  `usage-band` files through `retired.txt`.
+
 ### Added
 
 - The weekly usage recorder shows its notification on macOS through `osascript`.
