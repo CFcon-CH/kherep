@@ -11,6 +11,10 @@ increments the minor version; every other release increments the patch version.
 
 ### Fixed
 
+- GitHub App issue broker: installation tokens in GitHub's current format
+  contain dots and are about 390 characters long; the token format check now
+  allows `.`, so authentication no longer fails with `auth-refused` (#780).
+
 - Managed service activation (#746) binds health/settle to PID and start identity,
   retains prepared/attested evidence before native replacement/start, and preserves
   prior pending records during recovery. Windows consumes generation-bound stop
