@@ -6,7 +6,7 @@
 // It evaluates the documented rate_limits.seven_day window, shows at most one notification
 // per condition per reset window (exclusive-create markers; a Windows toast, or on macOS
 // osascript's display notification, issue #757), and writes
-// <home>/.cache/usage-watch/state.json for hooks/usage-watch.mts, then last-input, the
+// <home>/.cache/usage-watch/state.json, then last-input, the
 // throttle the status line compares. Every failure prints one line to stderr and exits 0.
 import { spawn } from "node:child_process";
 import fs from "node:fs";

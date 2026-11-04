@@ -185,10 +185,6 @@
           },
           {
             "type": "command",
-            "command": "node \"__KHEREP_CLAUDE_HOME__/kherep/hook-runtime/entry.mts\" reader \"__KHEREP_CLAUDE_HOME__/hooks/usage-watch.mts\""
-          },
-          {
-            "type": "command",
             "command": "node \"__KHEREP_CLAUDE_HOME__/kherep/control-plane/claude-control-plane-hook.mts\" deliver"
           },
           {

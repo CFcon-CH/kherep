@@ -1,6 +1,5 @@
-// Issue #748. Pure rules of the weekly plan-usage watcher, shared by the recorder
-// (hooks/usage-record.mts, toast) and the UserPromptSubmit hook (hooks/usage-watch.mts,
-// notice), so threshold, pace and wording cannot diverge between the two channels.
+// Issue #748. Pure rules of the weekly plan-usage watcher, used by the recorder
+// (hooks/usage-record.mts, toast).
 // Input is the documented status-line field rate_limits.seven_day {used_percentage,
 // resets_at}; an absent or unparsable window is "no window", never a zero.
 
@@ -78,11 +77,6 @@ export function formatLocal(epochSeconds: number, timeZone?: string): string {
   return `${p.weekday} ${p.day} ${p.month} ${p.hour}:${p.minute}`;
 }
 
-function clock(epochSeconds: number, timeZone?: string): string {
-  const p = parts(epochSeconds, { hour: "2-digit", minute: "2-digit" }, timeZone);
-  return `${p.hour}:${p.minute}`;
-}
-
 const pct = (n: number) => `${Math.round(n)}%`;
 
 export function toastText(v: Verdict, condition: Condition, timeZone?: string): { title: string; body: string } {
@@ -97,26 +91,6 @@ export function toastText(v: Verdict, condition: Condition, timeZone?: string): 
     title: "Claude weekly usage ahead of pace",
     body: `${pct(v.used)} used after ${pct(v.elapsed)} of the 7-day window. ${resets}`,
   };
-}
-
-// The hook text. Silent when the window is over or no condition holds. A condition is
-// named only when the recorder recorded it and it still holds at `now` (elapsed is
-// re-derived; the cached elapsed is informational), so the text never contradicts itself.
-export function noticeText(state: UsageState, nowMs: number, timeZone?: string): string {
-  if (state.resets_at * 1000 <= nowMs) return "";
-  const v = evaluate({ used: state.used_percentage, resetsAt: state.resets_at }, nowMs);
-  const threshold = state.conditions.threshold && v.threshold;
-  const pace = state.conditions.pace && v.pace;
-  if (!threshold && !pace) return "";
-  const clauses: string[] = [];
-  if (threshold) clauses.push("Half of the budget is gone");
-  if (pace) clauses.push(threshold ? "usage runs ahead of the week" : "Usage runs ahead of the week");
-  const observed = Date.parse(state.observed_at);
-  const reading = Number.isFinite(observed) ? `reading from ${clock(observed / 1000, timeZone)}, ` : "";
-  return [
-    `[usage-watch] Weekly Claude plan budget: ${pct(v.used)} used, ${pct(v.elapsed)} of the 7-day window elapsed (${reading}resets ${formatLocal(state.resets_at, timeZone)}). ${clauses.join("; ")}.`,
-    "Spend sparingly until the reset: fewer and smaller delegations, cheaper models where the task allows, no speculative fan-out.",
-  ].join("\n");
 }
 
 // state.json as the recorder wrote it; anything else (missing, malformed, other version,

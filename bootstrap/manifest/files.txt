@@ -53,8 +53,6 @@ hooks/obs-handback-gate.mts
 hooks/obs-handback-gate.test.mts
 hooks/research-first.mts
 hooks/research-first.test.mts
-hooks/usage-watch.mts
-hooks/usage-watch.test.mts
 hooks/usage-record.mts
 hooks/usage-record.test.mts
 hooks/research-stop.mts
