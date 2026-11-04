@@ -10,6 +10,7 @@ test("versionless role policy chooses available exact families and numerically n
   assert.equal(resolved.roles.designer.model, "gpt-6-astra");
   assert.equal(resolved.roles.builder.model, "gpt-6.10-sol");
   assert.equal(resolved.roles.observer.model, "gpt-6-luna");
+  assert.deepEqual(resolved.roles.broker, { model: "gpt-6-luna", reasoning: "medium" });
   assert.equal(resolved.roles.root.reasoning, "xhigh");
   assert.match(resolved.policySha256, /^[a-f0-9]{64}$/);
   assert.equal(resolved.policySha256, createHash("sha256").update(policyText).digest("hex"));
@@ -87,12 +88,22 @@ test("resolution fails closed on incomplete, malformed, duplicate and missing ca
 });
 
 test("projection shares resolved roles and dispatch support without mutating source capabilities", () => {
-  const source = { agents: { obs: { role: "observer", enforcePin: true }, builder: { role: "builder" } } };
+  const source = { agents: { obs: { role: "observer", enforcePin: true }, builder: { role: "builder" }, "atlassian-broker": { role: "broker" } } };
   const result = resolveCapabilities(source as never, fixtureResolution());
   assert.equal(result.agents.obs.model, "gpt-6-luna");
   assert.equal(result.agents.obs.enforcePin, true);
   assert.equal(result.agents.builder.reasoning, "high");
+  assert.deepEqual(result.agents["atlassian-broker"], { role: "broker", model: "gpt-6-luna", reasoning: "medium" });
+  assert.deepEqual(source.agents["atlassian-broker"], { role: "broker" });
   assert.deepEqual(source.agents.obs, { role: "observer", enforcePin: true });
   assert.ok(result.modelResolution);
   assert.throws(() => resolveCapabilities({ agents: { x: { role: "missing" } } } as never, fixtureResolution()), /role/);
+});
+
+test("unsupported Luna Medium is attributed to broker when preceding roles are supported", () => {
+  const policy = parseModelPolicy(policyText);
+  policy.roles.observer.reasoning = "low";
+  const catalog = { complete: true, models: fixtureModels.map(model => model.model.endsWith("-luna")
+    ? { ...model, supportedReasoningEfforts: [{ reasoningEffort: "low" }] } : model) };
+  assert.throws(() => resolveModels(policy, catalog), /role broker, family luna/);
 });

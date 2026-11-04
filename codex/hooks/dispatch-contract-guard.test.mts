@@ -77,7 +77,7 @@ test("rejects malformed or unsupported dispatch contracts", () => {
   assert.match(validate(spawnDispatch({ reasoning_effort: "extreme" }), POLICY) ?? "", /reasoning effort/);
 });
 
-test("accepts the pinned cheap model used by the obs and broker agents", () => {
+test("accepts an explicit supported cheap model pair", () => {
   assert.equal(validate({
     tool_name: "spawn_agent",
     tool_input: {
@@ -91,6 +91,26 @@ test("accepts the pinned cheap model used by the obs and broker agents", () => {
     tool_name: "spawn_agent",
     tool_input: { task_name: "x", message: "y", model: "gpt-5.6-nonexistent" },
   }, POLICY) ?? "", /Unsupported/);
+});
+
+test("broker guard accepts supported dispatch pairs and rejects unsupported inherited Medium", () => {
+  assert.deepEqual(POLICY.agentDefaults.get("atlassian-broker"), { model: "gpt-6-luna", reasoning: "medium" });
+  const older = { id: "gpt-5-luna", model: "gpt-5-luna", hidden: false,
+    supportedReasoningEfforts: [{ reasoningEffort: "low" }] };
+  const resolution = resolveModels(parseModelPolicy(policyText), { complete: true, models: [...fixtureModels, older] });
+  const policy = dispatchPolicy(resolveCapabilities(capabilities, resolution));
+  const dispatch = (overrides: Record<string, unknown> = {}) => validate(spawnDispatch({ agent_type: "atlassian-broker", ...overrides }), policy);
+  assert.equal(dispatch(), null);
+  assert.equal(dispatch({ model: "gpt-6-luna" }), null);
+  for (const reasoning_effort of ["low", "medium", "high"]) {
+    assert.equal(dispatch({ reasoning_effort }), null);
+    assert.equal(dispatch({ model: "gpt-6-luna", reasoning_effort }), null);
+  }
+  assert.equal(dispatch({ model: older.model, reasoning_effort: "low" }), null);
+  assert.match(dispatch({ model: older.model }) ?? "", /reasoning effort/);
+  assert.match(dispatch({ model: older.model, reasoning_effort: "high" }) ?? "", /reasoning effort/);
+  assert.match(dispatch({ reasoning_effort: "ultra" }) ?? "", /reasoning effort/);
+  assert.match(dispatch({ model: "gpt-99-luna", reasoning_effort: "medium" }) ?? "", /Unsupported/);
 });
 
 test("a pinned agent dispatched without a model is denied and told its pin", () => {
