@@ -391,6 +391,19 @@ jobs:
           if-no-files-found: error
           retention-days: 2
 
+  github-broker-windows:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: lts/*
+      - name: Windows ACL decision against real descriptors (Windows PowerShell)
+        run: node --test modules/github-broker/windows-access.test.mts
+
   client-binding-probe:
     strategy:
       fail-fast: false
