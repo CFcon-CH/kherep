@@ -255,9 +255,16 @@ export class MessageStore {
     if(origin!==undefined&&(!isSenderOrigin(origin)||origin.nodeId!==message.from.nodeId||actor!==`node:${message.from.nodeId}`
       ||!this.capabilities(message.from.nodeId)?.includes(MESSAGING_ORIGIN_CAPABILITY)||senderTime(origin.sentAt)!>now||!prepared?.payload||!this.contextMatches(message,prepared)))return {ok:false,error:'invalid sender origin'};
     const effects = this.expireDue(now);
-    const payloadReplay=this.payloadReplay(message,prepared);
-    if(payloadReplay)return payloadReplay.ok?{...payloadReplay,effects:{deliveries:[...effects.deliveries,...payloadReplay.effects.deliveries],statuses:[...effects.statuses,...payloadReplay.effects.statuses]}}:payloadReplay;
     const row = this.sql.exec(`SELECT ${COLUMNS}, text, task_id FROM messages WHERE id = ?`, message.messageId).toArray()[0];
+    // Legacy ordinary retries retain their selected-owner/status semantics.
+    // Once an origin was stored, omitting it cannot downgrade payload proof.
+    if (origin !== undefined || row?.sender_sent_at != null || row?.message_binding != null) {
+      const replay = this.payloadReplay(message, prepared);
+      if (replay) return replay.ok ? { ...replay, effects: {
+        deliveries: [...effects.deliveries, ...replay.effects.deliveries],
+        statuses: [...effects.statuses, ...replay.effects.statuses],
+      } } : replay;
+    }
     if (row) {
       const error = duplicateSendError(row, message, prepared, !!prepared && this.contextMatches(message, prepared));
       if (error) return { ok: false, error };

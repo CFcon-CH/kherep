@@ -25,8 +25,24 @@ export function duplicateSendError(row: Row, message: NewMessage, prepared: Prep
 // The MCP registry has already verified the native claimant and argument digest.
 // Recovery reads only a live row's source; it does not resolve its destination.
 export function recoveryOwnerError(row: Row, nodeId: string, sessionId: string, runtime: string): string | null {
-  if (row.from_node !== nodeId) return "duplicate messageId";
+  if (row.from_node !== nodeId || row.from_session !== sessionId) return "duplicate messageId";
   const binding = storedMessageBinding(row);
   if (binding === "invalid") return RESOLUTION_REQUIRED;
   return binding && (binding.from.sessionId !== sessionId || binding.from.runtime !== runtime) ? "duplicate messageId" : null;
+}
+
+// An authenticated intent proves its actual arguments, not a same-ID row.
+// Body erasure is safe only while the original production digest survives.
+export function recoveryPayloadError(row: Row, message: NewMessage, fingerprint: string): string | null {
+  if (row.from_node !== message.from.nodeId || row.from_session !== message.from.session
+    || row.to_node !== message.to.nodeId || row.to_session !== message.to.session
+    || row.in_reply_to !== (message.inReplyTo ?? null) || row.proxy_of !== (message.proxyOf ?? null)
+    || row.task_id !== (message.taskId ?? null)) return "duplicate messageId";
+  if ((row.sender_sent_at ?? null) !== (message.senderOrigin?.sentAt ?? null)) return "conflicting message binding";
+  if (row.message_binding != null) {
+    if (typeof row.message_binding !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(row.message_binding)) return "message binding unavailable";
+    return row.message_binding === fingerprint ? null : "conflicting message binding";
+  }
+  if (typeof row.text !== "string") return "message binding unavailable";
+  return row.text === message.text ? null : "conflicting message binding";
 }

@@ -103,6 +103,20 @@ is never upgraded. Tombstones still return settled status without recreating a
 message. Worker transport retention remains based on receipt time. Accepted work
 may finish and ACK after the sender's admission deadline.
 
+Payload retries enforce any persisted content/address digest even when sender
+origin is unknown or the accepted body has been erased. MCP recovery separately
+proves the actual call's canonical endpoints, content and reply/proxy/task lineage
+against the stored row before claiming its intent. A valid intent digest alone
+cannot adopt a colliding message. Historical rows without a digest require retained
+matching text; an erased body without a digest fails closed.
+
+An exact-owned, selected-bound, originless row can return metadata status without
+a destination RPC for an unclaimed intent or its identical claimed repetition.
+That path requires exact stored canonical addresses and never releases a loop
+hold or authorizes delivery. Actual MCP effect outcomes keep strict current
+selection/context replay. Claim-state pairs, current source and stored payload
+proof are rechecked in the final transaction after asynchronous preparation.
+
 ```mermaid
 flowchart LR
   outbox[New outbox: immutable senderSentAt] --> node[Authenticated node connection]

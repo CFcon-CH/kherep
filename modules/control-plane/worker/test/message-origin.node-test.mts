@@ -81,12 +81,16 @@ test("additive migration never retrofills sender origin or a legacy content bind
   new MessageStore(sql as unknown as ConstructorParameters<typeof MessageStore>[0], () => {}, () => ["messaging.v1", "messaging.origin.v1"]);
   const record = db.prepare("SELECT sender_sent_at, message_binding, created_at FROM messages WHERE id = ?").get(A)!;
   assert.deepEqual({ ...record }, { sender_sent_at: null, message_binding: null, created_at: T });
+  assert.deepEqual({ ...db.prepare("SELECT delivery_binding,delivery_pair FROM messages WHERE id=?").get(A) },
+    { delivery_binding: null, delivery_pair: null });
+  const columns = db.prepare("PRAGMA table_info(messages)").all().map(row => row.name);
+  for (const name of ['sender_sent_at', 'message_binding', 'delivery_binding', 'delivery_pair', 'loop_pair', 'loop_identity']) assert.ok(columns.includes(name));
   assert.equal(store.pendingFor(B, T).deliveries[0]?.body.senderOrigin, undefined);
 });
 
 test("operator handler omits the stored duplicate digest while retaining ordinary metadata", async t => {
   const { store, db } = fixture(t);
-  const msg = { messageId: A, from: { nodeId: A, session: "s" }, to: { nodeId: B, session: "t" }, text: "synthetic" };
+  const msg = { messageId: A, from: { nodeId: A, session: "s" }, to: { nodeId: B, session: "t" }, text: "synthetic", senderOrigin: { nodeId: A, sentAt: at(T) } };
   const digest = fingerprint(msg);
   assert.equal((await send(store,msg, `node:${A}`, Date.now(), digest)).ok, true);
   const env = { REGISTRY: { idFromName: () => "synthetic-registry", get: () => ({ listMessages: (node: string | null, limit: number) => store.list(node, limit) }) } };
@@ -111,4 +115,37 @@ test('payload send and status-only replay remain separate after a stored origin'
  db.prepare('INSERT INTO sessions(node_id,session_id,runtime,state,updated_at) VALUES(?,?,?,?,?)').run(A,'s','codex','running',T);
  assert.deepEqual(store.send(msg,`node:${A}`,T+1,{...prepared,payload:{fingerprint:fingerprint(msg),from:msg.from,to:msg.to}}),{ok:false,error:'invalid sender origin'});
  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM messages').get()?.n,1);
+});
+
+test('accepted legacy ordinary retries preserve metadata without retaining the erased body', async t => {
+  const { store, db } = fixture(t);
+  const message = { messageId: A, from: { nodeId: A, session: 's' }, to: { nodeId: B, session: 't' }, text: 'synthetic original' };
+  const now = Date.now();
+  assert.equal((await send(store, message, `node:${A}`, now)).ok, true);
+  store.report(B, { messageId: A, state: 'accepted' }, now + 1);
+  db.prepare('UPDATE messages SET sender_sent_at=NULL,message_binding=NULL WHERE id=?').run(A);
+  const before = db.prepare('SELECT * FROM messages WHERE id=?').get(A);
+  assert.equal(before?.sender_sent_at, null);
+  assert.equal(before?.message_binding, null);
+  assert.equal(before?.text, null);
+  const result = await send(store, { ...message, text: 'synthetic changed' }, `node:${A}`, now + 2);
+  assert.equal(result.ok && result.status.state, 'accepted');
+  assert.deepEqual(result.ok && result.effects, { deliveries: [], statuses: [] });
+  assert.deepEqual(db.prepare('SELECT * FROM messages WHERE id=?').get(A), before);
+});
+
+test('originless accepted modern retries enforce the persisted digest after body erasure', async t => {
+  const { store, db } = fixture(t);
+  const message = { messageId: A, from: { nodeId: A, session: 's' }, to: { nodeId: B, session: 't' }, text: 'synthetic modern original' };
+  const now = Date.now();
+  assert.equal((await send(store, message, `node:${A}`, now)).ok, true);
+  store.report(B, { messageId: A, state: 'accepted' }, now + 1);
+  const before = db.prepare('SELECT * FROM messages WHERE id=?').get(A);
+  assert.equal(before?.sender_sent_at, null);
+  assert.equal(before?.message_binding, fingerprint(message));
+  assert.equal(before?.text, null);
+  assert.equal((await send(store, message, `node:${A}`, now + 2)).ok, true);
+  assert.deepEqual(await send(store, { ...message, text: 'synthetic changed modern body' }, `node:${A}`, now + 2),
+    { ok: false, error: 'conflicting message binding' });
+  assert.deepEqual(db.prepare('SELECT * FROM messages WHERE id=?').get(A), before);
 });

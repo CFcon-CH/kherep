@@ -313,7 +313,7 @@ for (const tool of ["send", "reply"] as const) {
       });
     });
   }
-  it(`A3 MCP ${tool}: valid bound recovery keeps claim/digest checks without fresh destination resolution`, async () => {
+  for (const state of ["queued", "accepted"] as const) it(`A3 MCP ${tool}: valid ${state} bound recovery keeps claim/digest checks without fresh destination resolution`, async () => {
     const f = await attestedPair();
     const token = await runInDurableObject(registry(), (_i, state) => String(state.storage.sql.exec("SELECT message_connection_token FROM nodes WHERE id=?", f.nodeId).one().message_connection_token));
     await registry().updateRegistration(f.nodeId, FACTS, [{ name: "codex", kind: "cli" }], [REMOTE_MCP_CAPABILITY, "messaging.v1", "messaging.loop-brake.v1", "messaging.selected-binding.v1"], token);
@@ -324,17 +324,36 @@ for (const tool of ["send", "reply"] as const) {
     const digest = await digestMcpArguments(args);
     await registry().registerMcpIntent(f.nodeId, registration(digest, { requestId: id, sessionId: ID_A, threadId: ID_A, tool }));
     const claim = { nodeId: f.nodeId, credentialVersion: credential.version, requestId: id, runtime: "codex" as const, sessionId: ID_A, threadId: ID_A, callId: CALL, tool, argumentsDigest: digest };
-    // A legitimate prior bound effect of this exact claimant; replay uses metadata only.
-    const first = await registry().sendMessage({ messageId: id, from: { nodeId: f.nodeId, session: ID_A }, to: { nodeId: f.nodeId, session: ID_B }, text }, "synthetic");
+    // A reply recovery must prove the prior reply relation, including after erasure.
+    if (tool === "reply") {
+      const seeded = await registry().sendMessage({ messageId: parent, from: { nodeId: f.nodeId, session: ID_B },
+        to: { nodeId: f.nodeId, session: ID_A }, text: "Synthetic delivered parent" }, "synthetic");
+      expect(seeded.ok).toBe(true);
+      await registry().reportMessageStatus(f.nodeId, { messageId: parent, state: "delivered" });
+    }
+    const first = await registry().sendMessage({ messageId: id, from: { nodeId: f.nodeId, session: ID_A }, to: { nodeId: f.nodeId, session: ID_B }, text,
+      ...(tool === "reply" ? { inReplyTo: parent } : {}) }, "synthetic");
+    expect(await runInDurableObject(registry(), (_i, s) => s.storage.sql.exec("SELECT in_reply_to,message_binding FROM messages WHERE id=?", id).one()))
+      .toMatchObject({ in_reply_to: tool === "reply" ? parent : null, message_binding: expect.any(String) });
     expect(first.ok && first.status.state).toBe("queued");
-    await registry().reportMessageStatus(f.nodeId, { messageId: id, state: "accepted" });
-    const recover = (value = claim) => tool === "send" ? registry().sendMcpMessage(value, { nodeId: f.nodeId, session: ID_B }, text) : registry().replyMcpMessage(value, parent, text);
+    if (state === "accepted") await registry().reportMessageStatus(f.nodeId, { messageId: id, state });
+    const recover = (value = claim, payload = text) => tool === "send" ? registry().sendMcpMessage(value, { nodeId: f.nodeId, session: ID_B }, payload) : registry().replyMcpMessage(value, parent, payload);
     f.setRows([]);
-    const recovered = await recover(); expect(recovered.ok && recovered.status.state).toBe("accepted");
-    expect(recovered.ok && recovered.effects.deliveries).toEqual([]);
+    const recovered = await recover(); expect(recovered.ok && recovered.status.state).toBe(state);
+    expect(recovered.ok && recovered.effects).toEqual({ deliveries: [], statuses: [] });
+    const snapshot = () => runInDurableObject(registry(), (_i, s) => ({
+      row: s.storage.sql.exec("SELECT * FROM messages WHERE id=?", id).one(),
+      pairs: s.storage.sql.exec("SELECT * FROM message_loop_pairs WHERE from_node=?", f.nodeId).toArray(),
+      intent: s.storage.sql.exec("SELECT * FROM mcp_intents WHERE request_id=?", id).one(),
+      audit: s.storage.sql.exec("SELECT COUNT(*) AS n FROM audit").one().n,
+    }));
+    const before = await snapshot();
+    expect(await recover(claim, "Synthetic changed recovery body")).toEqual({ ok: false, error: "tool arguments do not match intent", denied: true });
     expect(await recover({ ...claim, argumentsDigest: "b".repeat(64) })).toEqual({ ok: false, error: "tool arguments do not match intent", denied: true });
     expect(await recover({ ...claim, callId: "different-native-call" })).toEqual({ ok: false, error: "native call identity does not match intent", denied: true });
     expect((await recover()).ok).toBe(true);
+    expect((await recover()).ok).toBe(true);
+    expect(await snapshot()).toEqual(before);
   });
   for (const state of ["queued", "accepted"] as const) it(`A3 MCP ${tool}: ${state} ordinary bound row cannot become another verified session's effect`, async () => {
     const f = await attestedPair(), other = crypto.randomUUID();

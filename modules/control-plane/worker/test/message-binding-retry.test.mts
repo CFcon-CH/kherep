@@ -1,7 +1,7 @@
 import { runInDurableObject } from "cloudflare:test";
 import { expect, it } from "vitest";
 import { attestedPair, attestedRows, ID_A, ID_B } from "./message-loop-fixture.mts";
-import { registry } from "./helpers.mts";
+import { FACTS, registry } from "./helpers.mts";
 import type { NewMessage } from "../src/message-store.mts";
 const ID_C = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
 const query = <T,>(run: (sql: SqlStorage) => T) => runInDurableObject(registry(), (_i, state) => run(state.storage.sql));
@@ -10,6 +10,43 @@ const capture = (id: string, nodeId: string) => query(sql => ({
   pairs: sql.exec("SELECT * FROM message_loop_pairs WHERE from_node=? OR to_node=?", nodeId, nodeId).toArray(),
   audit: sql.exec("SELECT COUNT(*) AS n FROM audit").one().n,
 }));
+
+it("historical origin-null digest-null accepted ordinary retry does not acquire modern proof", async () => {
+  const f = await attestedPair();
+  const message: NewMessage = { messageId: crypto.randomUUID(), from: { nodeId: f.nodeId, session: ID_A },
+    to: { nodeId: f.nodeId, session: ID_B }, text: "Synthetic historical ordinary retry" };
+  expect((await registry().sendMessage(message, "synthetic")).ok).toBe(true);
+  await registry().reportMessageStatus(f.nodeId, { messageId: message.messageId, state: "accepted" });
+  await query(sql => sql.exec("UPDATE messages SET sender_sent_at=NULL,message_binding=NULL WHERE id=?", message.messageId));
+  const before = await capture(message.messageId, f.nodeId);
+  expect(before.row).toMatchObject({ sender_sent_at: null, message_binding: null, text: null });
+  const result = await registry().sendMessage({ ...message, text: "Synthetic unverifiable historical body" }, "synthetic");
+  expect(result.ok && result.status.state).toBe("accepted");
+  expect(result.ok && result.effects).toEqual({ deliveries: [], statuses: [] });
+  expect(await capture(message.messageId, f.nodeId)).toEqual(before);
+});
+
+for (const state of ["queued", "accepted"] as const) it(`explicit-origin ${state} retry preserves canonical aliases and rejects changed payload or omitted origin`, async () => {
+  const f = await attestedPair();
+  const token = await query(sql => String(sql.exec("SELECT message_connection_token FROM nodes WHERE id=?", f.nodeId).one().message_connection_token));
+  await registry().updateRegistration(f.nodeId, FACTS, [],
+    ["messaging.v1", "messaging.ack.v1", "messaging.loop-brake.v1", "messaging.selected-binding.v1", "messaging.origin.v1"], token);
+  const message: NewMessage = { messageId: crypto.randomUUID(), from: { nodeId: f.nodeId, session: ID_A },
+    to: { nodeId: f.nodeId, session: ID_B }, text: "Synthetic immutable origin retry",
+    senderOrigin: { nodeId: f.nodeId, sentAt: "2026-01-01T00:00:00.000Z" } };
+  const send = (value: NewMessage) => registry().sendMessage(value, `node:${f.nodeId}`);
+  expect((await send(message)).ok).toBe(true);
+  if (state === "accepted") await registry().reportMessageStatus(f.nodeId, { messageId: message.messageId, state });
+  const before = await capture(message.messageId, f.nodeId);
+  const retry = await send({ ...message, from: { nodeId: f.nodeId, session: "alias-0" }, to: { nodeId: f.nodeId, session: "alias-1" } });
+  expect(retry.ok && retry.status.state).toBe(state);
+  expect(retry.ok && retry.effects).toEqual({ deliveries: [], statuses: [] });
+  for (const patch of [{ text: "Synthetic different body" }, { senderOrigin: undefined },
+    { senderOrigin: { nodeId: f.nodeId, sentAt: "2026-01-02T00:00:00.000Z" } }]) {
+    expect((await send({ ...message, ...patch })).ok).toBe(false);
+    expect(await capture(message.messageId, f.nodeId)).toEqual(before);
+  }
+});
 async function legacyParent(f: Awaited<ReturnType<typeof attestedPair>>, rows = attestedRows(), from = ID_B, to = ID_A) {
   await registry().replaceSessions(f.nodeId, rows.map(({ canonicalIdentity, ...row }) => ({ ...row, state: "unknown" })), { version: 1, generation: 2 });
   const parent = await f.send(from, to, undefined, "Synthetic legacy parent");
@@ -62,9 +99,8 @@ for (const state of ["queued", "accepted"] as const) {
       f.setRows(rows);
       const before = await capture(message.messageId, f.nodeId);
       const result = await registry().sendMessage(retry, "synthetic");
-      // Accepted bodies have already been erased; this tranche adds no body retention.
-      if (variant === "text" && state === "accepted") expect(result.ok && result.status.state).toBe("accepted");
-      else expect(result.ok).toBe(false);
+      expect(result.ok).toBe(false);
+      if (variant === "text" && state === "accepted") expect(result).toEqual({ ok: false, error: "conflicting message binding" });
       if (result.ok) expect(result.effects.deliveries).toEqual([]);
       expect(await capture(message.messageId, f.nodeId)).toEqual(before);
     });

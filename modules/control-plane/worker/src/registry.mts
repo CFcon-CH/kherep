@@ -1,4 +1,6 @@
+import { recoveryOwnerError, recoveryPayloadError } from './message-dedup.mts';
 import { bindingContext, prepareMessageBinding } from "./message-binding.mts";
+import { storedMessageBinding } from "./message-binding-store.mts";
 import { isSelectedPair, loopCapability, type SelectedPair, type SelectedIdentityEvidence } from "./message-loop-identity-api.mts";
 import { RegistrySessionIdentity } from "./registry-session-identity.mts";
 import type { IdentitySnapshotV1 } from "../../protocol-session-identity.mts";
@@ -26,7 +28,7 @@ import { McpRegistry, type McpOutcome } from "./mcp-registry.mts";
 import { intakeRows, recordTaken } from "./node-intake.mts";
 import { SqlMeter, type SqlRows } from "./sql-meter.mts";
 import {
-  CLAUDE_MCP_CAPABILITY, REMOTE_MCP_CAPABILITY, type McpInboxItem, type McpIntentClaim, type McpIntentRegistration,
+  CLAUDE_MCP_CAPABILITY, REMOTE_MCP_CAPABILITY, digestMcpArguments, type McpInboxItem, type McpIntentClaim, type McpIntentRegistration,
 } from "../../protocol-mcp.mts";
 import type { TaskReportBody } from "../../protocol-tasks.mts";
 import {
@@ -349,27 +351,63 @@ export class Registry extends DurableObject<Env> {
     return this.tx("claimMcpIntent", () => this.mcp.claim(intent, now));
   }
 
-  private async recoverMcpMessage(intent:McpIntentClaim,text:string,to?:NewMessage['to'],inReplyTo?:string):Promise<McpSendResult|null> {
-    const stored=this.messages.get(intent.requestId);
-    if(!stored)return this.messages.tombstoneOnlyPayload(intent.requestId)?{ok:false,denied:false,error:'duplicate messageId'}:null;
-    const peek=this.mcp.peekClaimSession(intent,Date.now());if(!peek.ok)return {...peek,denied:true};
-    const message:NewMessage={messageId:intent.requestId,from:{nodeId:intent.nodeId,session:peek.sessionId},to:to??{nodeId:stored.toNode,session:stored.toSession},text,inReplyTo};
-    const prepared=await this.prepareMessage(message);
-    return this.messageTx('recoverMcpMessage',()=>{
-      const current=this.mcp.peekClaimSession(intent,Date.now());if(!current.ok)return {...current,denied:true as const};
-      const ownerError=this.messages.recoveryOwnerError(intent.requestId,intent.nodeId,current.sessionId,intent.runtime);
-      if(ownerError||current.sessionId!==peek.sessionId||!this.messages.contextMatches(message,prepared))return {ok:false as const,denied:false as const,error:ownerError??LOOP_STALE};
-      const sent=this.messages.payloadReplay(message,prepared);if(!sent)return null;
-      if(!sent.ok)return asMcpSendResult(sent);
-      const claim=this.mcp.claim(intent,Date.now());if(!claim.ok)return {...claim,denied:true as const};
-      return {...sent,denied:false as const,claim};
+  private mcpRecoveryMode(row: Record<string, SqlStorageValue>, intent: McpIntentClaim): "metadata" | "payload" | "invalid" {
+    const claim = this.sql.exec("SELECT claimed_at,outcome FROM mcp_intents WHERE request_id=? AND node_id=?", intent.requestId, intent.nodeId).toArray()[0];
+    if (!claim) return "invalid";
+    const unclaimed = claim.claimed_at === null && claim.outcome === null;
+    const claimed = claim.claimed_at !== null && claim.outcome === "claimed";
+    const completed = claim.claimed_at !== null && ["succeeded", "failed", "uncertain"].includes(String(claim.outcome));
+    if (!unclaimed && !claimed && !completed) return "invalid";
+    const binding = storedMessageBinding(row);
+    return row.sender_sent_at === null && binding !== null && binding !== "invalid" && (unclaimed || claimed)
+      ? "metadata" : "payload";
+  }
+
+  private async recoverMcpMessage(tool: "send" | "reply", intent: McpIntentClaim, text: string, to?: NewMessage['to'], inReplyTo?: string): Promise<McpSendResult | null> {
+    const digest = await digestMcpArguments(tool === "reply" ? { inReplyTo, text } : { to, text });
+    if (digest !== intent.argumentsDigest) return { ok: false, denied: true, error: "tool arguments do not match intent" };
+    const peek = this.mcp.peekClaimSession(intent, Date.now());
+    if (!peek.ok) return { ...peek, denied: true };
+    if (intent.tool !== tool) return { ok: false, denied: true, error: "native call identity does not match intent" };
+    const read = () => this.sql.exec("SELECT * FROM messages WHERE id=?", intent.requestId).toArray()[0];
+    const row = read();
+    if (!row) return this.messages.tombstoneOnlyPayload(intent.requestId) ? { ok: false, error: "duplicate messageId" } : null;
+    const ownerError = recoveryOwnerError(row, intent.nodeId, peek.sessionId, intent.runtime);
+    if (ownerError) return { ok: false, error: ownerError };
+    if (tool === "reply" && row.in_reply_to !== inReplyTo) return { ok: false, error: "duplicate messageId" };
+    const message: NewMessage = { messageId: intent.requestId, from: { nodeId: intent.nodeId, session: peek.sessionId },
+      to: to ?? { nodeId: String(row.to_node), session: String(row.to_session) }, text, inReplyTo };
+    const mode = this.mcpRecoveryMode(row, intent);
+    if (mode === "invalid") return { ok: false, error: "duplicate messageId" };
+    const prepared = mode === "metadata" ? null : await this.prepareMessage(message);
+    const canonical = prepared?.payload ? { ...message, from: prepared.payload.from, to: prepared.payload.to } : message;
+    const fingerprint = prepared?.payload?.fingerprint ?? await payloadFingerprint(message);
+    const payloadError = recoveryPayloadError(row, canonical, fingerprint);
+    if (payloadError) return { ok: false, error: payloadError };
+    return this.messageTx("recoverMcpMessage", () => {
+      const current = this.mcp.peekClaimSession(intent, Date.now());
+      if (!current.ok) return { ...current, denied: true as const };
+      const latest = read();
+      if (!latest) return { ok: false as const, error: "duplicate messageId" };
+      const ownerError = recoveryOwnerError(latest, intent.nodeId, current.sessionId, intent.runtime);
+      if (ownerError) return { ok: false as const, error: ownerError };
+      if (current.sessionId !== peek.sessionId || mode !== this.mcpRecoveryMode(latest, intent)
+        || prepared && !this.messages.contextMatches(message, prepared)) return { ok: false as const, error: LOOP_STALE };
+      const payloadError = recoveryPayloadError(latest, canonical, fingerprint);
+      if (payloadError) return { ok: false as const, error: payloadError };
+      const sent = mode === "metadata" ? this.messages.replay(intent.requestId, intent.nodeId, false) : this.messages.payloadReplay(message, prepared!);
+      if (!sent) return { ok: false as const, error: "duplicate messageId" };
+      if (!sent.ok) return asMcpSendResult(sent);
+      const claim = this.mcp.claim(intent, Date.now());
+      if (!claim.ok) return { ...claim, denied: true as const };
+      return { ...sent, denied: false as const, claim };
     });
   }
 
   // A failed claim is an authorization denial; its fixed error is visible to the caller.
   async sendMcpMessage(intent: McpIntentClaim, to: { nodeId: string; session: string }, text: string, inReplyTo?: string): Promise<McpSendResult> {
     this.directoryRows = null;
-    const replay = await this.recoverMcpMessage(intent, text, to, inReplyTo);
+    const replay = await this.recoverMcpMessage("send", intent, text, to, inReplyTo);
     if (replay) return replay;
     const peek = this.mcp.peekClaimSession(intent, Date.now());
     if (!peek.ok) return { ...peek, denied: true as const };
@@ -398,7 +436,7 @@ export class Registry extends DurableObject<Env> {
   // call recovers the same claim.
   async replyMcpMessage(intent: McpIntentClaim, inReplyTo: string, text: string, item?: McpInboxItem | null): Promise<McpReplyResult> {
     this.directoryRows = null;
-    const replay = await this.recoverMcpMessage(intent, text, undefined, inReplyTo);
+    const replay = await this.recoverMcpMessage("reply", intent, text, undefined, inReplyTo);
     if (replay) return replay;
     const peek = this.mcp.peekClaimSession(intent, Date.now());
     if (!peek.ok) return { ...peek, denied: true as const };
