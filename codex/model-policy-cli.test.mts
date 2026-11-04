@@ -36,6 +36,23 @@ test("model refresh requires its explicit CLI flag", () => {
   assert.throws(() => parseArgs(["--models-only"]), /Unexpected/);
 });
 
+for (const effort of ["low", "high"]) test(`top-level ${effort} model settings retain exact lines through install, refresh and reinstall`, async (t) => {
+  const f = fixture(t);
+  const operator = `model  = "operator-model" # explicit model\nmodel_reasoning_effort = "${effort}" # explicit effort\n`;
+  const profile = '[profiles.personal]\nmodel = "profile-model"\nmodel_reasoning_effort = "high" # profile choice\n';
+  fs.writeFileSync(f.configFile, operator + profile);
+  for (const refreshModels of [false, true, false]) {
+    const result = await installFromCli({ ...f.options, refreshModels }, async () => {
+      assert.ok(refreshModels || !fs.existsSync(path.join(f.codexHome, "orchestra/parity-receipt.json")), "ordinary reinstall never reads a catalog");
+      return fixtureModelCatalog();
+    });
+    const config = fs.readFileSync(f.configFile, "utf8");
+    assert.ok(config.startsWith(operator));
+    assert.ok(config.includes(profile));
+    assert.equal(result.receipt.modelResolution.roles.broker.reasoning, "medium");
+  }
+});
+
 test("async CLI reads one selected-home catalog initially, none on reinstall, and one on refresh", async (t) => {
   const f = fixture(t);
   const calls: string[] = [];

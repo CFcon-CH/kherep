@@ -49,3 +49,26 @@ test("Observer Medium is never downgraded when the visible Luna model supports o
     ? { ...model, supportedReasoningEfforts: [{ reasoningEffort: "low" }] } : model) };
   assert.throws(() => selectModelResolution(policyText, { catalog, refresh: true }), /role observer, family luna/);
 });
+
+test("Broker Low policy requires explicit refresh and retains Medium on ordinary reinstall", () => {
+  const lowText = policyText.replace(/(\[roles\.broker\]\s+family = "luna"\s+reasoning = )"medium"/, '$1"low"');
+  const oldPolicy = parseModelPolicy(lowText), currentPolicy = parseModelPolicy(policyText);
+  assert.equal(oldPolicy.sourceSha256, "e0ad1f9e2f1a657f27b8a9b29e9983b15cf517859cae3531276e46d3a05bd615");
+  assert.equal(oldPolicy.roles.broker.reasoning, "low");
+  assert.equal(currentPolicy.roles.broker.reasoning, "medium");
+  const catalog = { complete: true, models: structuredClone(fixtureModels) };
+  const low = resolveModels(oldPolicy, catalog);
+  assert.deepEqual(selectModelResolution(lowText, { existing: low }), low);
+  assert.throws(() => selectModelResolution(policyText, { existing: low, catalog }), /explicit refresh/);
+  const medium = selectModelResolution(policyText, { existing: low, catalog, refresh: true });
+  assert.deepEqual(medium.roles.broker, { model: low.roles.broker.model, reasoning: "medium" });
+  for (const role of ["root", "designer", "builder", "support", "researcher", "observer"] as const) {
+    assert.deepEqual(currentPolicy.roles[role], oldPolicy.roles[role]);
+    assert.deepEqual(medium.roles[role], low.roles[role]);
+  }
+  assert.deepEqual(medium.supportedModels, low.supportedModels);
+  assert.equal(medium.catalogSha256, low.catalogSha256);
+  catalog.models.push({ ...catalog.models[4], id: "gpt-7-luna", model: "gpt-7-luna" });
+  assert.equal(selectModelResolution(policyText, { existing: medium, catalog }), medium);
+  assert.throws(() => selectModelResolution(lowText, { existing: medium, catalog }), /explicit refresh/);
+});

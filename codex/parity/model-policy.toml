@@ -27,4 +27,4 @@ reasoning = "medium"
 
 [roles.broker]
 family = "luna"
-reasoning = "low"
+reasoning = "medium"

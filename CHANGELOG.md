@@ -9,6 +9,12 @@ increments the minor version; every other release increments the patch version.
 
 ## [Unreleased]
 
+### Changed
+
+- Codex: the managed `atlassian-broker` role now defaults to medium reasoning
+  instead of low. An existing install needs one explicit `--refresh-models`,
+  because an ordinary install refuses the changed policy before writes (#786).
+
 ### Fixed
 
 - GitHub App issue broker: installation tokens in GitHub's current format
