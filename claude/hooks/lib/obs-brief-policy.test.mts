@@ -103,7 +103,7 @@ test("the revision sentence is pinned", () => {
 
 test("T1 a complete, scoped binding is silent", () => {
   assert.equal(notice(bound(`kherep@${SHA} -- README.md`)), null);
-  assert.equal(notice(bound(`cfaysal/kherep@${SHA} -- src/a.mts`)), null);
+  assert.equal(notice(bound(`CFcon-CH/kherep@${SHA} -- src/a.mts`)), null);
   assert.equal(notice(`- ${bound(`kherep@${SHA} -- README.md`)}\n- ${RELAYED}`), null);
 });
 

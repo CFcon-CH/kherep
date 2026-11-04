@@ -47,7 +47,6 @@ The scripts `claude/hooks/cbm-*` have no row: the Claude template does not wire 
 | `critical-file-integrity` | Claude | SessionStart, all sources | watcher (warns) | Checks the installed Git hooks and `attribution-record.mts` beside them, which no settings file wires, and restores a defective one from the versioned source, measured by its hash at the target. |
 | `maestro-discipline` | Claude | UserPromptSubmit | context | Adds a compact Maestro checklist to every prompt in the Kherep workspace, so the routing duties stay in front of the model. |
 | `research-first` | Claude | UserPromptSubmit | context | Asks, on every prompt in the workspace, to classify the prompt and to research a relevant one before answering: the knowledge space always, the code graph first inside a git repository. |
-| `usage-watch` | Claude | UserPromptSubmit | context | Adds a short notice to every prompt while the weekly plan budget is at least half used or usage runs ahead of the 7-day window, and shows the same text to the person in one line (`systemMessage`), from the state the status line's recorder (`hooks/usage-record.mts`) or the `usage-band` mod cached under `.cache/usage-watch/`; silent without a cached open window. The recorder also shows one notification per condition per reset window: a Windows toast, or a macOS notification through `osascript`. |
 | `maestro-banner-gate` | Claude | Stop | gate | Sends a substantial turn in the workspace back once when no assistant message of the session shows the Maestro banner yet. |
 | `clq-accept-gate` | Claude | Stop | gate | Sends a delegated turn back once when its last message carries a `Dispatched:` receipt without a real `Evidence:` line, or a receipt naming a build agent without an `Accept: C1` verdict; a turn without a dispatch receipt is never stopped. |
 | `observation-stop` | Claude | Stop | gate | Sends a substantial turn in the workspace back once when it neither dispatched `claude-obs` nor opted out with `[obs: none – <reason>]`. |
@@ -76,11 +75,3 @@ The scripts `claude/hooks/cbm-*` have no row: the Claude template does not wire 
 | `commit-msg` | Git | commit-msg | blocking guard | Applies the host's commit policy to every commit in a workspace repository, including optional work-item keys, and allows co-author trailers and AI attribution, whichever runtime or person commits. |
 | `post-checkout` | Git | post-checkout | watcher (warns) | Warns when a branch checkout leaves the main checkout of a workspace repository off its default branch; it runs after the checkout and cannot undo it. |
 | `pre-push` | Git | pre-push | recorder | Records which session pushed which ref in the host-local attribution log and never blocks the push. |
-
-## Mods
-
-A mod is a plugin of function hooks that Claude Code loads from a folder; settings do not wire it, so it has no row in the table above and `bootstrap/hooks-reference.test.mts` does not read this section. `npm run test:mods` runs `claude plugin validate` and `claude plugin test` on each mod under `claude/mods/`.
-
-| Mod | Runtime | Events | Draws | What it does |
-|---|---|---|---|---|
-| `usage-band` | Claude (terminal and desktop app) | `session.start`, `session.measure`, `ui.render` on `AbovePrompt`, `prompt.submit` | band above the prompt | Shows the weekly plan budget (used, elapsed share of the week, local reset time, reading time) in the band above the prompt, dim while calm and bold yellow or red while usage runs ahead of the week or half the budget is gone; after each turn it writes the engine's `seven_day` reading to `.cache/usage-watch/state.json`, so the watcher has a reading where no status line runs. It never toasts, claims a marker or reads a prompt. The person can collapse the band, and a collapsed band stays collapsed. |

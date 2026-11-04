@@ -1,7 +1,5 @@
 {
-  "env": {
-    "CLAUDE_CODE_PLUGIN_DIRS": "__KHEREP_CLAUDE_HOME__/mods/usage-band"
-  },
+  "env": {},
   "permissions": {
     "allow": [
       "Bash(node __KHEREP_WORKSPACE__/tools/atl-confluence-ccoder.mts get:*)",
@@ -184,10 +182,6 @@
           {
             "type": "command",
             "command": "node \"__KHEREP_CLAUDE_HOME__/kherep/hook-runtime/entry.mts\" reader \"__KHEREP_CLAUDE_HOME__/hooks/research-first.mts\""
-          },
-          {
-            "type": "command",
-            "command": "node \"__KHEREP_CLAUDE_HOME__/kherep/hook-runtime/entry.mts\" reader \"__KHEREP_CLAUDE_HOME__/hooks/usage-watch.mts\""
           },
           {
             "type": "command",

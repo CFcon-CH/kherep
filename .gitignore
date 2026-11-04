@@ -31,4 +31,3 @@ secrets/
 *.pfx
 .claude/worktrees/
 claude/hooks/.kherep-integrity/
-claude/mods/*/.claude-plugin/types/

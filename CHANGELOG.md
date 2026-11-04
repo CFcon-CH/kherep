@@ -17,6 +17,11 @@ increments the minor version; every other release increments the patch version.
   evidence and offers explicit, strictly validated rollback recovery for older
   orphaned activations. Live host acceptance remains separate.
 
+### Removed
+
+- The `usage-watch` prompt hook (issue #774). Installed copies are parked with the
+  `usage-band` files through `retired.txt`.
+
 ### Added
 
 - SonarQube Cloud analysis from GitHub Actions (#772): `sonar-project.properties` (organization `cfcon-ch`, project `CFcon-CH_kherep`)
@@ -25,16 +30,7 @@ increments the minor version; every other release increments the patch version.
   Vendored `codex/parity/plugin-sources` is excluded. CI and Sonar cancel the
   older run when a newer commit is pushed to the same pull request.
 
-- Permanent usage notice (issue #757): the `usage-band` mod, installed to
-  `<CLAUDE_HOME>/mods/usage-band/` and loaded through `CLAUDE_CODE_PLUGIN_DIRS` in the
-  rendered `settings.json`, draws the weekly plan budget in the band above the prompt in
-  the CLI and the desktop app (Windows and macOS), highlighted over the threshold or
-  ahead of pace, and writes the engine's `seven_day` reading to
-  `.cache/usage-watch/state.json` after each turn, so the cache refreshes without a
-  status line. The `usage-watch` hook now also shows the person a one-line notice
-  (`systemMessage`). The recorder shows its notification on macOS through `osascript`.
-  `npm run test:mods` validates and tests the mods with the Claude Code CLI (SKIP
-  without it); a bootstrap test pins the mod's copy of `usage-window.mts`.
+- The weekly usage recorder shows its notification on macOS through `osascript`.
 - Team model profiles (issue #761, first part): every session on every node and
   runtime gets two role texts, `kherep-lead` and `kherep-team-lead`, with the chain
   of command operator -> lead -> team leads and one message contract (PACKAGE,
@@ -389,6 +385,8 @@ increments the minor version; every other release increments the patch version.
 
 ### Changed
 
+- The repository moved to the `CFcon-CH` organization; README, docs, templates,
+  illustrations and test fixtures now name `CFcon-CH/kherep`. Old URLs redirect.
 - Claude model and effort are user-overridable defaults, not pins (issue #737). The
   shipped `kherep/model-policy.json` assigns each agent a role and each role a default
   model; the observer default becomes `haiku` with effort `medium`. The operator's
@@ -3778,10 +3776,10 @@ First public release.
 - Turn-completion observations for Claude and Codex through the service-account
   Confluence path.
 
-[Unreleased]: https://github.com/cfaysal/kherep/compare/v0.4.0...HEAD
-[0.4.0]: https://github.com/cfaysal/kherep/compare/v0.3.0...v0.4.0
-[0.3.0]: https://github.com/cfaysal/kherep/compare/v0.2.0...v0.3.0
-[0.2.0]: https://github.com/cfaysal/kherep/compare/v0.1.2...v0.2.0
-[0.1.2]: https://github.com/cfaysal/kherep/compare/v0.1.1...v0.1.2
-[0.1.1]: https://github.com/cfaysal/kherep/compare/v0.1.0...v0.1.1
-[0.1.0]: https://github.com/cfaysal/kherep/releases/tag/v0.1.0
+[Unreleased]: https://github.com/CFcon-CH/kherep/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/CFcon-CH/kherep/compare/v0.3.0...v0.4.0
+[0.3.0]: https://github.com/CFcon-CH/kherep/compare/v0.2.0...v0.3.0
+[0.2.0]: https://github.com/CFcon-CH/kherep/compare/v0.1.2...v0.2.0
+[0.1.2]: https://github.com/CFcon-CH/kherep/compare/v0.1.1...v0.1.2
+[0.1.1]: https://github.com/CFcon-CH/kherep/compare/v0.1.0...v0.1.1
+[0.1.0]: https://github.com/CFcon-CH/kherep/releases/tag/v0.1.0

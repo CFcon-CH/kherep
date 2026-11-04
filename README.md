@@ -37,7 +37,7 @@ Use Kherep to give your agents consistent working rules, reusable skills and a s
 - **Central Brain:** a shared knowledge base in a dedicated Confluence space. With a configured space and brokers, durable findings from completed turns become pages: the Claude observation agent files them itself, and the pinned Codex Luna observation agent extracts and publishes through a narrow local service-account adapter. The Codex Maestro independently checks its receipt and target pages. A finding about repository code counts as `confirmed` only when it names each repository as `<name>@<full commit sha>` measured on a clean tree; otherwise it is filed as `assumed`.
 - **Brain drainage:** operator-invoked knowledge-space hygiene review through the read-only service-account scanner, with explicit-authority repairs and reviewed-version protection, and an operator-requested confirm path that measures `evidence-assumed` pages against their primary source before proposing a new evidence label. See [broker workflow](modules/atl-jira-brokers/README.md#brain-drainage).
 - **GitHub App issue broker:** fixed Claude and Codex CLIs for public-repository issue creation, comments and updates, with selected App identities, constrained installation tokens and durable duplicate protection. Source installation stays disabled until separately authorized operator configuration; see the [broker contract](modules/github-broker/README.md).
-- **Weekly usage watcher:** warns once per reset window, by a Windows toast or macOS notification and by a prompt notice the model and the person see, when the plan budget is half used or usage runs ahead of the week; the `usage-band` mod keeps the budget in a band above the prompt in the terminal and in the desktop app ([hook reference](docs/HOOKS.md), `usage-watch`, `usage-band`).
+- **Weekly usage watcher:** warns once per reset window, by a Windows toast or macOS notification, when the plan budget is half used or usage runs ahead of the week ([installation](docs/INSTALLATION.md)).
 - **Turn-completion observations:** after a substantial Claude turn a Stop hook has the Maestro dispatch `claude-obs`, and Codex can dispatch one bounded `codex-obs` pass; see [Codex integration](docs/CODEX.md#turn-completion-observations).
 - **Control Plane:** enrolled nodes connect to a Cloudflare Worker to exchange session messages and start tasks on each other. On a host with a managed service, sessions use one stable command, `node "<config directory>/bin/kherep-node.mjs"`, which follows the active service pin. The details are in [Control Plane](modules/control-plane/README.md), including prerequisites, task controls and platform limits:
   - **Delivery:** a running Claude Code session receives accepted messages after its next successful tool call, and its Stop confirms delivery.
@@ -129,13 +129,13 @@ cache; see the [service adoption contract](docs/INSTALLATION.md).
 
 ### Central Brain
 
-[![Relief: scribes of Claude Code and Codex bring findings to one archive; a scale weighs the evidence, the broker seals each scroll, private matters stay in a locked shrine.](assets/illustrations/kherep-brain-relief.svg)](https://raw.githubusercontent.com/cfaysal/kherep/main/assets/illustrations/kherep-brain.svg)
+[![Relief: scribes of Claude Code and Codex bring findings to one archive; a scale weighs the evidence, the broker seals each scroll, private matters stay in a locked shrine.](assets/illustrations/kherep-brain-relief.svg)](https://raw.githubusercontent.com/CFcon-CH/kherep/main/assets/illustrations/kherep-brain.svg)
 
-Sessions are asked to search the space before answering, and a substantial turn that shows neither research nor a stated reason to skip it is sent back once. The matching pages come back with their evidence status. After a substantial turn, the observation agent files what the turn established through the broker. See the [detailed diagram](https://raw.githubusercontent.com/cfaysal/kherep/main/assets/illustrations/kherep-brain.svg). Clients that read the space directly, including through the Atlassian MCP server, follow [Reading the Central Brain](docs/CENTRAL-BRAIN-READING.md).
+Sessions are asked to search the space before answering, and a substantial turn that shows neither research nor a stated reason to skip it is sent back once. The matching pages come back with their evidence status. After a substantial turn, the observation agent files what the turn established through the broker. See the [detailed diagram](https://raw.githubusercontent.com/CFcon-CH/kherep/main/assets/illustrations/kherep-brain.svg). Clients that read the space directly, including through the Atlassian MCP server, follow [Reading the Central Brain](docs/CENTRAL-BRAIN-READING.md).
 
 ### Control Plane
 
-[![Relief: two temples on opposite banks exchange sealed scrolls by boat through a central obelisk, where waiting messages are kept in jars.](assets/illustrations/kherep-control-plane-relief.svg)](https://raw.githubusercontent.com/cfaysal/kherep/main/assets/illustrations/kherep-control-plane.svg)
+[![Relief: two temples on opposite banks exchange sealed scrolls by boat through a central obelisk, where waiting messages are kept in jars.](assets/illustrations/kherep-control-plane-relief.svg)](https://raw.githubusercontent.com/CFcon-CH/kherep/main/assets/illustrations/kherep-control-plane.svg)
 
 Phase 1 session liveness uses metadata and local lifecycle tombstones, with UNKNOWN
 native adapters. Current supported source identities can qualify a fresh pair-brake root even when availability is UNKNOWN, using enrolled-Node attestation and runtime/lifecycle binding. This does not cryptographically authenticate a native session. Historical legacy chains require a fresh root.
@@ -145,7 +145,7 @@ MCP registration or claim permission. This does not establish native acceptance 
 24-hour admission deadline; native turn start can follow timely admission after
 expiry. See the [liveness contract](modules/control-plane/ARCHITECTURE.md#session-liveness-metadata-phase-1-706).
 
-Sessions on different nodes exchange messages through one Cloudflare Worker, and a session can ask another node to start a new intercom session. A peer message informs; it never approves. See the [detailed diagram](https://raw.githubusercontent.com/cfaysal/kherep/main/assets/illustrations/kherep-control-plane.svg).
+Sessions on different nodes exchange messages through one Cloudflare Worker, and a session can ask another node to start a new intercom session. A peer message informs; it never approves. See the [detailed diagram](https://raw.githubusercontent.com/CFcon-CH/kherep/main/assets/illustrations/kherep-control-plane.svg).
 
 ## Supported integrations
 
@@ -168,7 +168,7 @@ Each integration is optional unless a component's guide says otherwise, and each
 Use Node.js 24 (at least 22.18 on the 22 line, or 23.6), npm and Git. The Claude installer also needs Bash; on Windows use Git Bash.
 
 ```sh
-git clone https://github.com/cfaysal/kherep.git
+git clone https://github.com/CFcon-CH/kherep.git
 cd kherep
 npm ci
 ```
@@ -249,11 +249,11 @@ npm run test:bootstrap
 
 ## Contributing
 
-Track changes in [GitHub Issues](https://github.com/cfaysal/kherep/issues). Changes reach `main` only through a pull request, merged by rebase. See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, checks and conventions.
+Track changes in [GitHub Issues](https://github.com/CFcon-CH/kherep/issues). Changes reach `main` only through a pull request, merged by rebase. See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, checks and conventions.
 
 ## Roadmap
 
-Planned and in-progress work is tracked as [open issues](https://github.com/cfaysal/kherep/issues). Released changes and the `[Unreleased]` section are in the [changelog](CHANGELOG.md).
+Planned and in-progress work is tracked as [open issues](https://github.com/CFcon-CH/kherep/issues). Released changes and the `[Unreleased]` section are in the [changelog](CHANGELOG.md).
 
 ## Acknowledgements
 

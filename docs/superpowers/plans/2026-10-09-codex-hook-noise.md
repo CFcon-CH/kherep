@@ -8,7 +8,7 @@
 
 **Tech Stack:** Node.js 24, erasable TypeScript `.mts`, `node:test`, GitHub Git Data API.
 
-**Current authorized phase:** The Director authorized Codex-only source implementation, functional verification and merge after green acceptance. [Authority record at #365](https://github.com/cfaysal/kherep/issues/365#issuecomment-6095123268). Live installation and activation are excluded. Claude, shared watcher bytes, safety guards and permissions remain unchanged.
+**Current authorized phase:** The Director authorized Codex-only source implementation, functional verification and merge after green acceptance. [Authority record at #365](https://github.com/CFcon-CH/kherep/issues/365#issuecomment-6095123268). Live installation and activation are excluded. Claude, shared watcher bytes, safety guards and permissions remain unchanged.
 
 **Related delivery plan:** [Codex Delivery Feedback Noise Plan](2026-10-09-codex-delivery-feedback-noise.md) specifies concise Codex Stop feedback and preserved peer-message retrieval. Its [existing-owner addendum](2026-10-10-codex-quiet-owner-cutover.md) requires independently identifiable A/B source stages and separate target acceptance before activation.
 

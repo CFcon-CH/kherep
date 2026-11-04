@@ -6,7 +6,7 @@
 
 **Architecture:** Keep the existing delivery state machine and `msg inbox --receive` path. SessionStart and every UserPromptSubmit developer context own the exact session-bound receive recipe, including when the inbox is empty. Stop owns only the fixed cue that starts one bounded continuation. The continuation retrieves framed peer context through the existing CLI, and its next Stop confirms what was offered.
 
-**Current authorized phase:** Codex-only source implementation, functional verification and merge after green acceptance are now authorized. [Authority record at #365](https://github.com/cfaysal/kherep/issues/365#issuecomment-6095123268). Live installation and activation remain excluded. The [existing-owner addendum](2026-10-10-codex-quiet-owner-cutover.md) governs the separate A/B artifacts and target cutover.
+**Current authorized phase:** Codex-only source implementation, functional verification and merge after green acceptance are now authorized. [Authority record at #365](https://github.com/CFcon-CH/kherep/issues/365#issuecomment-6095123268). Live installation and activation remain excluded. The [existing-owner addendum](2026-10-10-codex-quiet-owner-cutover.md) governs the separate A/B artifacts and target cutover.
 
 **Related plan:** [Codex Hook Noise Implementation Plan](2026-10-09-codex-hook-noise.md) covers the separate PostToolUse and research-feedback work in the same draft PR.
 

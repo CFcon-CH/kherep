@@ -53,8 +53,6 @@ hooks/obs-handback-gate.mts
 hooks/obs-handback-gate.test.mts
 hooks/research-first.mts
 hooks/research-first.test.mts
-hooks/usage-watch.mts
-hooks/usage-watch.test.mts
 hooks/usage-record.mts
 hooks/usage-record.test.mts
 hooks/research-stop.mts
@@ -93,13 +91,6 @@ hooks/lib/turn-substance.test.mts
 hooks/lib/research-evidence.mts
 hooks/lib/usage-window.mts
 hooks/lib/usage-window.test.mts
-mods/usage-band/.claude-plugin/plugin.json
-mods/usage-band/hooks/hooks.json
-mods/usage-band/hooks/register.mts
-mods/usage-band/hooks/register.test.ts
-mods/usage-band/hooks/lib/usage-window.mts
-mods/usage-band/types/index.d.ts
-mods/usage-band/tsconfig.json
 hooks/lib/workspace-scope.mts
 hooks/lib/workspace-scope.test.mts
 hooks/lib/orchestra-checkout.mts
