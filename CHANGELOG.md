@@ -19,7 +19,7 @@ increments the minor version; every other release increments the patch version.
 
 ### Added
 
-- SonarQube Cloud analysis from GitHub Actions (#772): `sonar-project.properties`
+- SonarQube Cloud analysis from GitHub Actions (#772): `sonar-project.properties` (organization `cfcon-ch`, project `CFcon-CH_kherep`)
   and a `Sonar` workflow on pushes to main and same-repository pull requests,
   reading `SONAR_TOKEN` from repository secrets; fork pull requests skip the job.
   Vendored `codex/parity/plugin-sources` is excluded.
