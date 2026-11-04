@@ -196,7 +196,7 @@
   <text class="b" x="836" y="954">in a session that bypasses permission prompts.</text>
   <text class="b" x="820" y="978">• Delivered means it reached the session, not that the model understood it.</text>
 
-  <text class="lbl" x="40" y="1030">Source: github.com/cfaysal/kherep · modules/control-plane (worker, node, protocol) · state of 8 October 2026</text>
+  <text class="lbl" x="40" y="1030">Source: github.com/CFcon-CH/kherep · modules/control-plane (worker, node, protocol) · state of 8 October 2026</text>
 
   <!-- ===== Animated packets (hidden with reduced motion) ===== -->
   <g class="pkt">

@@ -86,7 +86,7 @@ test("a confirmed candidate's Revision lines bind a full commit SHA", () => {
     evidence: "confirmed", labels: ["type-observation", "evidence-confirmed", "status-author-model"], bodyStorage: body,
   }));
   const assumed = (body: string) => doc(candidate({ bodyStorage: body }));
-  for (const body of [`<p>Revision: kherep@${sha}</p>`, `<p>Revision: cfaysal/kherep@${sha}</p><p>Revision: other@${sha}</p>`,
+  for (const body of [`<p>Revision: kherep@${sha}</p>`, `<p>Revision: CFcon-CH/kherep@${sha}</p><p>Revision: other@${sha}</p>`,
     "<p>Synthetic body without a revision line.</p>"]) {
     assert.deepEqual(checkObsCandidate(confirmed(body)), { count: 1 }, body);
   }

@@ -529,7 +529,7 @@ App-grant decisions retain `"grant": "codexApp"` in the metadata-only wake audit
 Codex background tasks and genuinely closed targets retain their separate policy
 paths; Claude delivery is unchanged. Source and synthetic tests do not establish
 installation, hook trust or processing on either Desktop host. Actual owner-turn
-acceptance is tracked in [issue #374](https://github.com/cfaysal/kherep/issues/374).
+acceptance is tracked in [issue #374](https://github.com/CFcon-CH/kherep/issues/374).
 
 ## Retired memory backend
 

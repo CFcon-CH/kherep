@@ -196,7 +196,7 @@
   <text class="b" x="64" y="946">They go only to the local inference runner on the same host, which hands back a status and an opaque receipt, never the content. There is no cloud fallback.</text>
   <text class="b" x="64" y="970">Search terms follow the same classification, so private content never reaches the knowledge space.</text>
 
-  <text class="lbl" x="40" y="1030">Source: github.com/cfaysal/kherep · hooks under claude/hooks, broker under modules/atl-jira-brokers · state of 8 October 2026</text>
+  <text class="lbl" x="40" y="1030">Source: github.com/CFcon-CH/kherep · hooks under claude/hooks, broker under modules/atl-jira-brokers · state of 8 October 2026</text>
 
   <!-- ===== Animated packets (hidden with reduced motion) ===== -->
   <g class="pkt">

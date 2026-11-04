@@ -1,6 +1,6 @@
 # Codex hook starts
 
-Issue [#386](https://github.com/cfaysal/kherep/issues/386) compares the public
+Issue [#386](https://github.com/CFcon-CH/kherep/issues/386) compares the public
 `main` at `87c317b2f88ecf689d7fb5f82bbd3bdbbdfb820f` with the shell dispatcher.
 The reported Desktop total of 846 runs has no per-hook attribution. It does
 not establish a loop, and these synthetic savings cannot be extrapolated to
