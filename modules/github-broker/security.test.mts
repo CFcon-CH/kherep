@@ -41,6 +41,12 @@ test('authentication downscopes exactly and rejects wrong identity before token 
   assert.deepEqual(calls[2][3],{repository_ids:[55],permissions:{issues:'write'}});
   for (const app of [{id:12,client_id:'Iv.synthetic',permissions:{issues:'write'}},{id:11,client_id:'wrong',permissions:{issues:'write'}},{id:11,client_id:'Iv.synthetic',permissions:{issues:'read'}}]) await assert.rejects(authenticate(async()=>app,key,{...identity,operations:[...identity.operations]},identity.repositories[0],now),{message:'auth-refused'});
 });
+test('authentication accepts the dotted installation-token format and still refuses other characters',async()=> {
+  const answers=(token:string)=>{const calls:unknown[][]=[];return async (...args:unknown[])=>{calls.push(args);return [{id:11,client_id:'Iv.synthetic',slug:'synthetic',permissions:{issues:'write'}},{id:44,app_id:11,suspended_at:null,permissions:{issues:'write'}},{token,expires_at:new Date(now+60000).toISOString(),permissions:{issues:'write',metadata:'read'}},{id:33,login:'synthetic[bot]',type:'Bot'},{id:55,full_name:'example/project',private:false}][calls.length-1];};};
+  const dotted='ghs_synthetic.part-two.part_three';
+  assert.equal(await authenticate(answers(dotted),key,{...identity,operations:[...identity.operations]},identity.repositories[0],now),dotted);
+  for (const token of ['ghs_synthetic token','ghs_synthetic/slash','ghs_synthetic\nline']) await assert.rejects(authenticate(answers(token),key,{...identity,operations:[...identity.operations]},identity.repositories[0],now),{message:'auth-refused'});
+});
 test('selected protected file refuses symlink, mode, absent path and unsafe ancestor',async(t)=> {
   const root=temp(t);fs.writeFileSync(path.join(root,'selected.pem'),key,{mode:0o600});assert.deepEqual(await readProtected(root,'selected.pem',16384),key);
   fs.linkSync(path.join(root,'selected.pem'),path.join(root,'hardlink.pem'));await assert.rejects(readProtected(root,'selected.pem',16384));fs.unlinkSync(path.join(root,'hardlink.pem'));

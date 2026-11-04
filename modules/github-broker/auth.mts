@@ -18,7 +18,7 @@ export async function authenticate(http:Http, key:Buffer, identity:Identity, rep
   const installation = await http('GET',`/repos/${repo.slug}/installation`,signed);
   if (installation.id !== identity.installationId || installation.app_id !== identity.appId || installation.suspended_at !== null || (installation.permissions as Record<string,unknown>)?.issues !== 'write') fail('auth-refused');
   const token = await http('POST',`/app/installations/${identity.installationId}/access_tokens`,signed,{repository_ids:[repo.id],permissions:{issues:'write'}});
-  if (typeof token.token !== 'string' || !/^[-A-Za-z0-9_]+$/.test(token.token) || token.token.length > 4096 || typeof token.expires_at !== 'string' || !Number.isFinite(Date.parse(token.expires_at)) || Date.parse(token.expires_at) <= now + 15000) fail('auth-refused');
+  if (typeof token.token !== 'string' || !/^[-A-Za-z0-9_.]+$/.test(token.token) || token.token.length > 4096 || typeof token.expires_at !== 'string' || !Number.isFinite(Date.parse(token.expires_at)) || Date.parse(token.expires_at) <= now + 15000) fail('auth-refused');
   if (token.permissions !== undefined) {
     const perms = token.permissions as Record<string,unknown>;
     if (!perms || perms.issues !== 'write' || Object.entries(perms).some(([k,v]) => !(k === 'issues' && v === 'write' || k === 'metadata' && v === 'read'))) fail('auth-refused');
