@@ -1,10 +1,15 @@
 {
   "compilerOptions": {
     "target": "es2024",
-    "lib": ["es2024"],
+    "lib": [
+      "es2024"
+    ],
     "module": "esnext",
     "moduleResolution": "bundler",
-    "types": ["@cloudflare/workers-types", "@cloudflare/vitest-plugin/types"],
+    "types": [
+      "@cloudflare/workers-types",
+      "@cloudflare/vitest-plugin/types"
+    ],
     "strict": true,
     "noEmit": true,
     "erasableSyntaxOnly": true,
@@ -13,5 +18,13 @@
     "resolveJsonModule": true,
     "skipLibCheck": true
   },
-  "include": ["src/**/*.mts", "test/**/*.mts", "vitest.config.mts", "../protocol.mts"]
+  "include": [
+    "src/**/*.mts",
+    "test/**/*.mts",
+    "vitest.config.mts",
+    "../protocol.mts"
+  ],
+  "exclude": [
+    "test/session-node-host/**"
+  ]
 }

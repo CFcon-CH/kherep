@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Kherep Control Plane Worker (Phase 1). Deployed separately from the root package.",
   "scripts": {
-    "typecheck": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.harness.json",
     "test": "vitest run",
     "check:bundle": "wrangler deploy --dry-run"
   },
