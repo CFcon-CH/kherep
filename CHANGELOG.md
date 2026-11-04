@@ -19,6 +19,11 @@ increments the minor version; every other release increments the patch version.
 
 ### Added
 
+- SonarQube Cloud analysis from GitHub Actions (#772): `sonar-project.properties`
+  and a `Sonar` workflow on pushes to main and same-repository pull requests,
+  reading `SONAR_TOKEN` from repository secrets; fork pull requests skip the job.
+  Vendored `codex/parity/plugin-sources` is excluded.
+
 - Permanent usage notice (issue #757): the `usage-band` mod, installed to
   `<CLAUDE_HOME>/mods/usage-band/` and loaded through `CLAUDE_CODE_PLUGIN_DIRS` in the
   rendered `settings.json`, draws the weekly plan budget in the band above the prompt in
