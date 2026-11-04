@@ -24,6 +24,12 @@ increments the minor version; every other release increments the patch version.
 
 ### Added
 
+- SonarQube Cloud analysis from GitHub Actions (#772): `sonar-project.properties` (organization `cfcon-ch`, project `CFcon-CH_kherep`)
+  and a `Sonar` workflow on pushes to main and same-repository pull requests,
+  reading `SONAR_TOKEN` from repository secrets; fork pull requests skip the job.
+  Vendored `codex/parity/plugin-sources` is excluded. CI and Sonar cancel the
+  older run when a newer commit is pushed to the same pull request.
+
 - The weekly usage recorder shows its notification on macOS through `osascript`.
 - Team model profiles (issue #761, first part): every session on every node and
   runtime gets two role texts, `kherep-lead` and `kherep-team-lead`, with the chain
