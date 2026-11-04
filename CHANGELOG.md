@@ -27,6 +27,11 @@ increments the minor version; every other release increments the patch version.
   contain dots and are about 390 characters long; the token format check now
   allows `.`, so authentication no longer fails with `auth-refused` (#780).
 
+- GitHub App issue broker: the Windows access check no longer refuses a default
+  `C:\` drive root. At drive-root level only, it accepts TrustedInstaller as owner
+  and a non-inheriting Allow ACE giving Authenticated Users the create-folder right
+  (0x4). Every other ancestor and the private tree keep their checks (#788).
+
 - Managed service activation (#746) binds health/settle to PID and start identity,
   retains prepared/attested evidence before native replacement/start, and preserves
   prior pending records during recovery. Windows consumes generation-bound stop
