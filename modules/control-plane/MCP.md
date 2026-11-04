@@ -1,6 +1,6 @@
 # Remote MCP candidate
 
-This source candidate exposes the existing control-plane messaging router through a stateless Streamable HTTP endpoint. It remains disabled in the committed Worker config and in the default node policy. See issue [#127](https://github.com/cfaysal/kherep/issues/127) for the actual-client acceptance gates.
+This source candidate exposes the existing control-plane messaging router through a stateless Streamable HTTP endpoint. It remains disabled in the committed Worker config and in the default node policy. See issue [#127](https://github.com/CFcon-CH/kherep/issues/127) for the actual-client acceptance gates.
 
 ## Components
 
@@ -283,12 +283,12 @@ Before activation, the production Codex path needs a successful direct canary an
 
 Actual compatibility canaries measured Claude Code 2.1.283 on macOS on 2026-10-02: the real hook
 session and tool-use ID joined the actual MCP metadata, the required request-ID schema worked after
-native rewrite, and the real session appeared in native discovery. The [recorded evidence](https://github.com/cfaysal/kherep/issues/127#issuecomment-5958977972)
-establishes that contract, rather than delivery of this adapter. Issue [#187](https://github.com/cfaysal/kherep/issues/187)
+native rewrite, and the real session appeared in native discovery. The [recorded evidence](https://github.com/CFcon-CH/kherep/issues/127#issuecomment-5958977972)
+establishes that contract, rather than delivery of this adapter. Issue [#187](https://github.com/CFcon-CH/kherep/issues/187)
 also requires an actual native CLI canary after the accepted adapter reaches its target. Production
 ACK latency, normal permissions, two-session isolation and both-host messaging remain separate
-acceptance gates in [#127](https://github.com/cfaysal/kherep/issues/127); lifecycle and Windows
-process/window/Stop acceptance remain in [#128](https://github.com/cfaysal/kherep/issues/128).
+acceptance gates in [#127](https://github.com/CFcon-CH/kherep/issues/127); lifecycle and Windows
+process/window/Stop acceptance remain in [#128](https://github.com/CFcon-CH/kherep/issues/128).
 
 ## Dependencies
 

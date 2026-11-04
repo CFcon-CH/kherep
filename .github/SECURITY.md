@@ -2,7 +2,7 @@
 
 ## Reporting a vulnerability
 
-Report security vulnerabilities privately through GitHub's private vulnerability reporting: open the repository's **Security** tab and select **Report a vulnerability**, or go directly to <https://github.com/cfaysal/kherep/security/advisories/new>.
+Report security vulnerabilities privately through GitHub's private vulnerability reporting: open the repository's **Security** tab and select **Report a vulnerability**, or go directly to <https://github.com/CFcon-CH/kherep/security/advisories/new>.
 
 Do not open a public issue, pull request or discussion for a suspected vulnerability.
 

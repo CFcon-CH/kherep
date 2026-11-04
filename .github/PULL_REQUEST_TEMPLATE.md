@@ -12,6 +12,6 @@
 
 - [ ] `npm run typecheck`
 - [ ] `npm run test:bootstrap`
-- [ ] Focused checks for the changed component (see [component checks](https://github.com/cfaysal/kherep/blob/main/CONTRIBUTING.md#component-checks))
+- [ ] Focused checks for the changed component (see [component checks](https://github.com/CFcon-CH/kherep/blob/main/CONTRIBUTING.md#component-checks))
 
 Closes #

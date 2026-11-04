@@ -1,6 +1,6 @@
 # Public release review
 
-Kherep is developed in its public repository, `cfaysal/kherep`. Every commit pushed to it, on any branch, is public from that moment, and a release is a tagged revision of `main` in the same repository. Review each change before it is pushed, and review the release revision and the third-party material it redistributes before it is tagged.
+Kherep is developed in its public repository, `CFcon-CH/kherep`. Every commit pushed to it, on any branch, is public from that moment, and a release is a tagged revision of `main` in the same repository. Review each change before it is pushed, and review the release revision and the third-party material it redistributes before it is tagged.
 
 ## Content and configuration
 

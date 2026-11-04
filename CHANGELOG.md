@@ -383,6 +383,8 @@ increments the minor version; every other release increments the patch version.
 
 ### Changed
 
+- The repository moved to the `CFcon-CH` organization; README, docs, templates,
+  illustrations and test fixtures now name `CFcon-CH/kherep`. Old URLs redirect.
 - Claude model and effort are user-overridable defaults, not pins (issue #737). The
   shipped `kherep/model-policy.json` assigns each agent a role and each role a default
   model; the observer default becomes `haiku` with effort `medium`. The operator's
@@ -3772,10 +3774,10 @@ First public release.
 - Turn-completion observations for Claude and Codex through the service-account
   Confluence path.
 
-[Unreleased]: https://github.com/cfaysal/kherep/compare/v0.4.0...HEAD
-[0.4.0]: https://github.com/cfaysal/kherep/compare/v0.3.0...v0.4.0
-[0.3.0]: https://github.com/cfaysal/kherep/compare/v0.2.0...v0.3.0
-[0.2.0]: https://github.com/cfaysal/kherep/compare/v0.1.2...v0.2.0
-[0.1.2]: https://github.com/cfaysal/kherep/compare/v0.1.1...v0.1.2
-[0.1.1]: https://github.com/cfaysal/kherep/compare/v0.1.0...v0.1.1
-[0.1.0]: https://github.com/cfaysal/kherep/releases/tag/v0.1.0
+[Unreleased]: https://github.com/CFcon-CH/kherep/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/CFcon-CH/kherep/compare/v0.3.0...v0.4.0
+[0.3.0]: https://github.com/CFcon-CH/kherep/compare/v0.2.0...v0.3.0
+[0.2.0]: https://github.com/CFcon-CH/kherep/compare/v0.1.2...v0.2.0
+[0.1.2]: https://github.com/CFcon-CH/kherep/compare/v0.1.1...v0.1.2
+[0.1.1]: https://github.com/CFcon-CH/kherep/compare/v0.1.0...v0.1.1
+[0.1.0]: https://github.com/CFcon-CH/kherep/releases/tag/v0.1.0

@@ -1,6 +1,6 @@
 # Reading the Central Brain from any client
 
-This guide is for any client that reads the Central Brain: Claude Code, Codex or another MCP-capable client. It covers reading the space faithfully, both through the Atlassian brokers and through the Atlassian MCP v2 server. It adds no new service. The measurements below come from issue [#679](https://github.com/cfaysal/kherep/issues/679), taken on one Confluence site in October 2026. Other sites, scopes or vendor releases may behave differently.
+This guide is for any client that reads the Central Brain: Claude Code, Codex or another MCP-capable client. It covers reading the space faithfully, both through the Atlassian brokers and through the Atlassian MCP v2 server. It adds no new service. The measurements below come from issue [#679](https://github.com/CFcon-CH/kherep/issues/679), taken on one Confluence site in October 2026. Other sites, scopes or vendor releases may behave differently.
 
 ## Who does what
 

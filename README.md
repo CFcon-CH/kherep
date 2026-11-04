@@ -129,13 +129,13 @@ cache; see the [service adoption contract](docs/INSTALLATION.md).
 
 ### Central Brain
 
-[![Relief: scribes of Claude Code and Codex bring findings to one archive; a scale weighs the evidence, the broker seals each scroll, private matters stay in a locked shrine.](assets/illustrations/kherep-brain-relief.svg)](https://raw.githubusercontent.com/cfaysal/kherep/main/assets/illustrations/kherep-brain.svg)
+[![Relief: scribes of Claude Code and Codex bring findings to one archive; a scale weighs the evidence, the broker seals each scroll, private matters stay in a locked shrine.](assets/illustrations/kherep-brain-relief.svg)](https://raw.githubusercontent.com/CFcon-CH/kherep/main/assets/illustrations/kherep-brain.svg)
 
-Sessions are asked to search the space before answering, and a substantial turn that shows neither research nor a stated reason to skip it is sent back once. The matching pages come back with their evidence status. After a substantial turn, the observation agent files what the turn established through the broker. See the [detailed diagram](https://raw.githubusercontent.com/cfaysal/kherep/main/assets/illustrations/kherep-brain.svg). Clients that read the space directly, including through the Atlassian MCP server, follow [Reading the Central Brain](docs/CENTRAL-BRAIN-READING.md).
+Sessions are asked to search the space before answering, and a substantial turn that shows neither research nor a stated reason to skip it is sent back once. The matching pages come back with their evidence status. After a substantial turn, the observation agent files what the turn established through the broker. See the [detailed diagram](https://raw.githubusercontent.com/CFcon-CH/kherep/main/assets/illustrations/kherep-brain.svg). Clients that read the space directly, including through the Atlassian MCP server, follow [Reading the Central Brain](docs/CENTRAL-BRAIN-READING.md).
 
 ### Control Plane
 
-[![Relief: two temples on opposite banks exchange sealed scrolls by boat through a central obelisk, where waiting messages are kept in jars.](assets/illustrations/kherep-control-plane-relief.svg)](https://raw.githubusercontent.com/cfaysal/kherep/main/assets/illustrations/kherep-control-plane.svg)
+[![Relief: two temples on opposite banks exchange sealed scrolls by boat through a central obelisk, where waiting messages are kept in jars.](assets/illustrations/kherep-control-plane-relief.svg)](https://raw.githubusercontent.com/CFcon-CH/kherep/main/assets/illustrations/kherep-control-plane.svg)
 
 Phase 1 session liveness uses metadata and local lifecycle tombstones, with UNKNOWN
 native adapters. Current supported source identities can qualify a fresh pair-brake root even when availability is UNKNOWN, using enrolled-Node attestation and runtime/lifecycle binding. This does not cryptographically authenticate a native session. Historical legacy chains require a fresh root.
@@ -145,7 +145,7 @@ MCP registration or claim permission. This does not establish native acceptance 
 24-hour admission deadline; native turn start can follow timely admission after
 expiry. See the [liveness contract](modules/control-plane/ARCHITECTURE.md#session-liveness-metadata-phase-1-706).
 
-Sessions on different nodes exchange messages through one Cloudflare Worker, and a session can ask another node to start a new intercom session. A peer message informs; it never approves. See the [detailed diagram](https://raw.githubusercontent.com/cfaysal/kherep/main/assets/illustrations/kherep-control-plane.svg).
+Sessions on different nodes exchange messages through one Cloudflare Worker, and a session can ask another node to start a new intercom session. A peer message informs; it never approves. See the [detailed diagram](https://raw.githubusercontent.com/CFcon-CH/kherep/main/assets/illustrations/kherep-control-plane.svg).
 
 ## Supported integrations
 
@@ -168,7 +168,7 @@ Each integration is optional unless a component's guide says otherwise, and each
 Use Node.js 24 (at least 22.18 on the 22 line, or 23.6), npm and Git. The Claude installer also needs Bash; on Windows use Git Bash.
 
 ```sh
-git clone https://github.com/cfaysal/kherep.git
+git clone https://github.com/CFcon-CH/kherep.git
 cd kherep
 npm ci
 ```
@@ -249,11 +249,11 @@ npm run test:bootstrap
 
 ## Contributing
 
-Track changes in [GitHub Issues](https://github.com/cfaysal/kherep/issues). Changes reach `main` only through a pull request, merged by rebase. See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, checks and conventions.
+Track changes in [GitHub Issues](https://github.com/CFcon-CH/kherep/issues). Changes reach `main` only through a pull request, merged by rebase. See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, checks and conventions.
 
 ## Roadmap
 
-Planned and in-progress work is tracked as [open issues](https://github.com/cfaysal/kherep/issues). Released changes and the `[Unreleased]` section are in the [changelog](CHANGELOG.md).
+Planned and in-progress work is tracked as [open issues](https://github.com/CFcon-CH/kherep/issues). Released changes and the `[Unreleased]` section are in the [changelog](CHANGELOG.md).
 
 ## Acknowledgements
 

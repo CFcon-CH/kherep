@@ -7,7 +7,7 @@ Choose the workspace in which Kherep should apply. The source checkout can be an
 ## 1. Get the source
 
 ```sh
-git clone https://github.com/cfaysal/kherep.git
+git clone https://github.com/CFcon-CH/kherep.git
 cd kherep
 npm ci
 ```

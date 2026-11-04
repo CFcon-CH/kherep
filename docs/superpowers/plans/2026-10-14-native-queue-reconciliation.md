@@ -10,7 +10,7 @@
 
 ## Approved boundaries
 
-Issue: https://github.com/cfaysal/kherep/issues/410. `accepted` and `offered` never authorize deletion. Require exact owner, queue ID, input, complete delivered batch and unchanged captured local producer identity. Keep attempts after cleanup. Never resume, interrupt or modify permissions, profiles, Worker behavior, Composer preferences or foreign/legacy cards. Native calls in this worktree are synthetic tests only.
+Issue: https://github.com/CFcon-CH/kherep/issues/410. `accepted` and `offered` never authorize deletion. Require exact owner, queue ID, input, complete delivered batch and unchanged captured local producer identity. Keep attempts after cleanup. Never resume, interrupt or modify permissions, profiles, Worker behavior, Composer preferences or foreign/legacy cards. Native calls in this worktree are synthetic tests only.
 
 The actual producer's 0.161.0 experimental schema confirms `thread/queue/list` and `thread/queue/delete`; delete takes `threadId` and `queuedSubmissionId` and returns `deleted`. A complete post-read must confirm absence. Already-started queues and admission whose ID arrives after Stop remain outside an absolute no-empty-turn guarantee. No global lock is introduced.
 

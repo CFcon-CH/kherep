@@ -427,7 +427,7 @@ Legacy queue cards and bindings remain unchanged by Kherep at Stop.
 Genuinely closed targets retain the separate [closed-session policy](#messages-for-a-closed-session).
 Source and synthetic hook/CLI tests do not prove installation, hook trust or actual
 Desktop processing. Owner-turn acceptance is tracked in
-[issue #374](https://github.com/cfaysal/kherep/issues/374).
+[issue #374](https://github.com/CFcon-CH/kherep/issues/374).
 
 ## Tasks
 

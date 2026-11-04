@@ -8,7 +8,7 @@
 
 **Tech stack:** Node TypeScript type stripping, node:test, existing synthetic Codex fixtures.
 
-**Tracker:** https://github.com/cfaysal/kherep/issues/371
+**Tracker:** https://github.com/CFcon-CH/kherep/issues/371
 
 ## 1. Regression before production code
 
