@@ -1,7 +1,6 @@
 #!/usr/bin/env node
-// Contract test for usage-watch.mts (issues #748, #757): the notice appears for the model
-// (additionalContext) and the person (systemMessage) when the cached state says a condition
-// holds in an open window, and nothing appears otherwise; exit 0 always.
+// Contract test for usage-watch.mts (issue #748): the notice appears when the cached state
+// says a condition holds in an open window, and nothing appears otherwise; exit 0 always.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
@@ -10,8 +9,8 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { WEEK_SECONDS, noticeText, userNotice, windowKey, type UsageState } from "./lib/usage-window.mts";
-import { promptNotice, promptOutput } from "./usage-watch.mts";
+import { WEEK_SECONDS, windowKey, type UsageState } from "./lib/usage-window.mts";
+import { promptNotice } from "./usage-watch.mts";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), "usage-watch-test-"));
@@ -65,29 +64,12 @@ function spawnHook(stdin: string, home: string) {
   });
 }
 
-type Output = { systemMessage: string; hookSpecificOutput: { hookEventName: string; additionalContext: string } };
-
-test("C4 promptOutput: the person's line and the model's context together, or nothing", () => {
-  const text = promptOutput(JSON.stringify(state()), at(20), "UTC");
-  const out = JSON.parse(text) as Output;
-  assert.deepEqual(Object.keys(out).sort(), ["hookSpecificOutput", "systemMessage"]);
-  assert.equal(out.systemMessage, userNotice(state(), at(20), "UTC"));
-  assert.equal(out.hookSpecificOutput.hookEventName, "UserPromptSubmit");
-  assert.equal(out.hookSpecificOutput.additionalContext, noticeText(state(), at(20), "UTC"));
-  assert.match(out.systemMessage, /^Weekly Claude budget: 55% used/);
-  assert.equal(promptOutput(JSON.stringify(state({ conditions: { threshold: false, pace: false } })), at(20), "UTC"), "");
-  assert.equal(promptOutput(JSON.stringify(state()), (RESETS + 60) * 1000, "UTC"), "");
-  assert.equal(promptOutput("{broken", at(20), "UTC"), "");
-  assert.equal(promptOutput(null, at(20), "UTC"), "");
-});
-
-test("C3 as a hook: JSON systemMessage and additionalContext when the state warns", () => {
+test("C3 as a hook: JSON additionalContext when the state warns", () => {
   const run = spawnHook(JSON.stringify({ cwd: "/somewhere", prompt: "Example Corp secret" }), homeWith(live()));
   assert.equal(run.status, 0);
-  const out = JSON.parse(run.stdout) as Output;
+  const out = JSON.parse(run.stdout) as { hookSpecificOutput: { hookEventName: string; additionalContext: string } };
   assert.equal(out.hookSpecificOutput.hookEventName, "UserPromptSubmit");
   assert.match(out.hookSpecificOutput.additionalContext, /^\[usage-watch\] Weekly Claude plan budget: 55% used, 20% of the 7-day window/);
-  assert.match(out.systemMessage, /^Weekly Claude budget: 55% used, 20% of the 7-day window elapsed \(reading from \d\d:\d\d, resets /);
   assert.doesNotMatch(run.stdout, /Example Corp|somewhere/, "the payload is never echoed");
 });
 

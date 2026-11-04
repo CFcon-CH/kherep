@@ -19,16 +19,7 @@ increments the minor version; every other release increments the patch version.
 
 ### Added
 
-- Permanent usage notice (issue #757): the `usage-band` mod, installed to
-  `<CLAUDE_HOME>/mods/usage-band/` and loaded through `CLAUDE_CODE_PLUGIN_DIRS` in the
-  rendered `settings.json`, draws the weekly plan budget in the band above the prompt in
-  the CLI and the desktop app (Windows and macOS), highlighted over the threshold or
-  ahead of pace, and writes the engine's `seven_day` reading to
-  `.cache/usage-watch/state.json` after each turn, so the cache refreshes without a
-  status line. The `usage-watch` hook now also shows the person a one-line notice
-  (`systemMessage`). The recorder shows its notification on macOS through `osascript`.
-  `npm run test:mods` validates and tests the mods with the Claude Code CLI (SKIP
-  without it); a bootstrap test pins the mod's copy of `usage-window.mts`.
+- The weekly usage recorder shows its notification on macOS through `osascript`.
 - Team model profiles (issue #761, first part): every session on every node and
   runtime gets two role texts, `kherep-lead` and `kherep-team-lead`, with the chain
   of command operator -> lead -> team leads and one message contract (PACKAGE,

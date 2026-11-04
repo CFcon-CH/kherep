@@ -1,7 +1,6 @@
-// Issues #748 and #757. Pure rules of the weekly plan-usage watcher, shared by the recorder
-// (hooks/usage-record.mts, toast), the UserPromptSubmit hook (hooks/usage-watch.mts, notice)
-// and the usage-band mod (band), so threshold, pace and wording cannot diverge between the
-// channels. The mod carries a byte-equal copy (mods/usage-band/hooks/lib/), pinned by a test.
+// Issue #748. Pure rules of the weekly plan-usage watcher, shared by the recorder
+// (hooks/usage-record.mts, toast) and the UserPromptSubmit hook (hooks/usage-watch.mts,
+// notice), so threshold, pace and wording cannot diverge between the two channels.
 // Input is the documented status-line field rate_limits.seven_day {used_percentage,
 // resets_at}; an absent or unparsable window is "no window", never a zero.
 
@@ -100,67 +99,24 @@ export function toastText(v: Verdict, condition: Condition, timeZone?: string): 
   };
 }
 
-// The cached state judged at `now`: null when the window is over. A condition counts only
-// when the recorder recorded it and it still holds at `now` (elapsed is re-derived; the
-// cached elapsed is informational), so no text ever contradicts itself.
-function judge(state: UsageState, nowMs: number): { v: Verdict; threshold: boolean; pace: boolean } | null {
-  if (state.resets_at * 1000 <= nowMs) return null;
+// The hook text. Silent when the window is over or no condition holds. A condition is
+// named only when the recorder recorded it and it still holds at `now` (elapsed is
+// re-derived; the cached elapsed is informational), so the text never contradicts itself.
+export function noticeText(state: UsageState, nowMs: number, timeZone?: string): string {
+  if (state.resets_at * 1000 <= nowMs) return "";
   const v = evaluate({ used: state.used_percentage, resetsAt: state.resets_at }, nowMs);
-  return { v, threshold: state.conditions.threshold && v.threshold, pace: state.conditions.pace && v.pace };
-}
-
-function clauses(threshold: boolean, pace: boolean): string[] {
-  return [...(threshold ? ["half of the budget is gone"] : []), ...(pace ? ["usage runs ahead of the week"] : [])];
-}
-
-const capitalised = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
-
-// The shared sentence of the model's and the person's notice; "" when silent.
-function noticeSentence(state: UsageState, nowMs: number, timeZone?: string): string {
-  const j = judge(state, nowMs);
-  if (!j || (!j.threshold && !j.pace)) return "";
+  const threshold = state.conditions.threshold && v.threshold;
+  const pace = state.conditions.pace && v.pace;
+  if (!threshold && !pace) return "";
+  const clauses: string[] = [];
+  if (threshold) clauses.push("Half of the budget is gone");
+  if (pace) clauses.push(threshold ? "usage runs ahead of the week" : "Usage runs ahead of the week");
   const observed = Date.parse(state.observed_at);
   const reading = Number.isFinite(observed) ? `reading from ${clock(observed / 1000, timeZone)}, ` : "";
-  return `${pct(j.v.used)} used, ${pct(j.v.elapsed)} of the 7-day window elapsed (${reading}resets ${formatLocal(state.resets_at, timeZone)}). ${capitalised(clauses(j.threshold, j.pace).join("; "))}.`;
-}
-
-// The hook text for the model. Silent when the window is over or no condition holds.
-export function noticeText(state: UsageState, nowMs: number, timeZone?: string): string {
-  const sentence = noticeSentence(state, nowMs, timeZone);
-  if (!sentence) return "";
   return [
-    `[usage-watch] Weekly Claude plan budget: ${sentence}`,
+    `[usage-watch] Weekly Claude plan budget: ${pct(v.used)} used, ${pct(v.elapsed)} of the 7-day window elapsed (${reading}resets ${formatLocal(state.resets_at, timeZone)}). ${clauses.join("; ")}.`,
     "Spend sparingly until the reset: fewer and smaller delegations, cheaper models where the task allows, no speculative fan-out.",
   ].join("\n");
-}
-
-// Issue #757. One line for the person (systemMessage): the same gate and facts, no
-// guidance sentence, no prefix, local times. "" when silent.
-export function userNotice(state: UsageState, nowMs: number, timeZone?: string): string {
-  const sentence = noticeSentence(state, nowMs, timeZone);
-  return sentence ? `Weekly Claude budget: ${sentence}` : "";
-}
-
-export const STALE_AFTER_MS = 6 * 3_600_000;
-export interface BandView { text: string; level: "calm" | "pace" | "threshold"; stale: boolean }
-
-// Issue #757. The band above the prompt, from the file's state at "now"; null draws nothing.
-// An unreadable reading time counts as stale.
-export function bandView(state: UsageState, nowMs: number, timeZone?: string): BandView | null {
-  const j = judge(state, nowMs);
-  if (!j) return null;
-  const observed = Date.parse(state.observed_at);
-  const stale = !Number.isFinite(observed) || nowMs - observed > STALE_AFTER_MS;
-  const reading = Number.isFinite(observed) ? ` · reading ${clock(observed / 1000, timeZone)}` : "";
-  const said = clauses(j.threshold, j.pace).join("; ");
-  let level: BandView["level"] = "calm";
-  if (j.threshold) level = "threshold";
-  else if (j.pace) level = "pace";
-  return {
-    text: `Weekly Claude budget ${pct(j.v.used)} used · ${pct(j.v.elapsed)} of the week elapsed · resets ${formatLocal(state.resets_at, timeZone)}${reading}${stale ? " (stale)" : ""}${said ? `: ${said}` : ""}`,
-    level,
-    stale,
-  };
 }
 
 // state.json as the recorder wrote it; anything else (missing, malformed, other version,

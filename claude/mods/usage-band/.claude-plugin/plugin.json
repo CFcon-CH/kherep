@@ -1,6 +1,0 @@
-{
-  "name": "usage-band",
-  "version": "0.1.0",
-  "description": "Shows the weekly Claude plan budget above the prompt and feeds the usage watcher's state file after each turn.",
-  "types": "./types/index.d.ts"
-}
