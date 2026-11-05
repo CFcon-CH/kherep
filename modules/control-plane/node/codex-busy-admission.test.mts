@@ -63,7 +63,7 @@ for (const fault of ["contention", "persist"]) test(`publication ${fault} retrie
   node.retained();
 });
 
-test("claimed metadata is not Receive; reoffer after ten minutes requires fresh admission", async (t) => {
+test("claimed metadata is not Receive; recovery within 120 seconds requires fresh admission", async (t) => {
   const node = setup(t);
   await node.poll();
   const first = fs.readFileSync(node.ticket, "utf8");
@@ -74,11 +74,22 @@ test("claimed metadata is not Receive; reoffer after ten minutes requires fresh 
   await node.poll();
   assert.equal(node.turns().length, 1);
   node.retained();
-  node.tick(10 * 60_000 + 1);
+  node.tick(120_000);
   await node.poll();
   assert.notEqual(node.admission().ticket.generation, JSON.parse(first).generation);
   assert.equal(node.turns().length, 1);
   assert.equal(JSON.parse(fs.readFileSync(node.ticket, "utf8")).claimed, false);
+  node.retained();
+});
+
+test("a published hint without a claim also recovers within 120 seconds", async (t) => {
+  const node = setup(t);
+  await node.poll();
+  const first = node.admission().ticket.generation;
+  node.tick(120_000);
+  await node.poll();
+  assert.notEqual(node.admission().ticket.generation, first);
+  assert.equal(node.turns().length, 1);
   node.retained();
 });
 

@@ -11,6 +11,9 @@ import { classifyExclusiveCreate } from "./lock-contention.mts";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const FINGERPRINT = /^[0-9a-f]{64}$/;
 const MAX_BYTES = 8192;
+// Admission/claim is only a hint. Unreceived content may get a fresh guarded
+// generation after one minute, independently of Inbox offer retry intervals.
+export const BUSY_HINT_RECOVERY_MS = 60_000;
 const FIELDS = ["owner", "generation", "admittedAt", "expiresAt", "policyFingerprint", "messages"];
 
 export interface BusyHintAdmission {

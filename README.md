@@ -105,7 +105,7 @@ flowchart LR
   worker -->|queued acceptance retry within 60 seconds, same authenticated socket| nodeDaemon
   daemonService -->|starts and upgrades| nodeDaemon
   nodeDaemon -.->|delivers peer messages| runtimes
-  nodeDaemon -.->|Codex CP admission and original-owner intake| codex
+  nodeDaemon -.->|Codex CP hints recover after 60 seconds without Receive| codex
   codex -.->|Processing ACK, then exact Queue reconciliation| queueRetire
   queueRetire -.->|Exact owned Queue list/delete/readback| codex
 ```

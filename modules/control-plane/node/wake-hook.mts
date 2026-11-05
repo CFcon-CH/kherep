@@ -73,7 +73,8 @@ export const WAKE_POLL_MS = 2_000;
 // offer made meanwhile by a delivery hook is seen.
 export const WAKE_SETTLE_MS = 250;
 // The default timeout; the listener re-arms WAKE_REARM_EARLY_MS before it.
-export const WAKE_TIMEOUT_S = 86_400;
+// Longer than the rolling 24-hour budget window, still a finite hook lifetime.
+export const WAKE_TIMEOUT_S = 90_000;
 const WAKE_REARM_EARLY_MS = 60_000;
 export const WAKE_MAX_WAIT_MS = WAKE_TIMEOUT_S * 1000 - WAKE_REARM_EARLY_MS;
 
@@ -193,6 +194,7 @@ export async function runWake(input: unknown, deps: WakeDeps): Promise<WakeResul
   const release = (): void => fs.rmSync(lockFile, { force: true });
   const limited = new Set<string>();
   let unreadable = false;
+  let budgetAudited = false;
   let last = mine;
   for (;;) {
     await sleep(WAKE_POLL_MS);
@@ -265,15 +267,21 @@ export async function runWake(input: unknown, deps: WakeDeps): Promise<WakeResul
     let due: "wake" | "rearm";
     if (messages + stuck.length > 0) due = "wake";
     else if (now() >= deadline) due = "rearm";
-    else continue;
+    else { budgetAudited = false; continue; }
     const budget = takeTurn(paths, sessionId, now(), wakeBudget(policy));
     // Too soon after the last autonomous turn, or the budget was locked: try again at the next poll.
-    if (budget === "spacing" || budget === "locked") continue;
-    release();
-    if (budget === "exhausted") {
-      audit(paths, now(), sessionId, [...fresh, ...backlog, ...stuck], "budget");
-      return quiet;
+    if (budget !== "ok") {
+      if (budget !== "exhausted") budgetAudited = false;
+      if (budget === "exhausted" && !budgetAudited) {
+        audit(paths, now(), sessionId, [...fresh, ...backlog, ...stuck], "budget");
+        budgetAudited = true;
+      }
+      // A custom shorter hook lifetime or permanently unavailable budget lock
+      // cannot authorize a wake. Keep the process bounded and release only on exit.
+      if (now() >= deadline) { release(); return quiet; }
+      continue;
     }
+    release();
     if (due === "rearm") {
       audit(paths, now(), sessionId, [], "rearm");
       return { code: 2, text: REARM_TEXT };

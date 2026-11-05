@@ -6,9 +6,10 @@ import { takeTurn, TURN_SPACING_MS, TURNS_PER_DAY, TURNS_PER_HOUR } from "./auto
 import type { NodePaths } from "./config.mts";
 import { deliverForHook } from "./deliver-hook.mts";
 import { checkPolicy } from "./doctor-local.mts";
+import { markDelivered } from "./inbox.mts";
 import { DEFAULT_POLICY, DEFAULT_TURN_BUDGET, readPolicy, wakeBudget } from "./policy.mts";
-import { arrive, auditLines, id, listen, SELF, setup, T0 } from "./wake-fixture.mts";
-import { WAKE_POLL_MS } from "./wake-hook.mts";
+import { arrive, auditLines, id, listen, lockFile, SELF, setup, T0 } from "./wake-fixture.mts";
+import { runWake, WAKE_MAX_WAIT_MS, WAKE_POLL_MS, WAKE_TIMEOUT_S } from "./wake-hook.mts";
 
 // The configurable per-session turn budget (issue #259): wake.budget in the
 // node policy, with hard bounds, fail closed, and one effective budget for the
@@ -16,6 +17,77 @@ import { WAKE_POLL_MS } from "./wake-hook.mts";
 
 const HOUR = 60 * 60_000;
 const WAKE = { enabled: true, sessions: ["review"] };
+
+test("an exhausted listener retains its lock, spends nothing waiting and wakes after rolling eligibility", async (t) => {
+  const { paths } = setup(t, { wake: { ...WAKE, budget: { perHour: 1 } } });
+  assert.equal(takeTurn(paths, SELF, T0 - HOUR + 15_000), "ok");
+  const turns = lockFile(paths).replace(/\.json$/, ".turns.json");
+  const before = fs.readFileSync(turns, "utf8");
+  let waited = 0;
+  const result = await listen(paths, { tick: clock => {
+    if (clock === T0 + 2 * WAKE_POLL_MS) arrive(paths, 1000, clock);
+    if (clock > T0 + 5000 && clock < T0 + 15_000) {
+      waited++;
+      assert.equal(fs.existsSync(lockFile(paths)), true);
+      assert.equal(fs.readFileSync(turns, "utf8"), before);
+    }
+  } });
+  assert.equal(result.code, 2);
+  assert.ok(waited > 1);
+  assert.equal(auditLines(paths).filter(line => line.action === "budget").length, 1);
+  assert.equal(fs.existsSync(lockFile(paths)), false, "real wake exits and releases the lock");
+  assert.equal(JSON.parse(fs.readFileSync(turns, "utf8")).turns.length, 2);
+});
+
+test("the finite shipped lifetime spans a full daily exhaustion before a budgeted wake", async (t) => {
+  const { paths } = setup(t, { wake: { ...WAKE, budget: { perDay: 1 } } });
+  assert.equal(takeTurn(paths, SELF, T0), "ok");
+  const ledger = lockFile(paths).replace(/\.json$/, ".turns.json"), before = fs.readFileSync(ledger, "utf8");
+  assert.equal(WAKE_TIMEOUT_S, 90_000);
+  assert.ok(WAKE_MAX_WAIT_MS > 24 * HOUR);
+  let clock = T0 + 1, polls = 0;
+  const result = await runWake({ session_id: SELF, hook_event_name: "Stop", permission_mode: "default" }, {
+    paths, now: () => clock, maxWaitMs: WAKE_MAX_WAIT_MS, parentAlive: () => true, runMode: async () => "interactive",
+    sleep: async ms => {
+      clock += ms;
+      if (ms === WAKE_POLL_MS) {
+        polls++;
+        if (polls === 2) arrive(paths, 1001, clock);
+        if (polls === 3) {
+          assert.equal(fs.existsSync(lockFile(paths)), true);
+          assert.equal(fs.readFileSync(ledger, "utf8"), before);
+          clock = T0 + 24 * HOUR + 1;
+        }
+      }
+    },
+  });
+  assert.equal(result.code, 2);
+  assert.equal(fs.existsSync(lockFile(paths)), false);
+  assert.equal(auditLines(paths).filter(line => line.action === "budget").length, 1);
+  assert.deepEqual(JSON.parse(fs.readFileSync(ledger, "utf8")).turns, [clock]);
+});
+
+test("a custom short lifetime still ends and releases its lock when no guarded turn can be authorized", async (t) => {
+  const { paths } = setup(t, { wake: { ...WAKE, budget: { perDay: 1 } } });
+  assert.equal(takeTurn(paths, SELF, T0), "ok");
+  arrive(paths, 1002, T0 + 1);
+  assert.deepEqual(await listen(paths, { maxWaitMs: 10_000 }), { code: 0 });
+  assert.equal(fs.existsSync(lockFile(paths)), false);
+  assert.equal(auditLines(paths).filter(line => line.action === "budget").length, 1);
+});
+
+test("separate exhausted episodes each audit once without per-poll repetition", async (t) => {
+  const { paths } = setup(t, { wake: { ...WAKE, budget: { perHour: 1 } } });
+  assert.equal(takeTurn(paths, SELF, T0), "ok");
+  let first = false, cleared = false, second = false;
+  await listen(paths, { maxWaitMs: 30_000, tick: clock => {
+    if (!first && clock >= T0 + 4000) { first = true; arrive(paths, 1003, clock); }
+    if (!cleared && clock >= T0 + 12_000) { cleared = true; markDelivered(paths.inbox, id(1003)); }
+    if (!second && clock >= T0 + 18_000) { second = true; arrive(paths, 1004, clock); }
+  } });
+  assert.equal(auditLines(paths).filter(line => line.action === "budget").length, 2);
+  assert.equal(fs.existsSync(lockFile(paths)), false);
+});
 
 function parsed(t: test.TestContext, wake: unknown) {
   const { paths } = setup(t, { wake });
