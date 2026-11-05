@@ -1,10 +1,10 @@
 import { isMessageDiagnostic, type MessageDiagnostic } from "../../protocol-diagnostics.mts";
-export function readDiagnostic(raw: unknown, state?: string, progressAt?: unknown): MessageDiagnostic | undefined {
+export function readDiagnostic(raw: unknown, state: string, progressAt?: unknown): MessageDiagnostic | undefined {
   try {
     const value: unknown = JSON.parse(String(raw));
     if (!isMessageDiagnostic(value)) return undefined;
-    if (state !== undefined && (value.stage === "target-progress" ? state !== "accepted" || value.observedAt !== progressAt
-      : value.stage === "upstream-egress" ? state !== "queued" : state !== "refused")) return undefined;
+    if (value.stage === "target-progress" ? state !== "accepted" || value.observedAt !== progressAt
+      : value.stage === "upstream-egress" ? state !== "queued" : state !== "refused") return undefined;
     return value;
   } catch { return undefined; }
 }

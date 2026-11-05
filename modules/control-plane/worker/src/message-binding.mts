@@ -39,7 +39,7 @@ export async function prepareMessageBinding(sql: SqlStorage, message: AddressPai
     const key = role as "from" | "to", address = message[key], reference = context.refs[index];
     if (stored && key === "from") continue; // An admitted source never reconnects or rebinds on replay.
     if (address.nodeId === OPERATOR_NODE_ID || !context.nodes[index]?.capable || reference.code === "AMBIGUOUS") {
-      if (key === "to" && address.nodeId !== OPERATOR_NODE_ID && context.nodes[index] && !result.diagnosticCode) {
+      if (key === "to" && address.nodeId !== OPERATOR_NODE_ID && context.nodes[index]) {
         const node = context.nodes[index];
         result.diagnosticCode = !node.token ? "node-offline" : node.registration !== node.token ? "registration-pending"
           : !node.capable ? "binding-capability-missing" : "resolution-unavailable";

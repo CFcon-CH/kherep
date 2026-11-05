@@ -120,6 +120,7 @@ function loopOf(row: Record<string, SqlStorageValue>): LoopAdmissionV1 | undefin
 }
 
 function recordMetadata(row: Record<string, SqlStorageValue>): MessageRecord {
+  const diagnostic = readDiagnostic(row.diagnostic_json, String(row.state), row.progress_observed_at);
   return {
     messageId: String(row.id), fromNode: String(row.from_node), fromSession: String(row.from_session),
     toNode: String(row.to_node), toSession: String(row.to_session), inReplyTo: row.in_reply_to as string | null,
@@ -129,7 +130,7 @@ function recordMetadata(row: Record<string, SqlStorageValue>): MessageRecord {
       observedAt: String(row.progress_observed_at),
       ...(row.progress_retry_at === null || row.progress_retry_at === undefined ? {} : { retryAt: String(row.progress_retry_at) }),
     },
-    ...(readDiagnostic(row.diagnostic_json, String(row.state), row.progress_observed_at) ? { diagnostic: readDiagnostic(row.diagnostic_json, String(row.state), row.progress_observed_at) } : {}),
+    ...(diagnostic ? { diagnostic } : {}),
     createdAt: Number(row.created_at), updatedAt: Number(row.updated_at), expiresAt: Number(row.expires_at),
   };
 }
@@ -204,8 +205,6 @@ export class MessageStore {
     const current = this.identity.snapshot(message.from, message.to, message.inReplyTo ?? message.proxyOf);
     return { matches: sameLoopIdentity(prepared.snapshot, current), current, context };
   }
-  contextMatches(message: NewMessage, prepared: PreparedLoop): boolean { return this.compareContext(message, prepared).matches; }
-
   async prepare(message: NewMessage, sign: LoopSigner): Promise<PreparedLoop> {
     const snapshot = this.identity.snapshot(message.from, message.to, message.inReplyTo ?? message.proxyOf);
     if (!snapshot.encoding) return { snapshot, key: null, signal: null };
@@ -604,14 +603,15 @@ export class MessageStore {
     effects: MessageEffects, progress?: MessageProgress, diagnostic?: MessageDiagnostic): void {
     // Only a queued message keeps its text. Progress belongs only to accepted.
     const kept = state === "accepted" ? progress ?? null : null;
+    const keptDiagnostic = state === "accepted" ? diagnostic : undefined;
     this.sql.exec(`UPDATE messages SET state = ?, reason = ?, text = NULL, progress_phase = ?, progress_code = ?,
       progress_observed_at = ?, progress_retry_at = ?, updated_at = ? WHERE id = ?`, state, reason, kept?.phase ?? null,
     kept?.code ?? null, kept?.observedAt ?? null, kept?.retryAt ?? null, now, record.messageId);
     this.audit(actor, "message.state", record.toNode, { messageId: record.messageId, state, reason, ...(kept ? { progress: kept } : {}) });
-    storeDiagnostic(this.sql, record.messageId, state === "accepted" ? diagnostic : undefined);
+    storeDiagnostic(this.sql, record.messageId, keptDiagnostic);
     this.retention.finalized(record.messageId, record.fromNode, state, now);
     if (record.fromNode !== OPERATOR_NODE_ID) {
-      const body = statusBody(record.messageId, state, reason, kept, state === "accepted" ? diagnostic : undefined);
+      const body = statusBody(record.messageId, state, reason, kept, keptDiagnostic);
       effects.statuses.push({ nodeId: record.fromNode, body: this.statusFor(record.fromNode, body) });
     }
   }
