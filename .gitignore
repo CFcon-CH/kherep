@@ -31,3 +31,6 @@ secrets/
 *.pfx
 .claude/worktrees/
 claude/hooks/.kherep-integrity/
+
+# Generated local coverage reports and raw V8 diagnostics.
+coverage/

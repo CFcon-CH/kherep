@@ -23,6 +23,13 @@ export default defineConfig({
     }),
   ],
   test: {
+    coverage: {
+      provider: "istanbul",
+      reporter: ["lcovonly"],
+      reportsDirectory: "coverage",
+      reportOnFailure: true,
+      include: ["src/**/*.mts", "src/**/*.ts"],
+    },
     include: ["test/**/*.test.mts"],
     setupFiles: ["./test/quiet-sql-log.mts"],
     // Issue #607: the node harness tests wait up to 5 s per event (WAIT in

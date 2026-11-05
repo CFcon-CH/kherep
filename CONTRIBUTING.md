@@ -32,6 +32,64 @@ On Windows, select Git for Windows Bash in the test process's `PATH` before WSL 
 
 Keep production configuration out of tests. Tests that need an unavailable platform capability can skip; report skips separately from passing checks.
 
+## SonarQube Cloud coverage
+
+CI produces real LCOV from the existing current-LTS Ubuntu test steps. The
+`unit`, `typescript` and `client-binding-probe` jobs collect step-local Node V8
+coverage; the Worker tests use Istanbul in workerd. Tests keep their original
+exit status. The `coverage-report` job requires all four contributing jobs to
+succeed, validates their non-empty artifacts, and converts the Node union once
+with c8 `--all`. Unexecuted maintained Node source therefore contributes zero.
+Worker `src/` belongs to Istanbul; Worker configuration and shared protocol code
+remain in the Node population. The existing Sonar source/test classifications
+are unchanged.
+
+Each producer manifest contains only its producer, run ID, attempt, checkout SHA
+and test outcome. Assembly and the reusable scanner verify all four against the
+same event checkout, run and attempt. On pull requests that is the default merge
+checkout, not the PR head SHA. Raw and final artifacts expire after two days.
+These same-run artifacts transport reports; they do not make PR code trusted.
+A missing, malformed or mismatched report fails `coverage-report` visibly; a
+partial report is never accepted for scanning. The scanner receives only the
+named Sonar secret after report validation. Fork PRs run coverage validation and
+skip the secret-bearing scan with a summary.
+
+Sonar is **not a required merge check yet**. The existing 80% coverage threshold
+on new code stays unchanged; no exclusions, synthetic hits or ignored-line
+comments are added to reach it. Linux coverage does not prove native Windows or
+macOS behavior. Their existing compatibility checks and engine-floor jobs remain
+in place. The matrix dependencies wait for their sibling jobs. Child processes
+that clear the coverage variable, die before flushing, or execute temporary
+installed copies may remain uncovered. Environment sanitization is preserved.
+Raw artifacts can be large (about 1.3 GB unit and 599 MB TypeScript in the #772
+sample); transfer time and real PR/Sonar results need separate measurement.
+
+For a local typed-source and child-process diagnostic after `npm ci`, run:
+
+```sh
+node --test bootstrap/coverage-report.test.mts
+```
+
+Only the c8 integration fixture explicitly skips when dependencies are unavailable
+in a dependency-free compatibility job. CI also runs it after `npm ci` in
+`coverage-report`. Pure validation fixtures always run. To assemble local real
+reports, collect `NODE_V8_COVERAGE` into each producer's `raw/` directory, create
+its manifest with `npm run coverage:report -- manifest`, and provide the four
+producer directories (Worker contains `lcov.info`) to:
+
+```sh
+npm run coverage:report -- assemble --artifacts /tmp/coverage-inputs \
+  --run-id 1 --attempt 1 --checkout-sha "$(git rev-parse HEAD)"
+npm run coverage:report -- verify --run-id 1 --attempt 1 \
+  --checkout-sha "$(git rev-parse HEAD)"
+```
+
+Use a single real checkout identity throughout. `--source-root` explicitly names
+the trusted collection checkout root when relocation is needed; only contained
+repository file URLs are relocated. Temporary installation paths are not mapped
+back. Outputs are `coverage/node/lcov.info` and `coverage/worker/lcov.info`, with
+unique repository-relative `SF:` paths. Generated coverage stays out of Git.
+
 ## Submitting changes
 
 Keep changes focused and preserve unrelated work. Include the problem, resulting behavior and relevant verification. Update architecture and installation reference alongside changes to interfaces, authentication or wiring.

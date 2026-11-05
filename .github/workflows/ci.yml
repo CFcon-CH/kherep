@@ -83,6 +83,7 @@ jobs:
       - name: Hook test suites
         shell: bash
         run: |
+          ${{ matrix.os == 'ubuntu-latest' && format('export NODE_V8_COVERAGE="{0}/kherep-coverage/unit/raw"', runner.temp) || '' }}
           status=0
           for t in claude/hooks/*.test.js claude/hooks/*.test.mts claude/hooks/lib/*.test.js claude/hooks/lib/*.test.mts; do
             [ -e "$t" ] || continue
@@ -92,9 +93,9 @@ jobs:
           exit $status
       - name: Shared Teamwork Graph tests
         shell: bash
-        run: node --test modules/twg/*.test.mts
+        run: ${{ matrix.os == 'ubuntu-latest' && format('NODE_V8_COVERAGE="{0}/kherep-coverage/unit/raw" node --test modules/twg/*.test.mts', runner.temp) || 'node --test modules/twg/*.test.mts' }}
       - name: Bootstrap suites (TypeScript on Node, no build)
-        run: npm run test:bootstrap
+        run: ${{ matrix.os == 'ubuntu-latest' && format('NODE_V8_COVERAGE="{0}/kherep-coverage/unit/raw" npm run test:bootstrap', runner.temp) || 'npm run test:bootstrap' }}
       - name: Install dependencies for native Control Plane tests
         if: runner.os == 'macOS'
         run: npm ci
@@ -107,6 +108,25 @@ jobs:
       - name: Control Plane protocol and node suites (macOS)
         if: runner.os == 'macOS'
         run: npm run test:control-plane
+      - name: Coverage manifest (unit)
+        if: always() && !cancelled() && matrix.os == 'ubuntu-latest'
+        continue-on-error: true
+        env:
+          TEST_OUTCOME: ${{ job.status }}
+        run: >-
+          node bootstrap/coverage-report.mts manifest --producer unit
+          --artifact "${{ runner.temp }}/kherep-coverage/unit"
+          --run-id "${{ github.run_id }}" --attempt "${{ github.run_attempt }}"
+          --checkout-sha "$(git rev-parse HEAD)" --test-outcome "$TEST_OUTCOME"
+      - name: Upload coverage (unit)
+        if: always() && !cancelled() && matrix.os == 'ubuntu-latest'
+        continue-on-error: true
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-unit-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/kherep-coverage/unit
+          if-no-files-found: error
+          retention-days: 2
 
   # Windows runs the same suites as `unit`, split across runners: the bootstrap
   # install tests drive install.sh under Git Bash at 80-330 s each (issue #424).
@@ -287,10 +307,16 @@ jobs:
       - name: Type check (tsc --noEmit, strict, erasableSyntaxOnly)
         run: npm run typecheck
       - name: Codex projection suites and run guard (issue #550)
+        env:
+          NODE_V8_COVERAGE: ${{ runner.temp }}/kherep-coverage/typescript/raw
         run: node codex/scripts/codex-run-guard.mts run --platform linux --tap "${{ runner.temp }}/codex-run.tap"
       - name: local-inference and mcp-auth-bridge suites
+        env:
+          NODE_V8_COVERAGE: ${{ runner.temp }}/kherep-coverage/typescript/raw
         run: npm run test:modules
       - name: atl-jira broker suites
+        env:
+          NODE_V8_COVERAGE: ${{ runner.temp }}/kherep-coverage/typescript/raw
         run: npm run test:brokers
       - name: Fetch pinned public legacy reader
         shell: bash
@@ -298,7 +324,28 @@ jobs:
           git fetch --no-tags --depth=1 origin f34b66fa581be6b5bdd5f1d84262b6d64a80a150
           git cat-file -e f34b66fa581be6b5bdd5f1d84262b6d64a80a150^{commit}
       - name: Control Plane protocol and node suites
+        env:
+          NODE_V8_COVERAGE: ${{ runner.temp }}/kherep-coverage/typescript/raw
         run: npm run test:control-plane
+      - name: Coverage manifest (typescript)
+        if: always() && !cancelled()
+        continue-on-error: true
+        env:
+          TEST_OUTCOME: ${{ job.status }}
+        run: >-
+          node bootstrap/coverage-report.mts manifest --producer typescript
+          --artifact "${{ runner.temp }}/kherep-coverage/typescript"
+          --run-id "${{ github.run_id }}" --attempt "${{ github.run_attempt }}"
+          --checkout-sha "$(git rev-parse HEAD)" --test-outcome "$TEST_OUTCOME"
+      - name: Upload coverage (typescript)
+        if: always() && !cancelled()
+        continue-on-error: true
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-typescript-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/kherep-coverage/typescript
+          if-no-files-found: error
+          retention-days: 2
 
   control-plane-worker:
     runs-on: ubuntu-26.04
@@ -316,9 +363,29 @@ jobs:
       - name: Type check
         run: npm run typecheck
       - name: Worker tests (vitest, workerd)
-        run: npm test
+        run: npm test -- --coverage
       - name: Bundle check (wrangler deploy --dry-run, no credentials)
         run: npm run check:bundle
+      - name: Coverage manifest (worker)
+        if: always() && !cancelled()
+        continue-on-error: true
+        working-directory: ${{ github.workspace }}
+        env:
+          TEST_OUTCOME: ${{ job.status }}
+        run: >-
+          node bootstrap/coverage-report.mts manifest --producer worker
+          --artifact "${{ runner.temp }}/kherep-coverage/worker" --input modules/control-plane/worker/coverage/lcov.info
+          --run-id "${{ github.run_id }}" --attempt "${{ github.run_attempt }}"
+          --checkout-sha "$(git rev-parse HEAD)" --test-outcome "$TEST_OUTCOME"
+      - name: Upload coverage (worker)
+        if: always() && !cancelled()
+        continue-on-error: true
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-worker-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/kherep-coverage/worker
+          if-no-files-found: error
+          retention-days: 2
 
   client-binding-probe:
     strategy:
@@ -344,4 +411,98 @@ jobs:
         run: npm run typecheck
       - name: Test client binding probe
         working-directory: modules/control-plane/client-binding-probe
-        run: npm test
+        run: ${{ matrix.os == 'ubuntu-latest' && format('NODE_V8_COVERAGE="{0}/kherep-coverage/probe/raw" npm test', runner.temp) || 'npm test' }}
+      - name: Coverage manifest (probe)
+        if: always() && !cancelled() && matrix.os == 'ubuntu-latest'
+        continue-on-error: true
+        env:
+          TEST_OUTCOME: ${{ job.status }}
+        run: >-
+          node bootstrap/coverage-report.mts manifest --producer probe
+          --artifact "${{ runner.temp }}/kherep-coverage/probe"
+          --run-id "${{ github.run_id }}" --attempt "${{ github.run_attempt }}"
+          --checkout-sha "$(git rev-parse HEAD)" --test-outcome "$TEST_OUTCOME"
+      - name: Upload coverage (probe)
+        if: always() && !cancelled() && matrix.os == 'ubuntu-latest'
+        continue-on-error: true
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-probe-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/kherep-coverage/probe
+          if-no-files-found: error
+          retention-days: 2
+
+  coverage-report:
+    needs: [unit, typescript, control-plane-worker, client-binding-probe]
+    if: always() && !cancelled()
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: lts/*
+          cache: npm
+      - run: npm ci
+      - name: Coverage fixtures with installed c8
+        run: node --test bootstrap/coverage-report.test.mts
+      - name: Download coverage (unit)
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: coverage-unit-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/coverage-inputs/unit
+      - name: Download coverage (typescript)
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: coverage-typescript-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/coverage-inputs/typescript
+      - name: Download coverage (probe)
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: coverage-probe-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/coverage-inputs/probe
+      - name: Download coverage (worker)
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: coverage-worker-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/coverage-inputs/worker
+      - name: Require successful contributing jobs
+        if: always() && !cancelled()
+        env:
+          UNIT: ${{ needs.unit.result }}
+          TYPESCRIPT: ${{ needs.typescript.result }}
+          WORKER: ${{ needs.control-plane-worker.result }}
+          PROBE: ${{ needs.client-binding-probe.result }}
+        run: |
+          printf 'Coverage producers: unit=%s typescript=%s worker=%s probe=%s\n' "$UNIT" "$TYPESCRIPT" "$WORKER" "$PROBE" | tee -a "$GITHUB_STEP_SUMMARY"
+          test "$UNIT" = success && test "$TYPESCRIPT" = success && test "$WORKER" = success && test "$PROBE" = success
+      - name: Assemble and validate real coverage
+        run: >-
+          npm run coverage:report -- assemble
+          --artifacts "${{ runner.temp }}/coverage-inputs" --source-root "$GITHUB_WORKSPACE"
+          --run-id "${{ github.run_id }}" --attempt "${{ github.run_attempt }}"
+          --checkout-sha "$(git rev-parse HEAD)"
+      - name: Upload accepted Sonar coverage
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: sonar-coverage-${{ github.run_id }}-${{ github.run_attempt }}
+          path: coverage
+          if-no-files-found: error
+          retention-days: 2
+      - name: Fork pull request scan policy
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository
+        run: |
+          echo 'Fork pull request: coverage validated; secret-bearing Sonar scan skipped. Sonar is not required yet.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Coverage failure summary
+        if: failure()
+        run: echo 'Coverage validation failed. No partial report is accepted for Sonar.' >> "$GITHUB_STEP_SUMMARY"
+
+  sonar:
+    needs: coverage-report
+    if: needs.coverage-report.result == 'success' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    uses: ./.github/workflows/sonar.yml
+    with:
+      coverage-artifact: sonar-coverage-${{ github.run_id }}-${{ github.run_attempt }}
+    secrets:
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}

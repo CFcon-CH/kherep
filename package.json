@@ -13,10 +13,12 @@
     "test:brokers": "node --test \"modules/atl-jira-brokers/*.test.mts\" \"modules/github-broker/*.test.mts\"",
     "test:modules": "node --test \"lib/*.test.mts\" \"modules/local-inference/*.test.mts\" \"modules/mcp-auth-bridge/*.test.mts\"",
     "test:control-plane": "node --test \"modules/control-plane/*.test.mts\" \"modules/control-plane/node/*.test.mts\"",
-    "audit:publication": "node bootstrap/publication-audit.mts"
+    "audit:publication": "node bootstrap/publication-audit.mts",
+    "coverage:report": "node bootstrap/coverage-report.mts"
   },
   "devDependencies": {
     "@types/node": "24.13.3",
+    "c8": "12.0.0",
     "typescript": "6.0.3"
   },
   "license": "Apache-2.0"
