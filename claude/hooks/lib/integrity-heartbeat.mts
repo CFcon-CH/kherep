@@ -185,7 +185,7 @@ export function takeRunLock(home: string, seams: LockSeams = {}): RunLock | stri
   // A failed attempt leaves no transaction, so the same connection tries again (issue #620).
   let why = beginExclusive(conn, seams);
   for (let retry = 0; why === BUSY && retry < BUSY_RETRIES; retry++) {
-    (seams.pause ?? pause)(BUSY_PAUSE_MIN_MS + Math.floor(Math.random() * BUSY_PAUSE_SPREAD_MS));
+    (seams.pause ?? pause)(crypto.randomInt(BUSY_PAUSE_MIN_MS, BUSY_PAUSE_MIN_MS + BUSY_PAUSE_SPREAD_MS));
     why = beginExclusive(conn, seams);
   }
   if (why) {
