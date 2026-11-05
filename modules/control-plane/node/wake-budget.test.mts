@@ -76,7 +76,7 @@ test("a custom short lifetime still ends and releases its lock when no guarded t
   assert.equal(auditLines(paths).filter(line => line.action === "budget").length, 1);
 });
 
-test("separate exhausted episodes each audit once without per-poll repetition", async (t) => {
+test("one exhausted episode stays audited when waiting messages temporarily disappear", async (t) => {
   const { paths } = setup(t, { wake: { ...WAKE, budget: { perHour: 1 } } });
   assert.equal(takeTurn(paths, SELF, T0), "ok");
   let first = false, cleared = false, second = false;
@@ -85,7 +85,7 @@ test("separate exhausted episodes each audit once without per-poll repetition", 
     if (!cleared && clock >= T0 + 12_000) { cleared = true; markDelivered(paths.inbox, id(1003)); }
     if (!second && clock >= T0 + 18_000) { second = true; arrive(paths, 1004, clock); }
   } });
-  assert.equal(auditLines(paths).filter(line => line.action === "budget").length, 2);
+  assert.equal(auditLines(paths).filter(line => line.action === "budget").length, 1);
   assert.equal(fs.existsSync(lockFile(paths)), false);
 });
 
@@ -163,20 +163,20 @@ test("the listener wakes a 21st time in the hour with perHour 22, and honours pe
   const fallback = setup(t).paths;
   spend(fallback, T0 - 50 * 60_000, 2 * TURN_SPACING_MS);
   assert.deepEqual(await listenFor(fallback, 1, T0), { code: 0 });
-  assert.equal(auditLines(fallback).at(-1)?.action, "budget");
+  assert.equal(auditLines(fallback).at(-1)?.action, "listener-timeout");
 
   const raised = setup(t, { wake: { ...WAKE, budget: { perHour: 22, perDay: 100 } } }).paths;
   spend(raised, T0 - 50 * 60_000, 2 * TURN_SPACING_MS);
   assert.equal((await listenFor(raised, 1, T0)).code, 2, "the 21st wake");
   assert.equal((await listenFor(raised, 2, T0 + 60_000)).code, 2, "the 22nd wake");
   assert.deepEqual(await listenFor(raised, 3, T0 + 2 * 60_000), { code: 0 }, "the 23rd is over budget");
-  assert.deepEqual(auditLines(raised).map((l) => l.action), ["wake", "wake", "budget"]);
+  assert.deepEqual(auditLines(raised).map((l) => l.action), ["wake", "wake", "budget", "listener-timeout"]);
 
   // perDay 6: six turns hours ago leave none today, though the hour is empty.
   const daily = setup(t, { wake: { ...WAKE, budget: { perDay: 6 } } }).paths;
   spend(daily, T0 - 6 * HOUR, HOUR / 2, 6);
   assert.deepEqual(await listenFor(daily, 1, T0), { code: 0 });
-  assert.equal(auditLines(daily).at(-1)?.action, "budget");
+  assert.equal(auditLines(daily).at(-1)?.action, "listener-timeout");
 
   // spacingSeconds 5: a turn just taken delays the wake by 5 s, not 30 s.
   const spaced = setup(t, { wake: { ...WAKE, budget: { spacingSeconds: 5 } } }).paths;

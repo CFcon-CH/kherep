@@ -27,7 +27,7 @@ export function semanticNodes(sql: SqlStorage, nodeIds: string[]) {
   });
 }
 
-export function semanticBinding(binding: MessageBinding) {
+function semanticBinding(binding: MessageBinding) {
   const owner = (o: MessageBinding["from"]) => [o.sessionId, o.runtime, o.lifecycleGeneration];
   return [binding.version, binding.mode, owner(binding.from), owner(binding.to)];
 }

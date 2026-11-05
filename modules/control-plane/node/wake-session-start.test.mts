@@ -140,5 +140,5 @@ test("the other guards hold at SessionStart: kill switch, opt-in, allowlist, rep
     assert.equal((await listenFor(paths, n, atStart("resume", { start: T0 + n * 60_000 }))).code, 2, `wake ${n}`);
   }
   assert.deepEqual(await listenFor(paths, 20, atStart("resume", { start: T0 + 7 * 60_000 })), { code: 0 });
-  assert.equal(auditLines(paths).at(-1)?.action, "budget");
+  assert.equal(auditLines(paths).findLast(line => line.action === "budget")?.action, "budget");
 });

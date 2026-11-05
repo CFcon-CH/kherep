@@ -5,6 +5,7 @@ import test from "node:test";
 import { makeEnvelope } from "../protocol.mts";
 import { SELECTED_BINDING_CAPABILITY } from "../protocol-message-binding.mts";
 import { NodeClient } from "./client.mts";
+import { recordLockFile, setRecordLockWait, RECORD_LOCK_WAIT_MS } from "./inbox-record-lock.mts";
 import { createBindingStorage } from "./inbox-storage.mts";
 import { MessageReferenceResolver } from "./message-reference.mts";
 import { writeLocalSessions } from "./exchange-sessions.mts";
@@ -61,4 +62,40 @@ test("layout faults preserve bytes and readiness recovers only after a real chec
   fs.mkdirSync(path.join(f.paths.inbox, "bound-v9")); assert.equal(storage.recheck(), false);
   fs.rmdirSync(path.join(f.paths.inbox, "bound-v9")); assert.equal(storage.ready(), false);
   assert.equal(storage.recheck(), true); assert.deepEqual(fs.readdirSync(path.join(f.paths.inbox, "bound-v1")), []);
+});
+
+test("redelivery under an existing record lock defers without faulting storage or clearing leases", async t => {
+  const f = fixture(t), storage = createBindingStorage(f.paths.inbox);
+  writeLocalSessions(f.paths, [{ sessionId: OWNER, runtime: "codex", state: "unknown" }]);
+  const references = new MessageReferenceResolver(f.paths);
+  const client = new NodeClient({ nodeId: PEER, identity: generateIdentity(), policy: DEFAULT_POLICY,
+    handlers: { "node.status": async () => ({}), "runtime.list": async () => [], "session.list": async () => [] },
+    facts: () => ({ hostname: "synthetic.example", os: "linux", arch: "x64", cpus: 1, memoryBytes: 1 }),
+    runtimes: async () => [], sessions: async () => [], selectedReferences: references,
+    bindingStorageReady: storage.snapshot, bindingStorageFault: storage.fault,
+    storeMessage: body => { storeMessage(f.paths.inbox, body); } });
+  await client.onFrame(frame("event", { name: "auth.ok" })); client.registrationSent();
+  const resolve = async () => {
+    const [response] = await client.onFrame(frame("message.resolve.request", { version: 1, requestId: crypto.randomUUID(), messageId: ID,
+      purpose: "admit", selections: [{ role: "to", ref: OWNER }], expiresAt: Date.now() + 5000 }));
+    const selected = JSON.parse(response).body.results[0];
+    return { ...f.body, binding: { ...f.body.binding, leaseId: selected.leaseId, localGeneration: selected.localGeneration } };
+  };
+  storeMessage(f.paths.inbox, f.body);
+  const unrelated = await resolve(), delivery = await resolve();
+  const before = fs.readFileSync(f.bound, "utf8"), snapshot = storage.snapshot();
+  const lock = recordLockFile(f.paths.inbox, ID);
+  fs.writeFileSync(lock, JSON.stringify({ pid: process.pid, at: new Date().toISOString() }));
+  setRecordLockWait(0);
+  try {
+    assert.deepEqual(await client.onFrame(frame("message.deliver", delivery)), []);
+    assert.deepEqual(storage.snapshot(), snapshot);
+    assert.deepEqual(await client.refreshPolicy(DEFAULT_POLICY), [], "no capability withdrawal or re-registration");
+    assert.equal(fs.readFileSync(f.bound, "utf8"), before);
+  } finally { setRecordLockWait(RECORD_LOCK_WAIT_MS); fs.unlinkSync(lock); }
+  assert.equal(JSON.parse((await client.onFrame(frame("message.deliver", unrelated)))[0]).body.state, "accepted", "other pending leases survive contention");
+  assert.equal(fs.readFileSync(f.bound, "utf8"), before);
+  const mismatch = { ...await resolve(), text: "synthetic mismatched redelivery" };
+  assert.deepEqual(await client.onFrame(frame("message.deliver", mismatch)), []);
+  assert.equal(storage.ready(), false, "a real redelivery mismatch still faults storage");
 });

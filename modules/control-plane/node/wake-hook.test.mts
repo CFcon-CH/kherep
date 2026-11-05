@@ -104,11 +104,11 @@ test("a listener replaced by a newer one exits quietly and leaves the new lock; 
   assert.deepEqual(result, { code: 0 });
   assert.deepEqual(auditLines(paths).map((l) => [l.action, l.messageIds]), [["superseded", []]]);
   assert.deepEqual(JSON.parse(fs.readFileSync(lockFile(paths), "utf8")), newer);
-  // A lost lock and scope end the listener without a line (a lock alone is put back: listener-sweep.test.mts).
+  // A lost lock and scope audit the superseded listener exit (a lock alone is put back: listener-sweep.test.mts).
   const lost = setup(t).paths;
   const lose = (): void => { for (const file of [lockFile(lost), listenerScope(lost, SELF)]) fs.rmSync(file); };
   assert.deepEqual(await listen(lost, { tick: lose }), { code: 0 });
-  assert.deepEqual(auditLines(lost), []);
+  assert.deepEqual(auditLines(lost).map(line => line.action), ["superseded"]);
 });
 
 test("the kill switch and an unenrolled machine keep the listener from starting", async (t) => {

@@ -12,7 +12,7 @@ import { codexSessionRefs, listCodexSessions, readCodexSession } from "./codex-s
 import { note, pruneNoted } from "./codex-wake.mts";
 export { guardQueue, QUEUE_TIMEOUT_MS, queueArgs } from "./codex-queue-run.mts";
 import { inboxOf, progressRecords } from "./delivery-progress.mts";
-import { BUSY_HINT_RECOVERY_MS } from "./codex-busy-ticket.mts";
+import { REOFFER_AFTER_MS } from "./deliver-core.mts";
 import { getMessageProgress, type InboxRecord } from "./inbox.mts";
 import { explicitlyListed, wakeAllowed } from "./policy.mts";
 import type { RunnerDeps } from "./session-runner.mts";
@@ -30,6 +30,8 @@ import { relayBookkeeping } from "./codex-fork-relay-pass.mts";
 // CP hint admission never spends the shared turn budget. The independent
 // native producer reserves it only for an original-owner Queue attempt.
 // Keep the public poll/lane interface for existing intake-window callers.
+// One fast recovery per retained message, then the ordinary reoffer interval.
+export const BUSY_HINT_RECOVERY_MS = 60_000;
 let lane: Promise<void> = Promise.resolve();
 const inFlight = new Set<string>();
 
@@ -173,9 +175,14 @@ function queueFor(deps: RunnerDeps, sessionId: string, live: string[], selectInb
   scheduleForkReply(deps, sessionId, due.filter((record) => record.toSession === sessionId).map((record) => record.messageId), log);
   const valid = previous && !previous.invalidated && previous.ticket.admittedAt <= now && now < previous.ticket.expiresAt
     && previous.ticket.policyFingerprint === busyPolicyFingerprint(policy);
-  const pending = valid && previous.publishedAt !== undefined
-    && now - previous.publishedAt < BUSY_HINT_RECOVERY_MS
-    && due.some((record) => previous.messageIds.includes(record.messageId));
+  const recovery = new Map((previous?.recovery ?? (previous?.publishedAt === undefined ? [] : previous.messageIds.map(messageId =>
+    ({ messageId, firstPublishedAt: previous.publishedAt!, lastPublishedAt: previous.publishedAt!, fastRecovered: false })))).map(item => [item.messageId, item]));
+  const hintDue = due.filter(record => {
+    const item = recovery.get(record.messageId);
+    return !item || !item.fastRecovered && now - item.firstPublishedAt >= BUSY_HINT_RECOVERY_MS
+      || now - item.lastPublishedAt >= REOFFER_AFTER_MS;
+  });
+  const pending = valid && previous.publishedAt !== undefined && hintDue.length === 0;
   if (pending) {
     progressRecords(paths, due, "waiting", "awaiting-user-turn", now);
     return;
@@ -188,17 +195,16 @@ function queueFor(deps: RunnerDeps, sessionId: string, live: string[], selectInb
     admission = previous;
   } else {
     if (tuiReachable) decide(due, "tui-reachable");
-    const ticket = captureBusyHint(deps, sessionId, due, now);
+    const ticket = captureBusyHint(deps, sessionId, valid ? hintDue : due, now);
     if (!ticket) {
       progressRecords(paths, due, "waiting", "retry-pending", now);
       return;
     }
-    admission = { ticket, messageIds: ids(due) };
+    admission = { ticket, messageIds: ids(due), recovery: due.flatMap(record => recovery.has(record.messageId) ? [recovery.get(record.messageId)!] : []) };
   }
   try { saveBusyAdmission(paths, admission); } catch {
     log("kherep-node: Codex CP admission persistence failed; inbox remains accepted");
   }
-  progressRecords(paths, due, "waiting", "retry-pending", now);
   inFlight.add(sessionId);
   lane = lane.then(() => {
     const result = publishAdmittedBusyHint(deps, admission.ticket);
@@ -208,7 +214,14 @@ function queueFor(deps: RunnerDeps, sessionId: string, live: string[], selectInb
     }
     const published = result === "published" || result === "unchanged";
     if (published) {
-      admission = { ...admission, publishedAt: deps.now?.() ?? Date.now() };
+      const publishedAt = deps.now?.() ?? Date.now();
+      const publishedIds = new Set(admission.ticket.messages.map(message => message.messageId));
+      admission = { ...admission, publishedAt, recovery: due.flatMap(record => {
+        const previous = recovery.get(record.messageId);
+        if (!publishedIds.has(record.messageId)) return previous ? [previous] : [];
+        return [{ messageId: record.messageId, firstPublishedAt: previous?.firstPublishedAt ?? publishedAt, lastPublishedAt: publishedAt,
+          fastRecovered: previous ? previous.fastRecovered || publishedAt - previous.firstPublishedAt >= BUSY_HINT_RECOVERY_MS : false }];
+      }) };
       try { saveBusyAdmission(paths, admission); } catch {
         log("kherep-node: Codex CP publication bookkeeping failed; inbox remains accepted");
       }

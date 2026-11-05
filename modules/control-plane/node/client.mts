@@ -1,3 +1,4 @@
+import { RecordLockBusy } from "./inbox-record-lock.mts";
 import type { BindingStorageSnapshot } from "./inbox-storage.mts";
 import { isResolveRequest, SELECTED_BINDING_CAPABILITY } from "../protocol-message-binding.mts";
 import type { MessageReferenceResolver } from "./message-reference.mts";
@@ -416,7 +417,7 @@ export class NodeClient {
 
   // Refused unless the local policy accepts this sender for this session.
   // A message that cannot be stored gets no answer, so the Worker keeps it
-  // queued and delivers it again after the next authentication.
+  // queued for the next same-socket retry or authentication.
   private onDeliver(body: MessageDeliverBody): string[] {
     const { messageId } = body;
     if (body.binding && (!this.storageReady || !this.options.selectedReferences?.validate(messageId, body.binding, JSON.stringify(this.policy)))) {
@@ -435,6 +436,7 @@ export class NodeClient {
     try {
       this.options.storeMessage(body);
     } catch (error) {
+      if (error instanceof RecordLockBusy) return []; // Another writer defers this receipt without faulting storage.
       this.options.bindingStorageFault?.();
       this.options.selectedReferences?.clear();
       this.setStorageReady(false);

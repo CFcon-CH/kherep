@@ -339,14 +339,18 @@ or other daemon phases. It does not identify the cause of a particular live stal
 
 Queued message egress arms the target `NodeSession` alarm within 60 seconds.
 While queued work remains on an unchanged authenticated socket, the alarm retries
-the existing bounded queue concurrently through `prepareMessageDelivery`, with
+the existing bounded queue oldest first in eight concurrent lanes through
+`prepareMessageDelivery`, leaving headroom below the 32-slot resolve limit, with
 current lease, owner, registration and loop-hold checks. The alarm re-arms even
-when preparation throws, returns to five minutes when the queue empties, and
+when preparation throws, logs only the fixed `DELIVERY_RETRY_FAILED` code without
+rethrowing, schedules the next queued retry 60 seconds after the pass completes,
+returns to five minutes when the queue empties, and
 keeps the existing three five-minute intervals for offline detection. Acceptance
 stops replay. Fresh leases never change the persisted exact owner binding;
 previously unbound legacy work cannot acquire a binding on a later retry.
 Historical required rows with no stored owner binding also remain deferred until
-expiry rather than inventing a different binding for a possibly accepted frame.
+expiry rather than inventing a different binding for a possibly accepted frame;
+these rows skip the unnecessary resolve request.
 
 Admission, duplicate validation and egress use the same semantic identity
 projection. It retains canonical owners, runtimes, lifecycle generations,
@@ -364,10 +368,19 @@ three matching commands are 90,000 seconds (25 hours), spanning a full rolling
 daily budget window. The existing budgeted exit-code-2 wake still re-arms through
 the next UserPromptSubmit hook, 60 seconds before the finite timeout. Existing or
 custom shorter hook settings retain their previous bound until separately
-upgraded; an unavailable guard at the finite deadline cannot authorize a wake.
+upgraded. Transient spacing or lock contention keeps polling within the existing
+60-second early-rearm margin; an unavailable guard cannot authorize a wake. A
+finite-lifetime exit audits `listener-timeout` and releases only its own lock.
+A transient lock result or temporarily empty inbox does not reset an exhausted
+budget episode.
 The separate ten-minute busy fallback is unchanged. Codex CP hints get fresh
-guarded admission after 60 seconds without Receive, on the next ordinary
-two-second exchange poll. A claim never offers a message; Receive removes it
+guarded admission once after 60 seconds without Receive, on the next ordinary
+two-second exchange poll; later republication waits the existing ten-minute
+reoffer interval. Recovery bookkeeping follows only the bounded ticket's actual
+message IDs, so new or excess accepted messages get their own first hint and
+fast recovery. Each retained message keeps its own last-publication time, so
+interleaved arrivals cannot postpone an older message's normal reoffer. Successful republication does not briefly set `retry-pending`.
+A claim never offers a message; Receive removes it
 from the accepted candidates, preventing republished content or hints for it.
 
 The Worker authenticates enrolled nodes over outbound WebSockets. `NodeSession`
@@ -1340,7 +1353,10 @@ source's safe storage, without attesting to loaded old consumers or installed
 targets. A store/index/layout fault clears leases, invalidates unsent register
 frames and suppresses bound acceptance. Existing rounds recheck the layout and,
 after a fault, bounded scratch write/read/rename cleanup before recovery. No
-inline delivery retry or receipt can make readiness true.
+inline delivery retry or receipt can make readiness true. Record-lock contention
+is a deferred receipt instead of a storage fault: it preserves storage readiness
+and other pending leases, and the next retry obtains a fresh one-shot lease.
+Real storage faults and message-redelivery mismatches retain the fault path.
 
 Strict stable binding-v1 records exist only in `inbox/bound-v1/<UUID>.json`;
 unbound legacy records stay flat. Invalid/null/unknown bindings, flat bound

@@ -423,7 +423,7 @@ export class Registry extends DurableObject<Env> {
   }
   async prepareMessageDelivery(messageId: string, phase?: "auth" | "registration") {
     const candidate = this.messages.deliveryCandidate(messageId);
-    const prepared = candidate?.required ? await prepareMessageBinding(this.sql, candidate.message, await this.loopSigner,
+    const prepared = candidate?.required && candidate.binding ? await prepareMessageBinding(this.sql, candidate.message, await this.loopSigner,
       (nodeId, request) => sessionStub(this.env, nodeId).resolveMessageReferences(request), "egress", candidate.binding ?? undefined) : null;
     const result = await this.messageTx("prepareMessageDelivery", () => this.messages.prepareDelivery(messageId, prepared, Date.now(), phase));
     if (result.effects.statuses.length) await routeEffects(this.env, result.effects);

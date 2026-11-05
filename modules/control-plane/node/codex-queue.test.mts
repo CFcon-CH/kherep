@@ -89,11 +89,11 @@ test("one pending hint per session; accepted content can be admitted again later
   const second = deliver(node, "two");
   node.tick(TURN_SPACING_MS + 1);
   await poll(node);
-  assert.equal(generation(node), initial, "the first hint is still unconfirmed");
+  assert.notEqual(generation(node), initial, "a newly accepted message gets its own hint without waiting for the older one");
   markOffered(node.paths.inbox, first, T0);
   await poll(node);
   const next = generation(node);
-  assert.notEqual(next, initial, "offered: the next message may be admitted");
+  assert.notEqual(next, initial, "the new message already has an admitted hint");
   // Never offered within 10 minutes (no hook): not queued again, it waits for the next prompt.
   node.tick(11 * 60_000);
   await poll(node);
