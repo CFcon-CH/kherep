@@ -64,3 +64,18 @@ test("the native planted-executable regression belongs to the required Windows b
   assert.match(workflow, /suite: \[[^\n]*bootstrap-rest/);
   assert.match(workflow, /unit-windows-gate:[\s\S]*needs: unit-windows/);
 });
+
+test("a removed working directory does not make the lookup throw", { skip: process.platform === "win32" ? "a working directory cannot be removed on Windows" : false }, (t) => {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "trusted-removed-")));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const gone = path.join(root, "gone");
+  fs.mkdirSync(gone);
+  const helper = path.join(import.meta.dirname, "..", "claude", "hooks", "lib", "trusted-executable.mts");
+  const script = `import fs from "node:fs";
+import { findTrustedExecutable } from ${JSON.stringify(helper)};
+fs.rmSync(process.cwd(), { recursive: true });
+console.log(findTrustedExecutable("sh") ? "found" : "none");`;
+  const run = spawnSync(process.execPath, ["--input-type=module", "-e", script], { cwd: gone, encoding: "utf8" });
+  assert.equal(run.status, 0, run.stderr);
+  assert.equal(run.stdout.trim(), "found");
+});
