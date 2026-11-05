@@ -1,4 +1,4 @@
-import { SELECTED_BINDING_CAPABILITY, BINDING_TTL_MS, type BoundOwner, type MessageBinding,
+import { BINDING_TTL_MS, type BoundOwner, type MessageBinding,
   type ResolveRequest, type ResolveResponse, type SelectedResult } from "../../protocol-message-binding.mts";
 import { OPERATOR_NODE_ID, type MessageAddress } from "../../protocol-messages.mts";
 import { RegistrySessionIdentity } from "./registry-session-identity.mts";

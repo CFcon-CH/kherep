@@ -30,6 +30,7 @@ import { SessionStore, type CommandRecord } from "./session-store.mts";
 // fires every 5 minutes; after 3 intervals without activity it is offline.
 export const ALARM_INTERVAL_MS = 5 * 60_000;
 export const DELIVERY_RETRY_MS = 60_000;
+export const DELIVERY_RETRY_CONCURRENCY = 8;
 export const MISSED_INTERVALS = 3;
 export const MESSAGE_STATUS_PAGE_SIZE = 32;
 export const MCP_INBOX_TIMEOUT_MS = 5_000;
@@ -139,14 +140,21 @@ export class NodeSession extends DurableObject<Env> {
       queued = !!effects?.deliveries.length;
       if (effects) {
         await routeEffects(this.env, { deliveries: [], statuses: effects.statuses });
-        // The existing queue cap bounds fan-out. Start each attempt together so
-        // a slow lease lookup cannot put the last row behind 100 serial waits.
-        const attempts = await Promise.allSettled(effects.deliveries.map(d => this.pushFrame("message.deliver", { ...d.body })));
-        const failed = attempts.find(a => a.status === "rejected");
-        if (failed?.status === "rejected") throw failed.reason;
+        // Eight oldest-first lanes leave resolve admission headroom below the
+        // 32-slot limit. A timed-out head never prevents later rows attempting.
+        let next = 0;
+        await Promise.all(Array.from({ length: Math.min(DELIVERY_RETRY_CONCURRENCY, effects.deliveries.length) }, async () => {
+          while (next < effects.deliveries.length) {
+            const delivery = effects.deliveries[next++];
+            try { await this.pushFrame("message.deliver", { ...delivery.body }); }
+            catch { console.error("DELIVERY_RETRY_FAILED"); }
+          }
+        }));
       }
+    } catch {
+      console.error("DELIVERY_RETRY_FAILED");
     } finally {
-      await this.alarms.earlier(now + (queued ? DELIVERY_RETRY_MS : ALARM_INTERVAL_MS));
+      await this.alarms.earlier(queued ? Date.now() + DELIVERY_RETRY_MS : now + ALARM_INTERVAL_MS);
     }
   }
 

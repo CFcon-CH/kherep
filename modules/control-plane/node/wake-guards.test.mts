@@ -146,7 +146,7 @@ test(`wakes at most ${TURNS_PER_HOUR} times per rolling hour and waits out the s
   const late = T0 + over * 60_000;
   assert.deepEqual(await listenFor(paths, over, { start: late }), { code: 0 });
   assert.equal(getMessage(paths.inbox, id(over))?.state, "accepted", "it waits for the next user prompt");
-  assert.deepEqual(auditLines(paths).at(-1), { ts: new Date(late + 2 * WAKE_POLL_MS + 250).toISOString(),
+  assert.deepEqual(auditLines(paths).findLast(line => line.action === "budget"), { ts: new Date(late + 2 * WAKE_POLL_MS + 250).toISOString(),
     sessionId: SELF, messageIds: [id(over)], action: "budget" });
   // The first wake leaves the rolling hour one hour after it was taken.
   const firstWake = Date.parse(auditLines(paths)[0].ts);

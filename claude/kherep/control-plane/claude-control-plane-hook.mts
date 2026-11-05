@@ -11,7 +11,7 @@
 // Unlike the Codex entry point (codex/hooks/control-plane-hook.mts) it starts no
 // second process: the hook is imported into this one and runs as its own main
 // module (argv[1] is rewritten to the hook file first, so the hook's own main
-// check holds). The wake listener runs for up to 24 hours and ends itself when
+// check holds). The wake listener runs for up to 25 hours and ends itself when
 // its parent, Claude Code, is gone; it also reads the launch flags of its
 // ancestors. In this process its parent, ancestry, stdin, signals and exit code
 // are exactly those of a direct hook call. The check per run is the pointer's
@@ -90,7 +90,7 @@ if (isMainModule()) {
   if ("reason" in resolved) fail(resolved.reason);
   else {
     // From here on this process is the hook's: argv[1] the hook file, argv[2..] its
-    // arguments (`--timeout 86400` for wake). stdin stays unread for the hook. Node
+    // arguments (`--timeout 90000` for wake). stdin stays unread for the hook. Node
     // warns about type stripping once per process, so the hook's warning shows as
     // from a direct call and this entry adds none. A rejected import is a hook that
     // did not load or threw while loading; it exits 1, as a direct call would.

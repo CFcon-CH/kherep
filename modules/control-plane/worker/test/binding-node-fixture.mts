@@ -1,7 +1,7 @@
 import { runInDurableObject } from "cloudflare:test";
 import { afterEach, vi } from "vitest";
 import { makeEnvelope, parseEnvelope } from "../../protocol.mts";
-import { isResolveRequest, SELECTED_BINDING_CAPABILITY, type SelectedResult } from "../../protocol-message-binding.mts";
+import { isResolveRequest, SELECTED_BINDING_CAPABILITY, type ResolveRequest, type SelectedResult } from "../../protocol-message-binding.mts";
 import { authenticate, enroll, FACTS, newKey, registry, session, type NodeKey } from "./helpers.mts";
 const owned: { nodeId: string; socket: Awaited<ReturnType<typeof authenticate>> }[] = [];
 afterEach(async () => {
@@ -21,11 +21,13 @@ export async function bindingConnection(nodeId: string, key: NodeKey, initialRow
   const socket = await authenticate(nodeId, key);
   owned.push({ nodeId, socket });
   let sequence = 1, rows = initialRows;
+  let respond: (request: ResolveRequest) => boolean = () => true;
   let beforeResponse: (() => Promise<void>) | undefined;
   socket.ws.addEventListener("message", event => {
     const frame = parseEnvelope(event.data as string);
     if (!frame.ok || frame.envelope.type !== "message.resolve.request" || !isResolveRequest(frame.envelope.body)) return;
     const request = frame.envelope.body, selected = rows;
+    if (!respond(request)) return;
     const results = request.selections.map((selection): SelectedResult => {
       const exact = selected.filter(r => r.sessionId === selection.ref);
       const matches = exact.length ? exact : selected.filter(r => r.name === selection.ref);
@@ -41,5 +43,6 @@ export async function bindingConnection(nodeId: string, key: NodeKey, initialRow
   socket.send(makeEnvelope("register", { facts: FACTS, runtimes: [{ name: "codex", kind: "cli" }], capabilities: [...capabilities, SELECTED_BINDING_CAPABILITY] }, sequence, 0));
   await vi.waitFor(async () => { if (!(await session(nodeId).loopCapabilityEvidence()).registered) throw new Error("synthetic register pending"); });
   return { nodeId, key, socket, nextSequence: () => ++sequence, setRows: (value: SelectedFixtureRow[]) => { rows = value; },
+    respondWhen: (predicate: (request: ResolveRequest) => boolean) => { respond = predicate; },
     beforeResponse: (run: () => Promise<void>) => { beforeResponse = run; } };
 }

@@ -96,12 +96,14 @@ it("rearms the retry alarm when egress throws", async () => {
   const f = await attestedPair();
   await runInDurableObject(session(f.nodeId), async (instance, state) => {
     const original = instance.pushFrame;
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
     instance.pushFrame = async () => { throw new Error("synthetic storage fault"); };
     try {
       const sent = await f.send(); if (!sent.ok) throw new Error(sent.error);
-      await expect(instance.alarm()).rejects.toThrow("synthetic storage fault");
+      await expect(instance.alarm()).resolves.toBeUndefined();
+      expect(log).toHaveBeenCalledExactlyOnceWith("DELIVERY_RETRY_FAILED");
       expect((await state.storage.getAlarm())! - Date.now()).toBeLessThanOrEqual(60_000);
-    } finally { instance.pushFrame = original; }
+    } finally { instance.pushFrame = original; log.mockRestore(); }
   });
 });
 
@@ -123,4 +125,20 @@ it("does not send binding-required rows until this socket's registration is acce
   expect(await session(f.nodeId).pushFrame("message.deliver", { messageId: sent.status.messageId })).toBe(false);
   await runDurableObjectAlarm(session(f.nodeId));
   expect((await registry().mcpMessageStatus(f.nodeId, sent.status.messageId))?.state).toBe("queued");
+});
+
+it("schedules the queued retry sixty seconds after a slow pass completes", async () => {
+  const f = await attestedPair(), sent = await f.send();
+  if (!sent.ok) throw new Error(sent.error);
+  await runInDurableObject(session(f.nodeId), async (instance, state) => {
+    await state.storage.deleteAlarm();
+    const startedAt = Date.now();
+    let clock = startedAt;
+    const date = vi.spyOn(Date, "now").mockImplementation(() => clock);
+    const push = vi.spyOn(instance, "pushFrame").mockImplementation(async () => { clock += 65_000; return false; });
+    try {
+      await instance.alarm();
+      expect(await state.storage.getAlarm()).toBe(clock + 60_000);
+    } finally { push.mockRestore(); date.mockRestore(); }
+  });
 });

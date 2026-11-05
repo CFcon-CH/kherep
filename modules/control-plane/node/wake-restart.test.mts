@@ -145,5 +145,6 @@ test("the guards hold for waiting messages: kill switch, allowlist, reply depth 
   const over = TURNS_PER_HOUR + 1;
   arrive(paths, over, T0 + over * 60_000 - 1_000);
   assert.deepEqual(await listen(paths, atStart({ start: T0 + over * 60_000 })), { code: 0 });
-  assert.deepEqual(auditLines(paths).at(-1), { ...auditLines(paths).at(-1), action: "budget", messageIds: [id(over)] });
+  assert.deepEqual(auditLines(paths).findLast(line => line.action === "budget")?.messageIds, [id(over)]);
+  assert.equal(auditLines(paths).at(-1)?.action, "listener-timeout");
 });

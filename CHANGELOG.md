@@ -34,19 +34,29 @@ increments the minor version; every other release increments the patch version.
 - Intercom listeners wait across exhausted wake budgets without spending turns
   or releasing their owner lock early. Shipped Claude hook lifetimes are now
   25 hours, retaining the budgeted early re-arm and finite timeout. Codex hints
-  without Receive recover through fresh guarded admission after 60 seconds;
-  global offer intervals, turn budgets and the ten-minute busy fallback stay
-  unchanged. Existing hook settings need a separately authorized upgrade (#706).
+  without Receive get one fresh guarded recovery after 60 seconds per retained
+  message, then wait the existing ten-minute reoffer interval. New and excess
+  messages get their own recovery, without normal republish progress churn.
+  Transient listener guards keep polling through the early-rearm margin; finite
+  exits audit and preserve replacement owners. Global offer intervals, turn
+  budgets and the ten-minute busy fallback stay unchanged. Existing hook settings need a separately authorized upgrade (#706).
 
 - Intercom identity comparisons use one semantic projection across admission,
   duplicate validation and egress. Fresh observation refreshes no longer refuse
   unchanged owners; proof validity, lifecycle, connection, capability and loop
   lineage checks remain enforced (#706, #765).
 
-- Intercom retries queued acceptance on the same authenticated socket within
-  60 seconds, retaining lease, owner, registration and loop checks. The alarm
-  always re-arms after retry failure and returns to its normal cadence when
-  drained. Retries cannot change an already emitted owner binding (#706).
+- Intercom schedules the first queued acceptance retry pass on the same
+  authenticated socket within 60 seconds, retaining lease, owner, registration
+  and loop checks. The alarm
+  uses eight oldest-first concurrent lanes below the 32-slot resolve limit,
+  leaving room for fresh admission. It catches retry failures with a fixed code,
+  re-arms 60 seconds after pass completion even after failure, and returns to
+  its normal cadence when drained. Inbox
+  record-lock contention defers the receipt without faulting binding storage.
+  Retries cannot change an already emitted owner binding. A required queued
+  row without a stored binding deliberately waits until its hold ends or it
+  expires, fails closed, and skips pointless resolution (#706).
 
 - Coverage assembly attributes explicitly declared identical test copies to their
   original source by exact URL and SHA-256, preserving real hits and uncovered

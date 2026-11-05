@@ -13,6 +13,7 @@ export interface BusyAdmission {
   messageIds: string[];
   publishedAt?: number;
   invalidated?: boolean;
+  recovery?: { messageId: string; firstPublishedAt: number; lastPublishedAt: number; fastRecovered: boolean }[];
 }
 const volatile = new Map<string, BusyAdmission>();
 const file = (paths: NodePaths, owner: string): string => path.join(listenerDir(paths), `${owner}.busy-admission.json`);
@@ -27,6 +28,11 @@ export function readBusyAdmission(paths: NodePaths, owner: string): BusyAdmissio
     || !Array.isArray(stored.messageIds) || !stored.messageIds.length
     || !stored.messageIds.every((id) => typeof id === "string" && /^[0-9a-f-]{36}$/.test(id))
     || (stored.invalidated !== undefined && typeof stored.invalidated !== "boolean")
+    || (stored.recovery !== undefined && (!Array.isArray(stored.recovery)
+      || new Set(stored.recovery.map(item => item?.messageId)).size !== stored.recovery.length
+      || !stored.recovery.every(item => item && stored!.messageIds.includes(item.messageId)
+        && Number.isSafeInteger(item.firstPublishedAt) && item.firstPublishedAt >= 0
+        && Number.isSafeInteger(item.lastPublishedAt) && item.lastPublishedAt >= item.firstPublishedAt && typeof item.fastRecovered === "boolean")))
     || !stored.ticket.messages.every(({ messageId }) => stored.messageIds.includes(messageId))
     || (stored.publishedAt !== undefined && (!Number.isSafeInteger(stored.publishedAt)
       || stored.publishedAt < stored.ticket.admittedAt || stored.publishedAt >= stored.ticket.expiresAt))) return null;

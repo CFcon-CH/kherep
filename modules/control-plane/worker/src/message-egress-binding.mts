@@ -16,6 +16,6 @@ export function egressBinding(sql: SqlStorage, row: Row, prepared: PreparedBindi
     to: { nodeId: String(row.to_node), session: String(row.to_session) } };
   if (!stored || !prepared?.binding || !prepared.leaseId || prepared.error
     || prepared.stamp !== bindingContext(sql, message).stamp
-    || stored && !sameBinding(stored, prepared.binding)) return null;
+    || !sameBinding(stored, prepared.binding)) return null;
   return { binding: { ...prepared.binding, leaseId: prepared.leaseId, localGeneration: prepared.localGeneration } };
 }

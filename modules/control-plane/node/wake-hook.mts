@@ -190,6 +190,7 @@ export async function runWake(input: unknown, deps: WakeDeps): Promise<WakeResul
     return quiet;
   }
   const deadline = mine.startedAt + (deps.maxWaitMs ?? WAKE_MAX_WAIT_MS);
+  const expiresAt = deadline + WAKE_REARM_EARLY_MS - WAKE_POLL_MS;
   const parentAlive = deps.parentAlive ?? parentWatch();
   const release = (): void => fs.rmSync(lockFile, { force: true });
   const limited = new Set<string>();
@@ -197,10 +198,10 @@ export async function runWake(input: unknown, deps: WakeDeps): Promise<WakeResul
   let budgetAudited = false;
   let last = mine;
   for (;;) {
-    await sleep(WAKE_POLL_MS);
+    await sleep(Math.min(WAKE_POLL_MS, Math.max(0, expiresAt - now())));
     // The daemon's sweep may hold the lock aside for a moment (issue #225).
     const held = readJson<ListenerLock>(lockFile) ?? reclaimLock(paths, sessionId, last);
-    if (!held) return quiet;
+    if (!held) { audit(paths, now(), sessionId, [], "superseded"); return quiet; }
     // Identity is the token, never the pid, and a replaced listener only ends itself.
     if (held.token !== mine.token) {
       // An older listener filled a gap (a sweep held this lock aside): take lock and scope back (listener-order.mts).
@@ -213,6 +214,11 @@ export async function runWake(input: unknown, deps: WakeDeps): Promise<WakeResul
       return quiet;
     }
     last = held;
+    if (now() >= expiresAt) {
+      release();
+      audit(paths, now(), sessionId, [], "listener-timeout");
+      return quiet;
+    }
     if (!parentAlive()) {
       release();
       audit(paths, now(), sessionId, [], "parent-gone");
@@ -267,20 +273,19 @@ export async function runWake(input: unknown, deps: WakeDeps): Promise<WakeResul
     let due: "wake" | "rearm";
     if (messages + stuck.length > 0) due = "wake";
     else if (now() >= deadline) due = "rearm";
-    else { budgetAudited = false; continue; }
+    else continue;
     const budget = takeTurn(paths, sessionId, now(), wakeBudget(policy));
     // Too soon after the last autonomous turn, or the budget was locked: try again at the next poll.
     if (budget !== "ok") {
-      if (budget !== "exhausted") budgetAudited = false;
       if (budget === "exhausted" && !budgetAudited) {
         audit(paths, now(), sessionId, [...fresh, ...backlog, ...stuck], "budget");
         budgetAudited = true;
       }
-      // A custom shorter hook lifetime or permanently unavailable budget lock
-      // cannot authorize a wake. Keep the process bounded and release only on exit.
-      if (now() >= deadline) { release(); return quiet; }
+      // Transient contention or spacing may clear within the existing rearm
+      // margin. Exhaustion also retains the owner lock until a real exit.
       continue;
     }
+    budgetAudited = false;
     release();
     if (due === "rearm") {
       audit(paths, now(), sessionId, [], "rearm");

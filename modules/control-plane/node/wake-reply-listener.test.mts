@@ -138,5 +138,5 @@ test("the budget and the bypassPermissions exclusion still apply", async (t) => 
     start += TURN_SPACING_MS + 10 * WAKE_POLL_MS;
   }
   assert.deepEqual(await replyAt(paths, { start }), { code: 0 });
-  assert.equal(auditLines(paths).at(-1)?.action, "budget");
+  assert.equal(auditLines(paths).findLast(line => line.action === "budget")?.action, "budget");
 });

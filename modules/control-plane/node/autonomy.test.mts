@@ -64,7 +64,7 @@ test("wakes and Stop continuations draw on the same budget", async (t) => {
   assert.deepEqual(await listen(paths, { start: T0 + TURN_SPACING_MS, tick: (clock) => {
     if (clock === T0 + TURN_SPACING_MS + 2 * WAKE_POLL_MS) arrive(paths, 2, clock);
   } }), { code: 0 });
-  assert.deepEqual(auditLines(paths).map((l) => l.action), ["continue", "budget"]);
+  assert.deepEqual(auditLines(paths).map((l) => l.action), ["continue", "budget", "listener-timeout"]);
 });
 
 test("bypassPermissions: no Stop continuation, while the user's own prompt still delivers", (t) => {

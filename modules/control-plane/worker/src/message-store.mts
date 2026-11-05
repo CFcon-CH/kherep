@@ -519,14 +519,8 @@ export class MessageStore {
     const key = prepared?.denyKey ?? row.delivery_pair ?? row.loop_pair;
     const held = typeof key === "string" ? this.loops.held(key) : null;
     if (held) { this.setState(recordMetadata(row), "refused", held, "system", now, effects); return { body: null, effects }; }
-    const binding = egress.binding;
-    if (binding) {
-      const stable = { version: binding.version, mode: binding.mode, from: binding.from, to: binding.to };
-      this.sql.exec("UPDATE messages SET from_session=?,to_session=?,delivery_binding=?,delivery_pair=? WHERE id=? AND state='queued'",
-        stable.from.sessionId, stable.to.sessionId, JSON.stringify(stable), prepared!.denyKey, messageId);
-      row.from_session = stable.from.sessionId; row.to_session = stable.to.sessionId;
-    }
-    return { body: { ...deliverBodyOf(row), ...(binding ? { binding } : {}) }, effects };
+    if (egress.binding) this.sql.exec("UPDATE messages SET delivery_pair=? WHERE id=? AND state='queued'", prepared!.denyKey, messageId);
+    return { body: { ...deliverBodyOf(row), ...egress }, effects };
   }
   private queueDeliveryAllowed(row: Record<string, SqlStorageValue>, now: number, effects: MessageEffects): boolean {
     const lineage = storedLoopLineage(row);

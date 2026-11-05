@@ -6,6 +6,7 @@ import test from "node:test";
 
 import { listenerDir, takeTurn, TURN_SPACING_MS } from "./autonomy.mts";
 import { codexQueueIdle, pollCodexQueue } from "./codex-queue.mts";
+import { REOFFER_AFTER_MS } from "./deliver-core.mts";
 import { CODEX_ACTIVE_MS, recordCodexSession } from "./codex-sessions.mts";
 import { deliverForCodex } from "./deliver-codex.mts";
 import { getMessage, getMessageProgress, storeMessage } from "./inbox.mts";
@@ -191,4 +192,78 @@ test("failed CP metadata persistence retains the in-process admission without a 
   assert.equal(node.turns().length, 1);
   assert.equal(fs.existsSync(path.join(node.dir, `${OWNER}.queued.json`)), false);
   node.retained();
+});
+
+test("one fast recovery then the normal reoffer interval without progress churn", async (t) => {
+  const node = setup(t);
+  await node.poll();
+  const first = node.admission().ticket.generation;
+  node.tick(60_000);
+  await node.poll();
+  const recovered = node.admission().ticket.generation;
+  assert.notEqual(recovered, first);
+  const progress = getMessageProgress(node.paths.inbox, ID);
+  node.tick(REOFFER_AFTER_MS - 1);
+  await node.poll();
+  assert.equal(node.admission().ticket.generation, recovered);
+  assert.deepEqual(getMessageProgress(node.paths.inbox, ID), progress);
+  node.tick(1);
+  await node.poll();
+  assert.notEqual(node.admission().ticket.generation, recovered);
+  assert.deepEqual(getMessageProgress(node.paths.inbox, ID), progress, "normal republish keeps awaiting-user-turn unchanged");
+});
+
+test("a new message receives its own fast recovery without resetting older recovery", async (t) => {
+  const node = setup(t);
+  await node.poll(); node.tick(60_000); await node.poll();
+  const secondId = "9e570002-0000-4000-8000-000000000000";
+  node.tick(2_000);
+  storeMessage(node.paths.inbox, { messageId: secondId, toSession: OWNER, text: "second synthetic",
+    from: { nodeId: "00000000-0000-4000-8000-0000000000bb", session: "synthetic-peer" }, createdAt: new Date(T0).toISOString() }, T0);
+  await node.poll();
+  const initial = node.admission().ticket.generation;
+  assert.ok(node.admission().messageIds.includes(secondId));
+  node.tick(60_000); await node.poll();
+  const recovered = node.admission().ticket.generation;
+  assert.notEqual(recovered, initial);
+  node.tick(60_000); await node.poll();
+  assert.equal(node.admission().ticket.generation, recovered);
+});
+
+test("more than eight retained messages each get a hint and their own fast recovery", async t => {
+  const node = setup(t);
+  const ids = [ID, ...Array.from({ length: 9 }, () => crypto.randomUUID())];
+  for (const messageId of ids.slice(1)) storeMessage(node.paths.inbox, { messageId, toSession: OWNER, text: "synthetic backlog",
+    from: { nodeId: "00000000-0000-4000-8000-0000000000bb", session: "synthetic-peer" }, createdAt: new Date(T0).toISOString() }, T0);
+  await node.poll();
+  const first = JSON.parse(fs.readFileSync(node.ticket, "utf8")).messages.map((m: { messageId: string }) => m.messageId);
+  assert.equal(first.length, 8);
+  assert.equal(node.admission().recovery.length, 8);
+  node.tick(2_000); await node.poll();
+  const rest = JSON.parse(fs.readFileSync(node.ticket, "utf8")).messages.map((m: { messageId: string }) => m.messageId);
+  assert.equal(rest.length, 2);
+  assert.deepEqual(new Set([...first, ...rest]), new Set(ids));
+  node.tick(58_000); await node.poll();
+  assert.deepEqual(JSON.parse(fs.readFileSync(node.ticket, "utf8")).messages.map((m: { messageId: string }) => m.messageId), first);
+  assert.equal(node.admission().recovery.filter((r: { fastRecovered: boolean }) => r.fastRecovered).length, 8);
+  node.tick(2_000); await node.poll();
+  assert.deepEqual(JSON.parse(fs.readFileSync(node.ticket, "utf8")).messages.map((m: { messageId: string }) => m.messageId), rest);
+  assert.equal(node.admission().recovery.filter((r: { fastRecovered: boolean }) => r.fastRecovered).length, 10);
+  const generation = node.admission().ticket.generation;
+  node.tick(60_000); await node.poll();
+  assert.equal(node.admission().ticket.generation, generation);
+});
+
+test("interleaved arrivals cannot postpone an older message's normal reoffer", async t => {
+  const node = setup(t);
+  await node.poll(); node.tick(60_000); await node.poll();
+  node.tick(REOFFER_AFTER_MS - 2_000);
+  const messageId = crypto.randomUUID();
+  storeMessage(node.paths.inbox, { messageId, toSession: OWNER, text: "interleaved synthetic",
+    from: { nodeId: "00000000-0000-4000-8000-0000000000bb", session: "synthetic-peer" }, createdAt: new Date(T0).toISOString() }, T0);
+  await node.poll();
+  assert.deepEqual(node.admission().ticket.messages.map((m: { messageId: string }) => m.messageId), [messageId]);
+  node.tick(2_000); await node.poll();
+  assert.deepEqual(node.admission().ticket.messages.map((m: { messageId: string }) => m.messageId), [ID]);
+  assert.equal(node.admission().recovery.find((r: { messageId: string }) => r.messageId === messageId).fastRecovered, false);
 });
