@@ -255,8 +255,12 @@ judged decisions, so it happens when someone decides, not when a session starts.
 
 One observation is one page. An attempt that went wrong is not left behind in silence: the
 observation agent neither writes a second page beside it nor deletes it, because deleting is outside
-its permissions; on Claude it reports `OBS-RESULT: failed abandoned page <id>`, and the Maestro
-decides in the same turn whether the page is removed.
+its permissions; on Claude, only a wrong page created in this run with a known ID is quarantined on that same ID: remove
+`evidence-confirmed`, add `status-pending-deletion` and read back both postconditions. A partial or unreadable
+quarantine fails explicitly with the known ID; an unknown ID stays failed/UNKNOWN without retry or search recovery.
+The agent hands one deletion request and quarantine result to the Maestro. Only the Director authorizes deletion.
+Claude authors UTF-8 bodies and decisions with the file tool and uses offline `validate` before create.
+Known limitation: mechanical gate missing; agent instruction is not a guarantee. Generic broker create remains available.
 Labels are written in the call that creates the page, never afterwards: a page that exists without
 them is either a draft nobody cleaned up or a page nobody can filter, and from the outside the two
 are the same thing. Measured on 2026-09-22, a single run left seventeen pages for nine findings -
