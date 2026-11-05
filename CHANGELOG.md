@@ -31,6 +31,11 @@ increments the minor version; every other release increments the patch version.
 
 ### Fixed
 
+- Intercom identity comparisons use one semantic projection across admission,
+  duplicate validation and egress. Fresh observation refreshes no longer refuse
+  unchanged owners; proof validity, lifecycle, connection, capability and loop
+  lineage checks remain enforced (#706, #765).
+
 - Intercom retries queued acceptance on the same authenticated socket within
   60 seconds, retaining lease, owner, registration and loop checks. The alarm
   always re-arms after retry failure and returns to its normal cadence when

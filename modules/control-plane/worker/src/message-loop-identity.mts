@@ -1,5 +1,6 @@
 import { parseIdentityBinding } from "../../protocol-session-identity.mts";
 import { RegistrySessionIdentity } from "./registry-session-identity.mts";
+import { semanticNodes, semanticReference } from "./message-semantic-identity.mts";
 import type { MessageAddress } from "../../protocol-messages.mts";
 import { isLoopAdmissionV1, safeLoopReason, MESSAGING_LOOP_BRAKE_CAPABILITY, LOOP_COMPATIBILITY, LOOP_LINEAGE, type LoopAdmissionV1 } from "../../protocol-loop-brake.mts";
 export const LOOP_COLUMNS = "loop_thread, loop_pair, loop_generation, loop_ordinal, loop_direction, loop_identity";
@@ -33,7 +34,7 @@ export function parentOf(sql: SqlStorage, id?: string): Parent {
     : { kind: lineage.kind, row };
 }
 export interface LoopSnapshot {
-  from: MessageAddress | null; to: MessageAddress | null; both: boolean; parent: Parent; encoding: string | null; direction: 0 | 1 | null; identityBinding: string | null; compatibility: boolean; proofs: unknown;
+  from: MessageAddress | null; to: MessageAddress | null; both: boolean; parent: Parent; encoding: string | null; direction: 0 | 1 | null; identityBinding: string | null; compatibility: boolean; proofs: unknown; connections: ReturnType<typeof semanticNodes>;
 }
 // Byte ordering is stable across hosts/locales; identifiers are not normalized.
 function compare(a: string, b: string): number {
@@ -74,7 +75,7 @@ export class LoopIdentity {
       ? JSON.stringify([1, lo.proof.runtime, lo.proof.lifecycleGeneration, hi.proof.runtime, hi.proof.lifecycleGeneration]) : null;
     return { from: qualified ? f.address : null, to: qualified ? t.address : null, both,
       parent: parentOf(this.sql, parentId), encoding: pair?.encoding ?? null, direction: pair?.direction ?? null,
-      identityBinding, compatibility, proofs: [f, t] };
+      identityBinding, compatibility, proofs: [f, t].map(semanticReference), connections: semanticNodes(this.sql, [fromRef.nodeId, toRef.nodeId]) };
   }
   deliveryValid(row: Row, binding: string, now: number): boolean {
     const snapshot = this.snapshot({ nodeId: String(row.from_node), session: String(row.from_session) },

@@ -2,6 +2,7 @@ import { RESOLUTION_REQUIRED } from "../../protocol-message-binding.mts";
 import { LOOP_STALE } from "../../protocol-loop-brake.mts";
 import { storedMessageBinding } from "./message-binding-store.mts";
 import type { NewMessage, PreparedLoop } from "./message-store.mts";
+import { sameBinding } from "./message-semantic-identity.mts";
 type Row = Record<string, SqlStorageValue>;
 
 // Payload-bearing retries prove the current selected owners. Status queries
@@ -15,7 +16,7 @@ export function duplicateSendError(row: Row, message: NewMessage, prepared: Prep
   if (!contextMatches) return LOOP_STALE;
   const selected = prepared?.binding;
   if (!selected?.binding) return RESOLUTION_REQUIRED;
-  if (row.to_node !== message.to.nodeId || JSON.stringify(stored) !== JSON.stringify(selected.binding)
+  if (row.to_node !== message.to.nodeId || !sameBinding(stored, selected.binding)
     || row.delivery_pair !== selected.denyKey || row.in_reply_to !== (message.inReplyTo ?? null)
     || row.proxy_of !== (message.proxyOf ?? null) || row.task_id !== (message.taskId ?? null)
     || row.text !== null && row.text !== message.text) return "duplicate messageId";

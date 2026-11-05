@@ -3,8 +3,22 @@ import { expect, it } from "vitest";
 import { attestedPair, attestedRows, ID_A, ID_B } from "./message-loop-fixture.mts";
 import { registry } from "./helpers.mts";
 import type { NewMessage } from "../src/message-store.mts";
+import { bindingContext } from "../src/message-binding.mts";
+import { egressBinding } from "../src/message-egress-binding.mts";
 const ID_C = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
 const query = <T,>(run: (sql: SqlStorage) => T) => runInDurableObject(registry(), (_i, state) => run(state.storage.sql));
+for (const identity of [null, '[1,"codex",0,"codex",0]']) it(`required historical unbound egress cannot acquire binding, proof=${identity !== null}`, async () => {
+  const f = await attestedPair();
+  await query(sql => {
+    const message = { messageId: crypto.randomUUID(), from: { nodeId: f.nodeId, session: ID_A }, to: { nodeId: f.nodeId, session: ID_B } };
+    const row = { id: message.messageId, from_node: f.nodeId, from_session: ID_A, to_node: f.nodeId, to_session: ID_B,
+      delivery_binding: null, delivery_pair: null, loop_identity: identity };
+    const owner = (sessionId: string) => ({ sessionId, runtime: "codex", lifecycleGeneration: null });
+    const prepared = { stamp: bindingContext(sql, message).stamp, binding: { version: 1 as const, mode: "exact" as const,
+      from: owner(ID_A), to: owner(ID_B) }, denyKey: null, leaseId: crypto.randomUUID(), localGeneration: null };
+    expect(egressBinding(sql, row, prepared, true)).toBeNull();
+  });
+});
 const capture = (id: string, nodeId: string) => query(sql => ({
   row: sql.exec("SELECT * FROM messages WHERE id=?", id).one(),
   pairs: sql.exec("SELECT * FROM message_loop_pairs WHERE from_node=? OR to_node=?", nodeId, nodeId).toArray(),
@@ -100,7 +114,7 @@ for (const selected of ["unavailable", "resolved"] as const) it(`A2: legacy pare
   expect(row.loop_pair).toBeNull(); expect(row.delivery_binding === null).toBe(selected === "unavailable");
 });
 
-for (const state of ["queued", "accepted"] as const) it(`A3: ${state} retry refuses a source proof epoch changed while selected RPC awaits`, async () => {
+for (const state of ["queued", "accepted"] as const) it(`A3: ${state} retry permits a fresh observation epoch while selected RPC awaits`, async () => {
   const f = await attestedPair();
   const message = { messageId: crypto.randomUUID(), from: { nodeId: f.nodeId, session: ID_A }, to: { nodeId: f.nodeId, session: ID_B }, text: "Synthetic epoch race" };
   await registry().sendMessage(message, "synthetic");
@@ -110,7 +124,9 @@ for (const state of ["queued", "accepted"] as const) it(`A3: ${state} retry refu
     await registry().replaceSessions(f.nodeId, attestedRows(), { version: 1, generation: 2 });
     afterEpoch = await capture(message.messageId, f.nodeId);
   });
-  expect(await registry().sendMessage(message, "synthetic")).toEqual({ ok: false, error: "loop-context-changed" });
+  const replay = await registry().sendMessage(message, "synthetic");
+  expect(replay.ok && replay.status.state).toBe(state);
+  expect(replay.ok && replay.effects.deliveries).toEqual([]);
   expect(afterEpoch).toBeDefined(); expect(await capture(message.messageId, f.nodeId)).toEqual(afterEpoch);
 });
 

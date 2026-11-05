@@ -5,24 +5,18 @@ import { RegistrySessionIdentity } from "./registry-session-identity.mts";
 import { pairIdentity } from "./message-loop-identity.mts";
 import type { LoopSigner } from "./message-loop-signals.mts";
 import { parseIdentityBinding } from "../../protocol-session-identity.mts";
+import { semanticNodes, semanticReference } from "./message-semantic-identity.mts";
 type AddressPair = { messageId: string; from: MessageAddress; to: MessageAddress };
 type Resolve = (nodeId: string, request: ResolveRequest) => Promise<ResolveResponse | null>;
 export interface PreparedBinding {
   stamp: string; binding: MessageBinding | null; denyKey: string | null; leaseId: string | null; localGeneration: number | null; error?: string;
 }
 export function bindingContext(sql: SqlStorage, message: AddressPair): { stamp: string; refs: ReturnType<RegistrySessionIdentity["resolveCanonicalReference"]>[];
-  nodes: ({ token: string | null; capable: boolean } | null)[] } {
+  nodes: ReturnType<typeof semanticNodes> } {
   const identities = new RegistrySessionIdentity(sql);
   const refs = [message.from, message.to].map(a => identities.resolveCanonicalReference(a, Date.now()));
-  const nodes = [message.from, message.to].map(a => {
-    const n = sql.exec("SELECT message_connection_token, registration_token, capabilities FROM nodes WHERE id=? AND revoked_at IS NULL", a.nodeId).toArray()[0];
-    if (!n) return null;
-    let capabilities: unknown; try { capabilities = JSON.parse(String(n.capabilities)); } catch { capabilities = null; }
-    return { token: typeof n.message_connection_token === "string" ? n.message_connection_token : null,
-      capable: typeof n.message_connection_token === "string" && n.registration_token === n.message_connection_token
-        && Array.isArray(capabilities) && capabilities.includes(SELECTED_BINDING_CAPABILITY) };
-  });
-  return { refs, nodes, stamp: JSON.stringify([refs, nodes]) };
+  const nodes = semanticNodes(sql, [message.from.nodeId, message.to.nodeId]);
+  return { refs, nodes, stamp: JSON.stringify([refs.map(semanticReference), nodes]) };
 }
 const boundOwner = (r: Extract<SelectedResult, { code: "BOUND" }>): BoundOwner => ({ sessionId: r.owner.sessionId, runtime: r.owner.runtime,
   lifecycleGeneration: r.lifecycleGeneration });
