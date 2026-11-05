@@ -67,9 +67,9 @@ type RunLike = Pick<Run, "status" | "signal" | "stdout">;
 const opsOf = (doc: FaultReceipt): string[] => doc.calls.map((c) => `${c.op}${c.tail ? `:${c.tail}` : ""}`);
 const complete = (doc?: FaultReceipt): doc is FaultReceipt => doc !== undefined && typeof doc.originAt === "number"
   && typeof doc.exitAt === "number" && Array.isArray(doc.calls) && Array.isArray(doc.timers);
-const markerWaits = (doc: FaultReceipt): FaultReceipt["timers"] => doc.timers.filter((timer) => timer.afterCall === 2);
-export function armedForDeadline(doc: FaultReceipt): boolean {
-  const waits = markerWaits(doc), end = doc.originAt + DEADLINE_MS;
+const markerWaits = (doc: FaultReceipt, afterCall = 2): FaultReceipt["timers"] => doc.timers.filter((timer) => timer.afterCall === afterCall);
+export function armedForDeadline(doc: FaultReceipt, afterCall = 2): boolean {
+  const waits = markerWaits(doc, afterCall), end = doc.originAt + DEADLINE_MS;
   return waits.length === 1 && (Math.abs(waits[0]!.due - end) <= TOLERANCE_MS || (waits[0]!.delay === 0 && waits[0]!.armedAt >= end - TOLERANCE_MS));
 }
 export function deadlineLimited(run: RunLike, doc: FaultReceipt): string | undefined {
@@ -80,6 +80,20 @@ export function deadlineLimited(run: RunLike, doc: FaultReceipt): string | undef
   const wait = markerWaits(doc)[0]!;
   if (wait.firedAt === undefined || wait.firedAt < wait.due - TOLERANCE_MS || doc.exitAt < wait.firedAt) return "4d";
   return doc.originAt + DEADLINE_MS - (doc.calls[2]!.at + MARKER_SLOW_MS) < SLACK_MS ? undefined : "4e";
+}
+
+// #750: mkdir times out before the marker append, so its settle timer is armed
+// after call 1. A deadline interleaving can still attempt one fallback rename.
+function allHangDeadlineLimited(run: RunLike, doc: FaultReceipt): string | undefined {
+  if (run.signal !== null || run.status !== 0 || run.stdout !== "") return "4a";
+  const ops = opsOf(doc);
+  if (ops[0] !== "mkdir:dir" || ops[1] !== "appendFile:.failed" || ops.length < 2 || ops.length > 3
+    || (ops.length === 3 && ops[2] !== "rename:.failed")) return "4b";
+  if (!armedForDeadline(doc, 1)) return "4c";
+  const wait = markerWaits(doc, 1)[0]!;
+  if (wait.firedAt === undefined || wait.firedAt < wait.due - TOLERANCE_MS || doc.exitAt < wait.firedAt) return "4d";
+  const ms = doc.exitAt - doc.originAt;
+  return ms < DEADLINE_MS + LATE_MS && ms >= DEADLINE_MS - 500 ? undefined : "4e";
 }
 
 // Issue #614. The recorder exits through process.exit(0), which abandons a pending fs.promises write, so the
@@ -121,11 +135,13 @@ test("a write that never settles: exit 0 before the recorder deadline, the marke
   assert.equal(run.signal, null, `killed after ${run.ms} ms`);
   assert.deepEqual([run.status, run.stdout], [0, ""]);
   assert.equal(fs.existsSync(journalPaths(stalled.root, "agent-d1").marker), false, "nothing settled, so no marker: the named residual");
-  const { ops, ms } = faultSpan(receipt, "origin");
+  const doc = readFaultReceipt(receipt);
+  assert.ok(complete(doc), `${NO_RECEIPT} (childMs ${run.ms}, signal ${run.signal})`);
+  const ops = opsOf(doc), ms = doc.exitAt - doc.originAt;
   t.diagnostic(JSON.stringify({ childMs: run.ms, spanMs: ms, ops }));
   assert.ok(ms !== undefined, `${NO_RECEIPT} (childMs ${run.ms}, signal ${run.signal})`);
   // The journal's mkdir hangs to the cap, then the marker append directly, to the deadline.
-  assert.deepEqual(ops, ["mkdir:dir", "appendFile:.failed"]);
+  assert.equal(allHangDeadlineLimited(run, doc), undefined, JSON.stringify(doc));
   assert.ok(ms < DEADLINE_MS + LATE_MS, `the recorder held ${ms} ms`);
   assert.ok(ms >= DEADLINE_MS - 500, `the deadline was abandoned early: ${ms} ms`);
 });
@@ -139,6 +155,37 @@ const STDIN = { afterCall: 0, armedAt: 100, delay: 1_500, due: 1_600 };
 const WAIT = { afterCall: 2, armedAt: 4_400, delay: 1_100, due: 5_500, firedAt: 5_501 };
 const SLICE = { afterCall: 2, armedAt: 4_400, delay: 400, due: 4_800, firedAt: 5_450 };
 const CLEAN: RunLike = { status: 0, signal: null, stdout: "" };
+const HANG_CALLS = [call(50, "mkdir", "dir"), call(1_550, "appendFile", ".failed")];
+const HANG_WAIT = { afterCall: 1, armedAt: 1_550, delay: 3_950, due: 5_500, firedAt: 5_501 };
+const HANG_RENAME = call(5_500, "rename", ".failed");
+const HANG_ROWS: [string, Partial<FaultReceipt>, Partial<RunLike>, string | undefined][] = [
+  ["the two-operation receipt", {}, {}, undefined],
+  ["the source-permitted trailing rename", { calls: [...HANG_CALLS, HANG_RENAME] }, {}, undefined],
+  ["an early 400 ms slice", { timers: [STDIN, { ...HANG_WAIT, delay: 400, due: 1_950 }] }, {}, "4c"],
+  ["missing append", { calls: HANG_CALLS.slice(0, 1) }, {}, "4b"],
+  ["missing mkdir", { calls: HANG_CALLS.slice(1) }, {}, "4b"],
+  ["missing timer", { timers: [STDIN] }, {}, "4c"],
+  ["the marker-slow afterCall instead of all-hang", { timers: [STDIN, { ...HANG_WAIT, afterCall: 2 }] }, {}, "4c"],
+  ["duplicate timer", { timers: [STDIN, HANG_WAIT, HANG_WAIT] }, {}, "4c"],
+  ["a rename before the append", { calls: [HANG_CALLS[0]!, HANG_RENAME, HANG_CALLS[1]!] }, {}, "4b"],
+  ["duplicate rename", { calls: [...HANG_CALLS, HANG_RENAME, HANG_RENAME] }, {}, "4b"],
+  ["a foreign trailing operation", { calls: [...HANG_CALLS, call(5_500, "rename", ".jsonl")] }, {}, "4b"],
+  ["a timer that never fired", { timers: [STDIN, { ...HANG_WAIT, firedAt: undefined }] }, {}, "4d"],
+  ["a timer firing early", { timers: [STDIN, { ...HANG_WAIT, firedAt: 5_400 }] }, {}, "4d"],
+  ["exit before the timer fired", { exitAt: 5_500 }, {}, "4d"],
+  ["late exit", { exitAt: 6_000 }, {}, "4e"],
+  ["early exit", { exitAt: 4_900, timers: [STDIN, { ...HANG_WAIT, firedAt: 4_800 }] }, {}, "4d"],
+  ["killed child", {}, { signal: "SIGKILL" }, "4a"],
+  ["nonzero exit", {}, { status: 1 }, "4a"],
+  ["unexpected output", {}, { stdout: "x" }, "4a"],
+];
+for (const [name, doc, run, expected] of HANG_ROWS) {
+  test(`all-hang classifier: ${name}: ${expected ?? "deadline-limited"}`, () => {
+    assert.equal(allHangDeadlineLimited({ ...CLEAN, ...run }, {
+      calls: HANG_CALLS, timers: [STDIN, HANG_WAIT], exitAt: 5_503, startAt: 50, originAt: 0, ...doc,
+    }), expected);
+  });
+}
 const ROWS: [string, Partial<FaultReceipt>, Partial<RunLike>, string | undefined][] = [
   ["the wait armed for the deadline, fired, then the exit", {}, {}, undefined],
   ["a 400 ms slice firing late at 5 450 (the B3 model)", { timers: [STDIN, SLICE], exitAt: 5_450 }, {}, "4c"],
