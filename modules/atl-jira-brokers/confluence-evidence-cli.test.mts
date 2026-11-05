@@ -9,7 +9,7 @@ import { renderMeasurementBlock } from './confluence-evidence.mts';
 
 test('Defect 5: prepare refuses without body approval or with an --out inside a work tree, before any request', async () => {
   const h = harness();
-  await assert.rejects(() => h.run({ mode: 'prepare', id: '1', space: 'K', out: '/tmp/ev/r.json' }), /body-approved/);
+  await assert.rejects(() => h.run({ mode: 'prepare', id: '1', space: 'K', out: '/synthetic/evidence/r.json' }), /body-approved/);
   await assert.rejects(() => h.run({ ...prepare, out: '/repo/notes/r.json' }), /out-inside-repository/);
   assert.equal(h.calls.length, 0);
   assert.equal(h.files.size, 0);
@@ -31,7 +31,7 @@ test('prepare reads with GET only, prints metadata only and writes body and titl
   const printed = h.out.join('\n');
   assert.ok(!printed.includes('Synthetic title') && !printed.includes('receipt identity') && !printed.includes('src/queue.mts'));
   assert.match(printed, /kind: code/);
-  const record = JSON.parse(h.files.get('/tmp/ev/r.json') ?? '{}');
+  const record = JSON.parse(h.files.get('/synthetic/evidence/r.json') ?? '{}');
   assert.equal(record.title, 'Synthetic title');
   assert.equal(record.body, BODY);
   assert.equal(record.claim.bodyApproved, true);
@@ -57,20 +57,20 @@ test('decide performs zero requests, writes the body and appends the decision; e
   const h = await prepared();
   assert.equal(await h.run(decideArgs), 0);
   assert.equal(h.calls.length, 0);
-  assert.ok(h.files.get('/tmp/ev/b.xml')?.includes('<h2>Measurement 2026-10-22</h2>'));
-  const record = JSON.parse(h.files.get('/tmp/ev/r.json') ?? '{}');
+  assert.ok(h.files.get('/synthetic/evidence/b.xml')?.includes('<h2>Measurement 2026-10-22</h2>'));
+  const record = JSON.parse(h.files.get('/synthetic/evidence/r.json') ?? '{}');
   assert.equal(record.decision.outcome, 'confirmed');
   assert.deepEqual(record.labelsAfter, ['evidence-confirmed', 'runtime-claude-code-win', 'status-author-model', 'type-observation']);
   const stale = await prepared(harness(), { ...MEASUREMENT, measuredAt: '2026-10-10' });
   assert.equal(await stale.run(decideArgs), 2);
-  assert.equal(stale.files.has('/tmp/ev/b.xml'), false);
+  assert.equal(stale.files.has('/synthetic/evidence/b.xml'), false);
   assert.match(stale.out.join('\n'), /reason: measurement-stale/);
 });
 
 test('Defect 4 and 5: a secret marker writes no body; --out-body inside a work tree exits before reading', async () => {
   const h = await prepared(harness(), { ...MEASUREMENT, excerpt: 'Bearer ' + 'abc' });
   assert.equal(await h.run(decideArgs), 2);
-  assert.equal(h.files.has('/tmp/ev/b.xml'), false);
+  assert.equal(h.files.has('/synthetic/evidence/b.xml'), false);
   assert.ok(!h.out.join('\n').includes('abc'));
   const inside = await prepared();
   await assert.rejects(() => inside.run({ ...decideArgs, 'out-body': '/repo/b.xml' }), /out-inside-repository/);
@@ -84,7 +84,7 @@ test('--superseded-by needs body approval, then two GETs, and refuses another sp
   assert.equal(h.calls.length, 0);
   assert.equal(await h.run({ ...decideArgs, 'superseded-by': '77', 'body-approved': undefined }), 0);
   assert.equal(h.calls.length, 2, 'metadata, then the storage body of a same-space target');
-  assert.match(h.files.get('/tmp/ev/b.xml') ?? '', /pages\/77">Synthetic title<\/a>/);
+  assert.match(h.files.get('/synthetic/evidence/b.xml') ?? '', /pages\/77">Synthetic title<\/a>/);
   const other = await prepared(harness({ '1': { body: BODY, labels: LABELS }, '78': { body: '', labels: [], spaceId: '8' } }), contradicts);
   assert.equal(await other.run({ ...decideArgs, 'superseded-by': '78', 'body-approved': undefined }), 2);
   assert.match(other.out.join('\n'), /superseded-other-space/);
@@ -99,9 +99,9 @@ test('#687 --superseded-by on an unbound code record: two GETs, superseded, no b
   const h = await prepared(harness({ '1': { body: UNBOUND, labels: LABELS }, '77': { body: SUPERSEDING, labels: [] } }), { ...MEASUREMENT, verdict: 'contradicts' });
   assert.equal(await h.run(supArgs), 0);
   assert.equal(h.calls.length, 2);
-  const body = h.files.get('/tmp/ev/b.xml') ?? '';
+  const body = h.files.get('/synthetic/evidence/b.xml') ?? '';
   assert.ok(body.includes('pages/77">Synthetic title</a>') && body.includes(`<p>Revision: alpha@${SHA}</p>`), body);
-  const record = JSON.parse(h.files.get('/tmp/ev/r.json') ?? '{}');
+  const record = JSON.parse(h.files.get('/synthetic/evidence/r.json') ?? '{}');
   assert.equal(record.decision.outcome, 'superseded');
   assert.ok(record.labelsAfter.includes('evidence-superseded') && !record.labelsAfter.includes('evidence-assumed'));
   const printed = h.out.join('\n');
@@ -112,11 +112,11 @@ test('#687 a superseding page that does not bind the revision, or is not current
   const h = await prepared(harness({ '1': { body: UNBOUND, labels: LABELS }, '77': { body: '<p>x</p>', labels: [] } }), { ...MEASUREMENT, verdict: 'contradicts' });
   assert.equal(await h.run(supArgs), 2);
   assert.match(h.out.join('\n'), /reason: superseded-page-not-bound/);
-  assert.equal(h.files.has('/tmp/ev/b.xml'), false);
+  assert.equal(h.files.has('/synthetic/evidence/b.xml'), false);
   const archived = await prepared(harness({ '1': { body: UNBOUND, labels: LABELS }, '77': { body: SUPERSEDING, labels: [], status: 'archived' } }),
     { ...MEASUREMENT, verdict: 'contradicts' });
   await assert.rejects(() => archived.run(supArgs), /superseded-page-not-current/);
-  assert.deepEqual([archived.calls.length, archived.files.has('/tmp/ev/b.xml')], [1, false]);
+  assert.deepEqual([archived.calls.length, archived.files.has('/synthetic/evidence/b.xml')], [1, false]);
 });
 
 test('#687 an unbound record without a target stays revision-not-on-page and reads nothing', async () => {
@@ -151,14 +151,14 @@ test('git receives only a validated 40-hex SHA', async () => {
 test('Defect 2: verify matches only the reviewed body with exactly the outcome label', async () => {
   const h = await prepared();
   assert.equal(await h.run(decideArgs), 0);
-  const body = h.files.get('/tmp/ev/b.xml') ?? '';
-  const verify = { mode: 'verify', record: '/tmp/ev/r.json', 'body-file': '/tmp/ev/b.xml' };
+  const body = h.files.get('/synthetic/evidence/b.xml') ?? '';
+  const verify = { mode: 'verify', record: '/synthetic/evidence/r.json', 'body-file': '/synthetic/evidence/b.xml' };
   const run = async (pageBody: string, labels: string[]) => {
     const v = harness({ '1': { body: pageBody, labels } });
     for (const [k, value] of h.files) v.files.set(k, value);
     return [await v.run(verify), v.out.at(-1)];
   };
-  const after: string[] = JSON.parse(h.files.get('/tmp/ev/r.json') ?? '{}').labelsAfter;
+  const after: string[] = JSON.parse(h.files.get('/synthetic/evidence/r.json') ?? '{}').labelsAfter;
   assert.deepEqual(after, ['evidence-confirmed', 'runtime-claude-code-win', 'status-author-model', 'type-observation']);
   assert.deepEqual(await run(body, [...after].reverse()), [0, 'readback: match']);
   assert.deepEqual(await run(body, [...after, 'evidence-assumed']), [2, 'readback: mismatch labels (+evidence-assumed)']);
@@ -174,13 +174,13 @@ test('Defect 2: verify matches only the reviewed body with exactly the outcome l
 test('#662: verify matches a readback that carries &quot; and refuses the raw-quote form Confluence never returns', async () => {
   const h = await prepared(harness(), { ...MEASUREMENT, excerpt: '12: retry("receipt")\n13: say "done"' });
   assert.equal(await h.run(decideArgs), 0);
-  const body = h.files.get('/tmp/ev/b.xml') ?? '';
+  const body = h.files.get('/synthetic/evidence/b.xml') ?? '';
   assert.ok(body.includes('<pre>12: retry(&quot;receipt&quot;)\n13: say &quot;done&quot;</pre>'), body);
-  const after: string[] = JSON.parse(h.files.get('/tmp/ev/r.json') ?? '{}').labelsAfter;
+  const after: string[] = JSON.parse(h.files.get('/synthetic/evidence/r.json') ?? '{}').labelsAfter;
   const run = async (pageBody: string) => {
     const v = harness({ '1': { body: pageBody, labels: after } });
     for (const [k, value] of h.files) v.files.set(k, value);
-    return [await v.run({ mode: 'verify', record: '/tmp/ev/r.json', 'body-file': '/tmp/ev/b.xml' }), v.out.at(-1)];
+    return [await v.run({ mode: 'verify', record: '/synthetic/evidence/r.json', 'body-file': '/synthetic/evidence/b.xml' }), v.out.at(-1)];
   };
   assert.deepEqual(await run(body), [0, 'readback: match']);
   assert.deepEqual(await run(body.replaceAll('&quot;', '"')), [2, 'readback: mismatch body']);
@@ -189,7 +189,7 @@ test('#662: verify matches a readback that carries &quot; and refuses the raw-qu
 test('labelsAfter anticipates the runtime label the labels call adds to a page without one', async () => {
   const h = await prepared(harness({ '1': { body: BODY, labels: LABELS.slice(0, 3) } }));
   assert.equal(await h.run(decideArgs), 0);
-  const record = JSON.parse(h.files.get('/tmp/ev/r.json') ?? '{}');
+  const record = JSON.parse(h.files.get('/synthetic/evidence/r.json') ?? '{}');
   assert.ok(record.labelsAfter.includes(runtimeLabel('KHEREP_ATL_CRED_FILE_CLAUDE', {})));
   assert.equal(record.labelsAfter.filter((l: string) => l.startsWith('runtime-')).length, 1);
 });
@@ -198,7 +198,7 @@ test('--superseded-by naming the page itself refuses before any read: superseded
   const h = await prepared(harness(), { ...MEASUREMENT, verdict: 'contradicts' });
   await assert.rejects(() => h.run({ ...decideArgs, 'superseded-by': '1', 'body-approved': undefined }), /superseded-same-page/);
   assert.equal(h.calls.length, 0);
-  assert.equal(h.files.has('/tmp/ev/b.xml'), false);
+  assert.equal(h.files.has('/synthetic/evidence/b.xml'), false);
 });
 
 test('a promoted body the drainage scan would flag stays unknown: promoted-body-revision-invalid', async () => {
@@ -206,22 +206,22 @@ test('a promoted body the drainage scan would flag stays unknown: promoted-body-
   const h = harness({ '1': { body: page, labels: LABELS } });
   assert.equal(await h.run({ ...prepare, kind: 'live' }), 0);
   assert.ok(h.out.includes('kind: live (override; classified code)'), h.out.join('\n'));
-  h.files.set('/tmp/ev/m.json', JSON.stringify({ kind: 'live', source: 'alpha-node', sourceClass: 'target-host',
+  h.files.set('/synthetic/evidence/m.json', JSON.stringify({ kind: 'live', source: 'alpha-node', sourceClass: 'target-host',
     command: 'ss -ltn | grep -E "8443|8080"', excerpt: 'LISTEN 0 4096 *:8080', measuredAt: TODAY, verdict: 'contradicts',
     subject: '8443', kindOverride: 'the claim is about the running host' }));
   assert.equal(await h.run(decideArgs), 2);
   assert.match(h.out.join('\n'), /reason: promoted-body-revision-invalid/);
-  assert.equal(h.files.has('/tmp/ev/b.xml'), false);
-  const record = JSON.parse(h.files.get('/tmp/ev/r.json') ?? '{}');
+  assert.equal(h.files.has('/synthetic/evidence/b.xml'), false);
+  const record = JSON.parse(h.files.get('/synthetic/evidence/r.json') ?? '{}');
   assert.deepEqual([record.decision.outcome, record.decision.labelsAdd, record.labelsAfter], ['unknown', [], [...LABELS].sort()]);
 });
 
 test('record registers an excluded page without a GET and report renders it', async () => {
   const h = harness();
-  assert.equal(await h.run({ mode: 'record', id: '5', excluded: 'private', reason: 'private-no-local-route', out: '/tmp/ev/x.json' }), 0);
-  await assert.rejects(() => h.run({ mode: 'record', id: '5', excluded: 'private', reason: 'free text with spaces', out: '/tmp/ev/y.json' }));
+  assert.equal(await h.run({ mode: 'record', id: '5', excluded: 'private', reason: 'private-no-local-route', out: '/synthetic/evidence/x.json' }), 0);
+  await assert.rejects(() => h.run({ mode: 'record', id: '5', excluded: 'private', reason: 'free text with spaces', out: '/synthetic/evidence/y.json' }));
   assert.equal(h.calls.length, 0);
-  assert.equal(await h.run({ mode: 'report', records: '/tmp/ev/x.json' }), 0);
+  assert.equal(await h.run({ mode: 'report', records: '/synthetic/evidence/x.json' }), 0);
   assert.match(h.out.join('\n'), /excluded: private[\s\S]*private-no-local-route/);
   await assert.rejects(() => h.run({ mode: 'unknown' }), /--mode/);
 });

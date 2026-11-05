@@ -70,11 +70,12 @@ export function harness(pages: Pages = { '1': { body: BODY, labels: LABELS } }, 
   const run = (args: Record<string, string | undefined>) => cmdEvidence(ctx, args, deps);
   return { calls, execs, files, out, run };
 }
-export const prepareArgs = { mode: 'prepare', id: '1', space: 'K', out: '/tmp/ev/r.json', 'body-approved': undefined };
-export const decideArgs = { mode: 'decide', record: '/tmp/ev/r.json', measurement: '/tmp/ev/m.json', 'out-body': '/tmp/ev/b.xml', 'repo-root': '/x/alpha' };
+// An absolute namespace for Map keys only; never a host temporary directory.
+export const prepareArgs = { mode: 'prepare', id: '1', space: 'K', out: '/synthetic/evidence/r.json', 'body-approved': undefined };
+export const decideArgs = { mode: 'decide', record: '/synthetic/evidence/r.json', measurement: '/synthetic/evidence/m.json', 'out-body': '/synthetic/evidence/b.xml', 'repo-root': '/x/alpha' };
 export async function prepared(h = harness(), measurement: object = MEASUREMENT, args: Record<string, string | undefined> = prepareArgs) {
   assert.equal(await h.run(args), 0);
-  h.files.set('/tmp/ev/m.json', JSON.stringify(measurement));
+  h.files.set('/synthetic/evidence/m.json', JSON.stringify(measurement));
   h.calls.length = 0;
   return h;
 }

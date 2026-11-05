@@ -23,6 +23,20 @@ let seq = 0;
 
 test.after(() => fs.rmSync(TMP, { recursive: true, force: true }));
 
+test("the no-new-names experiment is owner-only and restores the original directory mode", {
+  skip: process.platform === "win32" || process.getuid?.() === 0,
+}, async (t) => {
+  const dir = path.join(TMP, `mode-${++seq}`);
+  fs.mkdirSync(dir, { mode: 0o710 });
+  const original = fs.statSync(dir).mode & 0o7777;
+  await t.test("the owner can traverse but cannot publish a new name", (inner) => {
+    assert.equal(changeDirectory(inner, dir, "noNewNames"), true);
+    assert.equal(fs.statSync(dir).mode & 0o7777, 0o500);
+    assert.throws(() => fs.writeFileSync(path.join(dir, "new"), "x"), { code: "EACCES" });
+  });
+  assert.equal(fs.statSync(dir).mode & 0o7777, original);
+});
+
 for (const deny of [false, true]) {
   test(`a target with ${deny ? "a write-denying" : "a restricting"} ACL keeps that ACL and its inode`, (t) => {
     const hooks = path.join(TMP, `case-${++seq}`, "hooks");

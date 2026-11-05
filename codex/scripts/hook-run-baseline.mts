@@ -11,6 +11,7 @@ import { BUSY_BODY, BUSY_OWNER, busyFixture } from "../../modules/control-plane/
 import { listenerDir } from "../../modules/control-plane/node/autonomy.mts";
 import { publishBusyHint } from "../../modules/control-plane/node/codex-busy-ticket.mts";
 import { getMessage } from "../../modules/control-plane/node/inbox.mts";
+import { requireTrustedExecutable } from "../../claude/hooks/lib/trusted-executable.mts";
 
 export interface RunRow {
   label: string; event: string; hook: string; target: string | null;
@@ -25,11 +26,12 @@ export function replayHooks(render: Renderer = projection.renderHooks, baselineR
   const cleanup: (() => void)[] = [];
   const node = busyFixture({ after: (fn: () => void) => cleanup.push(fn) } as unknown as TestContext, 1, Date.now(), false);
   try {
+    const gitExecutable = requireTrustedExecutable("git", { cwd: node.workspace });
     const packetFile = path.join(node.paths.inbox, `${node.ids[0]}.json`);
     const packet = fs.readFileSync(packetFile);
     fs.unlinkSync(packetFile);
     const git = (args: string[]) => {
-      const result = spawnSync("git", ["-c", `core.hooksPath=${path.join(node.root, "no-hooks")}`, "-C", node.workspace, ...args], { encoding: "utf8" });
+      const result = spawnSync(gitExecutable, ["-c", `core.hooksPath=${path.join(node.root, "no-hooks")}`, "-C", node.workspace, ...args], { encoding: "utf8" });
       assert.equal(result.status, 0, result.stderr);
     };
     git(["init", "-b", "main"]);
@@ -38,7 +40,8 @@ export function replayHooks(render: Renderer = projection.renderHooks, baselineR
     const copySource = (source: string, destination: string) => {
       if (baselineRef && ["hook-adapter.mts", "post-edit-checks.mts", "kherep-maestro-context.mts"].includes(path.basename(source))) {
         assert.match(baselineRef, /^[a-f0-9]{40}$/);
-        const original = spawnSync("git", ["-C", repo, "show", `${baselineRef}:${path.relative(repo, source).replaceAll(path.sep, "/")}`], { encoding: "utf8" });
+        const command = requireTrustedExecutable("git", { cwd: repo });
+        const original = spawnSync(command, ["-C", repo, "show", `${baselineRef}:${path.relative(repo, source).replaceAll(path.sep, "/")}`], { encoding: "utf8" });
         assert.equal(original.status, 0, original.stderr);
         fs.writeFileSync(destination, original.stdout);
       } else fs.copyFileSync(source, destination);
