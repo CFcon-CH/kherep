@@ -142,11 +142,7 @@ export function rollbackRouting(options: { codexHome: string; backupId: string }
   safePath(backup, "file");
   const receipt = JSON.parse(fs.readFileSync(receiptFile, "utf8")) as Receipt;
   if (receipt.version !== 1 || receipt.status !== "applied" || receipt.backupId !== options.backupId || receipt.predecessorRevision !== REVISION
-    || !receipt.binding || Object.keys(receipt.binding).sort((left, right) => {
-      if (left < right) return -1;
-      if (left > right) return 1;
-      return 0;
-    }).join() !== "configRoot,exampleTarget,platform") {
+    || !receipt.binding || Object.keys(receipt.binding).sort((left, right) => Number(left > right) - Number(left < right)).join() !== "configRoot,exampleTarget,platform") {
     throw new Error("invalid routing receipt");
   }
   const binding = bindingFor(receipt.binding);

@@ -46,15 +46,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function hasExactKeys(value: Record<string, unknown>, keys: string[]): boolean {
-  return Object.keys(value).sort((left, right) => {
-    if (left < right) return -1;
-    if (left > right) return 1;
-    return 0;
-  }).join("\0") === [...keys].sort((left, right) => {
-    if (left < right) return -1;
-    if (left > right) return 1;
-    return 0;
-  }).join("\0");
+  return Object.keys(value).sort((left, right) => Number(left > right) - Number(left < right)).join("\0") === [...keys].sort((left, right) => Number(left > right) - Number(left < right)).join("\0");
 }
 
 function validReceipt(value: unknown): value is ProbeReceipt {

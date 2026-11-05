@@ -72,11 +72,7 @@ function strictWarning(label: string, detail: string): void {
   if (strictMode) { console.log(`FAIL | ${label} | ${detail}`); failures++; }
   else warn(label, detail);
 }
-function sorted(value: Iterable<string>): string[] { return [...value].sort((left, right) => {
-  if (left < right) return -1;
-  if (left > right) return 1;
-  return 0;
-}); }
+function sorted(value: Iterable<string>): string[] { return [...value].sort((left, right) => Number(left > right) - Number(left < right)); }
 function same(a: Iterable<string>, b: Iterable<string>): boolean { return JSON.stringify(sorted(a)) === JSON.stringify(sorted(b)); }
 function enabledKeys(value: EnabledPlugins): string[] {
   return Object.entries(value.enabledPlugins || {}).filter(([, on]) => on).map(([key]) => key);
@@ -184,11 +180,7 @@ function checkLive(): void {
   const unsafeMcpArgs = allMcpEntries(config, supplementalMcpConfigs)
     .filter(({ value }) => hasCredentialArg(value))
     .map(({ name }) => name);
-  const unsafeMcpNames = [...new Set(unsafeMcpArgs)].sort((left, right) => {
-    if (left < right) return -1;
-    if (left > right) return 1;
-    return 0;
-  });
+  const unsafeMcpNames = [...new Set(unsafeMcpArgs)].sort((left, right) => Number(left > right) - Number(left < right));
   ok("configured MCP command args are well-formed and secret-safe", unsafeMcpNames.length === 0, unsafeMcpNames.join(","));
 
   for (const [name, file] of Object.entries(expected.ownedAgents)) {

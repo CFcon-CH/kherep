@@ -74,11 +74,7 @@ export function nativeQueueGroups(paths: NodePaths, owner: string): NativeQueueG
   const result: NativeQueueGroup[] = [];
   for (const [queuedSubmissionId, group] of groups) {
     const first = group[0]!;
-    const ids = group.map((record) => record.messageId).sort((left, right) => {
-      if (left < right) return -1;
-      if (left > right) return 1;
-      return 0;
-    });
+    const ids = group.map((record) => record.messageId).sort((left, right) => Number(left > right) - Number(left < right));
     const binding: NativeQueueGroup = { version: 1, owner, queuedSubmissionId, admissionComplete: true,
       batchRecorded: group.every((record) => Array.isArray(record.groupMessageIds)),
       admissionMessageIds: ids, expectedInput: nativeQueueInput(owner, ids.length), producer: first.producer };
@@ -86,11 +82,7 @@ export function nativeQueueGroups(paths: NodePaths, owner: string): NativeQueueG
     if (!group.every((record) => {
       if (record.attemptedAt !== first.attemptedAt || !sameIdentity(binding.producer, record.producer)) return false;
       if (record.groupMessageIds === undefined && record.expectedInput === undefined) return true; // v1: exact native count corroborates completeness
-      return Array.isArray(record.groupMessageIds) && equal([...record.groupMessageIds].sort((left, right) => {
-        if (left < right) return -1;
-        if (left > right) return 1;
-        return 0;
-      }), ids)
+      return Array.isArray(record.groupMessageIds) && equal([...record.groupMessageIds].sort((left, right) => Number(left > right) - Number(left < right)), ids)
         && equal(record.expectedInput, binding.expectedInput);
     })) continue;
     const receipt = path.join(receipts(paths, owner), `${queuedSubmissionId}.json`);
@@ -124,15 +116,7 @@ export function outstandingNativeAttempts(paths: NodePaths, owner: string): stri
       const saved = read(path.join(receipts(paths, owner), `${record.queueId}.json`)) as NativeQueueGroup;
       return !isQueueBinding(saved) || saved.owner !== owner || saved.queuedSubmissionId !== record.queueId
         || !saved.admissionMessageIds.includes(record.messageId) || !sameIdentity(saved.producer, record.producer)
-        || (record.groupMessageIds !== undefined && !equal([...record.groupMessageIds].sort((left, right) => {
-          if (left < right) return -1;
-          if (left > right) return 1;
-          return 0;
-        }), [...saved.admissionMessageIds].sort((left, right) => {
-          if (left < right) return -1;
-          if (left > right) return 1;
-          return 0;
-        })))
+        || (record.groupMessageIds !== undefined && !equal([...record.groupMessageIds].sort((left, right) => Number(left > right) - Number(left < right)), [...saved.admissionMessageIds].sort((left, right) => Number(left > right) - Number(left < right))))
         || (record.expectedInput !== undefined && !equal(record.expectedInput, saved.expectedInput));
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return true;

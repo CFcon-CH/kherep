@@ -44,11 +44,7 @@ export function renderReport(records: readonly EvidenceRecord[]): string {
     lines.push('');
   }
   const total = Object.values(unknown).reduce((a, b) => a + b, 0);
-  const reasons = Object.keys(unknown).sort((left, right) => {
-    if (left < right) return -1;
-    if (left > right) return 1;
-    return 0;
-  }).map(k => `${k}: ${unknown[k]}`).join(', ');
+  const reasons = Object.keys(unknown).sort((left, right) => Number(left > right) - Number(left < right)).map(k => `${k}: ${unknown[k]}`).join(', ');
   lines.push('## Totals', `- confirmed: ${counts.confirmed}`, `- refuted: ${counts.refuted}`, `- superseded: ${counts.superseded}`, `- holds: ${counts.holds}`,
     `- unknown: ${total}${total ? ` (${reasons})` : ''}`, `- reported-only: ${counts['reported-only']}`,
     `- excluded: ${counts.excluded}`, `- failed: ${counts.failed}`, '',

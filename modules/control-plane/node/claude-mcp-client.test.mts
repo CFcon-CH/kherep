@@ -114,6 +114,20 @@ test("verification binds the manifest to its rendered bytes and intended target"
   assert.throws(() => verifyClaudeClient(outputRoot), /manifest rendering mismatch/);
 });
 
+test("verification accepts reordered manifest file and directory declarations", (t) => {
+  const { outputRoot, clientRoot, configRoot } = fixture(t);
+  const staged = stageClaudeClient({ outputRoot, clientRoot, configRoot, nodeCommand: process.execPath });
+  const manifestFile = path.join(outputRoot, "manifest.json");
+  const manifest = JSON.parse(fs.readFileSync(manifestFile, "utf8"));
+  manifest.files = Object.fromEntries(Object.entries(manifest.files).reverse());
+  manifest.directories.reverse();
+  const bytes = `${JSON.stringify(manifest, null, 2)}\n`;
+  fs.writeFileSync(manifestFile, bytes);
+  assert.deepEqual(verifyClaudeClient(outputRoot), {
+    files: staged.files, manifestSha256: createHash("sha256").update(bytes).digest("hex"),
+  });
+});
+
 test("the fixed graph cannot be expanded by editing the manifest", (t) => {
   const { outputRoot, clientRoot, configRoot } = fixture(t);
   stageClaudeClient({ outputRoot, clientRoot, configRoot, nodeCommand: process.execPath });

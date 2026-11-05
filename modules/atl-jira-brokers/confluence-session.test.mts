@@ -13,6 +13,7 @@ import {
   authenticationReport,
   createSession,
   currentUser,
+  tokenScopes,
   type ConfluenceContext,
   type HttpResponse,
   type RequestOptions,
@@ -77,6 +78,16 @@ function harness(options: Options = {}) {
 }
 
 const GET_PAGE = { method: "GET", path: v2("/pages/1"), scope: SCOPES.get };
+
+test("token scopes retain duplicates and UTF-16 order while dropping empty fields", () => {
+  const scopes = ["write:page", "Read:page", "read:page", "write:page", "\ud800", "\ud83d\ude00"];
+  const payload = Buffer.from(JSON.stringify({ scope: `  ${scopes.join("  ")}  ` })).toString("base64url");
+  assert.deepEqual(tokenScopes(`header.${payload}.signature`), [...scopes].sort());
+  for (const token of ["", "header..signature", "header.invalid.signature",
+    `header.${Buffer.from(JSON.stringify({ scope: ["read:page"] })).toString("base64url")}.signature`]) {
+    assert.deepEqual(tokenScopes(token), []);
+  }
+});
 
 test("a 403 names the scope the attempted verb requires", async () => {
   const { ctx } = harness({ api: () => response(403, { errors: [{ title: "Current user not permitted" }] }) });

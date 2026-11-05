@@ -27,11 +27,7 @@ export function relayBookkeeping(deps: RelayDeps, log: (line: string) => void): 
   }
   const { settled, stopped } = relayPassMemo;
   const now = deps.now?.() ?? Date.now();
-  for (const name of names.sort((left, right) => {
-    if (left < right) return -1;
-    if (left > right) return 1;
-    return 0;
-  })) {
+  for (const name of names.sort((left, right) => Number(left > right) - Number(left < right))) {
     const messageId = name.endsWith(".json") ? name.slice(0, -5) : "";
     if (!isMessageId(messageId) || settled.has(messageId)) continue;
     try {

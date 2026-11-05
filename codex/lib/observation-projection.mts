@@ -34,11 +34,7 @@ export function observationFiles(repo: string): string[] {
             queue.push(specifier);
         }
     }
-    return [...seen].sort((left, right) => {
-      if (left < right) return -1;
-      if (left > right) return 1;
-      return 0;
-    });
+    return [...seen].sort((left, right) => Number(left > right) - Number(left < right));
 }
 export function copyObservationBroker(repo: string, workspace: string, transaction: InstallTransaction): string[] {
     return observationFiles(repo).map(name => transaction.copyFile(path.join(repo, 'modules', 'atl-jira-brokers', name), path.join(workspace, 'tools', name)));
