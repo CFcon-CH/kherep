@@ -1,3 +1,4 @@
+import { compatibleDiagnostic, type MessageDiagnostic } from "../protocol-diagnostics.mts";
 import { RecordLockBusy } from "./inbox-record-lock.mts";
 import type { BindingStorageSnapshot } from "./inbox-storage.mts";
 import { isResolveRequest, SELECTED_BINDING_CAPABILITY } from "../protocol-message-binding.mts";
@@ -385,9 +386,9 @@ export class NodeClient {
   }
 
   // The state the target session reached: delivered, or refused with a reason.
-  reportStatus(messageId: string, state: "accepted" | "delivered" | "refused", reason?: string, progress?: MessageProgress): string[] {
+  reportStatus(messageId: string, state: "accepted" | "delivered" | "refused", reason?: string, progress?: MessageProgress, diagnostic?: MessageDiagnostic): string[] {
     return this.authenticated ? [this.frame("message.status",
-      { messageId, state, ...(reason ? { reason } : {}), ...(state === "accepted" && progress ? { progress } : {}) })] : [];
+      compatibleDiagnostic({ messageId, state, ...(reason ? { reason } : {}), ...(state === "accepted" && progress ? { progress } : {}), ...(diagnostic ? { diagnostic } : {}) }, this.workerCapabilities))] : [];
   }
 
   reportTask(body: TaskReportBody): string[] {

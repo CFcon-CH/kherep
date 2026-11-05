@@ -59,3 +59,20 @@ test("set only from a live directory frame of an authenticated connection; clear
   assert.deepEqual(c.workerCapabilities, ["other.v1"]);
   assert.equal(stored.length, 7, "every valid directory frame is still stored");
 });
+
+test("diagnostics follow live Worker negotiation, and capability loss strips them for the archived validator", async () => {
+  const { blockerDiagnostic, MESSAGING_DIAGNOSTICS_CAPABILITY } = await import("../protocol-diagnostics.mts");
+  const { isNodeMessageStatusBody } = await import("../fixtures/diagnostics-pre-v1.mts");
+  const { c } = client();
+  const id = "00000000-0000-4000-8000-000000000001";
+  const detail = blockerDiagnostic("runtime-pending", 0);
+  await c.onFrame(challenge); await c.onFrame(authOk);
+  const report = () => JSON.parse(c.reportStatus(id, "accepted", undefined, undefined, detail)[0]).body;
+  assert.equal(isNodeMessageStatusBody(report()), true, "unknown Worker");
+  await c.onFrame(directory([MESSAGING_DIAGNOSTICS_CAPABILITY]));
+  assert.deepEqual(report().diagnostic, detail);
+  assert.equal(isNodeMessageStatusBody(report()), false, "real old validator rejects new field");
+  c.connectionClosed(); await c.onFrame(challenge); await c.onFrame(authOk); await c.onFrame(directory([]));
+  assert.equal(isNodeMessageStatusBody(report()), true);
+  assert.equal(report().diagnostic, undefined);
+});

@@ -1,3 +1,4 @@
+import { compatibleDiagnostic, type MessageDiagnostic } from "../../protocol-diagnostics.mts";
 import { isResolveRequest, SELECTED_BINDING_CAPABILITY, type ResolveRequest, type ResolveResponse } from "../../protocol-message-binding.mts";
 import { NodeReferenceRpc } from "./node-reference-rpc.mts";
 import { AlarmSchedule } from "./alarm-schedule.mts";
@@ -308,7 +309,7 @@ export class NodeSession extends DurableObject<Env> {
           const accepted = await registry.updateRegistration(nodeId, body.facts, body.runtimes, body.capabilities, a.connectionToken);
           // A superseded socket never certifies the current connection.
           if (accepted && this.loopCapabilityEvidence().token === a.connectionToken) ws.serializeAttachment({ ...ws.deserializeAttachment() as Attachment,
-            registrationAccepted: true, loopCapability: loopCapability(body.capabilities), selectedBindingCapability: body.capabilities.includes(SELECTED_BINDING_CAPABILITY) } satisfies Attachment);
+            registrationAccepted: true, loopCapability: loopCapability(body.capabilities), selectedBindingCapability: body.capabilities.includes(SELECTED_BINDING_CAPABILITY), diagnosticCapabilities: body.capabilities } satisfies Attachment);
         }
         if (this.authedSocket() === ws) {
           await this.armDeliveryRetry();
@@ -407,6 +408,8 @@ export class NodeSession extends DurableObject<Env> {
   }
 
   private sendControl(ws: WebSocket, type: MessageType, body: Record<string, unknown>): void {
+    if (type === "message.status" || type === "error") body = compatibleDiagnostic(body as Record<string, unknown> & { diagnostic?: MessageDiagnostic },
+      (ws.deserializeAttachment() as Attachment).diagnosticCapabilities ?? null);
     ws.send(JSON.stringify(makeEnvelope(type, body, 0, this.lastNodeSeq(ws))));
   }
 
