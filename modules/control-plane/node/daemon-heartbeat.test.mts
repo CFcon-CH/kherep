@@ -6,7 +6,7 @@ import { writeRequest, readRequest } from "./task-records.mts";
 import { makeEnvelope } from "../protocol.mts";
 import { heartbeatFixture, PING_FRAME, PONG_FRAME, flush } from "./daemon-heartbeat-fixture.mts";
 
-const scenarios = ["open-timeout", "pong-timeout", "healthy", "stale", "terminal-4403", "terminal-4409", "blocked-discovery", "blocked-frame", "auth-barrier", "sleep", "stop-opening", "stop-probe", "stop-grace", "stop-retry", "pending"];
+const scenarios = ["open-timeout", "pong-timeout", "healthy", "stale", "terminal-4403", "terminal-4409", "blocked-discovery", "blocked-frame", "auth-barrier", "rejected-chain", "sleep", "stop-opening", "stop-probe", "stop-grace", "stop-retry", "pending"];
 const scenario = process.argv[2];
 if (!scenario) {
   for (const item of scenarios) test(`daemon heartbeat: ${item}`, () => {
@@ -22,7 +22,7 @@ if (!scenario) {
     const timeouts = (): string[] => f.logs.filter(line => line.startsWith("PONG_TIMEOUT") || line.startsWith("OPEN_TIMEOUT"));
     if (scenario !== "open-timeout" && scenario !== "stop-opening") old.open();
     if (scenario === "open-timeout" || scenario === "pong-timeout") {
-      const deadline = scenario === "open-timeout" ? 30_000 : 50_000;
+      const deadline = scenario === "open-timeout" ? 30_000 : 80_000;
       f.clock.advance(deadline - 1); assert.equal(f.sockets.length, 1); assert.equal(timeouts().length, 0);
       f.clock.advance(1); assert.equal(old.closes, 1); assert.equal(timeouts().length, 1);
       assert.match(timeouts()[0], /^(OPEN|PONG)_TIMEOUT open_ms=\d+ pong_age_ms=\d+ delay_ms=\d+$/);
@@ -35,7 +35,7 @@ if (!scenario) {
       assert.equal(f.sockets.length, 1); assert.deepEqual(timeouts(), []);
       old.receive({ binary: true }); assert.equal(f.sockets.length, 1);
     } else if (scenario === "stale") {
-      f.clock.advance(50_500); const fresh = f.sockets[1]; fresh.open(); f.auth(fresh); await flush();
+      f.clock.advance(80_500); const fresh = f.sockets[1]; fresh.open(); f.auth(fresh); await flush();
       const state = fs.readFileSync(`${f.paths.dir}/daemon.json`, "utf8"), sent = fresh.sent.length;
       old.open(); old.receive(PONG_FRAME); f.auth(old); old.emit("error");
       old.emit("close", { code: 1006 }); old.emit("close", { code: 4409 }); await flush();
@@ -63,7 +63,7 @@ if (!scenario) {
       assert.equal(old.sent.filter(raw => raw !== PING_FRAME).length, 0, "stale awaited auth sends nothing");
     } else if (scenario === "auth-barrier") {
       f.blockRuntime(); f.auth(); await flush();
-      f.clock.advance(50_500); const fresh = f.sockets[1]; fresh.open();
+      f.clock.advance(80_500); const fresh = f.sockets[1]; fresh.open();
       fs.writeFileSync(f.paths.policy, JSON.stringify({ version: 1, allowedCommands: [], messaging: { accept: [{ from: ["*"], session: "*" }] } }));
       f.auth(fresh);
       fresh.receive(JSON.stringify(makeEnvelope("message.deliver", { messageId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
@@ -71,6 +71,21 @@ if (!scenario) {
       await flush(); assert.equal(fresh.sent.some(raw => raw.includes('"message.status"')), false, "new delivery waits for its own auth");
       f.releaseRuntime(); await flush();
       assert.ok(fresh.sent.some(raw => raw.includes('"state":"accepted"')), "delivery progresses after current auth");
+    } else if (scenario === "rejected-chain") {
+      const unhandled: unknown[] = [], onUnhandled = (error: unknown): void => { unhandled.push(error); };
+      process.on("unhandledRejection", onUnhandled);
+      try {
+        f.auth(); await flush();
+        f.rejectChain(); await flush();
+        old.emit("close", { code: 1006 }); await flush();
+        await new Promise<void>(resolve => setImmediate(resolve));
+        assert.equal(f.resets(), 1, "retirement resets the client even after the frame chain rejected");
+        assert.deepEqual(unhandled, [], "retirement never leaves a derived unhandled rejection");
+        assert.ok(f.logs.some(line => line.includes("synthetic chain rejection")), "the original rejection remains visible");
+        f.clock.advance(500); const fresh = f.sockets[1]; fresh.open(); f.auth(fresh); await flush();
+        assert.ok(fresh.sent.some(raw => raw.includes('"register"')), "replacement authentication progresses");
+        await new Promise<void>(resolve => setImmediate(resolve)); assert.deepEqual(unhandled, []);
+      } finally { process.off("unhandledRejection", onUnhandled); }
     } else if (scenario === "sleep") {
       f.clock.time = 900_000;
       while (f.clock.fire() && old.sent.length < 2) { /* diagnostics may fire first */ }
@@ -90,8 +105,9 @@ if (!scenario) {
       for (let n = 0; n < 90; n++) { old.receive(PONG_FRAME); f.clock.advance(1_000); }
       assert.equal(f.logs.filter(line => line.startsWith("INTAKE_DIAG code=3")).length, 0);
     } else {
-      if (scenario === "stop-grace") f.clock.advance(45_000);
-      if (scenario === "stop-retry") f.clock.advance(50_000);
+      if (scenario === "stop-probe") f.clock.advance(30_000);
+      if (scenario === "stop-grace") f.clock.advance(75_000);
+      if (scenario === "stop-retry") f.clock.advance(80_000);
       const count = f.sockets.length; f.handle.stop(); await f.handle.done;
       f.clock.advance(1_000_000); assert.equal(f.sockets.length, count); assert.equal(f.clock.timers.size, 0);
     }
