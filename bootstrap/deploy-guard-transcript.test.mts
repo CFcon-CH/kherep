@@ -19,7 +19,7 @@ function fixture(t: test.TestContext) {
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const home = path.join(root, "installation");
   const hook = path.join(home, "hooks", "deploy-guard.mts");
-  for (const relative of ["deploy-guard.mts", "lib/git-push-match.mts", "lib/forge-match.mts"]) {
+  for (const relative of ["deploy-guard.mts", "lib/git-push-match.mts", "lib/forge-match.mts", "lib/deploy-transcript.mts"]) {
     const original = path.join(SOURCE, relative);
     const target = path.join(home, "hooks", relative);
     fs.mkdirSync(path.dirname(target), { recursive: true });

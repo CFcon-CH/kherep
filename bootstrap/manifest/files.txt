@@ -79,6 +79,7 @@ hooks/lib/git-push-match.mts
 hooks/lib/git-push-match.test.mts
 hooks/lib/forge-match.mts
 hooks/lib/forge-match.test.mts
+hooks/lib/deploy-transcript.mts
 hooks/lib/main-checkout.mts
 hooks/lib/trusted-executable.mts
 hooks/lib/main-checkout.test.mts
