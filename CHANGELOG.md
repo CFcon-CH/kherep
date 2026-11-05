@@ -31,6 +31,13 @@ increments the minor version; every other release increments the patch version.
 
 ### Fixed
 
+- Intercom listeners wait across exhausted wake budgets without spending turns
+  or releasing their owner lock early. Shipped Claude hook lifetimes are now
+  25 hours, retaining the budgeted early re-arm and finite timeout. Codex hints
+  without Receive recover through fresh guarded admission after 60 seconds;
+  global offer intervals, turn budgets and the ten-minute busy fallback stay
+  unchanged. Existing hook settings need a separately authorized upgrade (#706).
+
 - Intercom identity comparisons use one semantic projection across admission,
   duplicate validation and egress. Fresh observation refreshes no longer refuse
   unchanged owners; proof validity, lifecycle, connection, capability and loop

@@ -28,7 +28,7 @@ function commands(node: ReturnType<typeof busyFixture>) {
 }
 
 test("real CP poll, hook, Receive and Stop require a separate processing ACK without native artifacts", async (t) => {
-  const now = Date.now();
+  let now = Date.now();
   const node = busyFixture(t, 1, now, false);
   const legacyLedger = path.join(listenerDir(node.paths), `${BUSY_OWNER}.queued.json`);
   const legacyBinding = path.join(queueBindingDir(node.paths), "00000000-0000-4000-8000-000000000001.json");
@@ -65,7 +65,10 @@ test("real CP poll, hook, Receive and Stop require a separate processing ACK wit
   assert.equal(offered.state, "offered");
   assert.equal(offered.offers, 1);
   assert.equal(receive().stdout.includes(BUSY_BODY), true, "explicit receive recovers an interrupted offer");
+  const hintBeforeRecovery = fs.readFileSync(node.ticket, "utf8");
+  now += 120_000;
   await poll();
+  assert.equal(fs.readFileSync(node.ticket, "utf8"), hintBeforeRecovery, "Receive prevents recovery from republishing a hint");
   const stopped = hook({ ...node.input, hook_event_name: "Stop", stop_hook_active: true });
   assert.equal(stopped.status, 0, stopped.stderr);
   assert.equal(stopped.stdout, "");

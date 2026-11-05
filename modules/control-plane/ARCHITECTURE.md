@@ -358,6 +358,18 @@ Stored owner bindings use the same explicit owner projection, excluding only the
 per-attempt lease. Refusals remain terminal; a fixed changed-dimension audit field
 adds diagnosis without changing the wire refusal vocabulary.
 
+Claude listeners keep their lock while an exhausted budget recovers, with one
+budget audit per blocked episode and no turn spent while waiting. The shipped hook lifetime and its
+three matching commands are 90,000 seconds (25 hours), spanning a full rolling
+daily budget window. The existing budgeted exit-code-2 wake still re-arms through
+the next UserPromptSubmit hook, 60 seconds before the finite timeout. Existing or
+custom shorter hook settings retain their previous bound until separately
+upgraded; an unavailable guard at the finite deadline cannot authorize a wake.
+The separate ten-minute busy fallback is unchanged. Codex CP hints get fresh
+guarded admission after 60 seconds without Receive, on the next ordinary
+two-second exchange poll. A claim never offers a message; Receive removes it
+from the accepted candidates, preventing republished content or hints for it.
+
 The Worker authenticates enrolled nodes over outbound WebSockets. `NodeSession`
 terminates each connection; `Registry` owns shared identities, messages, task
 requests and owner-control records in SQLite. Local node policy remains an

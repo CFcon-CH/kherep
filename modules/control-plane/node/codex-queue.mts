@@ -12,7 +12,7 @@ import { codexSessionRefs, listCodexSessions, readCodexSession } from "./codex-s
 import { note, pruneNoted } from "./codex-wake.mts";
 export { guardQueue, QUEUE_TIMEOUT_MS, queueArgs } from "./codex-queue-run.mts";
 import { inboxOf, progressRecords } from "./delivery-progress.mts";
-import { REOFFER_AFTER_MS } from "./deliver-core.mts";
+import { BUSY_HINT_RECOVERY_MS } from "./codex-busy-ticket.mts";
 import { getMessageProgress, type InboxRecord } from "./inbox.mts";
 import { explicitlyListed, wakeAllowed } from "./policy.mts";
 import type { RunnerDeps } from "./session-runner.mts";
@@ -174,7 +174,7 @@ function queueFor(deps: RunnerDeps, sessionId: string, live: string[], selectInb
   const valid = previous && !previous.invalidated && previous.ticket.admittedAt <= now && now < previous.ticket.expiresAt
     && previous.ticket.policyFingerprint === busyPolicyFingerprint(policy);
   const pending = valid && previous.publishedAt !== undefined
-    && now - previous.publishedAt < REOFFER_AFTER_MS
+    && now - previous.publishedAt < BUSY_HINT_RECOVERY_MS
     && due.some((record) => previous.messageIds.includes(record.messageId));
   if (pending) {
     progressRecords(paths, due, "waiting", "awaiting-user-turn", now);

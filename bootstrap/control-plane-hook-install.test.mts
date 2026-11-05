@@ -118,13 +118,13 @@ test("install wires the hooks through the stable entry, points it at the checkou
   for (const event of EVENTS) {
     const commands = commandsOf(settings, event).filter(controlPlane);
     assert.equal(commands.filter((command) => stableArgs(command, f.claude) === "deliver").length, 1, `${event}: ${commands.join(" | ")}`);
-    assert.equal(commands.filter((command) => stableArgs(command, f.claude) === "wake --timeout 86400").length, WAKE_EVENTS.includes(event) ? 1 : 0, event);
+    assert.equal(commands.filter((command) => stableArgs(command, f.claude) === "wake --timeout 90000").length, WAKE_EVENTS.includes(event) ? 1 : 0, event);
     assert.equal(stableArgs(deliverCommand(settings, event), f.claude), "deliver", `${event} does not end with the delivery hook`);
   }
   for (const event of WAKE_EVENTS) {
     const { command, ...fields } = wakeEntry(settings, event)!;
-    assert.equal(stableArgs(command, f.claude), "wake --timeout 86400", event);
-    assert.deepEqual(fields, { type: "command", asyncRewake: true, timeout: 86400 }, event);
+    assert.equal(stableArgs(command, f.claude), "wake --timeout 90000", event);
+    assert.deepEqual(fields, { type: "command", asyncRewake: true, timeout: 90000 }, event);
   }
   assert.deepEqual(attributionGroup(settings)!.hooks.map((hook) => stableArgs(hook.command, f.claude)), ["attribution"]);
   const all = Object.keys(settings.hooks).flatMap((event) => commandsOf(settings, event)).filter(controlPlane);
@@ -196,7 +196,7 @@ test("an upgrade replaces the path-form wake entries of an older install with a 
   const settings = JSON.parse(fs.readFileSync(settingsFile, "utf8")) as HookGroups;
   for (const event of WAKE_EVENTS) {
     const wakes = settings.hooks[event].flatMap((group) => group.hooks).filter((hook) => hook.command.includes("wake"));
-    assert.deepEqual(wakes.map((hook) => [stableArgs(hook.command, f.claude), hook.timeout, hook.asyncRewake]), [["wake --timeout 86400", 86400, true]], event);
+    assert.deepEqual(wakes.map((hook) => [stableArgs(hook.command, f.claude), hook.timeout, hook.asyncRewake]), [["wake --timeout 90000", 90000, true]], event);
   }
   assert.deepEqual(settings.hooks.UserPromptSubmit.filter((group) => group.matcher === "Bash"), [ownGroup]);
   assert.deepEqual(settings.hooks.Stop.at(-1)!.hooks.filter((hook) => hook.command.includes("/opt/own/")), [own]);
@@ -229,7 +229,7 @@ test("an install collapses the path-form entries of two roots to one stable set;
   const text = fs.readFileSync(settingsFile, "utf8");
   assert.ok(!text.includes(other) && !text.includes(repo), "a path-form entry survived the install");
   const settings = JSON.parse(text) as HookGroups;
-  const wake = "wake --timeout 86400";
+  const wake = "wake --timeout 90000";
   const stableSet: Record<string, string[]> = { UserPromptSubmit: ["deliver", wake], Stop: ["deliver", wake], StopFailure: ["deliver"],
     PostToolUse: ["deliver", "attribution"], SessionStart: [wake] };
   for (const [event, expected] of Object.entries(stableSet)) {
