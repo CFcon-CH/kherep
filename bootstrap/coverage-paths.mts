@@ -2,6 +2,8 @@ import { readFileSync, realpathSync, statSync } from "node:fs";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+const byCodeUnit = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
+
 export function containedFile(root: string, filename: string): string {
   const base = realpathSync(root), lexicalRoot = resolve(root);
   const path = resolve(lexicalRoot, filename);
@@ -103,7 +105,7 @@ export function validateLcov(lcov: string, repositoryRoot: string): { files: num
       } else if (!/^(TN:|SF:|FNF:\d+$|FNH:\d+$|BRF:\d+$|BRH:\d+$)/.test(line)) throw new Error("unknown LCOV record");
     }
     if (!localLines) throw new Error("LCOV source has no line records");
-    if (functions.sort().join("\0") !== functionHits.sort().join("\0")) throw new Error("LCOV function records mismatch");
+    if (functions.sort(byCodeUnit).join("\0") !== functionHits.sort(byCodeUnit).join("\0")) throw new Error("LCOV function records mismatch");
     for (const [prefix, count] of [["LF", localLines], ["LH", localHit], ["FNF", functions.length], ["FNH", fnHit], ["BRF", branchCount], ["BRH", branchHit]] as const) {
       const totals = fields.filter(line => line.startsWith(`${prefix}:`));
       if (totals.length > 1 || (totals.length === 1 && Number(totals[0].slice(prefix.length + 1)) !== count)) throw new Error("LCOV totals mismatch");

@@ -10,7 +10,7 @@ import { normalizeLcovPaths, relocateV8Report, validateLcov } from "./coverage-p
 const cli = resolve("bootstrap/coverage-report.mts");
 const sha = "a".repeat(40);
 function run(args: string[], cwd = process.cwd()) {
-  return spawnSync(process.execPath, [cli, ...args], { cwd, encoding: "utf8", env: { ...process.env, NODE_V8_COVERAGE: "" } });
+  return spawnSync(process.execPath, [cli, ...args], { cwd, encoding: "utf8" });
 }
 function identity() { return ["--run-id", "123", "--attempt", "2", "--checkout-sha", sha]; }
 function fixture() {

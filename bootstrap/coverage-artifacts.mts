@@ -15,7 +15,7 @@ export function readNonempty(root: string, filename: string): string {
 export function validateManifest(value: unknown, identity: Identity): Manifest {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("malformed manifest");
   const m = value as Manifest;
-  if (Object.values(m).some(value => typeof value !== "string") || Object.keys(m).sort().join(",") !== "attempt,checkoutSha,producer,runId,testOutcome" || !producers.includes(m.producer as typeof producers[number]) || !/^\d+$/.test(m.runId) || !/^[1-9]\d*$/.test(m.attempt) || !/^[a-f0-9]{40}$/.test(m.checkoutSha) || !["success", "failure", "cancelled", "skipped"].includes(m.testOutcome)) throw new Error("malformed manifest fields");
+  if (Object.values(m).some(value => typeof value !== "string") || Object.keys(m).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)).join(",") !== "attempt,checkoutSha,producer,runId,testOutcome" || !producers.includes(m.producer as typeof producers[number]) || !/^\d+$/.test(m.runId) || !/^[1-9]\d*$/.test(m.attempt) || !/^[a-f0-9]{40}$/.test(m.checkoutSha) || !["success", "failure", "cancelled", "skipped"].includes(m.testOutcome)) throw new Error("malformed manifest fields");
   for (const key of ["runId", "attempt", "checkoutSha"] as const) if (m[key] !== identity[key]) throw new Error(`manifest ${key} mismatch`);
   return m;
 }

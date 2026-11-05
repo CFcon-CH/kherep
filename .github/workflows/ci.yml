@@ -327,6 +327,10 @@ jobs:
         env:
           NODE_V8_COVERAGE: ${{ runner.temp }}/kherep-coverage/typescript/raw
         run: npm run test:control-plane
+      - name: Coverage fixtures with installed c8
+        env:
+          NODE_V8_COVERAGE: ${{ runner.temp }}/kherep-coverage/typescript/raw
+        run: node --test bootstrap/coverage-report.test.mts
       - name: Coverage manifest (typescript)
         if: always() && !cancelled()
         continue-on-error: true
@@ -444,9 +448,7 @@ jobs:
         with:
           node-version: lts/*
           cache: npm
-      - run: npm ci
-      - name: Coverage fixtures with installed c8
-        run: node --test bootstrap/coverage-report.test.mts
+      - run: npm ci --ignore-scripts
       - name: Download coverage (unit)
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
