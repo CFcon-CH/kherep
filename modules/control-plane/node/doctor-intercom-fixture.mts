@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { requireTrustedExecutable } from "../../../claude/hooks/lib/trusted-executable.mts";
 
 import { intercomValues, renderIntercom } from "../../../bootstrap/render-intercom.mts";
 import { launcherRule, renderControlPlaneRules } from "../../../codex/lib/control-plane-rules.mts";
@@ -20,7 +21,8 @@ import { pinServiceSource } from "./service-source.mts";
 export interface IntercomHost { root: string; pin: string; receipt: ServiceReceipt; files: Record<IntercomInstruction, string> }
 
 function git(root: string, ...args: string[]): string {
-  const result = spawnSync("git", ["-C", root, ...args], { encoding: "utf8", windowsHide: true });
+  const command = requireTrustedExecutable("git", { cwd: root });
+  const result = spawnSync(command, ["-C", root, ...args], { encoding: "utf8", windowsHide: true });
   if (result.status !== 0) throw new Error(result.stderr);
   return result.stdout.trim();
 }

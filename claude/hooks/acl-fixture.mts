@@ -223,10 +223,11 @@ export function changeDirectory(t: TestContext, dir: string, change: "inherit" |
     return null;
   }
   const darwin = process.platform === "darwin";
+  const originalMode = !WIN && change === "noNewNames" ? fs.statSync(dir).mode & 0o7777 : undefined;
   const undo = (): boolean => {
     if (WIN) return sh(system32("icacls.exe"), [dir, "/reset"]).status === 0;
     if (change === "noNewNames") {
-      fs.chmodSync(dir, 0o755);
+      fs.chmodSync(dir, originalMode!);
       return true;
     }
     return sh(posixTool, darwin ? ["-N", dir] : ["-k", dir]).status === 0;
@@ -238,7 +239,7 @@ export function changeDirectory(t: TestContext, dir: string, change: "inherit" |
     const ace = change === "noNewNames" ? `*${userSid()}:(WD)` : `*S-1-5-32-545:(OI)(CI)(${other ? "RA" : "R"})`;
     done = sh(system32("icacls.exe"), [dir, change === "noNewNames" ? "/deny" : "/grant", ace]).status === 0;
   } else if (change === "noNewNames") {
-    fs.chmodSync(dir, 0o555);
+    fs.chmodSync(dir, 0o500);
     done = true;
   } else {
     done = sh(posixTool, darwin ? ["+a", `everyone allow ${other ? "readattr" : "readextattr"},file_inherit`, dir]

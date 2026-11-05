@@ -330,7 +330,7 @@ check_profile() {
     node "$TMP/repo/bootstrap/model-policy-render.mts" agent "$TMP/repo/claude/agents/$alias" "$host_home/rendered-$alias" \
       "$TMP/repo/claude/kherep/model-policy.json" "$CLAUDE_HOME/kherep/model-policy.user.json" &&
       cmp -s "$host_home/rendered-$alias" "$CLAUDE_HOME/agents/$alias" || { note_fail "COMPAT alias source mismatch [$profile]: $alias"; }
-    grep -Eq 'http://192\.168\.|curl ' "$CLAUDE_HOME/agents/$alias" && { note_fail "COMPAT alias leaked direct LAN/curl [$profile]: $alias"; }
+    grep -Eq 'https?://192\.168\.|curl ' "$CLAUDE_HOME/agents/$alias" && { note_fail "COMPAT alias leaked direct LAN/curl [$profile]: $alias"; }
   done
   cmp "$CLAUDE_HOME/.mcp.json" "$host_home/mcp.before" >/dev/null || { note_fail "MCP secret overwritten [$profile]"; }
   cmp "$CLAUDE_HOME/unmanaged-helper.sh" "$host_home/unmanaged-helper.before" >/dev/null || { note_fail "Unmanaged helper secret overwritten [$profile]"; }

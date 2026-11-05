@@ -11,6 +11,21 @@ import { handleAttributionHook } from "../modules/control-plane/node/attribution
 import { nodePaths } from "../modules/control-plane/node/config.mts";
 import { defaultBranch, judge } from "../claude/hooks/lib/main-checkout.mts";
 import { runCodex } from "../codex/lib/codex-cli.mts";
+import { git as fixtureGit } from "./project-rules-history-fixture.mts";
+
+test("history fixture never runs a git planted in its child working directory", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "trusted-history-"));
+  const previous = process.env.PATH;
+  t.after(() => { if (previous === undefined) delete process.env.PATH; else process.env.PATH = previous;
+    fs.rmSync(root, { recursive: true, force: true }); });
+  const planted = path.join(root, process.platform === "win32" ? "git.exe" : "git");
+  if (process.platform === "win32") fs.copyFileSync(process.execPath, planted);
+  else fs.symlinkSync(process.execPath, planted);
+  const marker = path.join(root, "ran");
+  process.env.PATH = root;
+  assert.throws(() => fixtureGit(root, ["--eval", `require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'planted')`]), { code: "ENOENT" });
+  assert.equal(fs.existsSync(marker), false);
+});
 
 test("missing trusted tools preserve CLI errors and hook fail-soft results", (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "trusted-callers-"));

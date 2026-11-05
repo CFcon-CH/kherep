@@ -7,19 +7,19 @@ import { decideArgs, harness, LABELS, MEASUREMENT, prepareArgs, prepared, TODAY 
 
 test('P3-e: prepare and record refuse an existing --out before any request: out-exists', async () => {
   const h = await prepared();
-  const before = h.files.get('/tmp/ev/r.json');
+  const before = h.files.get('/synthetic/evidence/r.json');
   await assert.rejects(() => h.run(prepareArgs), /out-exists/);
-  await assert.rejects(() => h.run({ mode: 'record', id: '5', excluded: 'private', reason: 'private-no-local-route', out: '/tmp/ev/r.json' }), /out-exists/);
+  await assert.rejects(() => h.run({ mode: 'record', id: '5', excluded: 'private', reason: 'private-no-local-route', out: '/synthetic/evidence/r.json' }), /out-exists/);
   assert.equal(h.calls.length, 0);
-  assert.equal(h.files.get('/tmp/ev/r.json'), before);
+  assert.equal(h.files.get('/synthetic/evidence/r.json'), before);
 });
 
 test('P3-e: a record whose labels is not a list raises a ConfluenceError, not a TypeError', async () => {
   const h = await prepared();
-  const record = JSON.parse(h.files.get('/tmp/ev/r.json') ?? '{}');
-  h.files.set('/tmp/ev/r.json', JSON.stringify({ ...record, labels: 'type-observation' }));
+  const record = JSON.parse(h.files.get('/synthetic/evidence/r.json') ?? '{}');
+  h.files.set('/synthetic/evidence/r.json', JSON.stringify({ ...record, labels: 'type-observation' }));
   await assert.rejects(() => h.run(decideArgs), (error: unknown) => error instanceof ConfluenceError && /record malformed/.test(error.message));
-  assert.equal(h.files.has('/tmp/ev/b.xml'), false);
+  assert.equal(h.files.has('/synthetic/evidence/b.xml'), false);
 });
 
 test('P3-e: the git check runs on the resolved directory, which must exist', async () => {
@@ -54,14 +54,14 @@ async function endToEnd(body: string, kind: string, measurement: object, args: R
   assert.ok(h.out.includes(`kind: ${kind}`), h.out.join('\n'));
   assert.equal(await h.run(args), 0, h.out.join('\n'));
   assert.equal(h.calls.length, 0, 'decide sends no request');
-  const written = h.files.get('/tmp/ev/b.xml') ?? '';
-  const record = JSON.parse(h.files.get('/tmp/ev/r.json') ?? '{}');
+  const written = h.files.get('/synthetic/evidence/b.xml') ?? '';
+  const record = JSON.parse(h.files.get('/synthetic/evidence/r.json') ?? '{}');
   assert.deepEqual([record.decision.outcome, record.decision.labelsAdd, record.decision.labelsRemove],
     ['confirmed', ['evidence-confirmed'], ['evidence-assumed']]);
   // The operator's update and labels calls, then verify against the same fixture state.
   const v = harness({ '1': { body: written, labels: record.labelsAfter } });
   for (const [k, value] of h.files) v.files.set(k, value);
-  assert.equal(await v.run({ mode: 'verify', record: '/tmp/ev/r.json', 'body-file': '/tmp/ev/b.xml' }), 0);
+  assert.equal(await v.run({ mode: 'verify', record: '/synthetic/evidence/r.json', 'body-file': '/synthetic/evidence/b.xml' }), 0);
   assert.equal(v.out.at(-1), 'readback: match');
   return { written, record };
 }
@@ -103,5 +103,5 @@ test('#650 T4: an original Measurement heading with code still refuses: promoted
   assert.ok(h.out.includes('kind: tracker (override; classified code)'), h.out.join('\n'));
   assert.equal(await h.run(withoutRepo), 2);
   assert.match(h.out.join('\n'), /reason: promoted-body-revision-invalid/);
-  assert.equal(h.files.has('/tmp/ev/b.xml'), false);
+  assert.equal(h.files.has('/synthetic/evidence/b.xml'), false);
 });

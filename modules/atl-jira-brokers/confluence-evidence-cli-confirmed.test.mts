@@ -10,14 +10,14 @@ const TARGET = `<p>Revision: alpha@${NEWER}</p><p>Code: src/queue.mts</p><p>The 
 const supArgs = { ...decideArgs, 'superseded-by': '77', 'body-approved': undefined };
 const confirmed = (target: Pages[string] | null, options: HarnessOptions = {}, labels = CONFIRMED) =>
   harness({ '1': { body: BODY, labels }, ...(target ? { '77': target } : {}) }, options);
-const record = (h: Awaited<ReturnType<typeof prepared>>) => JSON.parse(h.files.get('/tmp/ev/r.json') ?? '{}');
+const record = (h: Awaited<ReturnType<typeof prepared>>) => JSON.parse(h.files.get('/synthetic/evidence/r.json') ?? '{}');
 const mergeBases = (h: Awaited<ReturnType<typeof prepared>>) => h.execs.filter(c => c.includes('merge-base'));
 
 test('T7 a contradiction at a newer commit supersedes a confirmed record through a target binding that commit', async () => {
   const h = await prepared(confirmed({ body: TARGET, labels: [] }, { mergeBase: SHA }), AT_NEWER);
   assert.equal(await h.run(supArgs), 0);
   assert.equal(h.calls.length, 2, 'metadata and body of the target, GET only');
-  const body = h.files.get('/tmp/ev/b.xml') ?? '';
+  const body = h.files.get('/synthetic/evidence/b.xml') ?? '';
   assert.ok(body.includes('pages/77">Synthetic title</a>') && body.includes(`<p>Revision: alpha@${NEWER}</p>`), body);
   const r = record(h);
   assert.deepEqual([r.decision.outcome, r.decision.labelsRemove, r.decision.supersededBy], ['superseded', ['evidence-confirmed'], '77']);
@@ -32,11 +32,11 @@ test('T7 not newer, unreadable, other-space and unbound targets are refused with
     const h = await prepared(confirmed({ body: TARGET, labels: [] }, mergeBase === undefined ? {} : { mergeBase }), AT_NEWER);
     assert.equal(await h.run(supArgs), 2, String(mergeBase));
     assert.match(h.out.join('\n'), /reason: revision-not-newer/);
-    assert.equal(h.files.has('/tmp/ev/b.xml'), false);
+    assert.equal(h.files.has('/synthetic/evidence/b.xml'), false);
   }
   const archived = await prepared(confirmed({ body: TARGET, labels: [], status: 'archived' }, { mergeBase: SHA }), AT_NEWER);
   await assert.rejects(() => archived.run(supArgs), /superseded-page-not-current/);
-  assert.equal(archived.files.has('/tmp/ev/b.xml'), false);
+  assert.equal(archived.files.has('/synthetic/evidence/b.xml'), false);
   const other = await prepared(confirmed({ body: TARGET, labels: [], spaceId: '8' }, { mergeBase: SHA }), AT_NEWER);
   assert.equal(await other.run(supArgs), 2);
   assert.match(other.out.join('\n'), /reason: superseded-other-space/);
@@ -54,13 +54,13 @@ test('T8 a holding re-measurement exits 0, writes no body and is neither verifia
   const h = await prepared(confirmed(null), MEASUREMENT);
   assert.equal(await h.run(decideArgs), 0);
   assert.deepEqual(h.out.slice(-4), ['outcome: holds', 'reason: measured', 'labels: none', 'body: not written']);
-  assert.equal(h.files.has('/tmp/ev/b.xml'), false);
+  assert.equal(h.files.has('/synthetic/evidence/b.xml'), false);
   const r = record(h);
   assert.equal(r.decision.outcome, 'holds');
   assert.deepEqual(r.labelsAfter, r.labels);
-  await assert.rejects(() => h.run({ mode: 'verify', record: '/tmp/ev/r.json', 'body-file': '/tmp/ev/b.xml' }), /no proposed change to verify/);
+  await assert.rejects(() => h.run({ mode: 'verify', record: '/synthetic/evidence/r.json', 'body-file': '/synthetic/evidence/b.xml' }), /no proposed change to verify/);
   h.out.length = 0;
-  assert.equal(await h.run({ mode: 'report', records: '/tmp/ev/r.json' }), 0);
+  assert.equal(await h.run({ mode: 'report', records: '/synthetic/evidence/r.json' }), 0);
   const report = h.out.join('\n');
   assert.match(report, /- outcome: holds\n- reason: measured\n- label diff: none/);
   assert.match(report, /- holds: 1\n/);
@@ -88,7 +88,7 @@ test('T9 git sees validated SHAs only, and merge-base runs only for an unbound r
 test('T10 the refuted record carries the label set verify will compare: the confirmed label swapped, runtime label kept or added', async () => {
   const h = await prepared(confirmed(null), CONTRADICTS);
   assert.equal(await h.run(decideArgs), 0);
-  assert.match(h.files.get('/tmp/ev/b.xml') ?? '', /<p>Outcome: refuted \(model-run, status-author-model unchanged\)<\/p><p>Revision: alpha@a{40}<\/p>/);
+  assert.match(h.files.get('/synthetic/evidence/b.xml') ?? '', /<p>Outcome: refuted \(model-run, status-author-model unchanged\)<\/p><p>Revision: alpha@a{40}<\/p>/);
   assert.deepEqual(h.out.slice(-4), ['outcome: refuted', 'reason: measured', 'labels: +evidence-refuted / -evidence-confirmed', 'body: written']);
   assert.deepEqual(record(h).labelsAfter, [...CONFIRMED.filter(l => l !== 'evidence-confirmed'), 'evidence-refuted'].sort());
   const bare = await prepared(confirmed(null, {}, CONFIRMED.filter(l => !l.startsWith('runtime-'))), CONTRADICTS);

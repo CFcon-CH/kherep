@@ -61,15 +61,15 @@ test("only the tail of an oversized index is read", (t) => {
 
 test("titles are sanitised: control and format characters removed, whitespace collapsed, length capped", () => {
   assert.equal(sanitiseTitle("  Kherep-Funktionen\tnachschlagen \n"), "Kherep-Funktionen nachschlagen");
-  assert.equal(sanitiseTitle("a\u0000b\u001bc‮d​e"), "abcde");
-  assert.equal(sanitiseTitle("line break"), "line break");
+  assert.equal(sanitiseTitle("a\u0000b\u001bc\u202ed\u200be"), "abcde");
+  assert.equal(sanitiseTitle("line\u2028break"), "line break");
   assert.equal(sanitiseTitle(" \u0007 "), undefined);
   assert.equal(sanitiseTitle(17), undefined);
   const long = sanitiseTitle("Ä".repeat(100))!;
   assert.equal([...long].length, 60);
   assert.ok(long.endsWith("…"));
   for (const title of ["Kherep-Funktionen nachschlagen", long, "Quote \" and \\ back"]) assert.ok(isTitle(title), title);
-  for (const bad of ["", " x", "x ", "a\u0000b", "a‮b", "a\nb", "x".repeat(61), 5]) assert.equal(isTitle(bad), false, JSON.stringify(bad));
+  for (const bad of ["", " x", "x ", "a\u0000b", "a\u202eb", "a\nb", "x".repeat(61), 5]) assert.equal(isTitle(bad), false, JSON.stringify(bad));
 });
 
 test("titles attach to Codex sessions only; a Claude session keeps its name", () => {

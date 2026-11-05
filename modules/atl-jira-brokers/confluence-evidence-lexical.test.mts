@@ -182,12 +182,12 @@ test('#672 review: the broker refuses the three reproducers and promotes the tru
   for (const [body, m] of cases) {
     const h = await prepared(harness({ '1': { body, labels: ASSUMED } }), m);
     assert.equal(await h.run(decideArgs), 2, body);
-    assert.equal(h.files.get('/tmp/ev/b.xml'), undefined, body);
+    assert.equal(h.files.get('/synthetic/evidence/b.xml'), undefined, body);
     assert.ok(h.calls.every(c => c.method === 'GET'), body);
   }
   const h = await prepared(harness({ '1': { body: `${AUTHOR}<pre>x</pre><p>Revision: ${REV}</p>${FOOTER}`, labels: ASSUMED } }), M(REV));
   assert.equal(await h.run(decideArgs), 0);
-  const record = JSON.parse(h.files.get('/tmp/ev/r.json') ?? '{}'), body = h.files.get('/tmp/ev/b.xml') ?? '';
+  const record = JSON.parse(h.files.get('/synthetic/evidence/r.json') ?? '{}'), body = h.files.get('/synthetic/evidence/b.xml') ?? '';
   assert.equal(record.decision.outcome, 'confirmed');
   assert.equal(flagged(body, record.labelsAfter), 0);
 });
