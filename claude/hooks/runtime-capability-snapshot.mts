@@ -8,6 +8,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { isKherepScope, workspaceForPayload, type ScopePayload } from "./lib/workspace-scope.mts";
+import { findTrustedExecutable } from "./lib/trusted-executable.mts";
 
 // The parts of the live JSON files this hook reads. Everything else, the
 // secret-bearing MCP server definitions above all, stays untyped and unread.
@@ -55,7 +56,9 @@ function newestInstall(entries: unknown): PluginInstall | null {
 
 function gitValue(cwd: string, args: string[]): string {
   try {
-    const result = spawnSync("git", args, { cwd, encoding: "utf8", timeout: 2_000, windowsHide: true });
+    const command = findTrustedExecutable("git", { cwd });
+    if (!command) return "UNKNOWN";
+    const result = spawnSync(command, args, { cwd, encoding: "utf8", timeout: 2_000, windowsHide: true });
     return result.status === 0 ? String(result.stdout || "").trim() : "UNKNOWN";
   } catch {
     return "UNKNOWN";

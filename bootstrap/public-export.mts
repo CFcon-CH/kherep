@@ -9,6 +9,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { readTar } from "./public-export-tar.mts";
+import { requireTrustedExecutable } from "../claude/hooks/lib/trusted-executable.mts";
 
 export const EXCLUDE_FILE = "bootstrap/manifest/public-export-exclude.txt";
 
@@ -41,7 +42,7 @@ export function isExcluded(file: string, patterns: string[]): boolean {
 }
 
 function git(repo: string, args: string[]): Buffer {
-  return execFileSync("git", ["-C", repo, ...args], { maxBuffer: 1024 * 1024 * 1024 });
+  return execFileSync(requireTrustedExecutable("git"), ["-C", repo, ...args], { maxBuffer: 1024 * 1024 * 1024 });
 }
 
 function walk(root: string, found = { files: [] as string[], directories: [] as string[] }, relative = "") {

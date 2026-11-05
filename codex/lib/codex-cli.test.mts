@@ -1,15 +1,17 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { codexEnvironment, codexInvocation, codexOutput, normalizeWindowsCodexCommand } from "./codex-cli.mts";
+import { codexEnvironment, codexInvocation, codexOutput, resolveCodexCommand } from "./codex-cli.mts";
 
-test("uses the app execution alias for packaged Codex", () => {
-  assert.equal(
-    normalizeWindowsCodexCommand(
-      "C:\\Program Files\\WindowsApps\\OpenAI.Codex_26.715.8383.0_x64__fixture\\codex.exe",
-    ),
-    "codex",
-  );
-  assert.equal(normalizeWindowsCodexCommand("C:\\Tools\\codex.exe"), "C:\\Tools\\codex.exe");
+test("resolves Codex absolutely and prefers native executables over script shims", () => {
+  const command = "C:\\Tools\\codex.exe";
+  assert.equal(resolveCodexCommand({ platform: "win32", env: { Path: "C:\\Shims;C:\\Tools" },
+    isExecutable: (file) => file === command || file === "C:\\Shims\\codex.cmd" }), command);
+  const packaged = "C:\\Program Files\\WindowsApps\\OpenAI.Codex_fixture\\codex.exe";
+  assert.equal(resolveCodexCommand({ platform: "win32", env: { PATH: "C:\\Program Files\\WindowsApps\\OpenAI.Codex_fixture" },
+    isExecutable: (file) => file === packaged }), packaged);
+  assert.equal(resolveCodexCommand({ platform: "linux", env: { PATH: ".:/tools" }, isExecutable: () => true }), "/tools/codex");
+  assert.throws(() => resolveCodexCommand({ platform: "win32", env: { Path: "." } }), { code: "ENOENT" });
+  assert.throws(() => resolveCodexCommand({ platform: "linux", env: { PATH: "" } }), { code: "ENOENT" });
 });
 
 test("routes packaged Windows Codex executables through cmd.exe", () => {
@@ -38,11 +40,11 @@ test("invokes native Windows Codex executables directly", () => {
   );
 });
 
-test("keeps a safe Windows app alias unquoted", () => {
-  assert.equal(
-    codexInvocation("codex", ["--version"], "win32", "cmd.exe").args[3],
-    "codex --version",
-  );
+test("never gives a bare Windows tool or shell to spawn or cmd", () => {
+  assert.throws(() => codexInvocation("codex", ["--version"], "win32", "C:\\Windows\\System32\\cmd.exe"), /absolute/);
+  assert.throws(() => codexInvocation("C:\\Tools\\codex.cmd", ["--version"], "win32", "cmd.exe"), /absolute/);
+  assert.equal(codexInvocation("C:\\Tools\\codex.cmd", ["--version"], "win32", "C:\\Windows\\System32\\cmd.exe").args[3],
+    '"C:\\Tools\\codex.cmd" --version');
 });
 
 test("uses direct invocation outside Windows", () => {

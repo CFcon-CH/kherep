@@ -6,6 +6,7 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { declareCopy } from "../../bootstrap/coverage-copy-fixture.mts";
 
 import { copyAdapter } from "./hook-adapter.fixture.mts";
 
@@ -16,7 +17,8 @@ export const JOURNAL_LIBS = ["denial-journal.mts", "workspace-scope.mts"];
 export interface CodexHome { root: string; hookDir: string }
 
 // lib: the state of the installed journal lib.
-export function codexHome(guards: Record<string, string>, lib: "present" | "missing" | "empty" | "throwing" | "hanging" = "present"): CodexHome {
+export function codexHome(guards: Record<string, string>, lib: "present" | "missing" | "empty" | "throwing" | "hanging" = "present",
+  capture = true): CodexHome {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "codex-denials-")));
   roots.push(root);
   const hookDir = path.join(root, "hooks", "kherep-maestro");
@@ -26,6 +28,7 @@ export function codexHome(guards: Record<string, string>, lib: "present" | "miss
   for (const [name, source] of Object.entries(guards)) fs.writeFileSync(path.join(hookDir, name), source);
   if (lib !== "missing") for (const name of JOURNAL_LIBS) fs.copyFileSync(path.join(CLAUDE_LIB, name), path.join(hookDir, "lib", name));
   const target = path.join(hookDir, "lib", "denial-journal.mts");
+  if (lib === "present" && capture) declareCopy(path.join(CLAUDE_LIB, "denial-journal.mts"), target);
   if (lib === "empty") fs.writeFileSync(target, "");
   if (lib === "throwing") fs.writeFileSync(target, "export function journalVerdict() { throw new Error(\"boom\"); }\n");
   if (lib === "hanging") fs.writeFileSync(target, "export function journalVerdict() { return new Promise(() => {}); }\n");

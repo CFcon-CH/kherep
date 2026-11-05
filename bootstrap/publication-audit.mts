@@ -4,6 +4,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
+import { requireTrustedExecutable } from '../claude/hooks/lib/trusted-executable.mts';
 
 export interface AuditIssue { file: string; category: string }
 export interface AuditReport { files: number; scanned: number; indexed: number; issues: AuditIssue[] }
@@ -23,7 +24,7 @@ function safeLabel(file: string, terms: string[]): string {
 }
 
 function indexBlobs(root: string): Map<string, { mode: string; bytes: Buffer }[]> {
-  const entries = execFileSync('git', ['-C', root, 'ls-files', '--stage', '-z'],
+  const entries = execFileSync(requireTrustedExecutable('git'), ['-C', root, 'ls-files', '--stage', '-z'],
     { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 }).split('\0').filter(Boolean).map((entry) => {
       const match = /^(\d+) ([a-f0-9]+) [0-3]\t([\s\S]+)$/.exec(entry);
       if (!match) throw new Error('Invalid index inventory');
@@ -32,7 +33,7 @@ function indexBlobs(root: string): Map<string, { mode: string; bytes: Buffer }[]
   const ids = [...new Set(entries.filter((entry) => entry.mode !== '160000').map((entry) => entry.oid))];
   const bytesById = new Map<string, Buffer>();
   if (ids.length) {
-    const output = execFileSync('git', ['-C', root, 'cat-file', '--batch'], {
+    const output = execFileSync(requireTrustedExecutable('git'), ['-C', root, 'cat-file', '--batch'], {
       input: ids.join('\n') + '\n', maxBuffer: 256 * 1024 * 1024,
     });
     let offset = 0;
@@ -69,7 +70,7 @@ function inspectBytes(bytes: Buffer, needles: string[], add: (category: string) 
 
 export function auditRepository(repo: string, terms: string[]): AuditReport {
   const root = fs.realpathSync(repo);
-  const files = [...new Set(execFileSync('git', [
+  const files = [...new Set(execFileSync(requireTrustedExecutable('git'), [
     '-C', root, 'ls-files', '-z', '--cached', '--others', '--exclude-standard',
   ], { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 }).split('\0').filter(Boolean))].sort();
   const indexed = indexBlobs(root);

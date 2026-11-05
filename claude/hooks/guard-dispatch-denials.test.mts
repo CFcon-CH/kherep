@@ -8,6 +8,7 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { after, test, type TestContext } from "node:test";
+import { declareCopy } from "../../bootstrap/coverage-copy-fixture.mts";
 
 import { denialFaultEnv, faultSpan, MARKER_SLOW_MS, type DenialFault } from "./denial-fault.fixture.mts";
 import { dispatcherFixture, type DispatcherFixture } from "./guard-dispatch-fixture.mts";
@@ -29,12 +30,13 @@ const GUARDS: Record<string, string> = {
 };
 
 // A dispatcher copy with synthetic guards; lib is the journal lib's state in it.
-function fixture(lib: "present" | "missing" | "empty" | "throwing" | "hanging" = "present"): DispatcherFixture {
+function fixture(lib: "present" | "missing" | "empty" | "throwing" | "hanging" = "present", capture = true): DispatcherFixture {
   const fx = dispatcherFixture("guard-dispatch-denials-");
   roots.push(fx.root);
   for (const [name, source] of Object.entries(GUARDS)) fs.writeFileSync(path.join(fx.hooks, name), source);
   if (lib !== "missing") for (const name of LIBS) fs.copyFileSync(path.join(import.meta.dirname, "lib", name), path.join(fx.hooks, "lib", name));
   const target = path.join(fx.hooks, "lib", "denial-journal.mts");
+  if (lib === "present" && capture) declareCopy(path.join(import.meta.dirname, "lib", "denial-journal.mts"), target);
   if (lib === "empty") fs.writeFileSync(target, "");
   if (lib === "throwing") fs.writeFileSync(target, "export function journalVerdict() { throw new Error(\"boom\"); }\n");
   if (lib === "hanging") fs.writeFileSync(target, "export function journalVerdict() { return new Promise(() => {}); }\n");
@@ -121,7 +123,7 @@ test("an allow is a call line without denials, the handback is not journalled, a
 });
 
 test("an agent_id that is no string: the decision as without one, no journal, never the internal-error deny", async () => {
-  const fx = fixture();
+  const fx = fixture("present", false);
   for (const guards of [["allow.mts"], ["exit2.mts"]]) {
     const plain = await dispatch(fx, guards, payload({ agent_id: undefined }));
     const odd = await dispatch(fx, guards, payload({ agent_id: { toString: 1 } }));

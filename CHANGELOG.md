@@ -9,6 +9,13 @@ increments the minor version; every other release increments the patch version.
 
 ## [Unreleased]
 
+### Security
+
+- Resolve tools from absolute PATH directories before spawning, excluding the
+  working directory and its aliases, on Windows and POSIX. Shared installed
+  hook libraries preserve lookup-failure behavior without discovery subprocesses.
+  Bound denial-journal command scanning to a single forward pass (#779).
+
 ### Changed
 
 - SonarQube Cloud (#772) consumes validated same-run LCOV from the existing

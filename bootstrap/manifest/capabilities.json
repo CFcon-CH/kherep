@@ -95,7 +95,8 @@
     "lib/private-path-rules.mts",
     "lib/real-path-policy.mts",
     "lib/restore-write.mts",
-    "lib/workspace-scope.mts"
+    "lib/workspace-scope.mts",
+    "lib/trusted-executable.mts"
   ],
   "pluginEntrypoints": {
     "caveman@caveman": [

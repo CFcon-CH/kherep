@@ -27,6 +27,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { errorMessage } from "./shape.mts";
+import { findTrustedExecutable } from "../claude/hooks/lib/trusted-executable.mts";
 
 export const DEFAULT_HOOK = path.resolve(import.meta.dirname, "..", "claude", "kherep", "githooks", "commit-msg");
 const CANARY = "canary without a work-item key\n";
@@ -39,8 +40,14 @@ class Unreadable extends Error {}
 
 const slash = (p: string) => p.replace(/\\/g, "/");
 
+function tool(name: string, cwd: string, env = process.env): string {
+  const command = findTrustedExecutable(name, { cwd, env });
+  if (!command) throw new Unreadable(`${name} executable not found in an absolute PATH directory`);
+  return command;
+}
+
 function git(cwd: string, args: string[], what: string): string {
-  const result = spawnSync("git", args, { cwd, encoding: "utf8" });
+  const result = spawnSync(tool("git", cwd), args, { cwd, encoding: "utf8" });
   if (result.error) throw new Unreadable(`${what}: ${result.error.message}`);
   if (result.status !== 0) throw new Unreadable(`${what}: ${result.stderr.trim() || `git exited ${result.status}`}`);
   return result.stdout;
@@ -92,7 +99,7 @@ export function checkCommits(options: Options): Result {
     const message = slash(path.join(tmp, "COMMIT_EDITMSG"));
     const runHook = (text: string | Buffer, hookEnvironment = env) => {
       fs.writeFileSync(message, text);
-      const result = spawnSync("sh", [hook, message], { cwd: top, env: hookEnvironment, encoding: "utf8" });
+      const result = spawnSync(tool("sh", top, hookEnvironment), [hook, message], { cwd: top, env: hookEnvironment, encoding: "utf8" });
       if (result.error) throw new Unreadable(`hook ${hook} did not run: ${result.error.message}`);
       return { status: result.status, stderr: (result.stderr ?? "").trim() };
     };
@@ -112,7 +119,7 @@ export function checkCommits(options: Options): Result {
     }
     let failed = 0;
     for (const { sha, merge } of commits) {
-      const body = spawnSync("git", ["show", "-s", "--format=%B", sha], { cwd });
+      const body = spawnSync(tool("git", cwd), ["show", "-s", "--format=%B", sha], { cwd });
       if (body.error || body.status !== 0) throw new Unreadable(`message of ${sha}: ${body.stderr?.toString().trim()}`);
       const subject = body.stdout.toString("utf8").split("\n", 1)[0]!.trim();
       const label = `${sha}${merge ? " (merge)" : ""} ${subject}`;

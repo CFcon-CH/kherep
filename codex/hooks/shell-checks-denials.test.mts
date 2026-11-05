@@ -88,7 +88,7 @@ test("a marker append that settles late: the dispatcher exits after it, the mark
 });
 
 test("an adapter that does not load: the deny stands and the call leaves the marker", async () => {
-  const home = codexHome(GUARDS);
+  const home = codexHome(GUARDS, "present", false);
   fs.writeFileSync(path.join(home.hookDir, "hook-adapter.mts"), "");
   const result = await shell(home, shellPayload());
   assert.match(JSON.parse(result.stdout).hookSpecificOutput.permissionDecisionReason, /adapter could not load/);
@@ -137,7 +137,7 @@ test("the capture window is clipped by the remaining deadline", async () => {
 });
 
 test("importing and calling shellChecks leaves the caller alive", async () => {
-  const home = codexHome(GUARDS);
+  const home = codexHome(GUARDS, "present", false);
   const code = `const { shellChecks } = await import(${JSON.stringify(pathToFileURL(path.join(home.hookDir, "codex-shell-checks.mts")).href)});
     const output = await shellChecks(${shellPayload({ agent_id: undefined })});
     process.stdout.write(JSON.stringify({ alive: true, output }));`;
@@ -151,7 +151,7 @@ test("importing and calling shellChecks leaves the caller alive", async () => {
 
 test("CLI completion awaits stdout and stderr callbacks, including a silent allow", async () => {
   for (const denied of [false, true]) {
-    const home = codexHome(Object.fromEntries(Object.keys(GUARDS).map((name) => [name, denied ? GUARDS[name as keyof typeof GUARDS] : "process.exit(0);\n"])));
+    const home = codexHome(Object.fromEntries(Object.keys(GUARDS).map((name) => [name, denied ? GUARDS[name as keyof typeof GUARDS] : "process.exit(0);\n"])), "present", false);
     // A flat layout omits the installed peer notice, so allow has genuinely empty stdout.
     const main = path.join(home.root, "shell-checks.mts");
     for (const name of fs.readdirSync(home.hookDir)) if (fs.statSync(path.join(home.hookDir, name)).isFile()) {
