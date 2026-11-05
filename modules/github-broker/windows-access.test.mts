@@ -79,17 +79,19 @@ function powershell(script:string,input:string) {
   });
 }
 // Parsing stays outside the evaluator's try and only its own refusal counts, so a
-// broken fixture or harness cannot pass a negative row by accident.
+// broken fixture or harness cannot pass a negative row by accident. Input is plain lines:
+// ConvertFrom-Json took about 18 s per start on windows-latest and ran the step out of time.
 const HARNESS=`$ErrorActionPreference='Stop'
 ${WINDOWS_ACL_EVALUATOR}
-$i=[Console]::In.ReadToEnd()|ConvertFrom-Json
-try { $raw=[Security.AccessControl.RawSecurityDescriptor]::new([Convert]::FromBase64String($i.sd),0) } catch { [Console]::Out.Write('unparsed'); exit 0 }
-try { Test-KherepLevel $raw $i.me $i.private $i.isRoot $i.directory $i.receiptFile; [Console]::Out.Write('ok') } catch { if ($_.Exception.Message -ceq 'refused') { [Console]::Out.Write('refused') } else { [Console]::Out.Write('error:' + $_.Exception.Message) } }
+$i=[Console]::In.ReadToEnd().Split([char]10)
+try { $raw=[Security.AccessControl.RawSecurityDescriptor]::new([Convert]::FromBase64String($i[0]),0) } catch { [Console]::Out.Write('unparsed'); exit 0 }
+try { Test-KherepLevel $raw $i[1] ($i[2] -ceq 'true') ($i[3] -ceq 'true') ($i[4] -ceq 'true') ($i[5] -ceq 'true'); [Console]::Out.Write('ok') } catch { if ($_.Exception.Message -ceq 'refused') { [Console]::Out.Write('refused') } else { [Console]::Out.Write('error:' + $_.Exception.Message) } }
 `;
 type Level={isRoot?:boolean;private?:boolean;directory?:boolean;};
 function evaluate(shape:Shape|string,level:Level={}):string {
   const sd=typeof shape==='string'?shape:descriptor(shape);
-  const result=powershell(HARNESS,JSON.stringify({sd,me:ME,private:false,isRoot:false,directory:true,receiptFile:false,...level}));
+  const {private:isPrivate=false,isRoot=false,directory=true}=level;
+  const result=powershell(HARNESS,[sd,ME,isPrivate,isRoot,directory,false].join('\n'));
   assert.equal(result.error,undefined);assert.equal(result.status,0,result.stderr);
   return result.stdout;
 }
