@@ -163,11 +163,6 @@
       "target": "code-simplifier agent"
     },
     {
-      "id": "codex@openai-codex",
-      "mode": "not-applicable",
-      "target": "Codex host"
-    },
-    {
       "id": "context7@claude-plugins-official",
       "mode": "mcp",
       "target": "context7 MCP"

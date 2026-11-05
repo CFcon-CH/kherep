@@ -31,7 +31,7 @@ test("both Dispatch sections define the markers, the review receipt and the revi
     const text = section(file, "Dispatch");
     for (const needle of ["`revision: <name>@<sha>`", "`<name>@<base>..<head>`", "`-dirty`", "`decided: <decision", "`decided: none`",
       "`REVISION: <name>@<base>..<head>[-dirty]`", "`ASSUMED: none | <n>`", "`kherep-builder` and `dc-plugin-build-runner`",
-      "reads no git state", "`codex exec`", "`codex:codex-rescue`", "`reviewer`"]) {
+      "reads no git state", "`codex exec`", "Control Plane intercom", "retired plugin agent is denied", "`reviewer`"]) {
       assert.ok(text.includes(needle), `${file}: ${needle}`);
     }
     assert.ok(text.includes(`\n> ${REVIEW_ASSUMPTION_RULE}\n`), `${file}: the reviewer rule verbatim`);

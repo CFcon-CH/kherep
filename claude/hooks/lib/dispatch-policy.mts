@@ -111,14 +111,8 @@ export function evaluateDispatch(event: DispatchEvent | null | undefined): Dispa
       normalized
     );
   }
-  // The installed OpenAI plugin's /codex:rescue command invokes exactly this
-  // thin forwarder and relies on its frontmatter model. It is the sole
-  // model-less exception; callers invoke the command, never the subagent.
-  if (normalized.agent === "codex:codex-rescue") {
-    return { decision: "allow", metadata: { agent: normalized.agent, model: normalized.model || "plugin-frontmatter", privacy: false } };
-  }
   if (/codex/i.test(normalized.agent)) {
-    return deny("CODEX_AGENT_DIRECT_FORBIDDEN", "Invoke a documented /codex command instead of a Codex-labelled Agent directly.", normalized);
+    return deny("CODEX_AGENT_DIRECT_FORBIDDEN", "Use codex exec or the Control Plane intercom to reach Codex; Codex-labelled Agent dispatches are not supported.", normalized);
   }
   if (!normalized.model) {
     return deny("DISPATCH_MODEL_REQUIRED", "Dispatch has no explicit model.", normalized);

@@ -4,6 +4,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { productEnv } from "../lib/product-env.mts";
+import { RETIRED_CODEX_PLUGIN } from "./codex-plugin-retirement.mts";
 import { activeMcpEntries, allMcpEntries, hasCredentialArg, type SupplementalConfig } from "./capability-mcp.mts";
 import { errorMessage, field } from "./shape.mts";
 
@@ -138,6 +139,7 @@ function checkLive(): void {
   const workspace = productEnv(process.env, "WORKSPACE") ?? defaultWorkspace;
   const baseline: ProfileBaseline = (expected.profileBaselines && expected.profileBaselines[profile]) || {};
   const settings = readJson<EnabledPlugins>(path.join(claudeHome, "settings.json"));
+  const workspaceSettings = readOptionalJson(path.join(workspace, ".claude", "settings.local.json")) as EnabledPlugins | null;
   const registry = readJson<InstalledPlugins>(path.join(claudeHome, "plugins", "installed_plugins.json"));
   const enabled = enabledKeys(settings);
   const installed = Object.keys(registry.plugins || {});
@@ -146,7 +148,13 @@ function checkLive(): void {
     ok(`live plugin installed ${key}`, installed.includes(key));
   }
   reportExtras("enabled plugin", enabled, expected.plugins, baseline.plugins, true);
-  reportExtras("installed plugin", installed, expected.plugins, baseline.plugins, true);
+  const retiredInstalled = installed.includes(RETIRED_CODEX_PLUGIN);
+  ok(`retired plugin disabled ${RETIRED_CODEX_PLUGIN}`,
+    !enabled.includes(RETIRED_CODEX_PLUGIN) && workspaceSettings?.enabledPlugins?.[RETIRED_CODEX_PLUGIN] !== true
+      && (!retiredInstalled || settings.enabledPlugins?.[RETIRED_CODEX_PLUGIN] === false));
+  // The retained exact retired registry entry is a recovery artifact, not an
+  // unexpected active capability. Its disabled state is asserted above.
+  reportExtras("installed plugin", installed, [...expected.plugins, RETIRED_CODEX_PLUGIN], baseline.plugins, true);
 
   for (const [plugin, files] of Object.entries(expected.pluginEntrypoints)) {
     const entries = registry.plugins && registry.plugins[plugin];

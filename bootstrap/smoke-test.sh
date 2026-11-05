@@ -138,17 +138,27 @@ check_profile() {
   # while unknown preferences/hooks and enabled plugins remain enabled.
   node -e '
   const fs=require("fs"),p=process.argv[1],plugin=process.argv[2];
-  fs.writeFileSync(p,JSON.stringify({fixturePreference:true,enabledPlugins:{[plugin]:true},permissions:{allow:["Bash(curl http://localhost:8000*)"]},hooks:{SessionStart:[{matcher:"fixture-only",hooks:[{type:"command",command:"true"}]}],UserPromptSubmit:[{matcher:"",hooks:[{type:"command",command:"fixture-same-matcher"}]}]}},null,2));
+  fs.writeFileSync(p,JSON.stringify({fixturePreference:true,enabledPlugins:{[plugin]:true,"codex@openai-codex":true},permissions:{allow:["Bash(curl http://localhost:8000*)"]},hooks:{SessionStart:[{matcher:"fixture-only",hooks:[{type:"command",command:"true"}]}],UserPromptSubmit:[{matcher:"",hooks:[{type:"command",command:"fixture-same-matcher"}]}]}},null,2));
   ' "$CLAUDE_HOME/settings.json" "$extra_plugin"
   node -e '
   const fs=require("fs"),p=process.argv[1];
-  fs.writeFileSync(p,JSON.stringify({permissions:{allow:["Bash(fixture:*)"],additionalDirectories:["C:\\\\fixture","D:\\\\fixture","//server/share","/d/Work","/opt/kherep-fixture"]},hooks:{Stop:[{matcher:"fixture-only",hooks:[{type:"command",command:"true"}]}]}},null,2));
+  fs.writeFileSync(p,JSON.stringify({enabledPlugins:{"codex@openai-codex":true},permissions:{allow:["Bash(fixture:*)"],additionalDirectories:["C:\\\\fixture","D:\\\\fixture","//server/share","/d/Work","/opt/kherep-fixture"]},hooks:{Stop:[{matcher:"fixture-only",hooks:[{type:"command",command:"true"}]}]}},null,2));
   ' "$workspace/.claude/settings.local.json"
+
+  # #797: retirement changes settings only; keep installed recovery artifacts byte-identical.
+  mkdir -p "$CLAUDE_HOME/plugins/cache/openai-codex/codex/fixture"
+  printf '%s\n' '{"plugins":{"codex@openai-codex":[{"scope":"user","version":"fixture"}]}}' > "$CLAUDE_HOME/plugins/installed_plugins.json"
+  printf '%s\n' '{"openai-codex":{"source":{"source":"github","repo":"openai/codex-plugin-cc"}}}' > "$CLAUDE_HOME/plugins/known_marketplaces.json"
+  printf '%s\n' 'operator recovery fixture' > "$CLAUDE_HOME/plugins/cache/openai-codex/codex/fixture/kept.txt"
+  cp -R "$CLAUDE_HOME/plugins" "$host_home/plugins.before"
 
   printf '%s\n' "{\"profile\":\"$profile\",\"secret\":true}" > "$CLAUDE_HOME/.mcp.json"
   printf '%s\n' '#!/usr/bin/env bash' "echo $profile-unmanaged-helper" > "$CLAUDE_HOME/unmanaged-helper.sh"
   cp "$CLAUDE_HOME/.mcp.json" "$host_home/mcp.before"
   cp "$CLAUDE_HOME/unmanaged-helper.sh" "$host_home/unmanaged-helper.before"
+
+  cp "$CLAUDE_HOME/settings.json" "$host_home/settings.before"
+  cp "$workspace/.claude/settings.local.json" "$host_home/project-settings.before"
 
   # Mac-only live extras are deliberately seeded; install must preserve them.
   # The historic lmstudio name is a managed compatibility entrypoint and is
@@ -286,6 +296,7 @@ check_profile() {
   node -e '
   const fs=require("fs");const u=JSON.parse(fs.readFileSync(process.argv[1]));const p=JSON.parse(fs.readFileSync(process.argv[2]));
   if(!u.fixturePreference||!u.enabledPlugins[process.argv[3]])process.exit(1);
+  if(u.enabledPlugins["codex@openai-codex"]!==false||p.enabledPlugins["codex@openai-codex"]!==false)process.exit(7);
   if(!(u.hooks.SessionStart||[]).some(h=>h.matcher==="fixture-only"))process.exit(2);
   if(!(u.hooks.UserPromptSubmit||[]).some(h=>h.matcher===""&&(h.hooks||[]).some(x=>x.command==="fixture-same-matcher")))process.exit(5);
   if((u.permissions.allow||[]).some(x=>/localhost:8000/.test(x)))process.exit(6);
@@ -293,6 +304,9 @@ check_profile() {
   if(!(p.hooks.Stop||[]).some(h=>h.matcher==="fixture-only"))process.exit(4);
   ' "$CLAUDE_HOME/settings.json" "$workspace/.claude/settings.local.json" "$extra_plugin" || {
     note_fail "SETTINGS MERGE failed [$profile]";
+  }
+  diff -r "$host_home/plugins.before" "$CLAUDE_HOME/plugins" >/dev/null || {
+    note_fail "PLUGIN RETIREMENT changed recovery artifacts [$profile]";
   }
   if [ "$profile" = "mac" ]; then
     node -e '
@@ -321,6 +335,16 @@ check_profile() {
   cmp "$CLAUDE_HOME/.mcp.json" "$host_home/mcp.before" >/dev/null || { note_fail "MCP secret overwritten [$profile]"; }
   cmp "$CLAUDE_HOME/unmanaged-helper.sh" "$host_home/unmanaged-helper.before" >/dev/null || { note_fail "Unmanaged helper secret overwritten [$profile]"; }
   compgen -G "$CLAUDE_HOME/backups/bootstrap/*/settings.json" >/dev/null || { note_fail "SETTINGS backup missing [$profile]"; }
+  node -e '
+  const fs=require("fs"),path=require("path"),[backups,user,project]=process.argv.slice(1);
+  const entries=fs.readdirSync(backups).filter(x=>x.startsWith("install-")).map(x=>path.join(backups,x));
+  for(const [relative,before] of [["settings.json",user],["project/settings.local.json",project]]){
+    if(!entries.some(dir=>fs.existsSync(path.join(dir,relative))&&fs.readFileSync(path.join(dir,relative)).equals(fs.readFileSync(before))))process.exit(1);
+  }
+  ' "$CLAUDE_HOME/backups/bootstrap" "$host_home/settings.before" "$host_home/project-settings.before" || {
+    note_fail "PLUGIN RETIREMENT previous settings not recoverable byte-for-byte [$profile]";
+  }
+
 
   local wired_hooks
   wired_hooks="$(node -e '
@@ -385,6 +409,16 @@ check_profile() {
     echo "$drift_output"
     note_fail "DRIFT-CHECK failed [$profile]"
   fi
+  # #797: both managed scopes must flag a reenabled retired plugin as drift.
+  for retired_settings in "$CLAUDE_HOME/settings.json" "$workspace/.claude/settings.local.json"; do
+    cp "$retired_settings" "$host_home/retired-settings.before"
+    node -e 'const fs=require("fs"),p=process.argv[1],j=JSON.parse(fs.readFileSync(p));j.enabledPlugins["codex@openai-codex"]=true;fs.writeFileSync(p,JSON.stringify(j,null,2)+"\n")' "$retired_settings"
+    if DRIFT_SCOPE=all bash "$TMP/repo/bootstrap/drift-check.sh" >/dev/null; then
+      note_fail "DRIFT-CHECK missed reenabled retired plugin [$profile] $retired_settings"
+    fi
+    cp "$host_home/retired-settings.before" "$retired_settings"
+  done
+
   if [ "$profile" = "win" ]; then
     printf '%s\n' '# unexpected live-only managed file' > "$CLAUDE_HOME/skills/codebase-memory/unexpected-live.md"
     if bash "$TMP/repo/bootstrap/drift-check.sh" >/dev/null; then

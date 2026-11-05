@@ -81,6 +81,13 @@ increments the minor version; every other release increments the patch version.
 
 ### Removed
 
+- The Claude Code plugin `codex@openai-codex` and its managed marketplace
+  (#797). Codex remains available through `codex exec` and the Control Plane
+  intercom; the global npm `@openai/codex` stays. Existing hosts need a
+  separately authorized upgrade and a new Claude Code session: that upgrade
+  disables only this exact plugin in user and managed workspace settings,
+  retaining its installed registry, cache and marketplaces for recovery.
+
 - The `usage-watch` prompt hook (issue #774). Installed copies are parked with the
   `usage-band` files through `retired.txt`.
 

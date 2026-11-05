@@ -9,7 +9,6 @@
     "cloudflare@claude-plugins-official",
     "code-review@claude-plugins-official",
     "code-simplifier@claude-plugins-official",
-    "codex@openai-codex",
     "context7@claude-plugins-official",
     "feature-dev@claude-plugins-official",
     "frontend-design@claude-plugins-official",
@@ -108,11 +107,6 @@
       "agents/code-architect.md",
       "agents/code-explorer.md",
       "agents/code-reviewer.md"
-    ],
-    "codex@openai-codex": [
-      "agents/codex-rescue.md",
-      "commands/rescue.md",
-      "commands/adversarial-review.md"
     ]
   },
   "runtimeFiles": [
