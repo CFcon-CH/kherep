@@ -121,11 +121,7 @@ async function decideMode(io: Io): Promise<number> {
     const runtime = runtimeLabel(ctx.credEnv, ctx.env);
     // The labels call adds the broker's runtime label to a page that carries none; verify expects it too.
     const added = [...decision.labelsAdd, ...(labels.some(l => l.startsWith('runtime-')) ? [] : [runtime])];
-    after = [...new Set([...labels.filter(l => !decision.labelsRemove.includes(l)), ...added])].sort((left, right) => {
-      if (left < right) return -1;
-      if (left > right) return 1;
-      return 0;
-    });
+    after = [...new Set([...labels.filter(l => !decision.labelsRemove.includes(l)), ...added])].sort((left, right) => Number(left > right) - Number(left < right));
     body = insertBeforeFooter(record.body!, renderMeasurementBlock(decision, m as Measurement, runtime, options.superseded));
     // Defect 1, checked on the result: the next drainage scan must accept the promoted page.
     const scan = drainageRules([{ id: record.pageId, version: record.readVersion ?? 0, title: '', spaceId: record.spaceId ?? '',
@@ -155,22 +151,10 @@ async function verify(io: Io): Promise<number> {
   const expected = await io.ctx.readFile(file, 'utf8').catch(() => fail('--body-file is not readable.'));
   const snapshot = await drainageSnapshot(io.session(), record.pageId, record.spaceId ?? '')
     .catch((error: unknown) => fail(`Readback failed: ${readFailure(error).reason}. Result UNVERIFIED.`));
-  const evidence = snapshot.labels.filter(l => l.startsWith('evidence-')).sort((left, right) => {
-    if (left < right) return -1;
-    if (left > right) return 1;
-    return 0;
-  });
+  const evidence = snapshot.labels.filter(l => l.startsWith('evidence-')).sort((left, right) => Number(left > right) - Number(left < right));
   // The full set, not only the evidence label: a status-author or any other change since prepare is a mismatch.
-  const diff = [...snapshot.labels.filter(l => !reviewed.includes(l)).sort((left, right) => {
-    if (left < right) return -1;
-    if (left > right) return 1;
-    return 0;
-  }).map(l => `+${l}`),
-    ...reviewed.filter(l => !snapshot.labels.includes(l)).sort((left, right) => {
-      if (left < right) return -1;
-      if (left > right) return 1;
-      return 0;
-    }).map(l => `-${l}`)];
+  const diff = [...snapshot.labels.filter(l => !reviewed.includes(l)).sort((left, right) => Number(left > right) - Number(left < right)).map(l => `+${l}`),
+    ...reviewed.filter(l => !snapshot.labels.includes(l)).sort((left, right) => Number(left > right) - Number(left < right)).map(l => `-${l}`)];
   io.ctx.log(`version: ${snapshot.version}`);
   if (snapshot.body !== expected) io.ctx.log('readback: mismatch body');
   else if (diff.length || !evidenceLabelsOk(snapshot.labels, outcome)) {

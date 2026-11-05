@@ -15,11 +15,7 @@ const CLIENT_NAME = "kherep-claude-messaging-client";
 const MANIFEST = "manifest.json";
 const EXPECTED_DIRS = ["control-plane", "control-plane/node", "plugin", "plugin/.claude-plugin", "plugin/hooks"];
 const GENERATED_FILES = ["mcp.json", "plugin/.claude-plugin/plugin.json", "plugin/hooks/hooks.json"];
-const EXPECTED_FILES = [...CLAUDE_CLIENT_GRAPH.map((relative) => `control-plane/${relative}`), ...GENERATED_FILES].sort((left, right) => {
-  if (left < right) return -1;
-  if (left > right) return 1;
-  return 0;
-});
+const EXPECTED_FILES = [...CLAUDE_CLIENT_GRAPH.map((relative) => `control-plane/${relative}`), ...GENERATED_FILES].sort((left, right) => Number(left > right) - Number(left < right));
 const COMMAND_UNSAFE = /[\u0000-\u001f\u007f$`%!'";&|<>(){}\[\]*?]/;
 
 export interface ClaudeClientOptions { clientRoot: string; configRoot: string; nodeCommand: string }
@@ -170,25 +166,9 @@ export function verifyClaudeClient(root: string, expectedClientRoot?: string): C
   if (unexpected.length > 0) throw new Error(`unmanaged client content: ${unexpected[0]}`);
   const missing = EXPECTED_FILES.filter((relative) => !files.includes(relative));
   if (missing.length > 0) throw new Error(`required client content missing: ${missing[0]}`);
-  assertExact("directories", entries.directories, [...manifest.directories].sort((left, right) => {
-    if (left < right) return -1;
-    if (left > right) return 1;
-    return 0;
-  }));
-  assertExact("files", files, Object.keys(manifest.files).sort((left, right) => {
-    if (left < right) return -1;
-    if (left > right) return 1;
-    return 0;
-  }));
-  assertExact("declared directories", [...manifest.directories].sort((left, right) => {
-    if (left < right) return -1;
-    if (left > right) return 1;
-    return 0;
-  }), [...EXPECTED_DIRS].sort((left, right) => {
-    if (left < right) return -1;
-    if (left > right) return 1;
-    return 0;
-  }));
+  assertExact("directories", entries.directories, [...manifest.directories].sort((left, right) => Number(left > right) - Number(left < right)));
+  assertExact("files", files, Object.keys(manifest.files).sort((left, right) => Number(left > right) - Number(left < right)));
+  assertExact("declared directories", [...manifest.directories].sort((left, right) => Number(left > right) - Number(left < right)), [...EXPECTED_DIRS].sort((left, right) => Number(left > right) - Number(left < right)));
   for (const relative of files) {
     if (!/^[a-f0-9]{64}$/.test(manifest.files[relative] ?? "")
       || sha256(path.join(root, relative)) !== manifest.files[relative]) throw new Error(`client drift: ${relative}`);

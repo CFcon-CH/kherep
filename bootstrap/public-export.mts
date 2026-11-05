@@ -77,16 +77,8 @@ export function exportRevision(repo: string, revision: string, outDir: string): 
   const leaked = [...files.filter((file) => isExcluded(file, patterns)),
     ...directories.filter((directory) => isExcluded(`${directory}/x`, patterns))];
   if (leaked.length) throw new Error(`Excluded path remains in the export: ${leaked[0]}`);
-  files.sort((left, right) => {
-    if (left < right) return -1;
-    if (left > right) return 1;
-    return 0;
-  });
-  if (JSON.stringify(files) !== JSON.stringify(expected.sort((left, right) => {
-    if (left < right) return -1;
-    if (left > right) return 1;
-    return 0;
-  }))) {
+  files.sort((left, right) => Number(left > right) - Number(left < right));
+  if (JSON.stringify(files) !== JSON.stringify(expected.sort((left, right) => Number(left > right) - Number(left < right)))) {
     throw new Error("The exported file set does not match the revision");
   }
   const manifest = `${target}.sha256`;

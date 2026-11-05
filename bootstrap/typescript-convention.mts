@@ -55,11 +55,7 @@ export function loadTypeScriptConvention(
   return {
     inventory,
     onDisk,
-    unlisted: onDisk.filter((file) => !listed.has(file)).sort((left, right) => {
-      if (left < right) return -1;
-      if (left > right) return 1;
-      return 0;
-    }),
+    unlisted: onDisk.filter((file) => !listed.has(file)).sort((left, right) => Number(left > right) - Number(left < right)),
     stale: inventory.filter((file) => !present.has(file)).sort(),
   };
 }

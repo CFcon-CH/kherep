@@ -31,31 +31,15 @@ export function migrateRegistry(
   }
   const server = registry.mcpServers && registry.mcpServers[serverName];
   if (!isRecord(server)) throw new Error("MCP server is missing");
-  const keys = Object.keys(server).sort((left, right) => {
-    if (left < right) return -1;
-    if (left > right) return 1;
-    return 0;
-  });
+  const keys = Object.keys(server).sort((left, right) => Number(left > right) - Number(left < right));
   if (keys.some((key) => !["args", "command", "env"].includes(key))) {
     throw new Error("stdio server has unsupported fields");
   }
   if (server.command === "node" && Array.isArray(server.args) && server.args.length === 1
       && WRAPPER_FILE.test(String(server.args[0]))) {
-    const envKeys = isRecord(server.env) ? Object.keys(server.env).sort((left, right) => {
-      if (left < right) return -1;
-      if (left > right) return 1;
-      return 0;
-    }).join(",") : "";
-    const canonical = envKeys === [...WRAPPER_ENV].sort((left, right) => {
-      if (left < right) return -1;
-      if (left > right) return 1;
-      return 0;
-    }).join(",");
-    const legacy = envKeys === [...LEGACY_WRAPPER_ENV].sort((left, right) => {
-      if (left < right) return -1;
-      if (left > right) return 1;
-      return 0;
-    }).join(",");
+    const envKeys = isRecord(server.env) ? Object.keys(server.env).sort((left, right) => Number(left > right) - Number(left < right)).join(",") : "";
+    const canonical = envKeys === [...WRAPPER_ENV].sort((left, right) => Number(left > right) - Number(left < right)).join(",");
+    const legacy = envKeys === [...LEGACY_WRAPPER_ENV].sort((left, right) => Number(left > right) - Number(left < right)).join(",");
     if (!isRecord(server.env) || (!canonical && !legacy)
         || server.env.NODE_TLS_REJECT_UNAUTHORIZED !== "0") {
       throw new Error("wrapper entry environment does not match the secret wrapper contract");

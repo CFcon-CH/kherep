@@ -73,16 +73,8 @@ function isLegacyRegistryAdapter(
         || server.args.length !== 1 || !samePath(server.args[0], adapter.bridge)
         || !plainObject(server.env)) return false;
     const env = server.env as Record<string, unknown>;
-    const keys = Object.keys(env).sort((left, right) => {
-      if (left < right) return -1;
-      if (left > right) return 1;
-      return 0;
-    });
-    const expectedKeys = Object.keys(expectedEnv).sort((left, right) => {
-      if (left < right) return -1;
-      if (left > right) return 1;
-      return 0;
-    });
+    const keys = Object.keys(env).sort((left, right) => Number(left > right) - Number(left < right));
+    const expectedKeys = Object.keys(expectedEnv).sort((left, right) => Number(left > right) - Number(left < right));
     return keys.length === expectedKeys.length
       && keys.every((key, index) => key === expectedKeys[index] && env[key] === expectedEnv[key]);
   });

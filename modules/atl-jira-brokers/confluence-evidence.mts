@@ -37,21 +37,13 @@ export const KINDS: readonly string[] = ['code', 'tracker', 'live', 'doc'];
 const CLASS_OF: Record<string, string> = { code: 'repository', tracker: 'tracker', live: 'target-host', doc: 'official-doc' };
 const FIELDS = new Set(['kind', 'source', 'sourceClass', 'command', 'excerpt', 'measuredAt', 'verdict', 'revision', 'subject', 'supersededBy', 'kindOverride']);
 const DAY = 86_400_000;
-const unique = (values: Iterable<string>): string[] => [...new Set(values)].sort((left, right) => {
-  if (left < right) return -1;
-  if (left > right) return 1;
-  return 0;
-});
+const unique = (values: Iterable<string>): string[] => [...new Set(values)].sort((left, right) => Number(left > right) - Number(left < right));
 const suffixes = (labels: string[], prefix: string): string[] => labels.filter(l => l.startsWith(prefix)).map(l => l.slice(prefix.length));
 const filled = (value: unknown): boolean => typeof value === 'string' && value.trim() !== '';
 const targetOf = (m: Measurement, o: DecideOptions): string | undefined => m.supersededBy ?? o.superseded?.id, noBinding = (r: Revisions): boolean => !r.bound.length && r.unbound.length > 0;
 
 export function classifyClaim(snapshot: ClaimSource, bodyApproved: boolean, kindOverride?: MeasuredKind): Claim {
-  const labels = [...snapshot.labels].sort((left, right) => {
-    if (left < right) return -1;
-    if (left > right) return 1;
-    return 0;
-  });
+  const labels = [...snapshot.labels].sort((left, right) => Number(left > right) - Number(left < right));
   const original = claimBody(snapshot.body);
   const text = plainText(original), lines = claimViews(original).join('\n'); // tokens and phrases: base text; line-anchored claims: both views
   const revisions = revisionLines(revisionBody(snapshot.body));

@@ -107,11 +107,7 @@ export function forkAttempts(paths: NodePaths, owner: string): ForkAttempt[] {
     throw error;
   }
   if (names.length > MAX_FORK_ATTEMPTS) throw new Error("fork attempt snapshot exceeds its bound");
-  return names.sort((left, right) => {
-    if (left < right) return -1;
-    if (left > right) return 1;
-    return 0;
-  }).map((name) => {
+  return names.sort((left, right) => Number(left > right) - Number(left < right)).map((name) => {
     const messageId = name.slice(0, -5);
     if (!name.endsWith(".json") || !isMessageId(messageId)) throw new Error("incomplete fork attempt snapshot");
     return readRecord(path.join(dir, name), owner, messageId);

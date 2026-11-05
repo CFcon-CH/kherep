@@ -48,11 +48,7 @@ export function migrateRegistry(registry: Registry, serverName: string): Registr
   const servers = registry.mcpServers;
   const server = servers && servers[serverName];
   if (!isRecord(server)) throw new Error("MCP server is missing");
-  const keys = Object.keys(server).sort((left, right) => {
-    if (left < right) return -1;
-    if (left > right) return 1;
-    return 0;
-  });
+  const keys = Object.keys(server).sort((left, right) => Number(left > right) - Number(left < right));
   if (keys.some((key) => !["args", "command", "env"].includes(key))) {
     throw new Error("stdio server has unsupported fields");
   }

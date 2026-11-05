@@ -50,20 +50,12 @@ export function desiredEntry(claudeHome: string, tokenFile: string): StdioEntry 
 
 function sameEntry(left: unknown, right: StdioEntry): boolean {
   if (!isRecord(left) || !isRecord(left.env) || !Array.isArray(left.args)) return false;
-  const keys = Object.keys(left).filter((key) => key !== "type").sort((leftText, rightText) => {
-    if (leftText < rightText) return -1;
-    if (leftText > rightText) return 1;
-    return 0;
-  });
+  const keys = Object.keys(left).filter((key) => key !== "type").sort((leftText, rightText) => Number(leftText > rightText) - Number(leftText < rightText));
   return (left.type === undefined || left.type === "stdio")
     && keys.join(",") === "args,command,env"
     && left.command === right.command
     && left.args.length === 1 && left.args[0] === right.args[0]
-    && Object.keys(left.env).sort((leftText, rightText) => {
-      if (leftText < rightText) return -1;
-      if (leftText > rightText) return 1;
-      return 0;
-    }).join(",") === "KHEREP_MCP_AUTH_FILE,KHEREP_MCP_ENDPOINT"
+    && Object.keys(left.env).sort((leftText, rightText) => Number(leftText > rightText) - Number(leftText < rightText)).join(",") === "KHEREP_MCP_AUTH_FILE,KHEREP_MCP_ENDPOINT"
     && left.env.KHEREP_MCP_AUTH_FILE === right.env.KHEREP_MCP_AUTH_FILE
     && left.env.KHEREP_MCP_ENDPOINT === right.env.KHEREP_MCP_ENDPOINT;
 }
@@ -99,11 +91,7 @@ export function shadowingProjects(registryFile: string): string[] {
     .filter(([, project]) => isRecord(project) && isRecord(project.mcpServers)
       && Object.hasOwn(project.mcpServers, ATLASSIAN_MCP_SERVER))
     .map(([directory]) => directory)
-    .sort((left, right) => {
-      if (left < right) return -1;
-      if (left > right) return 1;
-      return 0;
-    });
+    .sort((left, right) => Number(left > right) - Number(left < right));
 }
 
 export interface ClaudeRun { ok: boolean; stdout: string }

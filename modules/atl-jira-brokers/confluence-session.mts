@@ -213,11 +213,7 @@ export function tokenScopes(token: string): string[] {
   if (!payload) return [];
   try {
     const claims = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as { scope?: unknown };
-    return typeof claims.scope === "string" ? claims.scope.split(" ").filter(Boolean).sort((left, right) => {
-      if (left < right) return -1;
-      if (left > right) return 1;
-      return 0;
-    }) : [];
+    return typeof claims.scope === "string" ? claims.scope.split(" ").filter(Boolean).sort((left, right) => Number(left > right) - Number(left < right)) : [];
   } catch { return []; }
 }
 

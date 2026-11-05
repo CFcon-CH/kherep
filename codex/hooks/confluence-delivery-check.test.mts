@@ -68,6 +68,17 @@ test("a module the broker imports but the installer did not ship is named", () =
   assert.doesNotMatch(line, /not installed/, "partial and absent must not read the same");
 });
 
+test("delivery lists use UTF-16 order independently of import traversal order", () => {
+  const present = ["z.mts", "a.mts", "A.mts"];
+  const missing = ["y.mts", "b.mts", "B.mts"];
+  const files = { [ENTRY]: imports(...present, ...missing, "a.mts"),
+    ...Object.fromEntries(present.map(name => [name, "export const x = 1;"])) };
+  const { read, exists } = fixture(files);
+  assert.deepEqual(inspect("/tools", read, exists), {
+    present: [ENTRY, ...present].sort(), missing: [...missing].sort(), absent: false,
+  });
+});
+
 test("a count would have passed where the graph does not", () => {
   // Nine files present, one import unmet. This is exactly the shape that a
   // check counting to nine would have waved through.

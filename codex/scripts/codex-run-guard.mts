@@ -77,11 +77,7 @@ export function loadExpected(text: string): Expected {
     if (!Array.isArray(entries)) throw new Error(`expected file: skips.${platform} must be an array`);
     const seen = new Set<string>();
     skips[platform] = entries.map((entry: Record<string, unknown>) => {
-      const shape = entry && typeof entry === "object" && Object.keys(entry).sort((left, right) => {
-        if (left < right) return -1;
-        if (left > right) return 1;
-        return 0;
-      }).join(",") === "name,reason";
+      const shape = entry && typeof entry === "object" && Object.keys(entry).sort((left, right) => Number(left > right) - Number(left < right)).join(",") === "name,reason";
       if (!shape || typeof entry.name !== "string" || !entry.name || (entry.reason !== null && typeof entry.reason !== "string")) {
         throw new Error(`expected file: skips.${platform} entry is not { name, reason }: ${JSON.stringify(entry)}`);
       }

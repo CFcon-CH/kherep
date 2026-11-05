@@ -57,11 +57,7 @@ function readSelection(file: string): unknown {
 // The validation the pre-retirement installer applied. A selection it accepted
 // is exactly one whose rendered block it wrote.
 export function parseCentralBrainBinding(value: Record<string, unknown>): CentralBrainBinding {
-  const keys = Object.keys(value).sort((left, right) => {
-    if (left < right) return -1;
-    if (left > right) return 1;
-    return 0;
-  }).join(",");
+  const keys = Object.keys(value).sort((left, right) => Number(left > right) - Number(left < right)).join(",");
   const { mcpCli, profile, nativeHooks } = value;
   const absolute = (entry: unknown): entry is string => typeof entry === "string"
     && path.isAbsolute(entry) && !/[\0\r\n]/.test(entry);
@@ -71,11 +67,7 @@ export function parseCentralBrainBinding(value: Record<string, unknown>): Centra
   if (Object.hasOwn(value, "nativeHooks")) {
     const hooks = nativeHooks as Record<string, unknown> | null;
     if (!hooks || typeof hooks !== "object" || Array.isArray(hooks)
-        || !["captureCli,contextCli", "captureCli,contextCli,extraCaCertificates"].includes(Object.keys(hooks).sort((left, right) => {
-          if (left < right) return -1;
-          if (left > right) return 1;
-          return 0;
-        }).join(","))) {
+        || !["captureCli,contextCli", "captureCli,contextCli,extraCaCertificates"].includes(Object.keys(hooks).sort((left, right) => Number(left > right) - Number(left < right)).join(","))) {
       return invalid();
     }
     const { contextCli, captureCli, extraCaCertificates } = hooks;

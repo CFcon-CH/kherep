@@ -46,11 +46,7 @@ function record(value: unknown): Record<string, unknown> | null {
     return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
 }
 function hasExactKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
-    const own = Object.keys(value).sort((left, right) => {
-      if (left < right) return -1;
-      if (left > right) return 1;
-      return 0;
-    });
+    const own = Object.keys(value).sort((left, right) => Number(left > right) - Number(left < right));
     return own.length === keys.length && own.every((key, index) => key === keys[index]);
 }
 function filled(value: unknown): boolean {
