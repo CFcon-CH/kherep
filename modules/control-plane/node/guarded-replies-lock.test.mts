@@ -88,7 +88,7 @@ test("release never recursively removes an unexpected nonempty owner directory",
     return Reflect.apply(original, fs, args);
   } as typeof original;
   try {
-    assert.throws(() => rememberGuardedMcpReply(f.paths, crypto.randomUUID(), PARENT));
+    assert.throws(() => rememberGuardedMcpReply(f.paths, crypto.randomUUID(), PARENT), { code: 'ENOTEMPTY' });
     assert.equal(fs.readFileSync(path.join(f.lock, "foreign"), "utf8"), "synthetic foreign entry");
   } finally { fs.writeFileSync = original; }
 });
@@ -106,10 +106,10 @@ test("owner releases its directory after marker failure and leaves a replaced en
     return Reflect.apply(original, fs, args);
   } as typeof original;
   try {
-    assert.throws(() => rememberGuardedMcpReply(f.paths, crypto.randomUUID(), PARENT));
+    assert.throws(() => rememberGuardedMcpReply(f.paths, crypto.randomUUID(), PARENT), /synthetic marker write failure/);
     assert.equal(fs.existsSync(f.lock), false);
     replace = true;
-    assert.throws(() => rememberGuardedMcpReply(f.paths, crypto.randomUUID(), PARENT));
+    assert.throws(() => rememberGuardedMcpReply(f.paths, crypto.randomUUID(), PARENT), /guarded-reply-provenance-unavailable/);
     assert.ok(fs.lstatSync(f.lock).isDirectory()); assert.ok(fs.lstatSync(`${f.lock}.owned`).isDirectory());
   } finally { fs.writeFileSync = original; }
 });

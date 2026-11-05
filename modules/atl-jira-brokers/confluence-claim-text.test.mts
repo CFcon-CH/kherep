@@ -1,11 +1,23 @@
 // Issue #693 T1: the Revision grammar with an optional repo-relative path list.
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { MAX_PATH_LENGTH, MAX_PATHS, revisionLines, scopedRevision } from './confluence-claim-text.mts';
+import { claimViews, MAX_PATH_LENGTH, MAX_PATHS, revisionLines, scopedRevision } from './confluence-claim-text.mts';
 import { revisionLines as reexported } from './confluence-evidence.mts';
 
 const SHA = 'a'.repeat(40), CORE = `alpha@${SHA}`;
 const p = (line: string): string => `<p>Revision: ${line}</p>`;
+
+test('claim barriers retain adjacent whitespace and repeated marker semantics', () => {
+  const marker = String.fromCharCode(1);
+  for (const whitespace of ['', ' ', '\t', '\r', '\v', '\f', '\u00a0', '\u2028', '\ufeff']) {
+    const body = `<pre>example</pre>${whitespace}${marker}${whitespace}${marker}${whitespace}Revision: ${CORE}`;
+    assert.ok(claimViews(body)[1].endsWith(`\nRevision: ${CORE}`), JSON.stringify(whitespace));
+    assert.deepEqual(revisionLines(body).bound, [CORE]);
+  }
+  assert.equal(claimViews(`<pre>example</pre>x${marker}Revision: ${CORE}`)[1].split('\n').at(-1), `x${marker}Revision: ${CORE}`);
+  assert.deepEqual(revisionLines(`<p>Revision: ${marker}</p>`).malformed, ['']);
+  assert.deepEqual(revisionLines(`<p>Revision: ${marker}${marker}</p>`).malformed, [`${marker}${marker}`]);
+});
 
 test('an unscoped line is classified as before and carries no paths', () => {
   assert.deepEqual(revisionLines(p(CORE)), { bound: [CORE], unbound: [], malformed: [], paths: {} });

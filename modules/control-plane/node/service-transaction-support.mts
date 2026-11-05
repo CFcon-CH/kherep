@@ -93,7 +93,11 @@ export function candidateInPlace(pending: ServiceCandidate | null, existing: Nat
 // Key-order independent JSON: a receipt written by another writer must still compare equal to its parsed round trip.
 const canonical = (value: unknown): string => JSON.stringify(value, (_key, item: unknown) =>
   item && typeof item === "object" && !Array.isArray(item)
-    ? Object.fromEntries(Object.keys(item as Record<string, unknown>).sort().map(key => [key, (item as Record<string, unknown>)[key]])) : item);
+    ? Object.fromEntries(Object.keys(item as Record<string, unknown>).sort((left, right) => {
+      if (left < right) return -1;
+      if (left > right) return 1;
+      return 0;
+    }).map(key => [key, (item as Record<string, unknown>)[key]])) : item);
 
 // #582 (review P2-5): the recorded prior is trusted only when it is the receipt's own definition and names this receipt.
 // A missing or corrupt backup is "unbound" (A2 P2-B): the callers refuse with their fixed texts, the read error is never printed.

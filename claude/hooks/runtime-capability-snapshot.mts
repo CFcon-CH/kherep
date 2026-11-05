@@ -84,9 +84,17 @@ function main(): void {
   const enabled = Object.entries(settings.enabledPlugins || {})
     .filter(([, on]) => on === true)
     .map(([name]) => name)
-    .sort();
+    .sort((left, right) => {
+      if (left < right) return -1;
+      if (left > right) return 1;
+      return 0;
+    });
   const installedMap = registry.plugins || {};
-  const installed = Object.keys(installedMap).sort();
+  const installed = Object.keys(installedMap).sort((left, right) => {
+    if (left < right) return -1;
+    if (left > right) return 1;
+    return 0;
+  });
   const enabledInstalled = enabled
     .filter((name) => installedMap[name])
     .map((name) => {
@@ -109,7 +117,11 @@ function main(): void {
     `Enabled+installed plugins (${enabledInstalled.length}): ${enabledInstalled.join(", ") || "none detected"}`,
     `Enabled but missing (${enabledMissing.length}): ${enabledMissing.join(", ") || "none"}`,
     `Installed but disabled (${installedDisabled.length}): ${installedDisabled.join(", ") || "none"}`,
-    `Configured MCP names (${mcpNames.size}; configuration is NOT a health claim): ${[...mcpNames].sort().join(", ") || "none detected"}`,
+    `Configured MCP names (${mcpNames.size}; configuration is NOT a health claim): ${[...mcpNames].sort((left, right) => {
+      if (left < right) return -1;
+      if (left > right) return 1;
+      return 0;
+    }).join(", ") || "none detected"}`,
     `Local inference contract: ${localConfig && localConfig.backends ? Object.entries(localConfig.backends).map(([name, spec]) => `${name}=${spec.engine}@${spec.endpoint}${spec.model ? `#${spec.model}` : ""}`).join(", ") : "UNKNOWN (config not installed)"}`,
     "Use this snapshot as startup evidence only. Re-probe the live registry/tool before a load-bearing availability or version claim.",
   ];

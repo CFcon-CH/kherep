@@ -38,7 +38,11 @@ export function receiptStore(root: string): ReceiptStore {
                     if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || stat.size > 4096)
                         throw new Error('receipt-unavailable');
                     const raw = JSON.parse(fs.readFileSync(file, 'utf8')) as Receipt;
-                    if (!raw || typeof raw !== 'object' || Object.keys(raw).sort().join() !== 'digest,ids,result' || typeof raw.result !== 'string')
+                    if (!raw || typeof raw !== 'object' || Object.keys(raw).sort((left, right) => {
+                      if (left < right) return -1;
+                      if (left > right) return 1;
+                      return 0;
+                    }).join() !== 'digest,ids,result' || typeof raw.result !== 'string')
                         throw new Error('receipt-unavailable');
                     if (!/^[a-f0-9]{64}$/.test(raw.digest) || !Array.isArray(raw.ids)
                         || !raw.ids.every(pageId) || raw.ids.length > 20

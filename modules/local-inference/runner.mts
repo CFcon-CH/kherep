@@ -96,6 +96,13 @@ export function parseArgs(argv: string[]): RunnerArgs {
   return out;
 }
 
+function removeTemporaryArtifact(file: string): void {
+  // Only an already-removed temporary file is harmless. Other cleanup errors
+  // intentionally take precedence over a failed write or rename.
+  try { fs.unlinkSync(file); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+}
+
 export async function run(argv: string[], runtime: Runtime = {}): Promise<RunResult> {
   const env = runtime.env || process.env;
   const profile = detectProfile(env, runtime.platform || process.platform);
@@ -192,7 +199,7 @@ export async function run(argv: string[], runtime: Runtime = {}): Promise<RunRes
     fs.renameSync(temp, target);
   } finally {
     if (tempCreated) {
-      try { fs.unlinkSync(temp); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+      removeTemporaryArtifact(temp);
     }
   }
   const digest = crypto.createHash("sha256").update(artifactBytes).digest("hex");
@@ -223,4 +230,4 @@ function isMainModule(): boolean {
   }
 }
 
-if (isMainModule()) main();
+if (isMainModule()) await main();

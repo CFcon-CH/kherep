@@ -23,6 +23,16 @@ function tag(error: unknown, stage: CatalogStage): CatalogStageError {
   return error instanceof CatalogStageError ? error : new CatalogStageError(stage, `Model catalog ${stage} failed`, { cause: error });
 }
 
+async function confirmCleanup(client: CatalogClient, failure: CatalogStageError | undefined): Promise<void> {
+  let confirmed = false;
+  try { confirmed = await client.shutdown(); } catch { confirmed = false; }
+  if (!confirmed) {
+    // The first failure wins; the unconfirmed cleanup travels on it.
+    if (failure) failure.cleanupConfirmed = false;
+    else throw new CatalogStageError("cleanup", "Model catalog process cleanup was not confirmed");
+  }
+}
+
 // This metadata-only protocol never opens a thread, starts a turn or requests inference.
 // The caller owns exactly one app-server and must obtain confirmed cleanup before using the result.
 export async function collectModelCatalog(client: CatalogClient, limits: CatalogLimits = {}): Promise<ModelCatalog> {
@@ -68,12 +78,6 @@ export async function collectModelCatalog(client: CatalogClient, limits: Catalog
     failure = tag(error, "catalog");
     throw failure;
   } finally {
-    let confirmed = false;
-    try { confirmed = await client.shutdown(); } catch { confirmed = false; }
-    if (!confirmed) {
-      // The first failure wins; the unconfirmed cleanup travels on it.
-      if (failure) failure.cleanupConfirmed = false;
-      else throw new CatalogStageError("cleanup", "Model catalog process cleanup was not confirmed");
-    }
+    await confirmCleanup(client, failure);
   }
 }

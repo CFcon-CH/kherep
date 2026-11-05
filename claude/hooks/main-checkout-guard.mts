@@ -28,7 +28,7 @@ function read(stream: NodeJS.ReadableStream): Promise<string> {
   });
 }
 
-(async () => {
+await (async () => {
   let payload: ToolPayload | null = null;
   try { payload = JSON.parse(await read(process.stdin)) as ToolPayload | null; } catch { process.exit(0); }
   if (!payload || !["Bash", "PowerShell"].includes(payload.tool_name as string)) process.exit(0);

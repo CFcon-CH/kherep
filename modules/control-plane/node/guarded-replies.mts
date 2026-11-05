@@ -14,6 +14,15 @@ const directory = (paths: NodePaths): string => path.join(paths.mcp, "guarded-re
 const fileOf = (paths: NodePaths, id: string): string => path.join(directory(paths), `${id}.json`);
 const unavailable = (): Error => new Error("guarded-reply-provenance-unavailable");
 
+function releaseCapacityLock(file: string, mine: fs.Stats): void {
+  // Cleanup failure intentionally takes precedence over a body failure: never
+  // displace another entry or turn unprovable ownership into permission.
+  const current = fs.lstatSync(file);
+  if (!current.isDirectory() || current.isSymbolicLink() || current.dev !== mine.dev
+    || current.ino !== mine.ino || current.uid !== mine.uid) throw unavailable();
+  fs.rmdirSync(file);
+}
+
 // This capacity transaction cannot tolerate the record lock's age takeover:
 // a paused live writer would retain an unfenced count/check. Reuse its exact
 // pathname so old file-lock writers and new directory owners cannot overlap.
@@ -31,10 +40,7 @@ function withCapacityLock<T>(dir: string, body: () => T): T {
     // Never displace or recursively remove another entry, even after failure.
     // A crash or unprovable ownership leaves a conservative fence for offline
     // operator maintenance with all writers stopped, not automatic cleanup.
-    const current = fs.lstatSync(file);
-    if (!current.isDirectory() || current.isSymbolicLink() || current.dev !== mine.dev
-      || current.ino !== mine.ino || current.uid !== mine.uid) throw unavailable();
-    fs.rmdirSync(file);
+    releaseCapacityLock(file, mine);
   }
 }
 

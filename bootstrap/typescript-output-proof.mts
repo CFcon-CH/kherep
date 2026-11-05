@@ -57,12 +57,20 @@ function outputTree(root: string): OutputTree {
 }
 
 function compare(actual: Map<string, Buffer>, expected: Map<string, Buffer>): void {
-  for (const relative of [...expected.keys()].sort()) {
+  for (const relative of [...expected.keys()].sort((left, right) => {
+    if (left < right) return -1;
+    if (left > right) return 1;
+    return 0;
+  })) {
     const bytes = actual.get(relative);
     if (!bytes) return fail(`missing generated output: ${relative}`);
     if (!bytes.equals(expected.get(relative)!)) return fail(`altered generated output: ${relative}`);
   }
-  for (const relative of [...actual.keys()].sort()) {
+  for (const relative of [...actual.keys()].sort((left, right) => {
+    if (left < right) return -1;
+    if (left > right) return 1;
+    return 0;
+  })) {
     if (!expected.has(relative)) return fail(`unexpected generated output: ${relative}`);
   }
 }

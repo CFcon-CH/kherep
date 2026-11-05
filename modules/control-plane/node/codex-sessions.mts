@@ -211,7 +211,11 @@ export function listCodexSessions(paths: NodePaths, now: number = Date.now(), ac
     throw error;
   }
   const sessions: SessionInfo[] = [];
-  for (const name of names.filter((n) => n.endsWith(".json")).sort()) {
+  for (const name of names.filter((n) => n.endsWith(".json")).sort((left, right) => {
+    if (left < right) return -1;
+    if (left > right) return 1;
+    return 0;
+  })) {
     const file = path.join(paths.codexSessions, name);
     let record: CodexSessionRecord | null = null;
     try {

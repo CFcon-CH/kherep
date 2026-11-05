@@ -117,7 +117,7 @@ function validateSchemaTree(root: unknown): void {
     }
     if (schema.pattern !== undefined) {
       if (typeof schema.pattern !== "string") throw new Error("pattern must be a string");
-      new RegExp(schema.pattern);
+      RegExp(schema.pattern); // Compile for syntax validation without executing the supplied pattern.
     }
     if (schema.enum !== undefined) {
       if (!Array.isArray(schema.enum) || schema.enum.length === 0) throw new Error("enum must be a non-empty array");

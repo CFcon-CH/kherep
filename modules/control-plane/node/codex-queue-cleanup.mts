@@ -46,8 +46,16 @@ function exactValue(left: unknown, right: unknown): boolean {
       && left.every((item, index) => exactValue(item, right[index]));
   }
   if (typeof left !== "object" || left === null || typeof right !== "object" || right === null) return false;
-  const a = Object.keys(left).sort();
-  const b = Object.keys(right).sort();
+  const a = Object.keys(left).sort((leftText, rightText) => {
+    if (leftText < rightText) return -1;
+    if (leftText > rightText) return 1;
+    return 0;
+  });
+  const b = Object.keys(right).sort((leftText, rightText) => {
+    if (leftText < rightText) return -1;
+    if (leftText > rightText) return 1;
+    return 0;
+  });
   return a.length === b.length && a.every((key, index) => key === b[index]
     && exactValue((left as Record<string, unknown>)[key], (right as Record<string, unknown>)[key]));
 }
