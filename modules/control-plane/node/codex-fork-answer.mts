@@ -57,7 +57,11 @@ export function validateForkAnswer(notifications: readonly AppServerMessage[], t
   if (messages.length !== 1 || summary.length !== 1 || summary[0] !== messages[0]) return failed("answer-invalid");
   let value: unknown;
   try { value = JSON.parse(messages[0]!); } catch { return failed("answer-invalid"); }
-  if (!object(value) || Array.isArray(value) || Object.keys(value).sort().join() !== "code,kind,text") return failed("answer-invalid");
+  if (!object(value) || Array.isArray(value) || Object.keys(value).sort((left, right) => {
+    if (left < right) return -1;
+    if (left > right) return 1;
+    return 0;
+  }).join() !== "code,kind,text") return failed("answer-invalid");
   const { kind, text, code } = value;
   if (typeof text !== "string" || typeof code !== "string") return failed("answer-invalid");
   if (kind === "answer") {

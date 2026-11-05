@@ -62,6 +62,16 @@ try {
   try { loadResponseFormat(duplicateFile, root); }
   catch (error) { duplicateRejected = /Invalid strict JSON schema/.test((error as Error).message); }
   check("duplicate enum values are rejected before inference", duplicateRejected);
+
+  for (const pattern of ["[", "(?", "\\", "a{2,1}"]) {
+    const schema = { type: "object", properties: { text: { type: "string", pattern } }, required: ["text"], additionalProperties: false };
+    const file = path.join(root, "invalid-pattern.json");
+    fs.writeFileSync(file, JSON.stringify(schema));
+    let rejected = false;
+    try { loadResponseFormat(file, root); }
+    catch (error) { rejected = (error as Error).message === "Invalid strict JSON schema"; }
+    check(`invalid regular expression is rejected before inference: ${JSON.stringify(pattern)}`, rejected);
+  }
 } finally {
   fs.rmSync(root, { recursive: true, force: true });
 }

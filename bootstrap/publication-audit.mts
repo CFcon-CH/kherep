@@ -72,7 +72,11 @@ export function auditRepository(repo: string, terms: string[]): AuditReport {
   const root = fs.realpathSync(repo);
   const files = [...new Set(execFileSync(requireTrustedExecutable('git'), [
     '-C', root, 'ls-files', '-z', '--cached', '--others', '--exclude-standard',
-  ], { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 }).split('\0').filter(Boolean))].sort();
+  ], { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 }).split('\0').filter(Boolean))].sort((left, right) => {
+    if (left < right) return -1;
+    if (left > right) return 1;
+    return 0;
+  });
   const indexed = indexBlobs(root);
   const report: AuditReport = { files: files.length, scanned: 0, indexed: 0, issues: [] };
   const needles = terms.map((term) => term.trim().toLowerCase()).filter(Boolean);

@@ -31,23 +31,39 @@ export function migrateRegistry(
   }
   const server = registry.mcpServers && registry.mcpServers[serverName];
   if (!isRecord(server)) throw new Error("MCP server is missing");
-  const keys = Object.keys(server).sort();
+  const keys = Object.keys(server).sort((left, right) => {
+    if (left < right) return -1;
+    if (left > right) return 1;
+    return 0;
+  });
   if (keys.some((key) => !["args", "command", "env"].includes(key))) {
     throw new Error("stdio server has unsupported fields");
   }
   if (server.command === "node" && Array.isArray(server.args) && server.args.length === 1
       && WRAPPER_FILE.test(String(server.args[0]))) {
-    const envKeys = isRecord(server.env) ? Object.keys(server.env).sort().join(",") : "";
-    const canonical = envKeys === [...WRAPPER_ENV].sort().join(",");
-    const legacy = envKeys === [...LEGACY_WRAPPER_ENV].sort().join(",");
+    const envKeys = isRecord(server.env) ? Object.keys(server.env).sort((left, right) => {
+      if (left < right) return -1;
+      if (left > right) return 1;
+      return 0;
+    }).join(",") : "";
+    const canonical = envKeys === [...WRAPPER_ENV].sort((left, right) => {
+      if (left < right) return -1;
+      if (left > right) return 1;
+      return 0;
+    }).join(",");
+    const legacy = envKeys === [...LEGACY_WRAPPER_ENV].sort((left, right) => {
+      if (left < right) return -1;
+      if (left > right) return 1;
+      return 0;
+    }).join(",");
     if (!isRecord(server.env) || (!canonical && !legacy)
         || server.env.NODE_TLS_REJECT_UNAUTHORIZED !== "0") {
       throw new Error("wrapper entry environment does not match the secret wrapper contract");
     }
     const output: Registry = JSON.parse(JSON.stringify(registry));
     output.mcpServers = { ...output.mcpServers, [serverName]: { ...server, args: [wrapperPath], env: {
-      KHEREP_MCP_AUTH_FILE: server.env[canonical ? "KHEREP_MCP_AUTH_FILE" : "KHEREP_MCP_AUTH_FILE"],
-      KHEREP_MCP_ENDPOINT: server.env[canonical ? "KHEREP_MCP_ENDPOINT" : "KHEREP_MCP_ENDPOINT"],
+      KHEREP_MCP_AUTH_FILE: server.env.KHEREP_MCP_AUTH_FILE,
+      KHEREP_MCP_ENDPOINT: server.env.KHEREP_MCP_ENDPOINT,
       NODE_TLS_REJECT_UNAUTHORIZED: "0",
     } } };
     return { registry: output };

@@ -19,7 +19,11 @@ async function labels(session: ConfluenceSession, id: string): Promise<string[]>
     path = nextPath(json,endpoint);
     if (path && names.size === before) throw new ReadFailure('stalled-label-pagination');
   }
-  return [...names].sort();
+  return [...names].sort((left, right) => {
+    if (left < right) return -1;
+    if (left > right) return 1;
+    return 0;
+  });
 }
 async function page(session: ConfluenceSession, id: string, spaceId: string): Promise<Omit<Snapshot,'labels'>> {
   const {json} = await session.request({method:'GET',path:v2(`/pages/${id}?body-format=storage`),scope:SCOPES.get});

@@ -102,7 +102,15 @@ export function inspect(dir: string, read: (file: string) => string, exists: (fi
       queue.push(path.basename(match[1]));
     }
   }
-  return { present: present.sort(), missing: missing.sort(), absent: missing.includes(ENTRY) };
+  return { present: present.sort((left, right) => {
+    if (left < right) return -1;
+    if (left > right) return 1;
+    return 0;
+  }), missing: missing.sort((left, right) => {
+    if (left < right) return -1;
+    if (left > right) return 1;
+    return 0;
+  }), absent: missing.includes(ENTRY) };
 }
 
 export function message(delivery: Delivery, announcedComplete: boolean): string {

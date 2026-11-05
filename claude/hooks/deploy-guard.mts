@@ -82,7 +82,7 @@ function explicitlyApprovesProductionDeploy(text: string): boolean {
   return deployThenProd.test(normalized) || prodThenApproval.test(normalized);
 }
 
-(async () => {
+await (async () => {
   const raw = await read(process.stdin);
   let payload: ToolPayload | null = null;
   try {

@@ -55,8 +55,16 @@ export function loadCanonicalPluginSources(context: CanonicalSourceContext): Map
   const plugins = parsed.plugins as CanonicalEntry[];
   const expected = context.capabilities.plugins
     .filter((entry) => ["agent", "project"].includes(entry.mode))
-    .map((entry) => entry.id).sort();
-  const actual = plugins.map((entry) => entry.id).sort();
+    .map((entry) => entry.id).sort((left, right) => {
+      if (left < right) return -1;
+      if (left > right) return 1;
+      return 0;
+    });
+  const actual = plugins.map((entry) => entry.id).sort((left, right) => {
+    if (left < right) return -1;
+    if (left > right) return 1;
+    return 0;
+  });
   if (new Set(actual).size !== actual.length || JSON.stringify(actual) !== JSON.stringify(expected)) {
     throw new Error("Canonical plugin source manifest does not match required projection plugins");
   }

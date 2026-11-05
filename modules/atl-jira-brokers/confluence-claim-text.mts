@@ -34,11 +34,20 @@ export function plainText(body: string, mark = ''): string { let depth = 0;
     : tag[1] === '/' ? (depth > 0 && --depth === 0 && mark ? `${tag}\n${mark}` : tag) : tag.endsWith('/>') ? tag : (depth++ === 0 && mark ? `${mark}\n${tag}` : tag))
     .replace(/<\/(?:p|div|h[1-6]|li)>/gi, '\n').replace(/<[^>]*>/g, ' ').replace(/&(?:nbsp|amp|lt|gt|quot);/g, ' ').replace(/[ \t]+/g, ' ').trim();
 }
-export const claimViews = (body: string): [string, string] => [plainText(body), ['\x01', ...plainText(body, '\x01').split('\n').map(l => /^[^\S\n]*\x01/.test(l) ? l.replace(/^[\s\x01]+/, '') : '\x01')].join('\n')];
+const CLAIM_BARRIER = '\x01';
+function markedClaimLine(line: string): string {
+  let start = 0;
+  while (start < line.length && /\s/.test(line[start])) start++;
+  if (line[start] !== CLAIM_BARRIER) return CLAIM_BARRIER;
+  while (start < line.length && (line[start] === CLAIM_BARRIER || /\s/.test(line[start]))) start++;
+  return line.slice(start);
+}
+export const claimViews = (body: string): [string, string] => [plainText(body), [CLAIM_BARRIER,
+  ...plainText(body, CLAIM_BARRIER).split('\n').map(markedClaimLine)].join('\n')];
 export function revisionLines(body: string): Revisions { // claimViews: the base text, then the lines after a real </pre> or region; every other line is a \x01 barrier (#672 review)
   const out: Revisions = { bound: [], unbound: [], malformed: [], paths: {} };
   for (const [view, text] of claimViews(body).entries()) for (const match of text.matchAll(/(?:^|\n)\s*Revision\s*:\s*([^\n]*)/gmi)) {
-    const line = match[1].trim().replace(/^\x01$/, ''), scoped = scopedRevision(line);
+    const trimmed = match[1].trim(), line = trimmed === CLAIM_BARRIER ? '' : trimmed, scoped = scopedRevision(line);
     const kind = scoped ? 'bound' : NO_BINDING_LINE.test(line) || scopedRevision(DIRTY_LINE.exec(line)?.[1] ?? '') ? 'unbound' : 'malformed';
     // A bound entry is its core, so equality consumers see '<name>@<sha>'; scoped lines of one core merge into one entry.
     const entry = scoped?.core ?? line;

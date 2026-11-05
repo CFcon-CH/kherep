@@ -49,7 +49,11 @@ export function ordinaryXhtml(storage: string): boolean {
     return open.length === 0;
 }
 const exactKeys = (value: unknown, keys: string[]): value is Record<string, unknown> => Boolean(value) && typeof value === 'object'
-    && !Array.isArray(value) && Object.keys(value as object).sort().join() === keys.join();
+    && !Array.isArray(value) && Object.keys(value as object).sort((left, right) => {
+      if (left < right) return -1;
+      if (left > right) return 1;
+      return 0;
+    }).join() === keys.join();
 function linksShape(links: unknown): links is FindingLinks {
     return exactKeys(links, ['approved', 'candidates']) && typeof links.candidates === 'string' && /^[a-f0-9]{64}$/.test(links.candidates)
         && Array.isArray(links.approved) && links.approved.length <= 10 && links.approved.every(item => exactKeys(item, ['id', 'reason'])

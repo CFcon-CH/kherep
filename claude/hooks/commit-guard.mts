@@ -40,7 +40,7 @@ function isWithin(candidate: string, root: string | undefined): boolean {
 function subjectOf(message: string): string {
   return message.split(/\r?\n/).map((line) => line.trim()).find(Boolean) || "";
 }
-(async () => {
+await (async () => {
   let payload: ToolPayload | null = null;
   try { payload = JSON.parse(await read(process.stdin)) as ToolPayload | null; } catch { process.exit(0); }
   if (!payload || !["Bash", "PowerShell"].includes(payload.tool_name as string)) process.exit(0);

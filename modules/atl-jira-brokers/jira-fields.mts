@@ -181,7 +181,11 @@ export function readbackColumns(plan: FieldPlan): string {
 // Order is deliberately not compared. Jira returns labels sorted and is free to
 // reorder components, so only the set is a fact about the write; a list compare
 // would fail runs that in truth succeeded.
-const asSet = (values: unknown[]): string[] => [...new Set(values.map(String))].sort();
+const asSet = (values: unknown[]): string[] => [...new Set(values.map(String))].sort((left, right) => {
+  if (left < right) return -1;
+  if (left > right) return 1;
+  return 0;
+});
 
 function difference(kind: string, expected: string[], actual: unknown): string | null {
   if (!Array.isArray(actual)) return `Readback liefert keine ${kind}.`;
