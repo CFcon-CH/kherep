@@ -1,3 +1,4 @@
+import { isMessageDiagnostic, type MessageDiagnostic } from "./protocol-diagnostics.mts";
 // Kherep Control Plane messaging bodies, Phase 2 step 1 (GitHub issue #31).
 // Session-to-session messages between nodes, routed and queued by the Worker.
 // Plain ECMAScript like protocol.mts, so the Worker and the node load it alike.
@@ -97,7 +98,7 @@ export interface MessageDeliverBody {
   proxyOf?: string; loop?: LoopAdmissionV1; binding?: DeliveryBinding;
 }
 // node -> Worker (target reports progress) and Worker -> sending node.
-export interface MessageStatusBody { messageId: string; state: MessageState; reason?: string; progress?: MessageProgress }
+export interface MessageStatusBody { messageId: string; state: MessageState; reason?: string; progress?: MessageProgress; diagnostic?: MessageDiagnostic }
 // Worker -> reporting node, carried as an authenticated event only after the
 // Registry transaction completed. requestedState identifies the report being
 // acknowledged; storedState is the canonical state after that transaction.
@@ -189,8 +190,9 @@ export function isMessageProgress(value: unknown): value is MessageProgress {
 }
 
 export function isMessageStatusBody(body: unknown): body is MessageStatusBody {
-  return isObject(body) && only(body, ["messageId", "state", "reason", "progress"])
+  return isObject(body) && only(body, ["messageId", "state", "reason", "progress", "diagnostic"])
     && isMessageId(body.messageId) && isMessageState(body.state)
+    && (body.diagnostic === undefined || isMessageDiagnostic(body.diagnostic))
     && (body.reason === undefined || isText(body.reason, MAX_STATUS_REASON))
     && (body.progress === undefined || (body.reason === undefined && body.state === "accepted" && isMessageProgress(body.progress)));
 }

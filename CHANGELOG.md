@@ -21,6 +21,11 @@ increments the minor version; every other release increments the patch version.
 
 ### Changed
 
+- Control Plane: negotiate optional, strictly validated fixed-code delivery diagnostics
+  with `messaging.diagnostics.v1`; older peers retain their existing status shape
+  (#706, step 4). Worker changes require a separately approved deploy; node
+  changes require an approved install.
+
 - SonarQube Cloud (#772) consumes validated same-run LCOV from the existing
   Ubuntu Node suites and Istanbul Worker tests through a reusable workflow.
   Missing or mismatched reports fail visibly. Coverage stays honest, the 80%

@@ -1474,3 +1474,17 @@ validation. Inventory traversal checks namespace, duplicates and parent identity
 selected file identities decide cache reuse. Faults clear index entries and
 selected leases. Initial and recovery checks retain scratch write/read/rename
 validation, and periodic full cache revalidation remains active.
+
+## Delivery diagnostics (#706, step 4)
+
+`protocol-diagnostics.mts` owns the closed blocker codes, identity dimensions,
+stages, strict optional `diagnostic` validator and shared plain-word renderer.
+`messaging.diagnostics.v1` advertises protocol support only. A target strips the
+field until its current authenticated Worker advertises support; the Worker
+strips it for each sender, including immediate frames, routed updates, replay
+and errors. Reauthentication clears negotiation, so capability loss disables
+fields. Existing progress codes and receipt fields remain unchanged.
+
+Diagnostics record observations, never admission authority. Worker source needs
+a separately approved deploy, and node source an approved install, before live
+behavior can change. Neither action is part of this source change.

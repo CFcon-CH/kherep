@@ -1,3 +1,4 @@
+import { compatibleDiagnostic } from "../../protocol-diagnostics.mts";
 import { egressBinding } from "./message-egress-binding.mts";
 import { changedIdentityDimension, sameLoopIdentity } from "./message-semantic-identity.mts";
 import { duplicateSendError, recoveryOwnerError } from "./message-dedup.mts";
@@ -545,7 +546,9 @@ export class MessageStore {
   // Issue #396: a sending node without messaging.progress.v2 gets the older
   // progress code it validates. The row and the audit keep the reported code.
   private statusFor(nodeId: string, body: MessageStatusBody): MessageStatusBody {
-    if (!body.progress || nodeId === OPERATOR_NODE_ID) return body;
+    if (nodeId === OPERATOR_NODE_ID) return body;
+    body = compatibleDiagnostic(body, this.capabilities(nodeId));
+    if (!body.progress) return body;
     return { ...body, progress: legacyProgress(body.progress, this.capabilities(nodeId)) };
   }
 

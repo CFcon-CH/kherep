@@ -11,6 +11,7 @@ export interface Attachment {
   registrationAccepted?: boolean;
   loopCapability?: boolean;
   selectedBindingCapability?: boolean;
+  diagnosticCapabilities?: string[];
   nonce?: string;
   nonceIssuedAt?: number;
   connectedAt: number;
