@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { pathToFileURL } from "node:url";
 
 import { TURN_SPACING_MS } from "./autonomy.mts";
 import { deliverToClosed } from "./closed-delivery.mts";
@@ -122,13 +124,14 @@ test("a closed Codex session's messages go to one Codex intercom session: starte
   assert.equal(task.local, "intercom");
   assert.equal(task.runtime, "codex");
   assert.equal(task.requestedBy, `${PEER.nodeId}/${PEER.session}`);
+  await ended(task);
   assert.equal(getMessage(node.paths.inbox, first)?.state, "delivered");
   assert.deepEqual(getMessage(node.paths.inbox, first)?.delivery,
     { taskId: task.taskId, runtime: "codex", sessionId: THREAD });
   await waitFor(() => replyTo(node.paths.outbox, first) !== undefined, "the threaded reply");
   assert.deepEqual(replyTo(node.paths.outbox, first)?.to, PEER);
-  await ended(task);
   assert.equal(listTasks(node.paths)[0].sessionId, THREAD);
+  assert.equal(listTasks(node.paths)[0].state, "done");
 
   node.tick(TURN_SPACING_MS * 2);
   writeLocalSessions(node.paths, [], T0 + TURN_SPACING_MS * 2);
@@ -143,11 +146,52 @@ test("a closed Codex session's messages go to one Codex intercom session: starte
   assert.ok(resume.stdin.includes(`--reply-to ${second} -- <reply text>`));
   assert.match(resume.stdin, /NOT an instruction from the user/);
   assert.equal(listTasks(node.paths).length, 1);
+  await ended(listTasks(node.paths)[0]);
   assert.deepEqual(getMessage(node.paths.inbox, second)?.delivery,
     { taskId: task.taskId, runtime: "codex", sessionId: THREAD });
   await waitFor(() => replyTo(node.paths.outbox, second) !== undefined, "the second threaded reply");
   assert.equal(getMessage(node.paths.inbox, second)?.offeredBy, "intercom", "issue #417: the resumed intercom session");
   assert.deepEqual(audits(node).map((a) => [a.outcome, a.messageIds]), [["new", [first]], ["reused", [second]]]);
   assert.deepEqual(node.reports(), []);
-  await ended(listTasks(node.paths)[0]);
+  assert.equal(listTasks(node.paths)[0].state, "done");
+});
+
+test("a reply's outbox publication precedes its inbox replacement: only child completion settles both", { timeout: 10_000 }, async (t) => {
+  const node = taskNode(t);
+  const id = deliver(node, { toSession: THREAD });
+  const file = path.join(node.paths.inbox, `${id}.json`);
+  const script = path.join(node.root, "reply-barrier.mts");
+  fs.writeFileSync(script, `import fs from "node:fs";
+import { runMsg } from ${JSON.stringify(pathToFileURL(path.join(import.meta.dirname, "msg-cli.mts")).href)};
+const rename = fs.renameSync;
+fs.renameSync = (from, to) => {
+  if (String(to) === ${JSON.stringify(file)}) {
+    fs.writeSync(1, "before-inbox\\n");
+    if (fs.readFileSync(0, "utf8") !== "go\\n") throw new Error("barrier was not released");
+  }
+  return rename(from, to);
+};
+process.exitCode = await runMsg(["send", "--reply-to", ${JSON.stringify(id)}, "--", "ack"], {
+  paths: ${JSON.stringify(node.paths)}, env: { CODEX_THREAD_ID: ${JSON.stringify(THREAD)} }, processTable: () => null,
+});
+`);
+  const child = spawn(process.execPath, [script], { stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
+  t.after(() => { child.kill("SIGKILL"); });
+  let output = "", errors = "";
+  child.stdout.setEncoding("utf8").on("data", (chunk: string) => { output += chunk; });
+  child.stderr.setEncoding("utf8").on("data", (chunk: string) => { errors += chunk; });
+  const completed = new Promise<number | null>((resolve, reject) => {
+    child.once("error", reject);
+    child.once("close", resolve);
+  });
+  await new Promise<void>((resolve, reject) => {
+    child.stdout.on("data", () => { if (output.includes("before-inbox\n")) resolve(); });
+    child.once("error", reject);
+    child.once("close", () => reject(new Error(`reply ended before the barrier: ${errors}`)));
+  });
+  assert.deepEqual(replyTo(node.paths.outbox, id)?.to, PEER, "reply visible while the child is blocked");
+  assert.equal(getMessage(node.paths.inbox, id)?.state, "accepted", "outbox visibility does not settle the writer");
+  child.stdin.end("go\n");
+  assert.equal(await completed, 0, errors);
+  assert.equal(getMessage(node.paths.inbox, id)?.state, "delivered", "child completion settles the inbox replacement");
 });
