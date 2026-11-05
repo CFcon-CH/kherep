@@ -23,7 +23,7 @@ function run(payload: Payload): { status: number | null; stdout: string } {
   return { status: result.status, stdout: result.stdout };
 }
 
-function expect(name: string, payload: Payload, expected: Expected): void {
+function expectDecision(name: string, payload: Payload, expected: Expected): void {
   const actual = run(payload);
   let output: { hookSpecificOutput?: Record<string, unknown>; systemMessage?: unknown } = {};
   try { output = JSON.parse(actual.stdout || "{}"); } catch {}
@@ -47,44 +47,44 @@ const agent = (subagent_type: string, model: string, prompt: string, description
 const deny = (needle: string) => ({ deny: needle });
 
 // A code-bound role: both markers, well formed.
-expect("builder without markers denied", agent("kherep-builder", "opus", "Build it."), deny("WORKER_BRIEF_FORMAT"));
-expect("builder deny names the missing revision", agent("kherep-builder", "opus", "decided: none"), deny("the brief names no revision:"));
-expect("builder deny names the missing decided", agent("kherep-builder", "opus", `revision: kherep@${SHA}`), deny("the brief names no decided:"));
-expect("dc build runner is code-bound", agent("dc-plugin-build-runner", "sonnet", "Build the JAR."), deny("the brief names no revision:"));
-expect("malformed token denied by position", agent("kherep-builder", "opus", "revision: kherep@HEAD\ndecided: none"), deny("revision 1 has a malformed token"));
-expect("revision without a token denied", agent("kherep-builder", "opus", "revision:\ndecided: none"), deny("revision 1 names no repository"));
-expect("empty decided denied", agent("kherep-builder", "opus", `revision: kherep@${SHA}\ndecided:`), deny("decided 1 is empty"));
-expect("deny states the format", agent("kherep-builder", "opus", "Build it."), deny("or decided: none."));
-expect("deny never quotes the brief", agent("kherep-builder", "opus", "revision: secret-name@nope\ndecided: none"), deny("malformed token. A code-bound"));
-expect("builder with a full brief is silent", agent("kherep-builder", "fable", `Objective: x\n- revision: kherep@${SHA}-dirty\n- decided: keep the API`), "silent");
-expect("builder with a review range is silent", agent("kherep-builder", "opus", `revision: kherep@${SHA}..${HEAD}\ndecided:\n- a\n- b`), "silent");
-expect("the description never supplies a marker", agent("kherep-builder", "opus", "Build it.", WORKER), deny("WORKER_BRIEF_FORMAT"));
-expect("an unknown model is checked before the brief", agent("kherep-builder", "operator-model", "Build it."), deny("DISPATCH_MODEL_UNKNOWN"));
-expect("no default-model pin: builder on haiku reaches the brief check", agent("kherep-builder", "haiku", "Build it."), deny("WORKER_BRIEF_FORMAT"));
-expect("a code-bound review brief gets no notice", agent("kherep-builder", "opus", `${WORKER}Review your own diff.`), "silent");
+expectDecision("builder without markers denied", agent("kherep-builder", "opus", "Build it."), deny("WORKER_BRIEF_FORMAT"));
+expectDecision("builder deny names the missing revision", agent("kherep-builder", "opus", "decided: none"), deny("the brief names no revision:"));
+expectDecision("builder deny names the missing decided", agent("kherep-builder", "opus", `revision: kherep@${SHA}`), deny("the brief names no decided:"));
+expectDecision("dc build runner is code-bound", agent("dc-plugin-build-runner", "sonnet", "Build the JAR."), deny("the brief names no revision:"));
+expectDecision("malformed token denied by position", agent("kherep-builder", "opus", "revision: kherep@HEAD\ndecided: none"), deny("revision 1 has a malformed token"));
+expectDecision("revision without a token denied", agent("kherep-builder", "opus", "revision:\ndecided: none"), deny("revision 1 names no repository"));
+expectDecision("empty decided denied", agent("kherep-builder", "opus", `revision: kherep@${SHA}\ndecided:`), deny("decided 1 is empty"));
+expectDecision("deny states the format", agent("kherep-builder", "opus", "Build it."), deny("or decided: none."));
+expectDecision("deny never quotes the brief", agent("kherep-builder", "opus", "revision: secret-name@nope\ndecided: none"), deny("malformed token. A code-bound"));
+expectDecision("builder with a full brief is silent", agent("kherep-builder", "fable", `Objective: x\n- revision: kherep@${SHA}-dirty\n- decided: keep the API`), "silent");
+expectDecision("builder with a review range is silent", agent("kherep-builder", "opus", `revision: kherep@${SHA}..${HEAD}\ndecided:\n- a\n- b`), "silent");
+expectDecision("the description never supplies a marker", agent("kherep-builder", "opus", "Build it.", WORKER), deny("WORKER_BRIEF_FORMAT"));
+expectDecision("an unknown model is checked before the brief", agent("kherep-builder", "operator-model", "Build it."), deny("DISPATCH_MODEL_UNKNOWN"));
+expectDecision("no default-model pin: builder on haiku reaches the brief check", agent("kherep-builder", "haiku", "Build it."), deny("WORKER_BRIEF_FORMAT"));
+expectDecision("a code-bound review brief gets no notice", agent("kherep-builder", "opus", `${WORKER}Review your own diff.`), "silent");
 
 // Any other dispatch: checked only when it declares revision:.
-expect("other agent without revision unchecked", agent("general-purpose", "sonnet", "decided:"), "silent");
-expect("other agent declaring a malformed revision denied", agent("general-purpose", "sonnet", "revision: kherep"), deny("WORKER_BRIEF_FORMAT"));
-expect("other agent declaring revision with an empty decided denied", agent("general-purpose", "sonnet", `revision: kherep@${SHA}\ndecided:`), deny("decided 1 is empty"));
-expect("other agent with a review range is silent", agent("general-purpose", "sonnet", `Review it.\nrevision: kherep@${SHA}..${HEAD}-dirty`), "silent");
+expectDecision("other agent without revision unchecked", agent("general-purpose", "sonnet", "decided:"), "silent");
+expectDecision("other agent declaring a malformed revision denied", agent("general-purpose", "sonnet", "revision: kherep"), deny("WORKER_BRIEF_FORMAT"));
+expectDecision("other agent declaring revision with an empty decided denied", agent("general-purpose", "sonnet", `revision: kherep@${SHA}\ndecided:`), deny("decided 1 is empty"));
+expectDecision("other agent with a review range is silent", agent("general-purpose", "sonnet", `Review it.\nrevision: kherep@${SHA}..${HEAD}-dirty`), "silent");
 
 // The review notice: never a deny, once per dispatch.
-expect("review brief without revision gets the notice", agent("general-purpose", "sonnet", "Review the guard diff. Then review it again."), "notice");
-expect("reviewer word gets the notice", agent("general-purpose", "sonnet", "Act as a reviewer."), "notice");
-expect("a brief without review is silent", agent("general-purpose", "sonnet", "Look it up."), "silent");
-expect("the description never triggers the notice", agent("general-purpose", "sonnet", "Look it up.", "Review"), "silent");
+expectDecision("review brief without revision gets the notice", agent("general-purpose", "sonnet", "Review the guard diff. Then review it again."), "notice");
+expectDecision("reviewer word gets the notice", agent("general-purpose", "sonnet", "Act as a reviewer."), "notice");
+expectDecision("a brief without review is silent", agent("general-purpose", "sonnet", "Look it up."), "silent");
+expectDecision("the description never triggers the notice", agent("general-purpose", "sonnet", "Look it up.", "Review"), "silent");
 
 // Retired plugin names cannot bypass either model or worker-brief checks.
-expect("retired rescue with malformed brief is denied", { tool_name: "Agent", tool_input: { subagent_type: "codex:codex-rescue", prompt: "Review it.\nrevision: x@y" } }, deny("CODEX_AGENT_DIRECT_FORBIDDEN"));
-expect("retired rescue with valid model effort and brief is denied", {
+expectDecision("retired rescue with malformed brief is denied", { tool_name: "Agent", tool_input: { subagent_type: "codex:codex-rescue", prompt: "Review it.\nrevision: x@y" } }, deny("CODEX_AGENT_DIRECT_FORBIDDEN"));
+expectDecision("retired rescue with valid model effort and brief is denied", {
   ...agent("codex:codex-rescue", "opus", WORKER),
   tool_input: { subagent_type: "codex:codex-rescue", model: "opus", effort: "high", prompt: WORKER },
 }, deny("codex exec"));
 const obs = (prompt: string) => agent("claude-obs", "haiku", prompt, "Record observations");
-expect("observation brief is not a worker brief", obs(`- measured: code kherep@${SHA} -- x.test.mts \`node x.test.mts\` -> 12 pass\nrevision: kherep`), "silent");
-expect("observation brief mentioning review gets no worker notice", obs("- relayed: the review session"), "silent");
-expect("observation brief keeps its own deny", obs("Review it.\nrevision: kherep"), deny("OBS_BRIEF_FORMAT"));
+expectDecision("observation brief is not a worker brief", obs(`- measured: code kherep@${SHA} -- x.test.mts \`node x.test.mts\` -> 12 pass\nrevision: kherep`), "silent");
+expectDecision("observation brief mentioning review gets no worker notice", obs("- relayed: the review session"), "silent");
+expectDecision("observation brief keeps its own deny", obs("Review it.\nrevision: kherep"), deny("OBS_BRIEF_FORMAT"));
 
 console.log(`\n=== ${pass} pass, ${fail} fail ===`);
 process.exit(fail === 0 ? 0 : 1);
