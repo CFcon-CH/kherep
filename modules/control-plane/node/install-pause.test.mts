@@ -110,3 +110,32 @@ test("a legacy marker with only the pid takes its start from the file time", (t)
   const record = noticeInterruptedProbe({ dir }, () => {});
   assert.deepEqual([record?.pid, record?.at], [dead, "2026-10-12T09:30:00.000Z"]);
 });
+
+test("interrupted probe markers parse bounded pids and emit reconstructed canonical ISO times", (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "kherep-install-pause-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const paths = { dir }, fallback = "2026-10-12T09:30:00.000Z", started = "2026-10-15T08:00:00.000Z";
+  const rows: [string, number | null, string][] = [
+    [`123 ${started}\n`, 123, started],
+    [`0 ${started}`, null, started],
+    [`0123 ${started}`, null, started],
+    [`2147483648 ${started}`, null, started],
+    [`999999999999999999999999 ${started}`, null, started],
+    ["123 2026-10-15", 123, fallback],
+    ["123 2026-02-30T08:00:00.000Z", 123, fallback],
+    ["123 2026-10-15T08:00:00.000Z\u001b[31m", 123, fallback],
+    [`123 ${started} extra`, null, fallback],
+  ];
+  for (const [content, pid, at] of rows) {
+    fs.writeFileSync(probeMarkerFile(paths), content);
+    const mtime = new Date(fallback);
+    fs.utimesSync(probeMarkerFile(paths), mtime, mtime);
+    const seen: unknown[] = [], logs: string[] = [];
+    const record = noticeInterruptedProbe(paths, (line) => logs.push(line), (value) => { seen.push(value); return false; });
+    assert.deepEqual([record?.pid, record?.at], [pid, at]);
+    assert.deepEqual(seen, pid === null ? [] : [pid]);
+    assert.ok(logs[0]?.includes(`daemon pid ${pid ?? "unknown"}, started ${at})`));
+    assert.equal(logs[0]?.includes("\u001b"), false);
+    assert.equal(fs.existsSync(probeMarkerFile(paths)), false);
+  }
+});

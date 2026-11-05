@@ -72,13 +72,18 @@ export function noticeInterruptedProbe(paths: Pick<NodePaths, "dir">, log: (line
   } catch {
     return null;
   }
-  const [pidText = "", started = ""] = content.trim().split(/\s+/);
-  const pid = /^\d+$/.test(pidText) ? Number(pidText) : null;
+  const tokens = content.trim().split(/\s+/);
+  const [pidText = "", started = ""] = tokens;
+  const pidValue = tokens.length <= 2 && /^[1-9]\d{0,9}$/.test(pidText) ? Number(pidText) : NaN;
+  const pid = Number.isSafeInteger(pidValue) && pidValue <= 2_147_483_647 ? pidValue : null;
   if (pid !== null && alive(pid) && probeInFlight(paths, now)) {
     log(`kherep-node: another daemon's claude probe (daemon pid ${pid}) is in flight`);
     return null;
   }
-  const at = Number.isNaN(Date.parse(started)) ? new Date(mtime).toISOString() : started;
+  const timestamp = tokens.length === 2 && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(started)
+    ? Date.parse(started) : NaN;
+  const canonical = Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : null;
+  const at = canonical !== null && canonical === started ? canonical : new Date(mtime).toISOString();
   log(`kherep-node: the previous daemon stop interrupted a claude probe (daemon pid ${pid ?? "unknown"}, started ${at}); `
     + "if the next probe reports sign-in required, that stop likely interrupted a login renewal");
   fs.rmSync(marker, { force: true });
