@@ -47,6 +47,7 @@ export interface RoundContext {
 }
 
 export async function exchangeRound(ctx: RoundContext): Promise<void> {
+  if (!ctx.live()) return;
   const { client, paths, runner, log } = ctx;
   const current = loadPolicy(ctx.policyFile);
   let applied = current;
@@ -55,7 +56,9 @@ export async function exchangeRound(ctx: RoundContext): Promise<void> {
   const counts: ExchangeCounts = { status: 0, outbox: 0 };
   const exchange = (records?: InboxRecord[]): void => pollExchange(client, paths, ctx.inflight, ctx.send, Date.now(), Math.random,
     proxySend(), { unreported: (now) => ctx.inbox.unreported(now, records), counts });
-  let published = ctx.publishRegistration(await client.refreshPolicy(applied));
+  const refreshed = await client.refreshPolicy(applied);
+  if (!ctx.live()) return;
+  let published = ctx.publishRegistration(refreshed);
   const records = ctx.inbox.records();
   const round: RunnerDeps = { ...runner, inbox: () => records };
   observeClaudeDeliveryProgress({ ...round, policy: current });
@@ -67,10 +70,13 @@ export async function exchangeRound(ctx: RoundContext): Promise<void> {
   pollTaskControl(client, paths, ctx.taskControlInflight(), ctx.send, Date.now(), enabled);
   await pollMcpIntents(client, paths, ctx.mcpInflight(), ctx.send, async () => {
     applied = loadPolicy(ctx.policyFile);
-    const sent = ctx.publishRegistration(await client.refreshPolicy(applied));
+    const refreshed = await client.refreshPolicy(applied);
+    if (!ctx.live()) return false;
+    const sent = ctx.publishRegistration(refreshed);
     published = published && sent;
     return sent;
   });
+  if (!ctx.live()) return;
   // Peer messages for ended Codex task sessions resume them (issue #63).
   // Keep runtime mutation serialized while the existing queue lane and
   // admitted Codex peer transport can progress (issue #369).
@@ -84,6 +90,7 @@ export async function exchangeRound(ctx: RoundContext): Promise<void> {
   ctx.window(window);
   try { await pollCodexInbound({ ...runner, policy: applied }, log); }
   finally { await window?.drain(); ctx.window(null); }
+  if (!ctx.live()) return;
   // ... and wake idle interactive Codex sessions with a pointer (issue #66).
   // Not awaited: queue runs have their own lane and never block this chain.
   // Issue #444: this round's policy, as the intake window passes it; the fork gate and queue authorization re-read the file.

@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { makeEnvelope, parseEnvelope, type SessionInfo } from "../protocol.mts";
+import { makeEnvelope, parseEnvelope, PING_FRAME, type SessionInfo } from "../protocol.mts";
 import { MESSAGING_ACK_CAPABILITY, MESSAGING_PROGRESS_V2_CAPABILITY } from "../protocol-messages.mts";
 import { NodeClient } from "./client.mts";
 import { nodePaths, type NodeConfig } from "./config.mts";
@@ -57,7 +57,7 @@ async function fixture(t: test.TestContext, options: { initialGate?: Promise<voi
       static OPEN = 1; static CONNECTING = 0;
       readyState = 1;
       addEventListener(name: string, callback: (event: { data?: string; code?: number }) => void) { listeners.set(name, callback); }
-      send(frame: string) { frames.push(frame); }
+      send(frame: string) { if (frame !== PING_FRAME) frames.push(frame); }
       close(code = 1000) { this.readyState = 3; listeners.get("close")?.({ code }); }
     } });
   globalThis.setInterval = ((callback: () => void, ms: number) => {
