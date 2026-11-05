@@ -185,3 +185,63 @@ it("replay phases authorize disjoint legacy and binding-required rows at final p
   expect(await registry().prepareMessageDelivery(id)).not.toBeNull();
   expect((await registry().messageStatusPageFor(f.nodeId, 0, 32)).effects.statuses.some(s => s.body.messageId === id)).toBe(true);
 });
+
+for (const reply of [false, true]) for (const boundary of ["pair signer", "text signer", "selected response", "binding signer"] as const) {
+  it(`semantic refresh permits ${reply ? "reply" : "root"} during ${boundary}`, async () => {
+    const f = await attestedPair(); let parent: string | undefined;
+    if (reply) { const root = await f.send(ID_B, ID_A); if (!root.ok) throw new Error(root.error); parent = root.status.messageId; await f.take(parent); }
+    await runInDurableObject(registry(), async (_i, state) => {
+      const sql = state.storage.sql, store = new MessageStore(sql, () => {}, () => BRAKE_CAPS);
+      const refresh = () => {
+        sql.exec("UPDATE nodes SET identity_generation=identity_generation+1 WHERE id=?", f.nodeId);
+        for (const row of attestedRows(Date.now())) sql.exec("UPDATE sessions SET canonical_identity=? WHERE node_id=? AND session_id=?", JSON.stringify(row.canonicalIdentity), f.nodeId, row.sessionId);
+      };
+      const message = { messageId: crypto.randomUUID(), from: { nodeId: f.nodeId, session: ID_A }, to: { nodeId: f.nodeId, session: ID_B },
+        text: `Synthetic semantic await ${crypto.randomUUID()}`, inReplyTo: parent };
+      if (parent) {
+        const key = await digest("kherep-loop-pair-v1", JSON.stringify(["kherep-loop-pair-v1", f.nodeId, ID_A, f.nodeId, ID_B]));
+        sql.exec("UPDATE message_loop_pairs SET pair_key=? WHERE from_node=?", key, f.nodeId);
+        sql.exec("UPDATE message_tombstones SET loop_pair=? WHERE id=?", key, parent);
+      }
+      let refreshed = false;
+      const prepared = await store.prepare(message, async (domain, value) => {
+        if (!refreshed && domain === (boundary === "pair signer" ? "kherep-loop-pair-v1" : boundary === "text signer" ? "kherep-loop-text-v1" : "none")) {
+          await Promise.resolve(); refresh(); refreshed = true;
+        }
+        return digest(domain, value);
+      });
+      const binding = await prepareMessageBinding(sql, message, async (domain, value) => {
+        if (boundary === "binding signer") { await Promise.resolve(); refresh(); refreshed = true; }
+        return digest(domain, value);
+      }, async (nodeId, request) => {
+        const answer = await session(nodeId).resolveMessageReferences(request);
+        if (boundary === "selected response") { refresh(); refreshed = true; }
+        return answer;
+      });
+      expect(refreshed).toBe(true);
+      const result = state.storage.transactionSync(() => store.send(message, "synthetic", Date.now(), { ...prepared, binding }));
+      expect(result.ok && {state: result.status.state, reason: result.status.reason}).toEqual({state: "queued", reason: undefined});
+    });
+  });
+}
+
+it("fresh observation refresh during egress preserves the stable owner binding", async () => {
+  const f = await attestedPair(), sent = await f.send(); if (!sent.ok) throw new Error(sent.error);
+  const first = await registry().prepareMessageDelivery(sent.status.messageId);
+  f.beforeResponse(async () => { await registry().replaceSessions(f.nodeId, attestedRows(Date.now()), { version: 1, generation: 2 }); });
+  const retry = await registry().prepareMessageDelivery(sent.status.messageId);
+  expect(retry).not.toBeNull();
+  expect(retry?.binding?.from).toEqual(first?.binding?.from);
+  expect(retry?.binding?.to).toEqual(first?.binding?.to);
+});
+
+for (const state of ["delivered", "refused", "expired"] as const) it(`parent transition to ${state} revalidates current lineage eligibility`, async () => {
+  const f = await attestedPair(), parent = await f.send(ID_B, ID_A); if (!parent.ok) throw new Error(parent.error);
+  await registry().reportMessageStatus(f.nodeId, { messageId: parent.status.messageId, state: "accepted" });
+  f.beforeResponse(async () => {
+    if (state === "expired") await query(sql => sql.exec("UPDATE messages SET state='expired' WHERE id=?", parent.status.messageId));
+    else await registry().reportMessageStatus(f.nodeId, { messageId: parent.status.messageId, state });
+  });
+  const child = await f.send(ID_A, ID_B, parent.status.messageId);
+  expect(child.ok && child.status.state).toBe(state === "delivered" ? "queued" : "refused");
+});

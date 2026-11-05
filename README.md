@@ -96,7 +96,7 @@ flowchart LR
   runtimes --> bridge --> mcp
   nodeDaemon -->|five-minute coalesced pass| liveness
   liveness -->|truthful listing and deny-only admission| nodeDaemon
-  nodeDaemon -->|coherent Node-attested canonical identity, separate from availability| worker
+  nodeDaemon -->|fresh proof and semantic owner identity, separate from availability| worker
   nodeDaemon -->|selected references after bound-v1 storage initialization| selectedBinding["Deny-only held-pair resolution"]
   nodeDaemon --> boundInbox["Exact bound inbox/bound-v1/UUID.json"]
   nodeDaemon --> legacyInbox["Legacy inbox/UUID.json"]

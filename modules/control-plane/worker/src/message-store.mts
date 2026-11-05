@@ -1,6 +1,7 @@
 import { egressBinding } from "./message-egress-binding.mts";
+import { changedIdentityDimension, sameLoopIdentity } from "./message-semantic-identity.mts";
 import { duplicateSendError, recoveryOwnerError } from "./message-dedup.mts";
-import { RESOLUTION_REQUIRED, type MessageBinding, type DeliveryBinding } from "../../protocol-message-binding.mts";
+import { RESOLUTION_REQUIRED, type MessageBinding } from "../../protocol-message-binding.mts";
 import { bindingContext, selectedAgreesWithProof, type PreparedBinding } from "./message-binding.mts";
 import { BINDING_COLUMNS, migrateMessageBinding, storedMessageBinding } from "./message-binding-store.mts";
 import { LOOP_LINEAGE, LOOP_STALE, LOOP_COMPATIBILITY, MESSAGING_LOOP_BRAKE_CAPABILITY, type LoopAdmissionV1 } from "../../protocol-loop-brake.mts";
@@ -190,7 +191,7 @@ export class MessageStore {
   }
 
   contextMatches(message: NewMessage, prepared: PreparedLoop): boolean {
-    return !prepared.error && (!prepared.binding || prepared.binding.stamp === bindingContext(this.sql, message).stamp) && JSON.stringify(prepared.snapshot) === JSON.stringify(this.identity.snapshot(message.from, message.to, message.inReplyTo ?? message.proxyOf));
+    return !prepared.error && (!prepared.binding || prepared.binding.stamp === bindingContext(this.sql, message).stamp) && sameLoopIdentity(prepared.snapshot, this.identity.snapshot(message.from, message.to, message.inReplyTo ?? message.proxyOf));
   }
 
   async prepare(message: NewMessage, sign: LoopSigner): Promise<PreparedLoop> {
@@ -262,7 +263,7 @@ export class MessageStore {
     const bindingRequired = this.loops.hasHeldNodeScope(message.from.nodeId, target)
       || (mode === "guarded" && current.identityBinding !== null);
     if (reason === null) {
-      if (prepared && JSON.stringify(prepared.snapshot) !== JSON.stringify(current)) reason = LOOP_STALE;
+      if (prepared && !sameLoopIdentity(prepared.snapshot, current)) reason = LOOP_STALE;
       else if (prepared?.error || prepared?.binding?.error) reason = prepared.error ?? prepared.binding!.error!;
       else if (prepared?.binding && prepared.binding.stamp !== bindingContext(this.sql, message).stamp) reason = LOOP_STALE;
       else if (denyKey && this.loops.held(denyKey)) reason = this.loops.held(denyKey);
@@ -314,7 +315,7 @@ export class MessageStore {
     if (binding) this.sql.exec("UPDATE messages SET delivery_binding=?, delivery_pair=? WHERE id=?",
       JSON.stringify(binding), prepared!.binding!.denyKey, message.messageId);
     this.retention.finalized(message.messageId, message.from.nodeId, state, now);
-    this.audit(actor, "message.send", target, { messageId: message.messageId, toSession: message.to.session, state, reason });
+    this.audit(actor, "message.send", target, { messageId: message.messageId, toSession: message.to.session, state, reason, ...(reason === LOOP_STALE && prepared ? { changedDimension: changedIdentityDimension(prepared.snapshot, current) } : {}) });
     if (state === "queued") {
       effects.deliveries.push({ nodeId: target, body: {
         messageId: message.messageId, from: storedFrom, toSession: storedTo.session, text: message.text,

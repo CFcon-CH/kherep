@@ -345,6 +345,18 @@ when preparation throws, returns to five minutes when the queue empties, and
 keeps the existing three five-minute intervals for offline detection. Acceptance
 stops replay. Fresh leases never change the persisted exact owner binding;
 previously unbound legacy work cannot acquire a binding on a later retry.
+Historical required rows with no stored owner binding also remain deferred until
+expiry rather than inventing a different binding for a possibly accepted frame.
+
+Admission, duplicate validation and egress use the same semantic identity
+projection. It retains canonical owners, runtimes, lifecycle generations,
+resolution and eligibility, proof source/version, relevant messaging and binding
+capabilities, connection/registration epochs and parent lineage. Every comparison
+resolves the current references again, validating proof age and runtime eligibility
+before ignoring proof observation time and node-wide population generation.
+Stored owner bindings use the same explicit owner projection, excluding only the
+per-attempt lease. Refusals remain terminal; a fixed changed-dimension audit field
+adds diagnosis without changing the wire refusal vocabulary.
 
 The Worker authenticates enrolled nodes over outbound WebSockets. `NodeSession`
 terminates each connection; `Registry` owns shared identities, messages, task

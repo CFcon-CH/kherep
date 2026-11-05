@@ -71,10 +71,11 @@ it("L08: corrupt binding and binding on all-NULL legacy are guarded-invalid", as
     expect(storedLoopLineage({ ...row, loop_thread: null, loop_pair: null, loop_generation: null, loop_ordinal: null, loop_direction: null }).kind).toBe("guarded-invalid");
   });
 });
-for (const change of ["runtime", "proof", "capability", "generation", "alias"] as const) it(`L09: ${change} changes during signer await refuse before scoring`, async () => {
+for (const change of ["runtime", "proof", "capability", "lifecycle", "alias", "expire", "connection", "registration"] as const) it(`L09: ${change} changes during signer await refuse before scoring`, async () => {
   const { nodeId } = await attestedPair();
   await runInDurableObject(registry(), async (_i, state) => {
     const sql = state.storage.sql;
+    const originalToken = sql.exec("SELECT message_connection_token FROM nodes WHERE id=?", nodeId).one().message_connection_token;
     const caps = () => JSON.parse(String(sql.exec("SELECT capabilities FROM nodes WHERE id=?", nodeId).one().capabilities)) as string[];
     const store = new MessageStore(sql, () => {}, caps);
     const msg = { messageId: crypto.randomUUID(), from: { nodeId, session: "alias-0" }, to: { nodeId, session: ID_B }, text: "Synthetic signer boundary" };
@@ -84,7 +85,10 @@ for (const change of ["runtime", "proof", "capability", "generation", "alias"] a
       if (!changed) {
         changed = true;
         if (change === "capability") sql.exec("UPDATE nodes SET capabilities='[]' WHERE id=?", nodeId);
-        else if (change === "generation") sql.exec("UPDATE nodes SET identity_generation=2 WHERE id=?", nodeId);
+        else if (change === "connection") sql.exec("UPDATE nodes SET message_connection_token='synthetic-replacement' WHERE id=?", nodeId);
+        else if (change === "registration") sql.exec("UPDATE nodes SET registration_token=NULL WHERE id=?", nodeId);
+        else if (change === "expire") for (const row of attestedRows(0)) sql.exec("UPDATE sessions SET canonical_identity=? WHERE node_id=? AND session_id=?", JSON.stringify(row.canonicalIdentity), nodeId, row.sessionId);
+        else if (change === "lifecycle") for (const row of attestedRows(Date.now(), 1)) sql.exec("UPDATE sessions SET canonical_identity=? WHERE node_id=? AND session_id=?", JSON.stringify(row.canonicalIdentity), nodeId, row.sessionId);
         else if (change === "alias") sql.exec("UPDATE sessions SET name='changed' WHERE node_id=? AND session_id=?", nodeId, ID_A);
         else sql.exec(`UPDATE sessions SET ${change === "runtime" ? "runtime='claude-code'" : "canonical_identity=NULL"} WHERE node_id=? AND session_id=?`, nodeId, ID_A);
       }
@@ -93,6 +97,7 @@ for (const change of ["runtime", "proof", "capability", "generation", "alias"] a
     const result = state.storage.transactionSync(() => store.send(msg, "test", Date.now(), prepared));
     expect(result.ok && result.status.reason).toBe(change === "capability" ? "target node lacks messaging.v1" : "loop-context-changed");
     expect(sql.exec("SELECT COUNT(*) AS n FROM message_loop_pairs WHERE from_node=?", nodeId).one().n).toBe(0);
+    if (change === "connection") sql.exec("UPDATE nodes SET message_connection_token=? WHERE id=?", originalToken, nodeId);
   });
 });
 for (const change of ["expire", "missing", "terminal", "capability", "runtime"] as const) it(`L10: queued ${change} cannot replay or push as legacy`, async () => {
