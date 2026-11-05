@@ -100,21 +100,38 @@ async function takeWithin(h: string, ms: number): Promise<RunLock | string> {
 
 const pidOfBeat = (h: string): number => (JSON.parse(fs.readFileSync(heartbeatFile(h), "utf8")) as { pid: number }).pid;
 
-test("T4.1 one holder: two other processes are busy within 250 ms, holder UNKNOWN; only the database and its journal exist", { timeout: 30_000 }, async () => {
+test("T4.1 one holder: bounded busy attempts while the holder stays; only the database and its journal exist", { timeout: 30_000 }, async () => {
   const h = home();
   const a = await hold(h);
   try {
+    const statements: string[] = [], pauses: number[] = [], opened: DatabaseSync[] = [], closed: DatabaseSync[] = [];
+    class Spy extends DatabaseSync {
+      constructor(file: string) { super(file); opened.push(this); }
+      exec(sql: string): void { statements.push(sql); super.exec(sql); }
+      prepare(sql: string): ReturnType<DatabaseSync["prepare"]> { statements.push(sql); return super.prepare(sql); }
+      close(): void { closed.push(this); super.close(); }
+    }
     const begin = Date.now();
-    const b = takeRunLock(h);
+    const b = takeRunLock(h, { sqlite: () => ({ ...process.getBuiltinModule("node:sqlite"), DatabaseSync: Spy }),
+      pause: (ms) => {
+        pauses.push(ms);
+        assert.ok(pauses.length <= 3, "no wait for holder release after three pauses");
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+      } });
     const bMs = Date.now() - begin;
     const c = tryOnce(h);
-    assert.equal(b, BUSY);
-    // A busy answer carries three short retries (issue #620, about 40 ms), never a wait for the holder.
-    assert.ok(bMs < 250, `B took ${bMs} ms`);
-    assert.equal(c.result, BUSY);
-    assert.ok(c.ms < 250, `C took ${c.ms} ms`);
+    assert.equal(b, BUSY, `B took ${bMs} ms while the holder stayed`);
+    assert.equal(c.result, BUSY, `C took ${c.ms} ms while the holder stayed`);
+    assert.deepEqual(statements, Array.from({ length: 4 }, () => ["PRAGMA busy_timeout = 0", "PRAGMA journal_mode"]).flat());
+    assert.equal(pauses.length, 3, "four attempts, with no pause after the last");
+    assert.ok(pauses.every((ms) => ms >= 2 && ms <= 11), pauses.join(", "));
+    assert.ok(pauses.reduce((sum, ms) => sum + ms, 0) <= 33, "at most 33 ms of requested pauses");
+    assert.equal(opened.length, 1, "one connection for every attempt");
+    assert.deepEqual(closed, [opened[0]], "that connection closed exactly once");
+    assert.equal(opened[0]!.isOpen, false);
+    assert.doesNotThrow(() => process.kill(a.pid, 0), "both contenders returned before the holder was released");
     assert.equal(runLockFile(h), path.join(cacheDir(h), "run.lock.sqlite"));
-    assert.deepEqual(fs.readdirSync(cacheDir(h)).sort(), ["run.lock.sqlite", "run.lock.sqlite-journal"]);
+    assert.deepEqual(fs.readdirSync(cacheDir(h)).sort((left, right) => left.localeCompare(right)), ["run.lock.sqlite", "run.lock.sqlite-journal"]);
   } finally {
     await a.release();
   }
