@@ -11,14 +11,21 @@ import fs from "node:fs";
 import os from "node:os";
 import { spawnSync } from "node:child_process";
 
-const HOOK = path.join(import.meta.dirname, "deploy-guard.mts");
-
 let pass = 0;
 let fail = 0;
 
 // Runs the hook with a Bash command (or raw payload) and returns
 // { blocked, stderr }. blocked === true when exit code is 2.
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), "deploy-guard-test-"));
+const HOOK = path.join(TMP, "hooks", "deploy-guard.mts");
+const PROJECT = path.join(TMP, "projects", "synthetic-project");
+fs.mkdirSync(path.dirname(HOOK), { recursive: true });
+fs.mkdirSync(PROJECT, { recursive: true });
+for (const relative of ["deploy-guard.mts", "lib/git-push-match.mts", "lib/forge-match.mts"]) {
+  const target = path.join(TMP, "hooks", relative);
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.copyFileSync(path.join(import.meta.dirname, relative), target);
+}
 let transcriptCounter = 0;
 
 function runHook(command: string, toolName?: string, userText?: string): { blocked: boolean; stderr: string } {
@@ -27,13 +34,14 @@ function runHook(command: string, toolName?: string, userText?: string): { block
     tool_input: { command },
   };
   if (userText !== undefined) {
-    const transcript = path.join(TMP, `transcript-${transcriptCounter++}.jsonl`);
+    const transcript = path.join(PROJECT, `transcript-${transcriptCounter++}.jsonl`);
     fs.writeFileSync(transcript, JSON.stringify({ message: { role: "user", content: [{ type: "text", text: userText }] } }) + "\n");
     payload.transcript_path = transcript;
   }
   const res = spawnSync("node", [HOOK], {
     input: JSON.stringify(payload),
     encoding: "utf8",
+    timeout: 10_000,
   });
   return { blocked: res.status === 2, stderr: res.stderr || "" };
 }
