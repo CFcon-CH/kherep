@@ -74,14 +74,14 @@ export function noticeInterruptedProbe(paths: Pick<NodePaths, "dir">, log: (line
   }
   const tokens = content.trim().split(/\s+/);
   const [pidText = "", started = ""] = tokens;
-  const pidValue = tokens.length <= 2 && /^[1-9]\d{0,9}$/.test(pidText) ? Number(pidText) : NaN;
+  const pidValue = tokens.length <= 2 && /^[1-9]\d{0,9}$/.test(pidText) ? Number(pidText) : Number.NaN;
   const pid = Number.isSafeInteger(pidValue) && pidValue <= 2_147_483_647 ? pidValue : null;
   if (pid !== null && alive(pid) && probeInFlight(paths, now)) {
     log(`kherep-node: another daemon's claude probe (daemon pid ${pid}) is in flight`);
     return null;
   }
   const timestamp = tokens.length === 2 && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(started)
-    ? Date.parse(started) : NaN;
+    ? Date.parse(started) : Number.NaN;
   const canonical = Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : null;
   const at = canonical !== null && canonical === started ? canonical : new Date(mtime).toISOString();
   log(`kherep-node: the previous daemon stop interrupted a claude probe (daemon pid ${pid ?? "unknown"}, started ${at}); `
