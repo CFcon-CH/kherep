@@ -6,7 +6,7 @@ import test from "node:test";
 
 import { nodePaths } from "./config.mts";
 import { defaultServiceName, parseServiceCommand, runService, safeServiceFailure } from "./service-cli.mts";
-import { serviceDrainFile, type ServiceOwnerProbe } from "./service-drain.mts";
+import { SERVICE_DRAIN_BLOCKED, serviceDrainFile, type ServiceOwnerProbe } from "./service-drain.mts";
 import { snapshotDigests } from "./service-records.mts";
 import type { ServiceAdapter, ServiceBinding } from "./service-types.mts";
 
@@ -146,4 +146,59 @@ test("service status reports a stale drain and its recovery", async () => {
     console.log = originalLog;
     fs.rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("service status names a blocked Windows daemon start only for stale or unknown drains without a live daemon", async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "kherep-service-blocked-status-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const source = { root: path.join(root, "pin"), commit: "a".repeat(40), digest: "b".repeat(64), kind: "pin" as const, verified: true };
+  const binding: ServiceBinding = { platform: "win32", serviceName: "Node", taskPath: "\\Kherep", workspace: path.join(root, "work"),
+    configRoot: root, nodeExecutable: process.execPath, source };
+  const snapshot = { definition: Buffer.from("definition"), security: Buffer.from("security"), running: true as boolean | "unknown" };
+  const adapter = { read: async () => snapshot, processOwned: async () => true } as unknown as ServiceAdapter;
+  const receipt = { version: 1 as const, binding, ...snapshotDigests(snapshot), activatedAt: "2026-10-14T18:00:00.000Z" };
+  const state = { pid: 1234, startedAt: "2026-10-14T18:00:00.000Z", connectedAt: "2026-10-14T18:00:01.000Z", source,
+    service: { name: binding.serviceName, platform: binding.platform, taskPath: binding.taskPath } };
+  const owner = { version: 1 as const, pid: 987654, startedAt: "2026-10-14T18:05:00.000Z", owner: "synthetic-owner" };
+  const drain = serviceDrainFile(nodePaths(root));
+  fs.mkdirSync(path.dirname(drain), { recursive: true });
+  const recoveries: Partial<Record<string, string>> = {
+    stale: `kherep-node service upgrade --source <clean checkout> reclaims the stale drain (installed source ${source.commit})`,
+    unknown: "the service drain owner cannot be verified; inspect the service/drain owner file",
+  };
+  const cases: Array<[string, ServiceBinding["platform"], boolean | "unknown", "none" | "stale" | "unknown" | "active", "none" | "dead" | "live", boolean]> = [
+    ["stale without state", "win32", true, "stale", "none", true],
+    ["unknown without state", "win32", true, "unknown", "none", true],
+    ["stale dead daemon", "win32", true, "stale", "dead", true],
+    ["unknown dead daemon", "win32", true, "unknown", "dead", true],
+    ["no drain", "win32", true, "none", "none", false],
+    ["active upgrade", "win32", true, "active", "none", false],
+    ["live daemon", "win32", true, "stale", "live", false],
+    ["stopped task", "win32", false, "stale", "none", false],
+    ["unknown task", "win32", "unknown", "stale", "none", false],
+    ["darwin", "darwin", true, "stale", "none", false],
+  ];
+  const originalLog = console.log;
+  try {
+    for (const [name, platform, running, expectedDrain, daemon, blocked] of cases) {
+      binding.platform = platform; snapshot.running = running;
+      fs.rmSync(drain, { force: true });
+      if (expectedDrain !== "none") fs.writeFileSync(drain, JSON.stringify(owner), { mode: 0o600 });
+      let output = "";
+      console.log = value => { output = String(value); };
+      const exit = await runService(["status"], { root, readReceipt: () => receipt, adapterFor: () => adapter,
+        readState: () => daemon === "none" ? null : state, alive: () => daemon === "live",
+        ownerProbe: { current: () => owner, active: () => expectedDrain === "unknown" ? "unknown" : expectedDrain === "active" } });
+      const report = JSON.parse(output) as Record<string, unknown>;
+      assert.equal(exit, 1, name);
+      assert.equal(report.ok, false, name);
+      assert.equal(report.running, running, name);
+      assert.equal(report.drain, expectedDrain, name);
+      assert.equal("daemonStart" in report, blocked, name);
+      assert.equal(report.daemonStart, blocked ? SERVICE_DRAIN_BLOCKED : undefined, name);
+      assert.equal(report.recovery, recoveries[expectedDrain], name);
+      assert.equal(output.includes(String(owner.pid)), false, name);
+      assert.equal(output.includes(owner.owner), false, name);
+    }
+  } finally { console.log = originalLog; }
 });

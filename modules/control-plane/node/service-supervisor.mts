@@ -7,7 +7,7 @@ import { pathToFileURL } from "node:url";
 import { captureSourceIdentity, compareSourceIdentity, runtimeSourceRoot, type SourceIdentity } from "./daemon-source.mts";
 import { nodePaths } from "./config.mts";
 import { managedArguments } from "./service-definitions.mts";
-import { serviceDrainFile } from "./service-drain.mts";
+import { SERVICE_DRAIN_BLOCKED, serviceDrainFile } from "./service-drain.mts";
 import { claimServiceLaunchPermit } from "./service-launch-permit.mts";
 import { decodeSupervisorBinding } from "./service-supervisor-data.mts";
 import type { ServiceBinding } from "./service-types.mts";
@@ -36,6 +36,7 @@ interface SupervisorDependencies {
   openLog(): number;
   closeLog(fd: number): void;
   reportStartFailure?(): void;
+  reportDrainBlocked?(): void;
 }
 
 const canonical = (value: string, realpath: (path: string) => string): string => realpath(value).toLowerCase();
@@ -86,6 +87,10 @@ export function startWindowsServiceSupervisor(binding: ServiceBinding, overrides
     ...overrides,
   };
   const log = deps.openLog();
+  // Headless task console output does not reach the operator's service log.
+  const reportDrainBlocked = deps.reportDrainBlocked ?? (() => {
+    fs.writeSync(log, `kherep-node service supervisor: ${SERVICE_DRAIN_BLOCKED} daemon start waits for the service drain; see kherep-node service status\n`);
+  });
   let child: SupervisorChild | undefined;
   let stopped = false;
   let resolveDone!: () => void;
@@ -103,7 +108,14 @@ export function startWindowsServiceSupervisor(binding: ServiceBinding, overrides
     if (!stopped) await launch();
   };
   const launch = async () => {
-    while (!stopped && deps.drainActive() && !deps.claimPermit()) await deps.sleep(DRAIN_POLL_MS);
+    let reported = false;
+    while (!stopped && deps.drainActive() && !deps.claimPermit()) {
+      if (!reported) {
+        reported = true;
+        try { reportDrainBlocked(); } catch { /* Diagnostics cannot change the drain wait. */ }
+      }
+      await deps.sleep(DRAIN_POLL_MS);
+    }
     if (stopped) return;
     deps.verifySource();
     let next: SupervisorChild;

@@ -8,6 +8,8 @@ import { defaultServiceOwnerProbe, type ServiceFileOwner, type ServiceOwnerProbe
 
 export { defaultServiceOwnerProbe, type ServiceFileOwner, type ServiceOwnerProbe };
 
+export const SERVICE_DRAIN_BLOCKED = "SERVICE_DRAIN_BLOCKED";
+
 const root = (paths: NodePaths): string => path.join(paths.dir, "service");
 export const serviceDrainFile = (paths: NodePaths): string => path.join(root(paths), "drain");
 const admissions = (paths: NodePaths): string => path.join(root(paths), "admissions");
