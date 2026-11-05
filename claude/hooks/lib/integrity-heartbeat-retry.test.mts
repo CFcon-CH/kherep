@@ -57,27 +57,45 @@ test("T4.10 a reader that stays: busy at BEGIN EXCLUSIVE four times on one conne
     const begin = Date.now();
     const result = takeRunLock(h, { sqlite: () => ({ ...real, DatabaseSync: Spy }), beforeBegin: () => { begins++; }, pause: (ms) => { pauses.push(ms); } });
     const ms = Date.now() - begin;
-    assert.equal(result, BUSY);
+    assert.equal(result, BUSY, `busy result after ${ms} ms without real pauses`);
     assert.equal(begins, 4, "four attempts");
     assert.equal(pauses.length, 3, "a pause between attempts, none after the last");
     assert.ok(pauses.every(inPauseRange), pauses.join(", "));
     assert.equal(opened.length, 1, "one connection for every attempt");
     assert.equal(opened[0]!.isOpen, false, "closed after the last refusal");
-    assert.ok(ms < 1000, `${ms} ms without real pauses`);
   } finally {
     hold.release();
   }
 });
 
-// With the real pause: the retries are bounded, so a contender is still told busy promptly.
-test("T4.11 the real pauses: a contender against a holder that stays is told busy within 250 ms", () => {
+// Requested retry work is bounded; elapsed time depends on runner scheduling.
+test("T4.11 real pauses: four nonwaiting attempts on one connection, three bounded pauses, then closed", () => {
   const h = home();
   const hold = holder(h);
   try {
+    const opened: DatabaseSync[] = [], closed: DatabaseSync[] = [], pauses: number[] = [], statements: string[] = [];
+    class Spy extends DatabaseSync {
+      constructor(file: string) { super(file); opened.push(this); }
+      exec(sql: string): void { statements.push(sql); super.exec(sql); }
+      prepare(sql: string): ReturnType<DatabaseSync["prepare"]> { statements.push(sql); return super.prepare(sql); }
+      close(): void { closed.push(this); super.close(); }
+    }
     const begin = Date.now();
-    assert.equal(takeRunLock(h), BUSY);
+    const result = takeRunLock(h, { sqlite: () => ({ ...process.getBuiltinModule("node:sqlite"), DatabaseSync: Spy }),
+      pause: (ms) => {
+        pauses.push(ms);
+        assert.ok(pauses.length <= 3, "no wait for holder release after three pauses");
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+      } });
     const ms = Date.now() - begin;
-    assert.ok(ms < 250, `${ms} ms`);
+    assert.equal(result, BUSY, `busy result after ${ms} ms while the holder stayed`);
+    assert.deepEqual(statements, Array.from({ length: 4 }, () => ["PRAGMA busy_timeout = 0", "PRAGMA journal_mode"]).flat());
+    assert.equal(pauses.length, 3, "a pause between attempts, none after the last");
+    assert.ok(pauses.every(inPauseRange), pauses.join(", "));
+    assert.ok(pauses.reduce((sum, value) => sum + value, 0) <= 33, "at most 33 ms of requested pauses");
+    assert.equal(opened.length, 1);
+    assert.deepEqual(closed, [opened[0]], "that connection closed exactly once");
+    assert.equal(opened[0]!.isOpen, false);
   } finally {
     hold.release();
   }

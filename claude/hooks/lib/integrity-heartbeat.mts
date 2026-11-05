@@ -139,7 +139,7 @@ function refusal(error: unknown): string {
 // shared one; the CI runner's SQLite version is UNKNOWN. So a busy answer is retried
 // BUSY_RETRIES times, a random pause apart so the two do not collide again; synchronous
 // (Atomics.wait), as the lock is. A lock still busy then is held by a run that is working.
-// Worst case about 40 ms, measured on macOS; Windows UNKNOWN, T4.11 bounds it at 250 ms.
+// Four attempts request at most three 2-11 ms pauses; scheduler latency is not bounded.
 const BUSY_RETRIES = 3;
 const BUSY_PAUSE_MIN_MS = 2;
 const BUSY_PAUSE_SPREAD_MS = 10;
