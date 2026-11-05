@@ -4,6 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { pathToFileURL } from "node:url";
 
 import { frameForFork, frameRecords } from "../modules/control-plane/node/deliver-core.mts";
 import { frameFollowUp, framePrompt } from "../modules/control-plane/node/task-prompt.mts";
@@ -54,7 +55,7 @@ fs.openSync = (p, ...args) => { const fd = open(p, ...args); if (matches(p)) des
 const read = fs.readFileSync;
 fs.readFileSync = (p, ...args) => { const bytes = read(p, ...args); if (descriptors.has(p) || matches(p)) fs.appendFileSync(marker, 'read\\n'); return bytes; };
 `);
-  return { args: ["--import", preload], reads: () => fs.existsSync(marker) ? fs.readFileSync(marker, "utf8") : "" };
+  return { args: ["--import", pathToFileURL(preload).href], reads: () => fs.existsSync(marker) ? fs.readFileSync(marker, "utf8") : "" };
 }
 
 test("installed guard retains both human approval formats and reads its byte-identical import closure", (t) => {
