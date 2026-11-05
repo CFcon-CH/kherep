@@ -1,3 +1,4 @@
+import { blockerDiagnostic, type BlockerCode } from "../protocol-diagnostics.mts";
 import { automaticReplyDecision } from "./reply-admission.mts";
 import fs from "node:fs";
 import { closedFallbackGeneration } from "./session-lifecycle.mts";
@@ -19,7 +20,7 @@ import { acceptsMessage, wakeBudget } from "./policy.mts";
 import { notReadyNow } from "./runtime-readiness.mts";
 import type { RunnerDeps } from "./session-runner.mts";
 import { CLAUDE_RUNTIME } from "./sessions.mts";
-import { overLimit } from "./task-admission.mts";
+import { taskLimit } from "./task-admission.mts";
 import { intercomFor, isActive, listTasks, readTask, writeTask, type TaskRecord } from "./task-records.mts";
 import { resolveCwd } from "./task-prompt.mts";
 import { killSwitch } from "./wake-hook.mts";
@@ -144,8 +145,8 @@ async function deliver(deps: RunnerDeps, found: Target, all: InboxRecord[], now:
     && closedSession(paths, sessionId, deps.now?.() ?? Date.now());
   // Issue #230: each refusal names its code. A policy refusal waits with the
   // code of its guard; only a launch that failed is fallback-failed.
-  const refuse = (reason: string, code: MessageProgressCode, records: InboxRecord[] = all): false => {
-    progressRecords(paths, records, code === "fallback-failed" ? "failed" : "waiting", code, now);
+  const refuse = (reason: string, code: MessageProgressCode, records: InboxRecord[] = all, detail?: BlockerCode): false => {
+    progressRecords(paths, records, code === "fallback-failed" ? "failed" : "waiting", code, now, undefined, detail ? blockerDiagnostic(detail, now) : undefined);
     audit(paths, now, sessionId, records, "refused", reason);
     return false;
   };
@@ -166,11 +167,11 @@ async function deliver(deps: RunnerDeps, found: Target, all: InboxRecord[], now:
   if (found.task?.operatorStoppedAt !== undefined) return refuse("session stopped by operator", "operator-stopped");
   // Running already: its hook takes the messages.
   if (listTasks(paths).some((t) => t.sessionId === sessionId && isActive(t))) {
-    progressRecords(paths, records, "waiting", "target-busy", now);
+    progressRecords(paths, records, "waiting", "target-busy", now, undefined, blockerDiagnostic("task-active", now));
     return false;
   }
   if (found.task && await runs(deps, found.task)) {
-    progressRecords(paths, records, "waiting", "target-busy", now);
+    progressRecords(paths, records, "waiting", "target-busy", now, undefined, blockerDiagnostic("process-still-running", now));
     return false;
   }
   if (!stillEligible()) return false;
@@ -195,7 +196,7 @@ async function deliver(deps: RunnerDeps, found: Target, all: InboxRecord[], now:
   // are refused with a fixed reason. A pending probe keeps them waiting.
   const blocked = notReadyNow(deps.readiness, reusable ? runtime : found.runtime);
   if (blocked === "pending") {
-    progressRecords(paths, records, "waiting", "retry-pending", now);
+    progressRecords(paths, records, "waiting", "retry-pending", now, undefined, blockerDiagnostic("runtime-pending", now));
     return false;
   }
   if (blocked) {
@@ -204,8 +205,8 @@ async function deliver(deps: RunnerDeps, found: Target, all: InboxRecord[], now:
     return false;
   }
   // Refused before the attempt, a message is tried again next round, once the limit clears.
-  const limit = overLimit(deps, now, reusable?.taskId);
-  if (limit) return refuse(limit, "retry-pending");
+  const limit = taskLimit(deps, now, reusable?.taskId);
+  if (limit) return refuse(limit.reason, "retry-pending", all, limit.code);
   const cwd = resolveCwd(sessions, reusable?.cwd ?? found.cwd, deps.realpath);
   // Issue #396: the recorded cwd is unusable here; the policy authorized the sender.
   if (!cwd.ok) return refuse(cwd.reason, "cwd-refused");
@@ -221,7 +222,7 @@ async function deliver(deps: RunnerDeps, found: Target, all: InboxRecord[], now:
   if (!stillEligible()) return false;
   const budget = takeTurn(paths, reusable?.sessionId ?? sessionId, now, wakeBudget(policy));
   if (budget === "spacing" || budget === "locked") {
-    progressRecords(paths, records, "waiting", "retry-pending", now);
+    progressRecords(paths, records, "waiting", "retry-pending", now, undefined, blockerDiagnostic(budget === "spacing" ? "turn-spacing" : "budget-storage-unavailable", now));
     return false;
   }
   if (budget === "exhausted") return refuse("budget of autonomous turns exhausted", "budget-exhausted");

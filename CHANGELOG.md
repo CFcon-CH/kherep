@@ -39,6 +39,11 @@ increments the minor version; every other release increments the patch version.
 
 ### Fixed
 
+- Control Plane target progress now identifies task limits, pending runtime
+  readiness, turn spacing, budget storage, busy tasks/processes and bounded
+  hint failures at the original decision branches. Diagnostics persist with
+  observation time and clear on advancement, without changing admission (#706).
+
 - Node connections have an OPEN deadline and pong watchdog, with a confirmation
   ping and sleep-safe grace before retrying a silent socket. Connection retirement
   invalidates old events immediately and reconnects without waiting for close;

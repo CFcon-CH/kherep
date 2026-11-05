@@ -1488,3 +1488,14 @@ fields. Existing progress codes and receipt fields remain unchanged.
 Diagnostics record observations, never admission authority. Worker source needs
 a separately approved deploy, and node source an approved install, before live
 behavior can change. Neither action is part of this source change.
+
+Target diagnostics are captured at existing task-limit, readiness, budget-lock,
+hint-publication and busy-observer branches. The task-limit discriminator shares
+the existing population read; it never parses a reason or repeats a check.
+The local progress sidecar carries validated detail alongside its existing
+observation clock. Changing or clearing detail advances that clock and reuses
+the existing progress receipt, without a new receipt field. Hint attribution
+is restricted to checked ticket members, at most eight. Diagnostic write failure
+does not alter admission. The Worker persists optional diagnostic JSON separately
+from state transitions, replays it through the existing capability boundary, and
+clears obsolete waiting detail on advancement. Terminal ordering is unchanged.

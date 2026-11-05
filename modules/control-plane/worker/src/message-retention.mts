@@ -1,3 +1,4 @@
+import type { MessageDiagnostic } from "../../protocol-diagnostics.mts";
 import { safeLoopReason } from "../../protocol-loop-brake.mts";
 import { LOOP_COLUMNS, ALL_LOOP_FIELDS, loopColumnType, parentOf } from "./message-loop-identity.mts";
 import type { McpInboxItem } from "../../protocol-mcp.mts";
@@ -69,7 +70,7 @@ interface Tombstone {
 }
 // What MCP status reads from a message row or, after deletion, its tombstone.
 export interface MessageStatusView {
-  state: MessageState; reason?: string; progress: MessageStatusBody["progress"] | null; updatedAt: number; replyMessageId?: string;
+  state: MessageState; reason?: string; diagnostic?: MessageDiagnostic; progress: MessageStatusBody["progress"] | null; updatedAt: number; replyMessageId?: string;
 }
 
 type Audit = (actor: string, action: string, target: string | null, detail: unknown) => void;
