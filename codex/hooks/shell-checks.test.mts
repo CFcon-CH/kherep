@@ -6,12 +6,14 @@ import path from "node:path";
 import { test } from "node:test";
 import { nodePaths } from "../../modules/control-plane/node/config.mts";
 import { copyAdapter } from "./hook-adapter.fixture.mts";
+import { declareCopy } from "../../bootstrap/coverage-copy-fixture.mts";
 
 const GUARDS = ["commit-guard", "deploy-guard", "main-checkout-guard"];
 function fixture(t: import("node:test").TestContext) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "shell-dispatch-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   fs.copyFileSync(path.join(import.meta.dirname, "shell-checks.mts"), path.join(root, "shell-checks.mts"));
+  declareCopy(path.join(import.meta.dirname, "shell-checks.mts"), path.join(root, "shell-checks.mts"));
   copyAdapter(root);
   const trace = path.join(root, "trace.jsonl");
   fs.writeFileSync(trace, "");

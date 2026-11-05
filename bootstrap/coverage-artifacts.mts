@@ -1,6 +1,7 @@
 import { lstatSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { containedFile } from "./coverage-paths.mts";
+import { copyDeclarationsFile } from "./coverage-copies.mts";
 
 export const producers = ["unit", "typescript", "probe", "worker"] as const;
 export type Manifest = { producer: string; runId: string; attempt: string; checkoutSha: string; testOutcome: string };
@@ -37,13 +38,15 @@ export function rawFiles(artifact: string): string[] {
   if (!names.length || names.length > 100_000) throw new Error("missing or excessive raw V8 files");
   let total = 0;
   for (const name of names) {
-    if (!name.endsWith(".json")) throw new Error("unexpected raw coverage file");
-    const path = containedFile(dir, name); const stat = lstatSync(path);
+    if (!name.endsWith(".json") && name !== copyDeclarationsFile) throw new Error("unexpected raw coverage file");
+    containedFile(dir, name); const stat = lstatSync(join(dir, name));
     if (stat.isSymbolicLink() || !stat.size || stat.size > 512 * 1024 * 1024) throw new Error("empty, symlink or oversized raw coverage file");
     total += stat.size;
     if (total > 8 * 1024 ** 3) throw new Error("raw V8 byte limit exceeded");
   }
-  return names;
+  const reports = names.filter(name => name !== copyDeclarationsFile);
+  if (!reports.length) throw new Error("missing raw V8 files");
+  return reports;
 }
 export function readArtifacts(root: string, identity: Identity): { manifest: Manifest; directory: string }[] {
   const entries = readdirSync(root, { withFileTypes: true });
