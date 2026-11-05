@@ -43,12 +43,14 @@ const validCommit = (value: string): boolean => /^[0-9a-f]{40}(?:[0-9a-f]{24})?$
 const sha256 = (value: string | Buffer): string => crypto.createHash("sha256").update(value).digest("hex");
 
 function safeFile(root: string, relative: string): { digest: string; bytes: Buffer } {
-  const resolved = path.resolve(root, relative);
-  const prefix = `${path.resolve(root)}${path.sep}`;
+  const canonical = fs.realpathSync.native(root);
+  const resolved = path.resolve(canonical, relative);
+  const prefix = `${canonical}${path.sep}`;
   if (!resolved.startsWith(prefix)) throw new Error("source manifest escapes its root");
   const stat = fs.lstatSync(resolved);
   if (stat.isSymbolicLink()) throw new Error(`source pins do not support symbolic links: ${relative}`);
   if (!stat.isFile()) throw new Error(`source entry is not a regular file: ${relative}`);
+  if (!fs.realpathSync.native(resolved).startsWith(prefix)) throw new Error("source manifest escapes its root");
   const bytes = fs.readFileSync(resolved);
   return { digest: sha256(bytes), bytes };
 }
@@ -103,19 +105,21 @@ function checkoutIdentity(root: string, requireClean: boolean): SourceIdentity {
 
 function pinIdentity(root: string): SourceIdentity {
   const canonical = fs.realpathSync.native(root);
-  const value = JSON.parse(fs.readFileSync(path.join(canonical, SOURCE_MANIFEST), "utf8")) as SourceManifest;
+  const value = JSON.parse(safeFile(canonical, SOURCE_MANIFEST).bytes.toString("utf8")) as SourceManifest;
   if (value.version !== 1 || !validCommit(value.commit) || !Array.isArray(value.files)) throw new Error("source pin manifest is invalid");
   const files = value.files.map((entry) => {
     if (!entry || typeof entry.path !== "string" || !["100644", "100755"].includes(entry.mode) || typeof entry.digest !== "string") {
       throw new Error("source pin manifest is invalid");
     }
-    const actual = safeFile(canonical, entry.path);
-    if (actual.digest !== entry.digest) throw new Error(`source pin drift: ${entry.path}`);
     return entry;
   });
   const listed = files.map(file => file.path).sort((left, right) => Buffer.compare(Buffer.from(left), Buffer.from(right)));
   if (new Set(listed).size !== listed.length || JSON.stringify(actualFiles(canonical)) !== JSON.stringify(listed)) {
     throw new Error("source pin inventory does not match its manifest");
+  }
+  for (const entry of files) {
+    const actual = safeFile(canonical, entry.path);
+    if (actual.digest !== entry.digest) throw new Error(`source pin drift: ${entry.path}`);
   }
   if (manifestDigest(files) !== value.filesDigest) throw new Error("source pin manifest digest does not match its files");
   if (!/^[0-9a-f]{64}$/.test(value.digest)) throw new Error("source pin manifest is invalid");
