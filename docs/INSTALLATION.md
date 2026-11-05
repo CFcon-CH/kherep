@@ -604,6 +604,12 @@ receipt. Status prints the commit, never a local path or pid.
 These service commands do not edit runtime hook configuration; run `kherep-node
 doctor` and update an independently managed stale hook binding separately.
 
+On Windows, when the Scheduled Task is running but a stale or unverifiable drain
+blocks daemon start and no daemon runs, status adds
+`daemonStart: SERVICE_DRAIN_BLOCKED`. The supervisor writes that code once per
+wait to the service log. `running` continues to report the Scheduled Task,
+not the daemon.
+
 ### Intercom command
 
 Agent sessions reach the Control Plane through one command per host (issue

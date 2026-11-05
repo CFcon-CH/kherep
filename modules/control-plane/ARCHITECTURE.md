@@ -151,7 +151,11 @@ retry the same transient codes on one shared allowance, and EEXIST at the
 second create remains a conflict. A failed write, fsync or close after the
 create removes the caller's own permit and rethrows the original error; a
 failed removal leaves it for manual cleanup. Every other initial launch or
-restart waits for the drain. Windows stop retains positively attested handles
+restart waits for the drain, with no automatic release of a stale one (#810):
+the supervisor writes one fixed `SERVICE_DRAIN_BLOCKED` line per wait to the
+service log, and `service status` adds `daemonStart` when a stale or unverifiable
+drain blocks a running task with no live daemon (#755; `running` still reports
+the task). Windows stop retains positively attested handles
 for the selected supervisor and its one direct daemon child, stops and proves the
 supervisor first, then stops that exact daemon handle. A candidate succeeds only
 after native readback, a fresh pid, authenticated

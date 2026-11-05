@@ -1,6 +1,6 @@
 import { pidAlive, readDaemonState, type DaemonState } from "./daemon-state.mts";
 import { compareSourceIdentity } from "./daemon-source.mts";
-import { describeServiceDrain, type ServiceOwnerProbe } from "./service-drain.mts";
+import { SERVICE_DRAIN_BLOCKED, describeServiceDrain, type ServiceOwnerProbe } from "./service-drain.mts";
 import type { NodePaths } from "./config.mts";
 import { servicePlatform } from "./service-platform.mts";
 import { readServiceCandidate, serviceRoot, snapshotDigests, type ServiceCandidate, type ServiceReceipt } from "./service-records.mts";
@@ -117,13 +117,16 @@ export async function reportServiceStatus(paths: Paths, receipt: ServiceReceipt,
   // A2 P3-3: while unattested no record can be matched, so a present record is "unattested", never "stale".
   const candidate = record ? candidateReport(paths, record, receipt)
     : pending === "invalid" ? "invalid" : pending ? (attested ? "stale" : "unattested") : undefined;
+  const daemonStart = receipt.binding.platform === "win32" && native?.running === true && staleDrain && (!state || !alive(state.pid))
+    ? SERVICE_DRAIN_BLOCKED : undefined;
   const report = { ok: attested && definitionMatch === true && source.status === "match" && runtimeMatch && !staleDrain && !record, managed: true,
     serviceName: receipt.binding.serviceName, platform: receipt.binding.platform,
     ...(receipt.binding.taskPath ? { taskPath: receipt.binding.taskPath } : {}), running: attested ? (native?.running ?? "unknown") : "unknown",
     definition: !attested ? "unattested" : native ? (definitionMatch ? "match" : "mismatch") : "missing",
     ...(attested || receipt.binding.platform !== "darwin" ? {} : { configured }), source: source.status,
     authentication: authenticated ? "connected" : state?.disconnectedAt ? "disconnected" : "unknown",
-    ownership: ownership ? "match" : "unknown", drain, ...(candidate ? { candidate } : {}), ...(recovery ? { recovery } : {}) };
+    ownership: ownership ? "match" : "unknown", drain, ...(daemonStart ? { daemonStart } : {}),
+    ...(candidate ? { candidate } : {}), ...(recovery ? { recovery } : {}) };
   console.log(JSON.stringify(report, null, 2));
   return report.ok ? 0 : 1;
 }

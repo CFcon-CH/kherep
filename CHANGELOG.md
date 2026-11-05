@@ -54,6 +54,10 @@ increments the minor version; every other release increments the patch version.
   hint failures at the original decision branches. Diagnostics persist with
   observation time and clear on advancement, without changing admission (#706).
 
+- The Windows supervisor logs `SERVICE_DRAIN_BLOCKED` once per service drain
+  wait; `service status` names the blocked daemon start when a stale or
+  unverifiable drain persists with the task running and no live daemon (#755).
+
 - Node connections have an OPEN deadline and pong watchdog, with a confirmation
   ping and sleep-safe grace before retrying a silent socket. Connection retirement
   invalidates old events immediately and reconnects without waiting for close;
