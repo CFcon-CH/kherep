@@ -3,8 +3,8 @@ import { runInDurableObject } from "cloudflare:test";
 import { attestedPair, attestedRows, BRAKE_CAPS, ID_A, ID_B } from "./message-loop-fixture.mts";
 import { authenticate, FACTS, registry, session, until } from "./helpers.mts";
 import { makeEnvelope } from "../../protocol.mts";
-import { isMessageStatusBody as archivedStatus } from "../../fixtures/diagnostics-pre-v1.mts";
-import { parseEnvelope as archivedEnvelope } from "../../fixtures/protocol-pre-diagnostics.mts";
+import { isMessageStatusBody as archivedStatus } from "../../test/fixtures/diagnostics-pre-v1.mts";
+import { parseEnvelope as archivedEnvelope } from "../../test/fixtures/protocol-pre-diagnostics.mts";
 import { MESSAGING_DIAGNOSTICS_CAPABILITY } from "../../protocol-diagnostics.mts";
 import { digestMcpArguments, REMOTE_MCP_CAPABILITY } from "../../protocol-mcp.mts";
 for (const modern of [false, true]) it(`actual immediate send refusal and reconnect status-page validate across versions, modern=${modern}`, async () => {
@@ -18,7 +18,7 @@ for (const modern of [false, true]) it(`actual immediate send refusal and reconn
   f.socket.ws.close();
   const reconnected = await authenticate(f.nodeId, f.key);
   const replay = (await until(reconnected, "message.status", { messageId, state: "refused" })).at(-1)!;
-  expect(archivedStatus(replay.body)).toBe(true, "new authentication has no current diagnostics capability");
+  expect(archivedStatus(replay.body), "new authentication has no current diagnostics capability").toBe(true);
   reconnected.ws.close();
 });
 for (const modern of [false, true]) it(`actual correlated duplicate error preserves old error shape, modern=${modern}`, async () => {
@@ -31,7 +31,7 @@ for (const modern of [false, true]) it(`actual correlated duplicate error preser
   expect(archivedEnvelope(JSON.stringify(frame)).ok).toBe(true);
   expect(frame.body).toMatchObject({ error: "loop-context-changed", messageId: sent.status.messageId });
   if (modern) expect(frame.body).toMatchObject({ diagnostic: { kind: "identity-change", stage: "duplicate", dimensions: ["connection"] } });
-  else expect(Object.keys(frame.body).sort((a, b) => a < b ? -1 : a > b ? 1 : 0)).toEqual(["error", "messageId"]);
+  else expect(Object.keys(frame.body as object).sort((a, b) => a < b ? -1 : a > b ? 1 : 0)).toEqual(["error", "messageId"]);
   await registry().invalidateMessageConnection(f.nodeId, token);
 });
 for (const tool of ["send", "reply"] as const) it(`actual MCP ${tool} stamp drift reports capability before consuming the claim`, async () => {
@@ -55,4 +55,23 @@ for (const tool of ["send", "reply"] as const) it(`actual MCP ${tool} stamp drif
   const result = tool === "send" ? await registry().sendMcpMessage(claim, { nodeId: f.nodeId, session: ID_B }, text) : await registry().replyMcpMessage(claim, parentId!, text);
   expect(result).toMatchObject({ ok: false, error: "loop-context-changed", diagnostic: { kind: "identity-change", stage: "mcp-claim", dimensions: ["capability"] } });
   expect(await runInDurableObject(registry(), (_i, s) => s.storage.sql.exec("SELECT claimed_at,outcome FROM mcp_intents WHERE request_id=?", id).one())).toEqual({ claimed_at: null, outcome: null });
+});
+for (const registerOld of [false, true]) it(`actual reconnect ${registerOld ? "old" : "unknown"} sender receives canonical replay and no diagnostic-only frame`, async () => {
+  const { vi } = await import("vitest");
+  const f = await attestedPair([...BRAKE_CAPS, MESSAGING_DIAGNOSTICS_CAPABILITY]), sent = await f.send();
+  if (!sent.ok) throw new Error(sent.error);
+  f.socket.ws.close();
+  const socket = await authenticate(f.nodeId, f.key);
+  const replay = (await until(socket, "message.status", { messageId: sent.status.messageId, state: "queued" })).at(-1)!;
+  expect(archivedStatus(replay.body)).toBe(true);
+  if (registerOld) {
+    socket.send(makeEnvelope("register", { facts: FACTS, runtimes: [{ name: "codex", kind: "cli" }], capabilities: BRAKE_CAPS }, 1, 0));
+    await vi.waitFor(async () => { expect((await session(f.nodeId).loopCapabilityEvidence()).registered).toBe(true); });
+    await session(f.nodeId).pushFrame("message.status", { messageId: sent.status.messageId, state: "queued" });
+    expect(archivedStatus((await until(socket, "message.status", { messageId: sent.status.messageId })).at(-1)?.body)).toBe(true);
+  }
+  await registry().prepareMessageDelivery(sent.status.messageId, "auth");
+  await expect(socket.next(50)).rejects.toThrow("no message");
+  expect((await registry().mcpMessageStatus(f.nodeId, sent.status.messageId))?.diagnostic).toMatchObject({ code: "registration-pending" });
+  socket.ws.close();
 });

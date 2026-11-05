@@ -118,8 +118,13 @@ describe("exchange recovery", { timeout: E2E_TIMEOUT_MS }, () => {
     // until the forwarded accepted was lost too, or it could still arrive and
     // settle the message without a resend.
     await sender.dropped.seen("message.status", { messageId, state: "accepted" });
-    expect(sender.dropped.count("message.status", { messageId })).toBe(2);
-    expect(sender.dropped.count("message.status", { messageId, state: "queued" })).toBe(1);
+    const statuses = sender.dropped.list("message.status", { messageId });
+    const canonical = statuses.filter(frame => !(frame.body as Record<string, unknown>).diagnostic);
+    expect(canonical).toHaveLength(2);
+    expect(canonical.filter(frame => (frame.body as Record<string, unknown>).state === "queued")).toHaveLength(1);
+    for (const frame of statuses.filter(frame => (frame.body as Record<string, unknown>).diagnostic)) {
+      expect(frame.body).toMatchObject({ state: "queued", diagnostic: { code: "acceptance-unconfirmed", stage: "upstream-egress" } });
+    }
     expect(getSent(a.paths, messageId)).toBeNull();
     expect(getOutbox(a.paths, messageId)).not.toBeNull();
 

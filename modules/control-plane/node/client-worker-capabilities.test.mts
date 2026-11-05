@@ -62,7 +62,7 @@ test("set only from a live directory frame of an authenticated connection; clear
 
 test("diagnostics follow live Worker negotiation, and capability loss strips them for the archived validator", async () => {
   const { blockerDiagnostic, MESSAGING_DIAGNOSTICS_CAPABILITY } = await import("../protocol-diagnostics.mts");
-  const { isNodeMessageStatusBody } = await import("../fixtures/diagnostics-pre-v1.mts");
+  const { isNodeMessageStatusBody } = await import("../test/fixtures/diagnostics-pre-v1.mts");
   const { c } = client();
   const id = "00000000-0000-4000-8000-000000000001";
   const detail = blockerDiagnostic("runtime-pending", 0);

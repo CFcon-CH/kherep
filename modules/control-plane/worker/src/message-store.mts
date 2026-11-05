@@ -1,5 +1,5 @@
 import { identityDiagnostic, selectedProofDimensions, type IdentityComparison } from "./message-identity-diagnostics.mts";
-import { blockerDiagnostic } from "../../protocol-diagnostics.mts";
+import { blockerDiagnostic, MESSAGING_DIAGNOSTICS_CAPABILITY } from "../../protocol-diagnostics.mts";
 import { readDiagnostic, storeDiagnostic } from "./message-diagnostics.mts";
 import type { MessageDiagnostic } from "../../protocol-diagnostics.mts";
 import { compatibleDiagnostic } from "../../protocol-diagnostics.mts";
@@ -532,7 +532,7 @@ export class MessageStore {
     const effects = none(), record = this.get(messageId);
     if (!record || record.state !== "queued" || record.toNode !== nodeId) return effects;
     storeDiagnostic(this.sql, messageId, diagnostic);
-    if (record.fromNode !== OPERATOR_NODE_ID) effects.statuses.push({ nodeId: record.fromNode, observational: true,
+    if (record.fromNode !== OPERATOR_NODE_ID && this.capabilities(record.fromNode)?.includes(MESSAGING_DIAGNOSTICS_CAPABILITY)) effects.statuses.push({ nodeId: record.fromNode, observational: true,
       body: this.statusFor(record.fromNode, statusBody(messageId, record.state, record.reason, record.progress, diagnostic)) });
     return effects;
   }

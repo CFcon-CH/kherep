@@ -61,8 +61,9 @@ for (const dimension of ["owner", "reference-match", "runtime", "lifecycle", "pr
       const result = store.send(message, "test", Date.now(), prepared);
       expect(result.ok && result.status.reason).toBe("loop-context-changed");
       const detail = result.ok && result.status.diagnostic;
-      expect(detail && detail.kind === "identity-change" && detail.dimensions).toContain(dimension);
-      if (dimension === "eligibility") expect(detail && detail.kind === "identity-change" && detail.dimensions).toEqual(["eligibility"]);
+      const expected = { owner: ["owner", "reference-match"], "reference-match": ["owner", "reference-match"], runtime: ["eligibility", "runtime"],
+        lifecycle: ["lifecycle"], "proof-kind": ["eligibility", "proof-kind"], eligibility: ["eligibility"], connection: ["connection"], lineage: ["lineage"] };
+      expect(detail && detail.kind === "identity-change" && detail.dimensions).toEqual(expected[dimension]);
       expect(result.ok && result.effects.deliveries).toEqual([]);
       expect(sql.exec("SELECT * FROM message_loop_pairs WHERE from_node=?", f.nodeId).toArray()).toEqual(beforePairs);
     });

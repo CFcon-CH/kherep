@@ -20,7 +20,7 @@ import { acceptsMessage, wakeBudget } from "./policy.mts";
 import { notReadyNow } from "./runtime-readiness.mts";
 import type { RunnerDeps } from "./session-runner.mts";
 import { CLAUDE_RUNTIME } from "./sessions.mts";
-import { taskLimit } from "./task-admission.mts";
+import { overLimit, taskLimit } from "./task-admission.mts";
 import { intercomFor, isActive, listTasks, readTask, writeTask, type TaskRecord } from "./task-records.mts";
 import { resolveCwd } from "./task-prompt.mts";
 import { killSwitch } from "./wake-hook.mts";

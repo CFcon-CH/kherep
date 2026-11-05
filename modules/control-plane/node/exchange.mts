@@ -1,3 +1,4 @@
+import { isMessageDiagnostic, type MessageDiagnostic } from "../protocol-diagnostics.mts";
 import { MessageReferenceResolver } from "./message-reference.mts";
 import { wasGuardedMcpReply } from "./guarded-replies.mts";
 import { isLoopAdmissionV1 } from "../protocol-loop-brake.mts";
@@ -40,7 +41,7 @@ export interface OutboxRecord extends MessageSendBody { createdAt: string; depth
 // noticedAt: when the delivery hook told the sending session that the message
 // failed or was received (sent-notices.mts); a record is told at most once.
 export type SentRecord = Partial<OutboxRecord> & {
-  messageId: string; state: SentState; reason?: string; progress?: MessageProgress; updatedAt: string; noticedAt?: string;
+  messageId: string; state: SentState; reason?: string; progress?: MessageProgress; diagnostic?: MessageDiagnostic; updatedAt: string; noticedAt?: string;
 };
 // Issue #408, PR 4 (design r3 section 2.5): the send gate of proxy answers.
 // allow decides at each send, resends included; sent is told each send.
@@ -84,7 +85,8 @@ export function getSent(paths: NodePaths, messageId: string): SentRecord | null 
 // Moves an outbox record to sent/ with the given state, or updates the state
 // of one already there. Returns false for a message this node does not know.
 export function recordSent(paths: NodePaths, messageId: string, state: SentState, reason?: string, now: number = Date.now(),
-  progress?: MessageProgress): boolean {
+  progress?: MessageProgress, diagnostic?: MessageDiagnostic): boolean {
+  diagnostic = isMessageDiagnostic(diagnostic) ? diagnostic : undefined;
   let pending: OutboxRecord | null = null;
   try {
     pending = getOutbox(paths, messageId);
@@ -98,15 +100,21 @@ export function recordSent(paths: NodePaths, messageId: string, state: SentState
   if (recorded && !mayAdvanceSent(recorded.state, state)) {
     if (recorded.state === "accepted" && state === "accepted" && progress
       && (!recorded.progress || Date.parse(progress.observedAt) > Date.parse(recorded.progress.observedAt))) {
-      writeJsonAtomic(fileOf(paths.sent, messageId), { ...recorded, progress, updatedAt: new Date(now).toISOString() });
+      writeJsonAtomic(fileOf(paths.sent, messageId), { ...recorded, progress, diagnostic, updatedAt: new Date(now).toISOString() });
+    }
+    if ((recorded.state === "queued" && (state === "queued" || state === "error")
+      || recorded.state === "accepted" && state === "error") && (diagnostic || recorded.diagnostic)) {
+      if (!diagnostic || !recorded.diagnostic || Date.parse(diagnostic.observedAt) >= Date.parse(recorded.diagnostic.observedAt)) {
+        writeJsonAtomic(fileOf(paths.sent, messageId), { ...recorded, diagnostic, updatedAt: new Date(now).toISOString() });
+      }
     }
     if (outboxExists) fs.rmSync(fileOf(paths.outbox, messageId), { force: true });
     return true;
   }
-  const { state: _state, reason: _reason, progress: _progress, updatedAt: _updated, ...message } = base;
+  const { state: _state, reason: _reason, progress: _progress, diagnostic: _diagnostic, updatedAt: _updated, ...message } = base;
   ensureDir(paths.sent);
   writeJsonAtomic(fileOf(paths.sent, messageId),
-    { ...message, messageId, state, ...(reason ? { reason } : {}), ...(state === "accepted" && progress ? { progress } : {}),
+    { ...message, messageId, state, ...(reason ? { reason } : {}), ...(state === "accepted" && progress ? { progress } : {}), ...(diagnostic ? { diagnostic } : {}),
       updatedAt: new Date(now).toISOString() });
   if (outboxExists) fs.rmSync(fileOf(paths.outbox, messageId), { force: true });
   return true;
@@ -177,7 +185,7 @@ export function exchangeOptions(paths: NodePaths, now: () => number = Date.now):
   return {
     selectedReferences: new MessageReferenceResolver(paths, now),
     storeDirectory: (body) => writeDirectory(paths, body),
-    sentUpdate: (messageId, state, reason, progress) => { recordSent(paths, messageId, state, reason, now(), progress); },
+    sentUpdate: (messageId, state, reason, progress, diagnostic) => { recordSent(paths, messageId, state, reason, now(), progress, diagnostic); },
     receiptUpdate: (body) => {
       if ((body.requestedState === "accepted" || body.requestedState === "delivered" || body.requestedState === "refused")
         && receiptSettles(body.requestedState, body.storedState)) {

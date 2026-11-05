@@ -206,8 +206,11 @@ it("S24: an unbound remote queue cannot invent its offline source after an unrel
     state.storage.sql.exec("SELECT message_connection_token FROM nodes WHERE id=?", a.nodeId).one().message_connection_token)).toBeNull());
   for (let i = 0; i < 2; i++) {
     expect(await registry().prepareMessageDelivery(old.status.messageId)).toBeNull();
-    expect(await runInDurableObject(registry(), (_i, state) =>
-      state.storage.sql.exec("SELECT * FROM messages WHERE id=?", old.status.messageId).one())).toEqual(before);
+    const after = await runInDurableObject(registry(), (_i, state) => state.storage.sql.exec("SELECT * FROM messages WHERE id=?", old.status.messageId).one());
+    const { diagnostic_json: detail, ...unchanged } = after;
+    const { diagnostic_json: _oldDetail, ...prior } = before;
+    expect(unchanged).toEqual(prior);
+    expect(JSON.parse(String(detail))).toMatchObject({ version: 1, kind: "blocker", stage: "upstream-egress", code: "stored-binding-missing" });
     expect(await runInDurableObject(registry(), (_i, state) =>
       state.storage.sql.exec("SELECT * FROM message_loop_pairs WHERE from_node=?", a.nodeId).toArray())).toEqual(holds);
   }

@@ -27,7 +27,7 @@ test("identity dimensions reject duplicates, unsorted, unknown and unbounded det
 
 test("every closed code renders fixed plain words and compatibility passes archived status validation", async () => {
   const { BLOCKER_CODES, blockerDiagnostic, renderMessageDiagnostic, compatibleDiagnostic } = await import("./protocol-diagnostics.mts");
-  const archived = await import("./fixtures/diagnostics-pre-v1.mts");
+  const archived = await import("./test/fixtures/diagnostics-pre-v1.mts");
   for (const code of BLOCKER_CODES) {
     const detail = blockerDiagnostic(code, 0);
     assert.equal(isMessageStatusBody({ messageId, state: "queued", diagnostic: detail }), true);

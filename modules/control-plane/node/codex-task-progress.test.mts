@@ -140,7 +140,7 @@ for (const cause of ["task-concurrency", "runtime-pending", "turn-spacing", "bud
     publishSynthetic(node.paths, [fixtureEvidence(target, "idle-loaded", T0)], T0, [{ ...target, state: "idle-loaded" }], node.livenessAuthority);
     const id = message(node, ended.name, { taskId: ended.taskId }), deps = node.deps();
     if (cause === "task-concurrency") task(node, { state: "running" }, 2);
-    if (cause === "runtime-pending") deps.readiness = createReadiness(async () => ({ ready: false, cause: "timeout" }), { now: () => T0 });
+    if (cause === "runtime-pending") deps.readiness = createReadiness(async () => ({ ok: false, cause: "timeout", detail: "synthetic timeout" }), { now: () => T0 });
     if (cause === "turn-spacing") assert.equal(takeTurn(node.paths, ended.sessionId!, T0 - 1), "ok");
     if (cause === "budget-storage-unavailable") {
       fs.mkdirSync(path.join(node.paths.dir, "listeners"), { recursive: true });

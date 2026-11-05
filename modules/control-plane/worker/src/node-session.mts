@@ -1,4 +1,4 @@
-import { blockerDiagnostic, compatibleDiagnostic, type BlockerCode, type MessageDiagnostic } from "../../protocol-diagnostics.mts";
+import { blockerDiagnostic, compatibleDiagnostic, type BlockerCode, type MessageDiagnostic, MESSAGING_DIAGNOSTICS_CAPABILITY } from "../../protocol-diagnostics.mts";
 import { isResolveRequest, SELECTED_BINDING_CAPABILITY, type ResolveRequest, type ResolveResponse } from "../../protocol-message-binding.mts";
 import { NodeReferenceRpc } from "./node-reference-rpc.mts";
 import { AlarmSchedule } from "./alarm-schedule.mts";
@@ -245,10 +245,11 @@ export class NodeSession extends DurableObject<Env> {
   // is not connected; queued messages then wait for its next authentication.
   // Issue #408 (design r3 section 4.3): a proxy delivery re-reads its row here,
   // in the object that sends, and is dropped unless it is still queued.
-  async pushFrame(type: "message.deliver" | "message.status" | "event", body: Record<string, unknown>): Promise<boolean> {
+  async pushFrame(type: "message.deliver" | "message.status" | "event", body: Record<string, unknown>, observational = false): Promise<boolean> {
     const ws = this.authedSocket();
     if (!ws) { if (type === "message.deliver") await this.observeDelivery(String(body.messageId), "node-offline"); return false; }
     const attachment = ws.deserializeAttachment() as Attachment, token = attachment.connectionToken;
+    if (observational && !attachment.diagnosticCapabilities?.includes(MESSAGING_DIAGNOSTICS_CAPABILITY)) return false;
     if (type === "message.deliver") await this.armDeliveryRetry();
     const prepared = type === "message.deliver" ? await registryStub(this.env).prepareMessageDelivery(String(body.messageId),
       attachment.registrationAccepted ? undefined : "auth") : body;
@@ -306,7 +307,8 @@ export class NodeSession extends DurableObject<Env> {
 
   private local(ws: WebSocket, nodeId: string): LocalNode {
     return { nodeId, scheduleRetry: () => this.armDeliveryRetry(),
-      send: (type, body) => { if (this.authedSocket() === ws) this.sendControl(ws, type, body); } };
+      send: (type, body, observational = false) => { if (this.authedSocket() === ws
+        && (!observational || (ws.deserializeAttachment() as Attachment).diagnosticCapabilities?.includes(MESSAGING_DIAGNOSTICS_CAPABILITY))) this.sendControl(ws, type, body); } };
   }
 
   private localControl(ws: WebSocket, nodeId: string): LocalControlNode {
