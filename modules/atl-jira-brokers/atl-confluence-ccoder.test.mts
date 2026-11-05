@@ -5,7 +5,9 @@
 // a property.
 import assert from "node:assert/strict";
 import test from "node:test";
-
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { runCli, type Injected } from "./atl-confluence-ccoder.mts";
 import type { HttpResponse, RequestOptions } from "./confluence-session.mts";
 
@@ -24,7 +26,7 @@ const AUTHOR = "service-account-for-tests";
 // Compared whole: a regex with an unescaped "|" matched this line on any one of
 // its words and so asserted nothing.
 const VERBS = ["create", "update", "get", "delete", "purge", "labels", "move", "space", "children", "related",
-  "search", "list", "context", "orphans", "stitch", "drainage", "evidence", "selftest"];
+  "search", "list", "context", "orphans", "stitch", "drainage", "evidence", "validate", "selftest"];
 const USAGE = `Usage: ${VERBS.join(" | ")}. Run help for the flags of each verb.`;
 
 interface Call {
@@ -547,5 +549,74 @@ test(`${BROKER} a successful PUT followed by readback failure is safely UNVERIFI
     assert.equal(h.calls.filter(c=>c.options?.method === 'PUT').length,1);
     assert.match(h.printed(),/UNVERIFIED/);
     assert.ok(!h.printed().includes('SENSITIVE'));
+  }
+});
+
+// #760 B: generic create remains supported, including byte-exact quoted file bodies.
+test(`${BROKER} generic file create transports UTF-8 quotes byte for byte`, async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "kherep-760-bytes-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const file = path.join(dir, "body 'quoted'.xml");
+  const bytes = Buffer.from('<p>It\'s "plain", ‘single’ and “double”, C:/assigned/file.</p>\n');
+  fs.writeFileSync(file, bytes);
+  const h = harness({ api: defaultApi }), accountRead = h.injected.readFile!;
+  let bodyReads = 0;
+  h.injected.readFile = async (name, encoding) => {
+    if (name !== file) return accountRead(name, encoding);
+    bodyReads++; return fs.readFileSync(file, encoding);
+  };
+  assert.equal(await runCli(["create", "--space", "KB", "--title", "Quotes", "--format", "storage", "--body-file", file], h.injected), 0);
+  const creates = h.calls.filter(c => c.options?.method === "POST" && c.url.endsWith("/wiki/api/v2/pages"));
+  assert.equal(creates.length, 1); assert.equal(bodyReads, 1);
+  assert.deepEqual(Buffer.from(JSON.parse(String(creates[0].options?.body)).body.value), bytes);
+});
+
+// Protocol fixture, not an agent executor or a mandatory create control.
+test(`${BROKER} Claude recovery protocol keeps the known ID through every quarantine outcome`, async () => {
+  for (const mode of ["normal", "already-absent", "already-pending", "confirmed-pending", "remove-failed", "add-failed", "readback-failed", "unknown-id"]) {
+    let state = ["type-observation", "status-author-model", "evidence-confirmed"], posted = false;
+    if (mode === "already-absent" || mode === "already-pending") state = state.filter(l => l !== "evidence-confirmed");
+    if (mode === "already-pending" || mode === "confirmed-pending") state.push("status-pending-deletion");
+    const h = harness({ api: call => {
+      assert.match(call.url, /\/5001(?:[/?]|$)/, "only this run's known ID is allowed");
+      if (call.options?.method === "DELETE") {
+        if (mode === "remove-failed") return response(500, {});
+        assert.match(call.url, /label\?name=evidence-confirmed$/);
+        state = state.filter(l => l !== "evidence-confirmed"); return response(204, undefined);
+      }
+      if (call.options?.method === "POST") {
+        if (mode === "add-failed") return response(500, {});
+        const added = JSON.parse(String(call.options.body)) as { name: string }[];
+        state = [...new Set([...state, ...added.map(l => l.name)])]; posted = true;
+      }
+      if (mode === "readback-failed" && posted && call.options?.method === "GET") return response(500, {});
+      return response(200, { results: state.map(name => ({ name })) });
+    } });
+    const knownID = mode === "unknown-id" ? undefined : "5001";
+    // Follow only the source protocol: read, conditionally remove/add, then same-ID readback.
+    const request: { id: string; result: string }[] = [];
+    let outcome = "failed/UNKNOWN";
+    if (knownID) {
+      const invoke = (flags: string[]) => runCli(["labels", "--id", knownID, ...flags], h.injected);
+      const read = async (): Promise<string[] | null> => {
+        const start = h.out.length;
+        if (await invoke([])) return null;
+        return h.out.slice(start).find(l => l.startsWith("labels: "))?.slice(8).split(", ") ?? null;
+      };
+      const before = await read(); let ok = before !== null;
+      if (ok && before!.includes("evidence-confirmed")) ok = await invoke(["--remove", "evidence-confirmed"]) === 0;
+      if (ok && !before!.includes("status-pending-deletion")) ok = await invoke(["--labels", "status-pending-deletion"]) === 0;
+      const after = ok ? await read() : null;
+      outcome = after && !after.includes("evidence-confirmed") && after.includes("status-pending-deletion")
+        ? "quarantine verified" : "quarantine failed";
+      request.push({ id: knownID, result: outcome });
+    }
+    const success = ["normal", "already-absent", "already-pending", "confirmed-pending"].includes(mode);
+    assert.equal(outcome, success ? "quarantine verified" : knownID ? "quarantine failed" : "failed/UNKNOWN", mode);
+    assert.deepEqual(request, knownID ? [{ id: "5001", result: outcome }] : [], mode);
+    assert.equal(h.calls.filter(c => c.options?.method === "POST" && c.url.endsWith("/wiki/api/v2/pages")).length, 0);
+    assert.ok(!h.calls.some(c => c.options?.method === "DELETE" && !c.url.includes("/label?")), "no page deletion");
+    if (!knownID) assert.equal(h.calls.length, 0, "unknown outcome gets no search, retry or quarantine");
+    if (mode === "already-pending") assert.ok(h.calls.every(c => (c.options?.method ?? "GET") === "GET" || c.url.startsWith("https://auth.")));
   }
 });

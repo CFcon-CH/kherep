@@ -31,8 +31,8 @@ const withoutTypeStrippingWarning = (stderr: string | Buffer): string =>
 const HERE = import.meta.dirname;
 const REPO = path.join(HERE, "..");
 // The verbs claude/agents/claude-obs.md runs through the stored command.
-const OBS_VERBS = ["related", "create", "stitch", "children"];
-const ALL_VERBS = ["get", "related", "search", "create", "labels", "stitch", "children"];
+const OBS_VERBS = ["related", "validate", "create", "stitch", "children"];
+const ALL_VERBS = ["get", "related", "validate", "search", "create", "labels", "stitch", "children"];
 const WIN_WORKSPACE = "C:\\Users\\example\\Kherep";
 const HOSTS = [
   { profile: "win", workspace: WIN_WORKSPACE },

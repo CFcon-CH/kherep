@@ -5,6 +5,9 @@
 // a property.
 import assert from "node:assert/strict";
 import test from "node:test";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 import { runCli, type Injected } from "./atl-confluence.mts";
 import type { HttpResponse, RequestOptions } from "./confluence-session.mts";
@@ -24,7 +27,7 @@ const AUTHOR = "service-account-for-tests";
 // Compared whole: a regex with an unescaped "|" matched this line on any one of
 // its words and so asserted nothing.
 const VERBS = ["create", "update", "get", "delete", "purge", "labels", "move", "space", "children", "related",
-  "search", "list", "context", "orphans", "stitch", "drainage", "evidence", "selftest"];
+  "search", "list", "context", "orphans", "stitch", "drainage", "evidence", "validate", "selftest"];
 const USAGE = `Usage: ${VERBS.join(" | ")}. Run help for the flags of each verb.`;
 
 interface Call {
@@ -548,4 +551,23 @@ test(`${BROKER} a successful PUT followed by readback failure is safely UNVERIFI
     assert.match(h.printed(),/UNVERIFIED/);
     assert.ok(!h.printed().includes('SENSITIVE'));
   }
+});
+
+// #760 B: generic create remains supported, including byte-exact quoted file bodies.
+test(`${BROKER} generic file create transports UTF-8 quotes byte for byte`, async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "kherep-760-bytes-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const file = path.join(dir, "body 'quoted'.xml");
+  const bytes = Buffer.from('<p>It\'s "plain", ‘single’ and “double”, C:/assigned/file.</p>\n');
+  fs.writeFileSync(file, bytes);
+  const h = harness({ api: defaultApi }), accountRead = h.injected.readFile!;
+  let bodyReads = 0;
+  h.injected.readFile = async (name, encoding) => {
+    if (name !== file) return accountRead(name, encoding);
+    bodyReads++; return fs.readFileSync(file, encoding);
+  };
+  assert.equal(await runCli(["create", "--space", "KB", "--title", "Quotes", "--format", "storage", "--body-file", file], h.injected), 0);
+  const creates = h.calls.filter(c => c.options?.method === "POST" && c.url.endsWith("/wiki/api/v2/pages"));
+  assert.equal(creates.length, 1); assert.equal(bodyReads, 1);
+  assert.deepEqual(Buffer.from(JSON.parse(String(creates[0].options?.body)).body.value), bytes);
 });

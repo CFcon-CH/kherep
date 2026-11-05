@@ -41,7 +41,7 @@ test("the shipped default renders today's frontmatter plus the observer effort m
       : agent === "atlassian-broker" ? "\nmodel: haiku\n---" : "\n---";
     assert.equal(render(agent), source(agent).replace(placeholders, expected), agent);
   }
-  assert.match(frontmatter(render("claude-obs")), /\ntools: Bash, Read\nmodel: haiku\neffort: medium$/);
+  assert.match(frontmatter(render("claude-obs")), /\ntools: Bash, Read, Write\nmodel: haiku\neffort: medium$/);
   assert.ok(!/\nmodel:/.test(frontmatter(render("kherep-builder"))), "a role default alone keeps native inherit");
 });
 

@@ -17,11 +17,13 @@ test("related searches with the finding sentence and links only judged hits", ()
 });
 
 test("stitch runs as three steps: candidates, judgment, decisions", () => {
-  const candidates = CLAUDE_OBS.search(/^ +<confluence\.json broker> stitch --space <spaceKey> --id <the new page id> --topic "<the finding sentence>" --out "\$r"$/m);
+  const candidates = CLAUDE_OBS.search(/^ +<confluence\.json broker> stitch --space <spaceKey> --id <the new page id> --topic "<the finding sentence>" --out "<assigned scratch receipt path>"$/m);
   const judge = CLAUDE_OBS.indexOf("2. Judge every candidate on topic and page context: yes or no, plus one sentence why.");
-  const write = CLAUDE_OBS.search(/^ +<confluence\.json broker> stitch --space <spaceKey> --id <the new page id> --candidates "<the receipt path step 1 printed>" --decisions "\$d"$/m);
+  const write = CLAUDE_OBS.search(/^ +<confluence\.json broker> stitch --space <spaceKey> --id <the new page id> --candidates "<the receipt path step 1 printed>" --decisions "<assigned scratch decisions path>"$/m);
   assert.ok(candidates > 0 && judge > candidates && write > judge, "candidate mode, then judgment, then write mode");
-  assert.match(CLAUDE_OBS, /`d="\$\(mktemp\)"`, write one `<id><TAB><reason>` line per candidate you\s+judged yes/);
+  const author = CLAUDE_OBS.indexOf("3. Author stitch decisions with the Write tool in the assigned scratch file: one `<id><TAB><reason>` line per yes");
+  assert.ok(author > judge && author < write, "judge before structured decision-file authoring, then broker write");
+  assert.match(CLAUDE_OBS, /10 to 300 characters of reason/);
   assert.match(CLAUDE_OBS, /If you approved nothing, run it with the empty file anyway: it prints\s+`nolink`/);
   assert.doesNotMatch(CLAUDE_OBS, /--per-orphan/);
 });

@@ -4,6 +4,7 @@
     "allow": [
       "Bash(node __KHEREP_WORKSPACE__/tools/atl-confluence-ccoder.mts get:*)",
       "Bash(node __KHEREP_WORKSPACE__/tools/atl-confluence-ccoder.mts related:*)",
+      "Bash(node __KHEREP_WORKSPACE__/tools/atl-confluence-ccoder.mts validate:*)",
       "Bash(node __KHEREP_WORKSPACE__/tools/atl-confluence-ccoder.mts search:*)",
       "Bash(node __KHEREP_WORKSPACE__/tools/atl-confluence-ccoder.mts create:*)",
       "Bash(node __KHEREP_WORKSPACE__/tools/atl-confluence-ccoder.mts labels:*)",

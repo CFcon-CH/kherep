@@ -197,23 +197,23 @@ test("the Claude text and the Claude routing name the hook that checks the statu
   assert.match(section, /SubagentStop hook\s+`obs-result-check`/);
 });
 
-// Issue #280. On Windows the agent wrote its body file to the backslash
-// scratchpad path from Bash; Bash ate the backslashes, MSYS mapped the colon
-// to U+F03A, and the page body landed in the caller's checkout. Every text
-// that asks for --body-file must create it with mktemp and ban such paths.
-test("a text that asks for --body-file creates it with mktemp and bans backslash paths", () => {
-  assert.match(CLAUDE_OBS, /--body-file/, "the Claude text no longer files through --body-file");
-  for (const [name, text] of [["claude-obs", CLAUDE_OBS], ["codex-obs", codexProjection()]]) {
-    if (!/--body-file/.test(text)) continue;
-    assert.match(text, /f="\$\(mktemp\)"/, name);
-    assert.doesNotMatch(text, /--body-file <[^>]*>/, `${name}: a placeholder lets the model pick a path`);
-    assert.match(text, /--body-file "\$f"/, name);
-    assert.match(text, /rm -f "\$f"/, name);
-    assert.match(text, /never[^.]{0,80}Windows backslash path[^.]{0,40}Bash/i, name);
-    assert.doesNotMatch(text, /[A-Za-z]:\\/, `${name}: carries a Windows backslash path itself`);
-  }
+test("the Claude source declares Write and validates a literal body file before create", () => {
+  assert.match(CLAUDE_OBS, /^tools: Bash, Read, Write$/m);
+  assert.match(CLAUDE_OBS, /Write tool[^.]{0,180}assigned scratch/i);
+  assert.match(CLAUDE_OBS, /do not enforce a filesystem sandbox/); assert.match(CLAUDE_OBS, /UTF-8/); assert.match(CLAUDE_OBS, /literal forward-slash paths/i);
+  assert.match(CLAUDE_OBS, /validate --format storage --body-file/);
+  assert.match(CLAUDE_OBS, /stitch decisions[^.]{0,160}Write tool/i);
+  assert.match(CLAUDE_OBS, /mechanical gate missing; agent instruction is not a guarantee/);
+  assert.doesNotMatch(CLAUDE_OBS, /mktemp|heredoc[^.]*use|--body-file "\$f"|--decisions "\$d"/);
+  assert.match(CLAUDE_OBS, /never[^.]{0,180}inline `--body`/i);
+  assert.match(CLAUDE_OBS, /diagnostics[^.]{0,150}validate[^.]{0,150}selftest/i);
 });
-
+test("wrong pages are quarantined by known ID and deletion belongs only to the Director", () => {
+  assert.match(CLAUDE_OBS, /labels --id[^\n]+--remove evidence-confirmed --labels status-pending-deletion/);
+  assert.match(CLAUDE_OBS, /quarantine failed[^.]{0,180}id/i);
+  assert.match(CLAUDE_OBS, /one[^.]{0,80}Director deletion request/i);
+  for (const file of ROUTING_FILES) assert.match(fs.readFileSync(file, "utf8"), /Only the Director[^.]{0,120}deletion/i);
+});
 // Issue #505. A code-bound finding is `confirmed` only with an exact binding.
 test("both texts bind a code-bound finding to <name>@<sha> and file the rest as assumed", () => {
   for (const [name, text] of [["claude-obs", CLAUDE_OBS], ["codex-obs", codexProjection()]]) {
