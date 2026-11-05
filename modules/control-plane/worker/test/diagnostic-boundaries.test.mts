@@ -1,0 +1,58 @@
+import { expect, it } from "vitest";
+import { runInDurableObject } from "cloudflare:test";
+import { attestedPair, attestedRows, BRAKE_CAPS, ID_A, ID_B } from "./message-loop-fixture.mts";
+import { authenticate, FACTS, registry, session, until } from "./helpers.mts";
+import { makeEnvelope } from "../../protocol.mts";
+import { isMessageStatusBody as archivedStatus } from "../../fixtures/diagnostics-pre-v1.mts";
+import { parseEnvelope as archivedEnvelope } from "../../fixtures/protocol-pre-diagnostics.mts";
+import { MESSAGING_DIAGNOSTICS_CAPABILITY } from "../../protocol-diagnostics.mts";
+import { digestMcpArguments, REMOTE_MCP_CAPABILITY } from "../../protocol-mcp.mts";
+for (const modern of [false, true]) it(`actual immediate send refusal and reconnect status-page validate across versions, modern=${modern}`, async () => {
+  const f = await attestedPair([...BRAKE_CAPS, ...(modern ? [MESSAGING_DIAGNOSTICS_CAPABILITY] : [])]);
+  f.setLocalRows([ID_A, ID_B].map((sessionId, i) => ({ sessionId, name: `alias-${i}`, runtime: "codex", lifecycleGeneration: 1 })));
+  const messageId = crypto.randomUUID();
+  f.socket.send(makeEnvelope("message.send", { messageId, fromSession: ID_A, to: { nodeId: f.nodeId, session: ID_B }, text: "synthetic refusal" }, f.nextSequence(), 0));
+  const frame = (await until(f.socket, "message.status", { messageId, state: "refused" })).at(-1)!;
+  expect(archivedStatus(frame.body)).toBe(!modern);
+  if (modern) expect(frame.body).toMatchObject({ diagnostic: { kind: "identity-change", dimensions: ["lifecycle", "selected-proof"] } });
+  f.socket.ws.close();
+  const reconnected = await authenticate(f.nodeId, f.key);
+  const replay = (await until(reconnected, "message.status", { messageId, state: "refused" })).at(-1)!;
+  expect(archivedStatus(replay.body)).toBe(true, "new authentication has no current diagnostics capability");
+  reconnected.ws.close();
+});
+for (const modern of [false, true]) it(`actual correlated duplicate error preserves old error shape, modern=${modern}`, async () => {
+  const f = await attestedPair([...BRAKE_CAPS, ...(modern ? [MESSAGING_DIAGNOSTICS_CAPABILITY] : [])]), sent = await f.send();
+  if (!sent.ok) throw new Error(sent.error);
+  const token = crypto.randomUUID();
+  f.beforeResponse(async () => { await registry().beginMessageConnection(f.nodeId, token); });
+  f.socket.send(makeEnvelope("message.send", { messageId: sent.status.messageId, fromSession: ID_A, to: { nodeId: f.nodeId, session: ID_B }, text: "synthetic retry" }, f.nextSequence(), 0));
+  const frame = (await until(f.socket, "error", { messageId: sent.status.messageId })).at(-1)!;
+  expect(archivedEnvelope(JSON.stringify(frame)).ok).toBe(true);
+  expect(frame.body).toMatchObject({ error: "loop-context-changed", messageId: sent.status.messageId });
+  if (modern) expect(frame.body).toMatchObject({ diagnostic: { kind: "identity-change", stage: "duplicate", dimensions: ["connection"] } });
+  else expect(Object.keys(frame.body).sort((a, b) => a < b ? -1 : a > b ? 1 : 0)).toEqual(["error", "messageId"]);
+  await registry().invalidateMessageConnection(f.nodeId, token);
+});
+for (const tool of ["send", "reply"] as const) it(`actual MCP ${tool} stamp drift reports capability before consuming the claim`, async () => {
+  const f = await attestedPair([...BRAKE_CAPS, MESSAGING_DIAGNOSTICS_CAPABILITY, REMOTE_MCP_CAPABILITY]);
+  const token = (await session(f.nodeId).loopCapabilityEvidence()).token!;
+  await registry().updateRegistration(f.nodeId, FACTS, [{ name: "codex", kind: "cli" }], [...BRAKE_CAPS, MESSAGING_DIAGNOSTICS_CAPABILITY, REMOTE_MCP_CAPABILITY, "messaging.selected-binding.v1"], token);
+  await registry().replaceSessions(f.nodeId, attestedRows().map(r => ({ ...r, state: "running" })), { version: 1, generation: 2 });
+  const credential = await registry().rotateMcpCredential(f.nodeId); if (!credential.ok) throw new Error(credential.error);
+  const id = crypto.randomUUID(), text = "synthetic MCP drift";
+  const parent = tool === "reply" ? await f.send(ID_B, ID_A) : null;
+  if (parent && !parent.ok) throw new Error(parent.error);
+  const parentId = parent?.ok ? parent.status.messageId : undefined;
+  if (parentId) await registry().reportMessageStatus(f.nodeId, { messageId: parentId, state: "delivered" });
+  const args = parentId ? { inReplyTo: parentId, text } : { to: { nodeId: f.nodeId, session: ID_B }, text };
+  const digest = await digestMcpArguments(args), callId = "synthetic-call";
+  expect((await registry().registerMcpIntent(f.nodeId, { requestId: id, runtime: "codex", sessionId: ID_A, threadId: ID_A, callId, tool, argumentsDigest: digest })).ok).toBe(true);
+  f.beforeResponse(async () => { await runInDurableObject(registry(), (_i, s) => {
+    s.storage.sql.exec("UPDATE nodes SET capabilities=? WHERE id=?", JSON.stringify([...BRAKE_CAPS, MESSAGING_DIAGNOSTICS_CAPABILITY, REMOTE_MCP_CAPABILITY]), f.nodeId);
+  }); });
+  const claim = { nodeId: f.nodeId, credentialVersion: credential.version, requestId: id, runtime: "codex" as const, sessionId: ID_A, threadId: ID_A, callId, tool, argumentsDigest: digest };
+  const result = tool === "send" ? await registry().sendMcpMessage(claim, { nodeId: f.nodeId, session: ID_B }, text) : await registry().replyMcpMessage(claim, parentId!, text);
+  expect(result).toMatchObject({ ok: false, error: "loop-context-changed", diagnostic: { kind: "identity-change", stage: "mcp-claim", dimensions: ["capability"] } });
+  expect(await runInDurableObject(registry(), (_i, s) => s.storage.sql.exec("SELECT claimed_at,outcome FROM mcp_intents WHERE request_id=?", id).one())).toEqual({ claimed_at: null, outcome: null });
+});

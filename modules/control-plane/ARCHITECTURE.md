@@ -1499,3 +1499,22 @@ is restricted to checked ticket members, at most eight. Diagnostic write failure
 does not alter admission. The Worker persists optional diagnostic JSON separately
 from state transitions, replays it through the existing capability boundary, and
 clears obsolete waiting detail on advancement. Terminal ordering is unchanged.
+
+Worker identity diagnostics compare canonical semantic leaves after the existing
+refusal: owner, reference-match, runtime, lifecycle, proof-kind, eligibility,
+capability, connection, lineage and selected-proof. Prepared binding projections
+are retained for the existing stamp comparison. Capability-only drift is never
+reported as a connection change; eligibility-qualified endpoint nulls do not
+establish an owner change. Unexplained comparisons expose no guessed dimension
+and keep a fixed internal diagnostic-gap signal. Values and proof material never
+enter diagnostic fields. Duplicate and MCP send/reply errors carry the same
+closed detail, before the existing claim consumption point.
+
+Existing NodeSession/RPC and egress attempts observe node-offline,
+registration-pending, binding-capability-missing, stored-binding-missing,
+resolution-unavailable, resolution-timeout, resolution-capacity, identity-changed
+and acceptance-unconfirmed. An unacknowledged push establishes only the last
+code. These observations neither rebind nor retry nor spend a turn; optional
+storage/routing failure does not change the attempt result. No owner-scoped
+`message.status.query` is implemented: senders can see pushed/stored metadata,
+but cannot refresh current upstream state through local `msg status`.

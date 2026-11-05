@@ -1,0 +1,79 @@
+import { expect, it } from "vitest";
+import { runInDurableObject } from "cloudflare:test";
+import { attestedPair, BRAKE_CAPS, ID_A, ID_B } from "./message-loop-fixture.mts";
+import { registry } from "./helpers.mts";
+import { MessageStore } from "../src/message-store.mts";
+import { MESSAGING_DIAGNOSTICS_CAPABILITY } from "../../protocol-diagnostics.mts";
+it("a capability-only signer interleaving is refused with capability and never connection", async () => {
+  const f = await attestedPair();
+  await runInDurableObject(registry(), async (_i, s) => {
+    const sql = s.storage.sql;
+    const caps = () => [...JSON.parse(String(sql.exec("SELECT capabilities FROM nodes WHERE id=?", f.nodeId).one().capabilities)), MESSAGING_DIAGNOSTICS_CAPABILITY];
+    const store = new MessageStore(sql, () => {}, caps);
+    const message = { messageId: crypto.randomUUID(), from: { nodeId: f.nodeId, session: ID_A }, to: { nodeId: f.nodeId, session: ID_B }, text: "synthetic interleaving" };
+    let changed = false;
+    const prepared = await store.prepare(message, async () => {
+      if (!changed) { changed = true; sql.exec("UPDATE nodes SET capabilities=? WHERE id=?", JSON.stringify(caps().filter((c: string) => c !== "messaging.selected-binding.v1")), f.nodeId); }
+      return "0".repeat(64);
+    });
+    const result = store.send(message, "test", Date.now(), prepared);
+    expect(result.ok && result.status.reason).toBe("loop-context-changed");
+    expect(result.ok && result.status.diagnostic).toMatchObject({ kind: "identity-change", dimensions: ["capability"] });
+    expect(result.ok && result.effects.deliveries).toEqual([]);
+    expect(sql.exec("SELECT COUNT(*) AS n FROM message_loop_pairs WHERE from_node=?", f.nodeId).one().n).toBe(0);
+  });
+});
+
+for (const dimension of ["owner", "reference-match", "runtime", "lifecycle", "proof-kind", "eligibility", "connection", "lineage"] as const) {
+  it(`real signer refusal identifies changed semantic ${dimension} without scoring`, async () => {
+    const f = await attestedPair();
+    let actualParent: string | undefined;
+    if (dimension === "lineage") {
+      const parent = await f.send(ID_B, ID_A); if (!parent.ok) throw new Error(parent.error);
+      actualParent = parent.status.messageId;
+      await registry().reportMessageStatus(f.nodeId, { messageId: actualParent, state: "accepted" });
+    }
+    await runInDurableObject(registry(), async (_i, s) => {
+      const sql = s.storage.sql, caps = () => ["messaging.v1", "messaging.loop-brake.v1", MESSAGING_DIAGNOSTICS_CAPABILITY];
+      const store = new MessageStore(sql, () => {}, caps);
+      const alias = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+      if (["owner", "reference-match"].includes(dimension)) sql.exec("UPDATE sessions SET name=? WHERE node_id=? AND session_id=?", alias, f.nodeId, ID_A);
+      const parent = actualParent;
+      const message = { messageId: crypto.randomUUID(), from: { nodeId: f.nodeId, session: ["owner", "reference-match"].includes(dimension) ? alias : ID_A },
+        to: { nodeId: f.nodeId, session: ID_B }, text: "synthetic semantic mutation", inReplyTo: parent };
+      let changed = false;
+      const beforePairs = sql.exec("SELECT * FROM message_loop_pairs WHERE from_node=?", f.nodeId).toArray();
+      const prepared = await store.prepare(message, async () => {
+        if (!changed) {
+          changed = true;
+          const proof = JSON.parse(String(sql.exec("SELECT canonical_identity FROM sessions WHERE node_id=? AND session_id=?", f.nodeId, ID_A).one().canonical_identity));
+          if (dimension === "owner") sql.exec("UPDATE sessions SET session_id=?,canonical_identity=? WHERE node_id=? AND session_id=?", alias, JSON.stringify({ ...proof, sessionId: alias }), f.nodeId, ID_A);
+          if (dimension === "reference-match") sql.exec("UPDATE sessions SET session_id=?,canonical_identity=? WHERE node_id=? AND session_id=?", alias, JSON.stringify({ ...proof, sessionId: alias }), f.nodeId, ID_A);
+          if (dimension === "runtime") sql.exec("UPDATE sessions SET runtime='claude-code',canonical_identity=? WHERE node_id=? AND session_id=?", JSON.stringify({ ...proof, runtime: "claude-code", source: "claude-list" }), f.nodeId, ID_A);
+          if (dimension === "lifecycle") sql.exec("UPDATE sessions SET canonical_identity=? WHERE node_id=? AND session_id=?", JSON.stringify({ ...proof, lifecycleGeneration: 1 }), f.nodeId, ID_A);
+          if (dimension === "proof-kind") sql.exec("UPDATE sessions SET canonical_identity=NULL WHERE node_id=? AND session_id=?", f.nodeId, ID_A);
+          if (dimension === "eligibility") sql.exec("UPDATE sessions SET state='closed' WHERE node_id=? AND session_id=?", f.nodeId, ID_A);
+          if (dimension === "connection") sql.exec("UPDATE nodes SET registration_token=NULL WHERE id=?", f.nodeId);
+          if (dimension === "lineage") sql.exec("UPDATE messages SET state='refused' WHERE id=?", parent!);
+        }
+        return "0".repeat(64);
+      });
+      const result = store.send(message, "test", Date.now(), prepared);
+      expect(result.ok && result.status.reason).toBe("loop-context-changed");
+      const detail = result.ok && result.status.diagnostic;
+      expect(detail && detail.kind === "identity-change" && detail.dimensions).toContain(dimension);
+      if (dimension === "eligibility") expect(detail && detail.kind === "identity-change" && detail.dimensions).toEqual(["eligibility"]);
+      expect(result.ok && result.effects.deliveries).toEqual([]);
+      expect(sql.exec("SELECT * FROM message_loop_pairs WHERE from_node=?", f.nodeId).toArray()).toEqual(beforePairs);
+    });
+  });
+}
+
+it("real selected local lifecycle disagreement reports selected-proof and lifecycle", async () => {
+  const f = await attestedPair([...BRAKE_CAPS, MESSAGING_DIAGNOSTICS_CAPABILITY]);
+  f.setLocalRows([ID_A, ID_B].map((sessionId, i) => ({ sessionId, name: `alias-${i}`, runtime: "codex", lifecycleGeneration: 1 })));
+  const result = await f.send();
+  expect(result.ok && result.status.reason).toBe("loop-context-changed");
+  expect(result.ok && result.status.diagnostic).toMatchObject({ kind: "identity-change", dimensions: ["lifecycle", "selected-proof"] });
+  expect(result.ok && result.effects.deliveries).toEqual([]);
+});

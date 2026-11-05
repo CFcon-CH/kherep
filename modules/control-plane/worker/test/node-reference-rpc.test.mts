@@ -56,3 +56,15 @@ it("S14: expired request and send failure leave no pending permission", async ()
   expect(await rpc.request(socket, "one", timeout, () => {}, () => true)).toBeNull();
   expect(rpc.receive(socket, "one", response(timeout))).toBe(false);
 });
+
+it("real RPC capacity, timeout and failed send report distinct observational codes", async () => {
+  const rpc = new NodeReferenceRpc(), socket = {} as WebSocket, codes: string[] = [];
+  const pending = Array.from({ length: 32 }, () => rpc.request(socket, "one", request(), () => {}, () => true));
+  expect(await rpc.request(socket, "one", request(), () => {}, () => true, code => codes.push(code))).toBeNull();
+  expect(codes.pop()).toBe("resolution-capacity"); rpc.clear(socket); await Promise.all(pending);
+  const short = request(); short.expiresAt = Date.now() + 10;
+  expect(await rpc.request(socket, "one", short, () => {}, () => true, code => codes.push(code))).toBeNull();
+  expect(codes.pop()).toBe("resolution-timeout");
+  expect(await rpc.request(socket, "one", request(), () => { throw new Error("synthetic failure"); }, () => true, code => codes.push(code))).toBeNull();
+  expect(codes.pop()).toBe("resolution-unavailable");
+});

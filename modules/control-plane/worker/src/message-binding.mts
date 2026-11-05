@@ -7,9 +7,9 @@ import type { LoopSigner } from "./message-loop-signals.mts";
 import { parseIdentityBinding } from "../../protocol-session-identity.mts";
 import { semanticNodes, semanticReference } from "./message-semantic-identity.mts";
 type AddressPair = { messageId: string; from: MessageAddress; to: MessageAddress };
-type Resolve = (nodeId: string, request: ResolveRequest) => Promise<ResolveResponse | null>;
+type Resolve = (nodeId: string, request: ResolveRequest) => Promise<ResolveResponse | null | { answer: ResolveResponse | null; code?: import("../../protocol-diagnostics.mts").BlockerCode }>;
 export interface PreparedBinding {
-  stamp: string; binding: MessageBinding | null; denyKey: string | null; leaseId: string | null; localGeneration: number | null; error?: string;
+  context?: ReturnType<typeof bindingContext>; connectionChanged?: boolean; diagnosticCode?: import("../../protocol-diagnostics.mts").BlockerCode; stamp: string; binding: MessageBinding | null; denyKey: string | null; leaseId: string | null; localGeneration: number | null; error?: string;
 }
 export function bindingContext(sql: SqlStorage, message: AddressPair): { stamp: string; refs: ReturnType<RegistrySessionIdentity["resolveCanonicalReference"]>[];
   nodes: ReturnType<typeof semanticNodes> } {
@@ -31,14 +31,21 @@ export function selectedAgreesWithProof(binding: MessageBinding, proof: string, 
 export async function prepareMessageBinding(sql: SqlStorage, message: AddressPair, sign: LoopSigner, resolve: Resolve,
   purpose: "admit" | "egress" = "admit", stored?: MessageBinding): Promise<PreparedBinding> {
   const context = bindingContext(sql, message);
-  const result: PreparedBinding = { stamp: context.stamp, binding: null, denyKey: null, leaseId: null, localGeneration: null };
+  const result: PreparedBinding = { context, stamp: context.stamp, binding: null, denyKey: null, leaseId: null, localGeneration: null };
   const expiresAt = Date.now() + BINDING_TTL_MS;
   const selected = new Map<"from" | "to", Extract<SelectedResult, { code: "BOUND" }>>();
   const requests = new Map<string, ResolveRequest>();
   for (const [index, role] of ["from", "to"].entries()) {
     const key = role as "from" | "to", address = message[key], reference = context.refs[index];
     if (stored && key === "from") continue; // An admitted source never reconnects or rebinds on replay.
-    if (address.nodeId === OPERATOR_NODE_ID || !context.nodes[index]?.capable || reference.code === "AMBIGUOUS") continue;
+    if (address.nodeId === OPERATOR_NODE_ID || !context.nodes[index]?.capable || reference.code === "AMBIGUOUS") {
+      if (address.nodeId !== OPERATOR_NODE_ID && !result.diagnosticCode) {
+        const node = context.nodes[index];
+        result.diagnosticCode = !node?.token || node.registration !== node.token ? "registration-pending"
+          : !node.capable ? "binding-capability-missing" : "resolution-unavailable";
+      }
+      continue;
+    }
     let request = requests.get(address.nodeId);
     if (!request) { request = { version: 1, requestId: crypto.randomUUID(), messageId: message.messageId, purpose, selections: [], expiresAt }; requests.set(address.nodeId, request); }
     const expected = stored ? { sessionId: stored[key].sessionId, runtime: stored[key].runtime }
@@ -46,14 +53,19 @@ export async function prepareMessageBinding(sql: SqlStorage, message: AddressPai
     request.selections.push({ role: key, ref: address.session, ...(expected ? { expected } : {}) });
   }
   const answers = await Promise.all([...requests].map(async ([nodeId, request]) => {
-    try { return { request, answer: await resolve(nodeId, request) }; }
-    catch { return { request, answer: null }; }
+    try { const response = await resolve(nodeId, request);
+      return { request, answer: response && "answer" in response ? response.answer : response, code: response && "answer" in response ? response.code : undefined }; }
+    catch { return { request, answer: null, code: "resolution-unavailable" as const }; }
   }));
-  for (const { request, answer } of answers) {
-    if (!answer || answer.requestId !== request.requestId || answer.messageId !== request.messageId) continue;
+  for (const { request, answer, code } of answers) {
+    if (!answer || answer.requestId !== request.requestId || answer.messageId !== request.messageId) {
+      result.diagnosticCode ??= code ?? "resolution-unavailable"; continue;
+    }
     for (const r of answer.results) {
       const s = request.selections.find(s => s.role === r.role);
-      if (!s || r.code !== "BOUND" || s.expected && (s.expected.sessionId !== r.owner.sessionId || s.expected.runtime !== r.owner.runtime)) continue;
+      if (!s || r.code !== "BOUND" || s.expected && (s.expected.sessionId !== r.owner.sessionId || s.expected.runtime !== r.owner.runtime)) {
+        result.diagnosticCode ??= r.code === "CONFLICT" ? "identity-changed" : "resolution-unavailable"; continue;
+      }
       selected.set(r.role, r);
     }
   }
@@ -61,8 +73,8 @@ export async function prepareMessageBinding(sql: SqlStorage, message: AddressPai
     ? { sessionId: message.from.session, runtime: null, lifecycleGeneration: null }
     : selected.has("from") ? boundOwner(selected.get("from")!) : null);
   const target = selected.has("to") ? boundOwner(selected.get("to")!) : null;
-  if (!source || !target) return result;
-  if (stored && JSON.stringify(stored.to) !== JSON.stringify(target)) return result;
+  if (!source || !target) { result.diagnosticCode ??= "resolution-unavailable"; return result; }
+  if (stored && JSON.stringify(stored.to) !== JSON.stringify(target)) return { ...result, diagnosticCode: "identity-changed" };
   const pair = pairIdentity({ nodeId: message.from.nodeId, session: source.sessionId }, { nodeId: message.to.nodeId, session: target.sessionId });
   try { result.denyKey = pair ? await sign("kherep-loop-pair-v1", pair.encoding) : null; }
   catch { return { ...result, error: "loop-crypto-unavailable" }; }

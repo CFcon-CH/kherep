@@ -1,3 +1,5 @@
+import { identityDiagnostic, selectedProofDimensions, type IdentityComparison } from "./message-identity-diagnostics.mts";
+import { blockerDiagnostic } from "../../protocol-diagnostics.mts";
 import { readDiagnostic, storeDiagnostic } from "./message-diagnostics.mts";
 import type { MessageDiagnostic } from "../../protocol-diagnostics.mts";
 import { compatibleDiagnostic } from "../../protocol-diagnostics.mts";
@@ -73,10 +75,10 @@ export interface NewMessage {
 // Frames the caller must push to nodes after the SQL work is done.
 export interface MessageEffects {
   deliveries: { nodeId: string; body: MessageDeliverBody }[];
-  statuses: { nodeId: string; body: MessageStatusBody }[];
+  statuses: { nodeId: string; body: MessageStatusBody; observational?: true }[];
 }
 
-export type SendResult = { ok: true; status: MessageStatusBody; effects: MessageEffects } | { ok: false; error: string };
+export type SendResult = { ok: true; status: MessageStatusBody; effects: MessageEffects } | { ok: false; error: string; diagnostic?: MessageDiagnostic };
 // advancedFrom: the state a node report moved the message out of (issue #441).
 export interface MessageReportResult { effects: MessageEffects; receipt: MessageReceiptBody | null; advancedFrom?: MessageState }
 
@@ -195,9 +197,14 @@ export class MessageStore {
     this.identity = new LoopIdentity(sql, capabilities);
   }
 
-  contextMatches(message: NewMessage, prepared: PreparedLoop): boolean {
-    return !prepared.error && (!prepared.binding || prepared.binding.stamp === bindingContext(this.sql, message).stamp) && sameLoopIdentity(prepared.snapshot, this.identity.snapshot(message.from, message.to, message.inReplyTo ?? message.proxyOf));
+  compareContext(message: NewMessage, prepared: PreparedLoop): IdentityComparison {
+    if (prepared.error) return { matches: false };
+    const context = prepared.binding ? bindingContext(this.sql, message) : undefined;
+    if (prepared.binding && context?.stamp !== prepared.binding.stamp) return { matches: false, context };
+    const current = this.identity.snapshot(message.from, message.to, message.inReplyTo ?? message.proxyOf);
+    return { matches: sameLoopIdentity(prepared.snapshot, current), current, context };
   }
+  contextMatches(message: NewMessage, prepared: PreparedLoop): boolean { return this.compareContext(message, prepared).matches; }
 
   async prepare(message: NewMessage, sign: LoopSigner): Promise<PreparedLoop> {
     const snapshot = this.identity.snapshot(message.from, message.to, message.inReplyTo ?? message.proxyOf);
@@ -242,8 +249,13 @@ export class MessageStore {
     const effects = this.expireDue(now);
     const row = this.sql.exec(`SELECT ${COLUMNS}, text, task_id FROM messages WHERE id = ?`, message.messageId).toArray()[0];
     if (row) {
-      const error = duplicateSendError(row, message, prepared, !!prepared && this.contextMatches(message, prepared));
-      if (error) return { ok: false, error };
+      const comparison = prepared ? this.compareContext(message, prepared) : undefined;
+      const error = duplicateSendError(row, message, prepared, comparison?.matches === true);
+      if (error) {
+        const diagnostic = error === LOOP_STALE && prepared && comparison ? identityDiagnostic(prepared, comparison, "duplicate", now)
+          : prepared?.binding?.diagnosticCode ? blockerDiagnostic(prepared.binding.diagnosticCode, now, "duplicate") : undefined;
+        return { ok: false, error, ...(diagnostic ? { diagnostic: compatibleDiagnostic({ diagnostic }, this.capabilities(message.from.nodeId)).diagnostic } : {}) };
+      }
       if (row.state === "queued") this.queueDeliveryAllowed(row, now, effects);
       const existing = this.get(message.messageId)!;
       return { ok: true, status: this.statusFor(existing.fromNode, statusOf(existing)), effects };
@@ -267,16 +279,18 @@ export class MessageStore {
     const denyKey = prepared?.binding?.binding ? prepared.binding.denyKey : prepared?.key;
     const bindingRequired = this.loops.hasHeldNodeScope(message.from.nodeId, target)
       || (mode === "guarded" && current.identityBinding !== null);
+    let currentContext: ReturnType<typeof bindingContext> | undefined;
+    let selectedMismatch = false;
     if (reason === null) {
       if (prepared && !sameLoopIdentity(prepared.snapshot, current)) reason = LOOP_STALE;
       else if (prepared?.error || prepared?.binding?.error) reason = prepared.error ?? prepared.binding!.error!;
-      else if (prepared?.binding && prepared.binding.stamp !== bindingContext(this.sql, message).stamp) reason = LOOP_STALE;
+      else if (prepared?.binding && prepared.binding.stamp !== (currentContext = bindingContext(this.sql, message)).stamp) reason = LOOP_STALE;
       else if (denyKey && this.loops.held(denyKey)) reason = this.loops.held(denyKey);
       else if (typeof mode === "object") reason = mode.reason;
       else if (bindingRequired && !prepared?.binding?.binding) reason = RESOLUTION_REQUIRED;
       else if (bindingRequired && prepared?.binding?.binding && current.identityBinding !== null
         && (current.from?.session !== prepared.binding.binding.from.sessionId || current.to?.session !== prepared.binding.binding.to.sessionId
-          || !selectedAgreesWithProof(prepared.binding.binding, current.identityBinding, current.direction))) reason = LOOP_STALE;
+          || !selectedAgreesWithProof(prepared.binding.binding, current.identityBinding, current.direction))) { selectedMismatch = true; reason = LOOP_STALE; }
       else if (mode === "legacy") { if (depthExceeded(depth)) reason = REPLY_DEPTH_EXCEEDED; }
       else if (!prepared?.key || !prepared.signal || current.direction === null) reason = "loop-crypto-unavailable";
       else {
@@ -301,6 +315,9 @@ export class MessageStore {
         this.setState(toRecord(row), "refused", reason!, actor, now, effects);
       }
     }
+    const diagnostic = reason === LOOP_STALE && prepared ? identityDiagnostic(prepared, { matches: false, current, context: currentContext }, "send-admission", now,
+      selectedMismatch ? selectedProofDimensions(prepared, current) : []) : reason === RESOLUTION_REQUIRED && prepared?.binding?.diagnosticCode
+      ? blockerDiagnostic(prepared.binding.diagnosticCode, now, "send-admission") : undefined;
     const state: MessageState = reason === null ? "queued" : "refused";
 
     // Bind queued attested rows to exact canonical endpoints. Delivery rechecks
@@ -319,8 +336,9 @@ export class MessageStore {
       loop.threadId, prepared!.key, loop.generation, loop.ordinal, current.direction, current.identityBinding, message.messageId);
     if (binding) this.sql.exec("UPDATE messages SET delivery_binding=?, delivery_pair=? WHERE id=?",
       JSON.stringify(binding), prepared!.binding!.denyKey, message.messageId);
+    storeDiagnostic(this.sql, message.messageId, diagnostic);
     this.retention.finalized(message.messageId, message.from.nodeId, state, now);
-    this.audit(actor, "message.send", target, { messageId: message.messageId, toSession: message.to.session, state, reason, ...(reason === LOOP_STALE && prepared ? { changedDimension: changedIdentityDimension(prepared.snapshot, current) } : {}) });
+    this.audit(actor, "message.send", target, { messageId: message.messageId, toSession: message.to.session, state, reason, ...(reason === LOOP_STALE && prepared ? { ...(diagnostic ? { changedDimension: changedIdentityDimension(prepared.snapshot, current) } : { diagnosticGap: true }) } : {}) });
     if (state === "queued") {
       effects.deliveries.push({ nodeId: target, body: {
         messageId: message.messageId, from: storedFrom, toSession: storedTo.session, text: message.text,
@@ -330,7 +348,7 @@ export class MessageStore {
       } });
       this.markReplied(message, now, effects);
     }
-    return { ok: true, status: statusBody(message.messageId, state, reason), effects };
+    return { ok: true, status: this.statusFor(message.from.nodeId, statusBody(message.messageId, state, reason, null, diagnostic)), effects };
   }
 
   // A status reported by the target node. A row or tombstone of another target
@@ -510,6 +528,14 @@ export class MessageStore {
       to: { nodeId: String(row.to_node), session: String(row.to_session) }, text: String(row.text) }, binding,
       required: !!binding || row.loop_identity !== null || this.loops.hasHeldNodeScope(String(row.from_node), String(row.to_node)) };
   }
+  observeDiagnostic(messageId: string, nodeId: string | null, diagnostic: MessageDiagnostic): MessageEffects {
+    const effects = none(), record = this.get(messageId);
+    if (!record || record.state !== "queued" || record.toNode !== nodeId) return effects;
+    storeDiagnostic(this.sql, messageId, diagnostic);
+    if (record.fromNode !== OPERATOR_NODE_ID) effects.statuses.push({ nodeId: record.fromNode, observational: true,
+      body: this.statusFor(record.fromNode, statusBody(messageId, record.state, record.reason, record.progress, diagnostic)) });
+    return effects;
+  }
   prepareDelivery(messageId: string, prepared: PreparedBinding | null, now: number, phase?: "auth" | "registration"): { body: MessageDeliverBody | null; effects: MessageEffects } {
     const effects = this.expireDue(now);
     const row = this.sql.exec(`SELECT ${COLUMNS}, text, task_id FROM messages WHERE id=? AND state='queued'`, messageId).toArray()[0];
@@ -517,10 +543,17 @@ export class MessageStore {
     const message = { messageId, from: { nodeId: String(row.from_node), session: String(row.from_session) },
       to: { nodeId: String(row.to_node), session: String(row.to_session) } };
     const stored = storedMessageBinding(row);
-    if (stored === "invalid") return { body: null, effects };
+    if (stored === "invalid") {
+      const observed = this.observeDiagnostic(messageId, message.to.nodeId, blockerDiagnostic("stored-binding-missing", now, "upstream-egress"));
+      effects.statuses.push(...observed.statuses); return { body: null, effects };
+    }
     const required = !!stored || row.loop_identity !== null || this.loops.hasHeldNodeScope(message.from.nodeId, message.to.nodeId);
-    const egress = egressBinding(this.sql, row, prepared, required, phase);
-    if (!egress) return { body: null, effects };
+    const detail: { code?: import("../../protocol-diagnostics.mts").BlockerCode } = {};
+    const egress = egressBinding(this.sql, row, prepared, required, phase, detail);
+    if (!egress) {
+      if (detail.code) effects.statuses.push(...this.observeDiagnostic(messageId, message.to.nodeId, blockerDiagnostic(detail.code, now, "upstream-egress")).statuses);
+      return { body: null, effects };
+    }
     const key = prepared?.denyKey ?? row.delivery_pair ?? row.loop_pair;
     const held = typeof key === "string" ? this.loops.held(key) : null;
     if (held) { this.setState(recordMetadata(row), "refused", held, "system", now, effects); return { body: null, effects }; }

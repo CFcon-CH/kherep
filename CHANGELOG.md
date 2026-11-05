@@ -39,6 +39,11 @@ increments the minor version; every other release increments the patch version.
 
 ### Fixed
 
+- Control Plane Worker: explain identity refusals with changed semantic dimensions
+  and record fixed upstream attempt blockers, including unconfirmed acceptance.
+  Existing comparisons, claim consumption, retry and delivery decisions are
+  unchanged; owner-scoped remote status queries remain deferred (#706).
+
 - Control Plane target progress now identifies task limits, pending runtime
   readiness, turn spacing, budget storage, busy tasks/processes and bounded
   hint failures at the original decision branches. Diagnostics persist with

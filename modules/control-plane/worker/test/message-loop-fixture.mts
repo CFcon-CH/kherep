@@ -23,8 +23,8 @@ export function attestedRows(now = Date.now(), lifecycleGeneration = 0): Session
     version: 1, source: "codex-hook", runtime: "codex", sessionId, observedAt: now, lifecycleGeneration,
   } }));
 }
-export async function attestedPair() {
-  const fixture = await bindingNode(attestedRows().map(({ sessionId, runtime, name }) => ({ sessionId, runtime, name })), BRAKE_CAPS);
+export async function attestedPair(capabilities = BRAKE_CAPS) {
+  const fixture = await bindingNode(attestedRows().map(({ sessionId, runtime, name }) => ({ sessionId, runtime, name })), capabilities);
   const { nodeId } = fixture;
   let manualLocal = false;
   await registry().replaceSessions(nodeId, attestedRows(), { version: 1, generation: 1 });
