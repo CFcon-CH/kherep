@@ -54,15 +54,17 @@ partial report is never accepted for scanning. The scanner receives only the
 named Sonar secret after report validation. Fork PRs run coverage validation and
 skip the secret-bearing scan with a summary.
 
-Sonar is **not a required merge check yet**. The existing 80% coverage threshold
-on new code stays unchanged; no exclusions, synthetic hits or ignored-line
+`SonarCloud Code Analysis` is a **required merge check** on `main`. A fork PR gets
+no scan, so it cannot satisfy this check; a maintainer has to move such a change
+to a same-repository branch. The existing 80% coverage threshold on new code
+stays unchanged; no exclusions, synthetic hits or ignored-line
 comments are added to reach it. Linux coverage does not prove native Windows or
 macOS behavior. Their existing compatibility checks and engine-floor jobs remain
 in place. The matrix dependencies wait for their sibling jobs. Child processes
 that clear the coverage variable, die before flushing, or execute temporary
 installed copies may remain uncovered. Environment sanitization is preserved.
-Raw artifacts can be large (about 1.3 GB unit and 599 MB TypeScript in the #772
-sample); transfer time and real PR/Sonar results need separate measurement.
+Raw coverage is about 1.3 GB for `unit` and 599 MB for `typescript` on the runner;
+the compressed artifacts measured 168 MB and 78 MB in the #790 run.
 
 For a local typed-source and child-process diagnostic after `npm ci`, run:
 
