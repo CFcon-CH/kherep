@@ -34,6 +34,12 @@ increments the minor version; every other release increments the patch version.
 
 ### Fixed
 
+- Intercom node intake diagnostics retain original socket arrival times through
+  deferral, count fixed frame classes and measure lane age, pongs and event-loop
+  lag. Bounded content-free threshold logs and numeric doctor samples distinguish
+  local backlog from late callback arrival. A separately authorized node upgrade
+  and restart is needed; no Worker deployment (#706).
+
 - Intercom listeners wait across exhausted wake budgets without spending turns
   or releasing their owner lock early. Shipped Claude hook lifetimes are now
   25 hours, retaining the budgeted early re-arm and finite timeout. Codex hints

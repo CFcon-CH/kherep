@@ -1,6 +1,7 @@
 import { parseEnvelope } from "../protocol.mts";
 import { isMessageDeliverBody, isMessageReceiptBody, isMessageStatusBody } from "../protocol-messages.mts";
 import { isMcpIntentReceiptBody } from "../protocol-mcp.mts";
+import type { FrameArrival, IntakeDiagnostics } from "./intake-diagnostics.mts";
 import type { NodeClient } from "./client.mts";
 import { CODEX_ACTIVE_MS, readCodexSession } from "./codex-sessions.mts";
 import type { NodePaths } from "./config.mts";
@@ -16,14 +17,15 @@ interface Options {
   send: (frame: string) => boolean;
   exchange: () => void;
   queue: () => void;
-  defer: (data: string) => void;
+  defer: (data: string, arrival?: FrameArrival) => void;
+  diagnostics?: IntakeDiagnostics;
   // Called once with each frame the window itself hands to onFrame (issue #487 D1).
   handled: (data: string) => void;
   log: (message: string) => void;
 }
 
 export interface CodexIntakeWindow {
-  frame(data: string): boolean;
+  frame(data: string, arrival?: FrameArrival): boolean;
   tick(): void;
   close(): void;
   drain(): Promise<void>;
@@ -68,16 +70,20 @@ export function codexIntakeWindow(options: Options): CodexIntakeWindow {
     });
   }
   return {
-    frame(data: string): boolean {
+    frame(data: string, arrival?: FrameArrival): boolean {
       if (!eligible() || !admittedFrame(data)) return false;
       enqueue(async () => {
-        if (!eligible()) { options.defer(data); return; }
+        if (!eligible()) { options.defer(data, arrival); return; }
         // Once admitted, publish its result even if policy changes afterwards.
         // A closed socket gets no ACK: the Worker retains its durable message.
-        options.handled(data);
-        const frames = await options.client.onFrame(data);
-        for (const frame of frames) if (!options.send(frame)) break;
-        if (eligible()) options.queue();
+        const process = async (): Promise<void> => {
+          options.handled(data);
+          const frames = await options.client.onFrame(data);
+          for (const frame of frames) if (!options.send(frame)) break;
+          if (eligible()) options.queue();
+        };
+        if (options.diagnostics) await options.diagnostics.process(arrival, process);
+        else await process();
       });
       return true;
     },

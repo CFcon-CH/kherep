@@ -41,13 +41,14 @@ for (const invalidation of ["close", "disconnect", "auth", "policy"]) {
       fs.writeFileSync(policyFile, JSON.stringify({ version: 1, allowedCommands: [] }));
       let connected = true;
       const counts = { handled: 0, deferred: 0, onFrame: 0, errors: 0 };
+      const arrival = { monoMs: 17, wallMs: 1234, kind: 4 };
       const client = { authenticated: true, onFrame: async () => { counts.onFrame++; return []; } };
       const window = codexIntakeWindow({ client: client as unknown as NodeClient, paths: nodePaths(root), policyFile,
         policy: readPolicy(policyFile, true)!, connected: () => connected, send: () => true, exchange: () => {}, queue: () => {},
-        defer: () => { counts.deferred++; }, handled: () => { counts.handled++; }, log: () => { counts.errors++; } });
+        defer: (_data, original) => { assert.equal(original, arrival); counts.deferred++; }, handled: () => { counts.handled++; }, log: () => { counts.errors++; } });
       for (let n = 1; n <= 2; n++) {
         assert.equal(window.frame(JSON.stringify(makeEnvelope("message.status",
-          { messageId: `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`, state: "accepted" }, n, 0))), true);
+          { messageId: `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`, state: "accepted" }, n, 0)), arrival), true);
       }
       if (invalidation === "close") window.close();
       if (invalidation === "disconnect") connected = false;

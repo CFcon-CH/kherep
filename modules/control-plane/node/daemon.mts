@@ -1,3 +1,4 @@
+import { createIntakeDiagnostics, type FrameArrival } from "./intake-diagnostics.mts";
 import { createBindingStorage } from "./inbox-storage.mts";
 import { MessageReferenceResolver } from "./message-reference.mts";
 import { createAdmissionAuthority, revokeAuthority, stopAuthority } from "./session-authority.mts";
@@ -214,11 +215,15 @@ export function startDaemon(config: NodeConfig, paths: NodePaths, log: (line: st
       (execute) => executeTaskControl(execute, { nodeId: config.nodeId, paths, runner })),
     ...exchangeOptions(paths), selectedReferences, bindingStorageReady: bindingStorage.snapshot, bindingStorageFault: storageFault, log,
   });
+  let knownPending = (): boolean => false;
+  const diagnostics = createIntakeDiagnostics({ log, pending: () => knownPending(), publish: intake => {
+    state = { ...state, intake }; recordDaemonState(paths, state, log);
+  } });
   const timed = lockRounds(laneTimer(log, lanes.slowLaneMs), DAEMON_RECORD_LOCK_WAIT_MS);
   const tally = roundTally(); // inbound items since the last round, by kind (issues #487, #493)
   // Issue #441: deliveries on a lane of their own (frame-lanes.mts); spans reconnects like chain.
   const intake = intakeLane({ client, policyFile: config.policyFile, inbox: paths.inbox, log, intakeSlowMs: lanes.intakeSlowMs,
-    timed: (lane, kind, run, at) => timed(lane, kind, () => { tally.add("frame:message.deliver"); return run(); }, at) });
+    diagnostics, timed: (lane, kind, run, at) => timed(lane, kind, () => { tally.add("frame:message.deliver"); return run(); }, at) });
   const stopSlowSync = reportSlowSync(log);
 
   let stopped = false;
@@ -226,7 +231,7 @@ export function startDaemon(config: NodeConfig, paths: NodePaths, log: (line: st
   let socket: WebSocket | null = null;
   let retry: NodeJS.Timeout | null = null;
   let finish: () => void = () => {};
-  const done = new Promise<void>((resolve) => { finish = resolve; }).then(drainProbes).finally(stopSlowSync);
+  const done = new Promise<void>((resolve) => { finish = resolve; }).then(drainProbes).finally(() => { stopSlowSync(); diagnostics.stop(); });
   // One lane spans reconnects so an old socket cannot finish a state mutation
   // concurrently with the replacement connection.
   let chain = Promise.resolve();
@@ -249,11 +254,13 @@ export function startDaemon(config: NodeConfig, paths: NodePaths, log: (line: st
     // once after a reconnect, which starts with a new map.
     const inflight = new Map<string, number>();
     const requestsInflight = new Set<string>();
+    knownPending = () => !stopped && socket === ws && ws.readyState === WebSocket.OPEN
+      && inflight.size + taskControlInflight.size + mcpInflight.size > 0;
     taskControlInflight = new Set<string>();
     mcpInflight = new Set<string>();
     const send = (frame: string): boolean => {
       if (ws.readyState !== WebSocket.OPEN) return false;
-      ws.send(client.stamp(frame)); // issue #441: the only path to the socket; stamps the wire seq
+      ws.send(client.stamp(frame)); diagnostics.sent(frame); // issue #441: the only path to the socket; stamps the wire seq
       return true;
     };
     const publishRegistration = (frames: string[]): boolean => {
@@ -265,7 +272,7 @@ export function startDaemon(config: NodeConfig, paths: NodePaths, log: (line: st
     // Allocate and publish every frame on the same lane. Periodic discovery
     // waits outside it so an unrelated slow listing cannot postpone native ACKs.
     ws.addEventListener("open", () => {
-      ping = setInterval(() => { if (ws.readyState === WebSocket.OPEN) ws.send(PING_FRAME); }, PING_INTERVAL_MS);
+      ping = setInterval(() => { if (ws.readyState === WebSocket.OPEN) { ws.send(PING_FRAME); diagnostics.sent(PING_FRAME); } }, PING_INTERVAL_MS);
       snapshots = setInterval(() => {
         // Issue #197: a runtime that is not ready is probed again in the
         // background, at most every NOT_READY_TTL_MS, so a re-login is noticed
@@ -300,7 +307,7 @@ export function startDaemon(config: NodeConfig, paths: NodePaths, log: (line: st
           return exchangeRound({ client, paths, policyFile: config.policyFile,
           runner, inbox, log, inflight, requestsInflight, taskControlInflight: () => taskControlInflight, mcpInflight: () => mcpInflight,
           send, publishRegistration, live: () => !stopped && socket === ws && ws.readyState === WebSocket.OPEN, defer: dispatchFrame,
-          window: (window) => { intakeWindow = window; }, tally }); }))
+          window: (window) => { intakeWindow = window; }, diagnostics, tally }); }))
           .catch((error: unknown) => log(`kherep-node: message exchange failed: ${String(error)}`))
           .finally(() => { exchangePending = false; });
       }, EXCHANGE_INTERVAL_MS);
@@ -311,16 +318,16 @@ export function startDaemon(config: NodeConfig, paths: NodePaths, log: (line: st
     const connection: IntakeConnection = { live: () => socket === ws && ws.readyState === WebSocket.OPEN, send, publishRegistration };
     ws.addEventListener("message", (event) => {
       if (typeof event.data !== "string") return;
-      const arrivedAt = Date.now();
-      if (!intakeWindow?.frame(event.data)) dispatchFrame(event.data, arrivedAt);
+      const arrival = diagnostics.receive(event.data);
+      if (!intakeWindow?.frame(event.data, arrival)) dispatchFrame(event.data, arrival);
     });
     // The listener after the Codex intake window, which also defers to it. Auth barrier: until
     // auth.ok is handled on chain, a delivery stays behind it there, never unauthenticated on intake.
-    const dispatchFrame = (data: string, arrivedAt = Date.now()): void => {
+    const dispatchFrame = (data: string, arrival?: FrameArrival): void => {
       const route = routeFrame(data, paths);
       const parsed = parseEnvelope(data);
-      if ((route.kind === "deliver" || parsed.ok && parsed.envelope.type === "message.resolve.request") && client.authenticated) intake(data, arrivedAt, connection);
-      else if (route.kind !== "command") handleFrame(data);
+      if ((route.kind === "deliver" || parsed.ok && parsed.envelope.type === "message.resolve.request") && client.authenticated) intake(data, arrival?.wallMs ?? Date.now(), connection, arrival);
+      else if (route.kind !== "command") handleFrame(data, arrival);
       else {
         // Issue #197: a session command for a runtime without any readiness
         // verdict waits for its first probe here, outside the frame lane;
@@ -328,12 +335,12 @@ export function startDaemon(config: NodeConfig, paths: NodePaths, log: (line: st
         const runtime = route.runtime;
         commands = commands.then(async () => {
           if (runtime) await readiness.check(runtime);
-          if (socket === ws) handleFrame(data);
+          if (socket === ws) handleFrame(data, arrival);
         }).catch((error: unknown) => log(`kherep-node: command handling failed: ${String(error)}`));
       }
     };
-    const handleFrame = (data: string): void => {
-      chain = chain.then(enqueued(timed, "chain", () => frameKind(data), async () => {
+    const handleFrame = (data: string, arrival?: FrameArrival): void => {
+      chain = chain.then(enqueued(timed, "chain", () => frameKind(data), () => diagnostics.process(arrival, async () => {
         tally.add(tallyKind(data));
         publishRegistration(await client.refreshPolicy(loadPolicy(config.policyFile)));
         const wasAuthed = client.authenticated;
@@ -368,7 +375,7 @@ export function startDaemon(config: NodeConfig, paths: NodePaths, log: (line: st
             });
           }
         }
-      })).catch((error: unknown) => log(`kherep-node: frame handling failed: ${String(error)}`));
+      }))).catch((error: unknown) => log(`kherep-node: frame handling failed: ${String(error)}`));
     };
     ws.addEventListener("close", (event) => {
       intakeWindow?.close();

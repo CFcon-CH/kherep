@@ -1,3 +1,5 @@
+import { createIntakeDiagnostics } from "./intake-diagnostics.mts";
+import { FakeClock } from "./connection-test-fixture.mts";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
@@ -386,4 +388,16 @@ test("the Codex fork attempt check counts attempts by state and unreadable owner
   assert.deepEqual(report.checks.codexForkAttempts, { ok: false, states: { ...states, launching: 1, completed: 1 }, unreadableOwners: 1,
     detail: "a Codex fork attempt store cannot be read completely" });
   for (const secret of [owner, other, message(1), "synthetic private answer"]) assert.equal(JSON.stringify(report).includes(secret), false);
+});
+
+// Numeric daemon-side samples are advisory, never an extra readiness verdict.
+test("doctor exposes only the fixed numeric intake snapshot", async t => {
+  const h = host(t), clock = new FakeClock();
+  const diagnostics = createIntakeDiagnostics({ clock, wall: () => 1000, pending: () => false, log: () => {} });
+  const intake = diagnostics.snapshot(); diagnostics.stop();
+  const file = daemonStateFile(h.paths), state = JSON.parse(fs.readFileSync(file, "utf8"));
+  fs.writeFileSync(file, JSON.stringify({ ...state, intake: { ...intake, arbitrary: "synthetic canary" } }));
+  assert.deepEqual((await runDoctor(h.deps)).checks.daemon.intake, intake);
+  fs.writeFileSync(file, JSON.stringify({ ...state, intake: { ...intake, lagMs: "synthetic canary" } }));
+  assert.equal((await runDoctor(h.deps)).checks.daemon.intake, undefined);
 });

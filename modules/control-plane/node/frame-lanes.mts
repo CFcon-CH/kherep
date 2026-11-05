@@ -1,6 +1,7 @@
 import { isCommandBody, parseEnvelope } from "../protocol.mts";
 import { isMessageDeliverBody } from "../protocol-messages.mts";
 import { isTaskControlExecuteBody } from "../protocol-task-control.mts";
+import type { FrameArrival, IntakeDiagnostics } from "./intake-diagnostics.mts";
 import type { NodeClient } from "./client.mts";
 import { getMessage } from "./inbox.mts";
 import { runRecordLockRound } from "./inbox-record-lock.mts";
@@ -82,17 +83,21 @@ interface IntakeOptions {
   log: (line: string) => void;
   timed: LaneTimer;
   intakeSlowMs?: number;
+  diagnostics?: IntakeDiagnostics;
 }
 
 // One lane per daemon, spanning reconnects like the frame lane.
-export function intakeLane(options: IntakeOptions): (data: string, arrivedAt: number, connection: IntakeConnection) => void {
+export function intakeLane(options: IntakeOptions): (data: string, arrivedAt: number, connection: IntakeConnection, arrival?: FrameArrival) => void {
   let lane = Promise.resolve();
-  return (data, arrivedAt, connection) => {
-    lane = lane.then(() => options.timed("intake", "intake:deliver", async () => {
-      connection.publishRegistration(await options.client.refreshPolicy(loadPolicy(options.policyFile)));
-      const frames = await options.client.onFrame(data, connection.live());
-      for (const frame of frames) if (!connection.send(frame)) break;
-      logSlowIntake(options, data, arrivedAt);
+  return (data, arrivedAt, connection, arrival) => {
+    lane = lane.then(() => options.timed("intake", "intake:deliver", () => {
+      const process = async (): Promise<void> => {
+        connection.publishRegistration(await options.client.refreshPolicy(loadPolicy(options.policyFile)));
+        const frames = await options.client.onFrame(data, connection.live());
+        for (const frame of frames) if (!connection.send(frame)) break;
+        logSlowIntake(options, data, arrivedAt);
+      };
+      return options.diagnostics ? options.diagnostics.process(arrival, process) : process();
     }, arrivedAt)).catch((error: unknown) => options.log(`kherep-node: message intake failed: ${String(error)}`));
   };
 }
