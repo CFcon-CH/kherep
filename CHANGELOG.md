@@ -11,6 +11,9 @@ increments the minor version; every other release increments the patch version.
 
 ### Security
 
+- CI dependency installs disable lifecycle scripts, with optional platform
+  binaries retained for the Control Plane Worker (#779).
+
 - Resolve tools from absolute PATH directories before spawning, excluding the
   working directory and its aliases, on Windows and POSIX. Shared installed
   hook libraries preserve lookup-failure behavior without discovery subprocesses.
