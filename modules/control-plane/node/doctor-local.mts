@@ -5,6 +5,7 @@ import { listenerDir, type ListenerLock } from "./autonomy.mts";
 import { FORK_ATTEMPT_STATES, forkAttempts, type ForkAttemptState } from "./codex-fork-attempts.mts";
 import { CODEX_ACTIVE_MS, isCodexHookEvent, isCodexSessionId, type CodexHookEvent, type CodexSessionRecord } from "./codex-sessions.mts";
 import { readConfig, type NodeConfig, type NodePaths } from "./config.mts";
+import { diagnosticNumbers } from "./intake-diagnostics.mts";
 import { readDaemonState } from "./daemon-state.mts";
 import { captureSourceIdentity, compareSourceIdentity, type SourceIdentity } from "./daemon-source.mts";
 import { readPrivateKey } from "./identity.mts";
@@ -69,7 +70,7 @@ export function checkDaemon(paths: NodePaths, pidAlive: (pid: unknown) => boolea
   else if (disconnectedAt) detail = "the daemon lost its connection and has not authenticated again";
   else if (!source.ok) detail = String(source.detail);
   return { ok: alive && connectedAt !== null && disconnectedAt === null && source.ok, pid: state.pid, alive, startedAt: state.startedAt,
-    connectedAt, disconnectedAt, source, ...(detail ? { detail } : {}) };
+    connectedAt, disconnectedAt, source, ...(diagnosticNumbers(state.intake) ? { intake: diagnosticNumbers(state.intake) } : {}), ...(detail ? { detail } : {}) };
 }
 
 // The readiness record of a running daemon (issue #222), with a Claude probe

@@ -189,6 +189,33 @@ exact child in memory. If that evidence is lost, or an earlier daemon never held
 it, this path cannot recover the lease retroactively. Existing positive
 stale-owner recovery stays unchanged.
 
+## Node intake diagnostics (#706)
+
+`node/intake-diagnostics.mts` records monotonic and wall arrival time directly
+in the socket callback, with fixed numeric classes and cumulative receive/send
+counts. The callback updates memory only. Original arrival stamps survive Codex
+window deferral; all three frame lanes record entry and exit against that stamp.
+A one-second timer measures event-loop lag. Once per minute, `daemon.json` and
+`doctor` expose a validated numeric-only snapshot, including the last pong.
+
+The existing log receives a bounded `INTAKE_DIAG` line for arrival age over
+30 seconds (code 1), loop lag over five seconds (code 2), or application silence
+over 30 seconds while pongs remain fresh and local outbox, task-control or MCP
+work is known pending (code 3). The completed-task connection dedup set is not
+pending evidence. Logs are limited to one per code per minute; silence reports
+once per episode, retaining eligibility when rate-limited. Fields are fixed
+codes, numeric class, times and counts, never contents or identities. Class order
+for `rx` and `tx` is ping, pong, auth, deliver, status, receipt, resolve, command,
+other, invalid (0 through 9). `enter_ms` and `exit_ms` refer to the reported class.
+
+High `age_ms` with low `lag_ms` indicates a node processing backlog. Code 2 or a
+large `max_lag_ms` establishes event-loop blocking (the maximum is cumulative).
+Code 3 with fresh pongs and low timer lag, followed by low-age arrivals, points
+to late application arrival before the callback. This cannot distinguish Worker,
+network, TLS or kernel buffering. Wall time correlates samples; monotonic time
+measures age. Application silence is advisory and never retires a socket.
+A separately authorized node upgrade and restart is required; no Worker change.
+
 ## Codex intake peer progress
 
 The daemon retains one runtime-mutation lane. Only around its awaited

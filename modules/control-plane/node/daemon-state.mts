@@ -1,4 +1,5 @@
 import path from "node:path";
+import type { IntakeNumbers } from "./intake-diagnostics.mts";
 
 import { isTaskRuntime, type TaskRuntime } from "../protocol-tasks.mts";
 import type { NodePaths } from "./config.mts";
@@ -21,6 +22,7 @@ export interface DaemonServiceBinding { name: string; platform: "darwin" | "win3
 export interface InterruptedProbe { runtime: "claude"; pid: number | null; at: string; noticedAt: string }
 export interface DaemonState {
   pid: number; startedAt: string; connectedAt?: string; disconnectedAt?: string;
+  intake?: IntakeNumbers;
   source?: SourceIdentity; service?: DaemonServiceBinding; readiness?: Partial<Record<TaskRuntime, ProbeRecord>>;
   interruptedProbe?: InterruptedProbe;
 }

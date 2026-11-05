@@ -1,3 +1,4 @@
+import type { FrameArrival, IntakeDiagnostics } from "./intake-diagnostics.mts";
 import type { NodeClient } from "./client.mts";
 import { relaySendGate } from "./codex-fork-relay.mts";
 import { codexIntakeWindow, type CodexIntakeWindow } from "./codex-intake-window.mts";
@@ -38,7 +39,8 @@ export interface RoundContext {
   publishRegistration(frames: string[]): boolean;
   // The round's connection is still the daemon's, open and not stopping.
   live(): boolean;
-  defer(data: string): void;
+  defer(data: string, arrival?: FrameArrival): void;
+  diagnostics?: IntakeDiagnostics;
   window(window: CodexIntakeWindow | null): void;
   // Inbound items handled since the previous round, by kind (issue #493 D2); take() resets it.
   tally: RoundTally;
@@ -77,7 +79,7 @@ export async function exchangeRound(ctx: RoundContext): Promise<void> {
   const windowKinds = new Map<TallyKind, number>();
   const window = published ? codexIntakeWindow({ client, paths, policyFile: ctx.policyFile, policy: applied,
     connected: ctx.live, send: (frame) => ctx.live() && ctx.send(frame), exchange: () => exchange(),
-    queue: () => pollCodexQueue({ ...runner, policy: applied }, log), defer: ctx.defer,
+    queue: () => pollCodexQueue({ ...runner, policy: applied }, log), defer: ctx.defer, diagnostics: ctx.diagnostics,
     handled: (data) => { const kind = tallyKind(data); windowKinds.set(kind, (windowKinds.get(kind) ?? 0) + 1); }, log }) : null;
   ctx.window(window);
   try { await pollCodexInbound({ ...runner, policy: applied }, log); }
