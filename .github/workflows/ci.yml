@@ -98,7 +98,7 @@ jobs:
         run: ${{ matrix.os == 'ubuntu-latest' && format('NODE_V8_COVERAGE="{0}/kherep-coverage/unit/raw" npm run test:bootstrap', runner.temp) || 'npm run test:bootstrap' }}
       - name: Install dependencies for native Control Plane tests
         if: runner.os == 'macOS'
-        run: npm ci
+        run: npm ci --ignore-scripts
       - name: Fetch pinned public legacy reader
         if: runner.os == 'macOS'
         shell: bash
@@ -168,7 +168,7 @@ jobs:
         run: node --test modules/github-broker/windows-access.test.mts
       - name: Install dependencies for native Control Plane tests
         if: matrix.suite == 'control-plane'
-        run: npm ci
+        run: npm ci --ignore-scripts
       - name: Fetch pinned public legacy reader
         if: matrix.suite == 'control-plane'
         shell: bash
@@ -249,7 +249,7 @@ jobs:
         run: node --test modules/twg/*.test.mts
       - name: Bootstrap suites (TypeScript on Node, no build)
         run: npm run test:bootstrap
-      - run: npm ci
+      - run: npm ci --ignore-scripts
       - name: Codex projection suites and run guard (issue #550)
         run: node codex/scripts/codex-run-guard.mts run --platform linux --tap "${{ runner.temp }}/codex-run.tap"
       - name: local-inference and mcp-auth-bridge suites
@@ -308,7 +308,7 @@ jobs:
         with:
           node-version: lts/*
           cache: npm
-      - run: npm ci
+      - run: npm ci --ignore-scripts
       - name: Type check (tsc --noEmit, strict, erasableSyntaxOnly)
         run: npm run typecheck
       - name: Codex projection suites and run guard (issue #550)
@@ -368,7 +368,7 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: lts/*
-      - run: npm ci
+      - run: npm ci --ignore-scripts --include=optional
       - name: Type check
         run: npm run typecheck
       - name: Worker tests (vitest, workerd)
@@ -411,7 +411,7 @@ jobs:
           node-version: lts/*
           cache: npm
       - name: Install root TypeScript dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
       - name: Install probe dependencies
         working-directory: modules/control-plane/client-binding-probe
         run: npm ci --ignore-scripts
