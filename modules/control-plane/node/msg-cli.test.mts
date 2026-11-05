@@ -280,7 +280,7 @@ test("msg inbox shows this session's messages, msg status the state of a sent on
   assert.doesNotMatch(all.out, /e3/);
 
   const sent = (await run(paths, ["send", "node-b/docs", "x"])).out;
-  assert.match((await run(paths, ["status", sent])).out, /pending: waiting for the daemon/);
+  assert.match((await run(paths, ["status", sent])).out, /pending: no control-plane confirmation received/);
   recordSent(paths, sent, "refused", "not accepted by node policy");
   assert.match((await run(paths, ["status", sent])).out, new RegExp(`${sent} refused: not accepted by node policy`));
   const progressId = (await run(paths, ["send", "node-b/docs", "x"])).out;

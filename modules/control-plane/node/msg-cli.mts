@@ -258,7 +258,7 @@ function status(io: Io, messageId: string): number {
     return 0;
   }
   if (getOutbox(io.paths, messageId)) {
-    io.out(`${messageId} pending: waiting for the daemon to send it`);
+    io.out(`${messageId} pending: no control-plane confirmation received`);
     return 0;
   }
   // Issue #417: a message this node received.
