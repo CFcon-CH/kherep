@@ -19,6 +19,7 @@ import { install } from "./install.mts";
 import { fixtureModelOptions } from "./lib/model-policy.fixture.mts";
 import { command, contextCommand } from "./lib/parity-config.mts";
 import { InstallTransaction } from "./lib/install-transaction.mts";
+import { declareCopy } from "../bootstrap/coverage-copy-fixture.mts";
 
 const GUARDS = ["commit-guard", "deploy-guard", "playwright-file-guard"] as const;
 
@@ -113,7 +114,9 @@ const CASES = [
   },
 ] as const;
 
-function assertGuardsBlock(config: string, hookDir: string): void {
+function assertGuardsBlock(config: string, hookDir: string, unchanged = true): void {
+  // Tests that replace or break this installed copy must not declare it.
+  if (unchanged) declareCopy(path.resolve(import.meta.dirname, "../claude/hooks/playwright-file-guard.mts"), path.join(hookDir, "playwright-file-guard.mts"));
   for (const item of CASES) {
     const hook = wiredGuard(config, hookDir, item.guard);
     assert.equal(hook.event, "PreToolUse", item.guard);
@@ -240,7 +243,7 @@ test("an upgrade over the .js projection replaces its block and removes the old 
       `// stale ${guard}\n`, `${guard}.js is kept in the install backup`);
     assert.doesNotMatch(config, new RegExp(`${guard}\\.js`), `config.toml no longer wires ${guard}.js`);
   }
-  assertGuardsBlock(config, hookDir);
+  assertGuardsBlock(config, hookDir, false);
 });
 
 test("missing or empty installed shell guards deny benign commands", (t) => {
@@ -270,7 +273,7 @@ test("missing or empty installed shell guards deny benign commands", (t) => {
       fs.writeFileSync(file, original);
     }
   }
-  assertGuardsBlock(config, hookDir);
+  assertGuardsBlock(config, hookDir, false);
 });
 
 // Issue #325. A fourth shared guard; it has no .js past, so it is not in GUARDS.

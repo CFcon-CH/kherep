@@ -14,6 +14,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { after, test } from "node:test";
+import { declareCopy } from "../../bootstrap/coverage-copy-fixture.mts";
 
 import { initialize, openDatabase } from "../kherep/hook-runtime/coordinator-db.mts";
 import { coordinated, entryFor, HOOK, installIntegrity } from "./integrity-sandbox.mts";
@@ -49,7 +50,10 @@ const options = (box: Box) => ({
   env: { ...process.env, HOME: path.dirname(box.claude), USERPROFILE: path.dirname(box.claude), CLAUDE_HOME: box.claude,
     KHEREP_WORKSPACE: box.cwd },
 });
-const args = (box: Box): string[] => [entryFor(box.hooks), "writer", path.join(box.hooks, HOOK), "--trigger", "guard-dispatch"];
+const args = (box: Box): string[] => {
+  declareCopy(path.join(import.meta.dirname, HOOK), path.join(box.hooks, HOOK));
+  return [entryFor(box.hooks), "writer", path.join(box.hooks, HOOK), "--trigger", "guard-dispatch"];
+};
 
 function run(box: Box): Run {
   const result = spawnSync(process.execPath, args(box), { ...options(box), encoding: "utf8" });

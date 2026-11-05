@@ -12,15 +12,18 @@ import path from "node:path";
 import { after, test } from "node:test";
 
 import { syntaxVerdict } from "../claude/hooks/lib/hook-syntax.mts";
+import { declareCopy } from "./coverage-copy-fixture.mts";
 
 const repo = path.resolve(import.meta.dirname, "..");
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), "wired-blocking-guards-"));
 // Issue #507, part 2: every wired command runs through kherep/hook-runtime/entry.mts,
 // which keeps its coordination state beside the hooks it admits. A copy of the
 // checkout's hooks and runtime plays the Claude home, so no state lands in the checkout.
-function claudeCopy(name: string): string {
+function claudeCopy(name: string, unchanged = true): string {
   const copy = path.join(TMP, name);
   fs.cpSync(path.join(repo, "claude", "hooks"), path.join(copy, "hooks"), { recursive: true });
+  // The broken-guard case edits its copies and must remain undeclared.
+  if (unchanged) declareCopy(path.join(repo, "claude", "hooks", "playwright-file-guard.mts"), path.join(copy, "hooks", "playwright-file-guard.mts"));
   fs.cpSync(path.join(repo, "claude", "kherep", "hook-runtime"), path.join(copy, "kherep", "hook-runtime"), { recursive: true });
   // Issue #737. The dispatch guard reads the installed shipped model policy.
   fs.copyFileSync(path.join(repo, "claude", "kherep", "model-policy.json"), path.join(copy, "kherep", "model-policy.json"));
@@ -262,7 +265,7 @@ test("obs-handback-gate is wired under PreToolUse SubagentHandback and refuses a
 // Issue #507. A 0-byte or missing guard used to exit without a decision (fail-open).
 // Through the dispatcher it denies every call, benign included, naming the file.
 test("a 0-byte or missing PreToolUse guard denies every call and names its file", () => {
-  const home = claudeCopy("broken-claude");
+  const home = claudeCopy("broken-claude", false);
   const copy = home;
   for (const guard of PRETOOL_GUARDS) {
     const file = path.join(copy, "hooks", guard.hook);
