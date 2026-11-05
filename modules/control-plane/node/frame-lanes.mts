@@ -92,7 +92,10 @@ export function intakeLane(options: IntakeOptions): (data: string, arrivedAt: nu
   return (data, arrivedAt, connection, arrival) => {
     lane = lane.then(() => options.timed("intake", "intake:deliver", () => {
       const process = async (): Promise<void> => {
-        connection.publishRegistration(await options.client.refreshPolicy(loadPolicy(options.policyFile)));
+        if (!connection.live()) return;
+        const refreshed = await options.client.refreshPolicy(loadPolicy(options.policyFile));
+        if (!connection.live()) return;
+        connection.publishRegistration(refreshed);
         const frames = await options.client.onFrame(data, connection.live());
         for (const frame of frames) if (!connection.send(frame)) break;
         logSlowIntake(options, data, arrivedAt);

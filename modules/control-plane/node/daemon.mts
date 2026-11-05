@@ -1,3 +1,6 @@
+import { createConnectionSupervisor } from "./connection-supervisor.mts";
+import { createConnectionWatchdog } from "./connection-watchdog.mts";
+import { nodeClock, type NodeClock } from "./node-clock.mts";
 import { createIntakeDiagnostics, type FrameArrival } from "./intake-diagnostics.mts";
 import { createBindingStorage } from "./inbox-storage.mts";
 import { MessageReferenceResolver } from "./message-reference.mts";
@@ -5,7 +8,7 @@ import { createAdmissionAuthority, revokeAuthority, stopAuthority } from "./sess
 import { readLivenessSnapshot } from "./session-lifecycle.mts";
 import { targetKey } from "./session-liveness.mts";
 import { attachLiveness, createLivenessPass, type LivenessSource } from "./liveness-pass.mts";
-import { parseEnvelope, PING_FRAME, type SessionInfo } from "../protocol.mts";
+import { parseEnvelope, PING_FRAME, PONG_FRAME, type SessionInfo } from "../protocol.mts";
 import { isTaskRuntime, type TaskRuntime } from "../protocol-tasks.mts";
 import { reconnectDelay } from "./backoff.mts";
 import { NodeClient, type CommandHandlers } from "./client.mts";
@@ -51,10 +54,8 @@ import {
   answerMcpInbox, disableMcp, hasMcpCredential, offerMcpInbox, readMcpInbox, recordMcpCredential, recordMcpIntentReceipt,
 } from "./mcp-local.mts";
 
-// Application ping interval. The Worker answers PING_FRAME through
-// setWebSocketAutoResponse without waking the Durable Object; Node's built-in
-// WebSocket client cannot send protocol-level ping frames.
-export const PING_INTERVAL_MS = 30_000;
+// Application heartbeat uses the existing static Worker auto-response.
+export { PING_INTERVAL_MS } from "./connection-watchdog.mts";
 // The session list is checked this often; a snapshot goes out only on change.
 export const SESSIONS_INTERVAL_MS = 60_000;
 
@@ -89,7 +90,7 @@ export function startDaemon(config: NodeConfig, paths: NodePaths, log: (line: st
   sessionSource?: (signal?: AbortSignal) => Promise<SessionInfo[]>,
   probe: (runtime: TaskRuntime, onUnconfirmedShutdown?: () => void) => Promise<ProbeResult> = (runtime, onUnconfirmedShutdown) =>
     probeRuntime(runtime, { forgetSession: (threadId) => forgetCodexSession(paths, threadId), onUnconfirmedShutdown }),
-  service?: DaemonServiceBinding, lanes: LaneOptions = {}, maintenance: MaintenanceOptions = {}, livenessSource?: LivenessSource): DaemonHandle {
+  service?: DaemonServiceBinding, lanes: LaneOptions = {}, maintenance: MaintenanceOptions = {}, livenessSource?: LivenessSource, clock: NodeClock = nodeClock): DaemonHandle {
   const identity = readPrivateKey(config.privateKeyFile);
   if (identity.publicKey !== config.publicKey) throw new Error("private key does not match the enrolled public key");
   const policy = loadPolicy(config.policyFile);
@@ -216,7 +217,7 @@ export function startDaemon(config: NodeConfig, paths: NodePaths, log: (line: st
     ...exchangeOptions(paths), selectedReferences, bindingStorageReady: bindingStorage.snapshot, bindingStorageFault: storageFault, log,
   });
   let knownPending = (): boolean => false;
-  const diagnostics = createIntakeDiagnostics({ log, pending: () => knownPending(), publish: intake => {
+  const diagnostics = createIntakeDiagnostics({ log, clock, pending: () => knownPending(), publish: intake => {
     state = { ...state, intake }; recordDaemonState(paths, state, log);
   } });
   const timed = lockRounds(laneTimer(log, lanes.slowLaneMs), DAEMON_RECORD_LOCK_WAIT_MS);
@@ -229,7 +230,6 @@ export function startDaemon(config: NodeConfig, paths: NodePaths, log: (line: st
   let stopped = false;
   let attempt = 0;
   let socket: WebSocket | null = null;
-  let retry: NodeJS.Timeout | null = null;
   let finish: () => void = () => {};
   const done = new Promise<void>((resolve) => { finish = resolve; }).then(drainProbes).finally(() => { stopSlowSync(); diagnostics.stop(); });
   // One lane spans reconnects so an old socket cannot finish a state mutation
@@ -238,31 +238,56 @@ export function startDaemon(config: NodeConfig, paths: NodePaths, log: (line: st
   // Inbound commands that wait for a first readiness verdict (issue #197).
   let commands = Promise.resolve();
 
+  const connections = createConnectionSupervisor({ clock, connect: () => connect(), log,
+    delay: () => reconnectDelay(attempt++),
+    reset: () => { chain = chain.then(() => { client.connectionClosed(); }); },
+    disconnected: () => {
+      state = { ...state, disconnectedAt: new Date().toISOString() }; recordDaemonState(paths, state, log);
+    },
+    finish: () => { stopped = true; stopSweep(); finish(); },
+  });
   const connect = (): void => {
     if (stopped) return;
     const ws = new WebSocket(connectUrl(config.controlUrl, config.nodeId));
     let socketError: SocketErrorClass | "none" = "none"; // issue #493 D2b: this socket's last error, classified
     socket = ws;
-    let ping: NodeJS.Timeout | null = null;
     let snapshots: NodeJS.Timeout | null = null;
     let exchange: NodeJS.Timeout | null = null;
     let directory: NodeJS.Timeout | null = null;
     let exchangePending = false;
+    let authenticated = false;
     let intakeWindow: CodexIntakeWindow | null = null;
     // Outbox records sent on this connection, with their send time; an
     // unanswered one is sent again with backoff (send-schedule.mts), or at
     // once after a reconnect, which starts with a new map.
     const inflight = new Map<string, number>();
     const requestsInflight = new Set<string>();
-    knownPending = () => !stopped && socket === ws && ws.readyState === WebSocket.OPEN
-      && inflight.size + taskControlInflight.size + mcpInflight.size > 0;
+    knownPending = () => generation.current() && inflight.size + taskControlInflight.size + mcpInflight.size > 0;
     taskControlInflight = new Set<string>();
     mcpInflight = new Set<string>();
     const send = (frame: string): boolean => {
-      if (ws.readyState !== WebSocket.OPEN) return false;
+      if (!generation.current() || ws.readyState !== WebSocket.OPEN) return false;
       ws.send(client.stamp(frame)); diagnostics.sent(frame); // issue #441: the only path to the socket; stamps the wire seq
       return true;
     };
+    const generation = connections.begin(() => {
+      // Revoke connection proof immediately; serialize the full reset after old work.
+      authenticated = false; client.authenticated = false; client.workerCapabilities = null; selectedReferences.clear();
+      watchdog.stop(); intakeWindow?.close();
+      for (const timer of [snapshots, exchange, directory]) if (timer) clearInterval(timer);
+      if (backgroundDiscovery?.socket === ws) {
+        backgroundDiscovery.controller.abort(); backgroundDiscovery = null;
+      }
+      if (socket === ws) socket = null;
+    });
+    const watchdog = createConnectionWatchdog({ clock, sendPing: () => {
+      if (generation.current() && ws.readyState === WebSocket.OPEN) { ws.send(PING_FRAME); diagnostics.sent(PING_FRAME); }
+    }, expire: event => {
+      if (!generation.current()) return;
+      log(`${event.code} open_ms=${event.openMs} pong_age_ms=${event.pongAgeMs} delay_ms=${event.delayMs}`);
+      generation.retireConnection({ code: 4000, error: socketError });
+      try { ws.close(4000, "heartbeat timeout"); } catch { /* retry does not depend on close */ }
+    } });
     const publishRegistration = (frames: string[]): boolean => {
       if (frames.length === 0) return true;
       for (const frame of frames) if (!send(frame)) return false;
@@ -272,8 +297,10 @@ export function startDaemon(config: NodeConfig, paths: NodePaths, log: (line: st
     // Allocate and publish every frame on the same lane. Periodic discovery
     // waits outside it so an unrelated slow listing cannot postpone native ACKs.
     ws.addEventListener("open", () => {
-      ping = setInterval(() => { if (ws.readyState === WebSocket.OPEN) { ws.send(PING_FRAME); diagnostics.sent(PING_FRAME); } }, PING_INTERVAL_MS);
+      if (!generation.current()) return;
+      watchdog.open();
       snapshots = setInterval(() => {
+        if (!generation.current()) return;
         // Issue #197: a runtime that is not ready is probed again in the
         // background, at most every NOT_READY_TTL_MS, so a re-login is noticed
         // and advertised without a run asking for it.
@@ -286,9 +313,11 @@ export function startDaemon(config: NodeConfig, paths: NodePaths, log: (line: st
           return null;
         }).then((listed) => {
           chain = chain.then(enqueued(timed, "chain", "snapshot", async () => {
-            if (socket !== ws || ws.readyState !== WebSocket.OPEN) return;
+            if (!generation.current() || ws.readyState !== WebSocket.OPEN) return;
             if (listed && !controller.signal.aborted) await recordAndPublishSessions(client, paths, listed, send, log, controller.signal, () => inbox.records(), livenessAuthority);
+            if (!generation.current()) return;
             await watchTasks(runner, log);
+            if (!generation.current()) return;
             await deliverToClosed(live(), log);
           })).catch((error: unknown) => log(`kherep-node: session snapshot failed: ${String(error)}`));
           return chain;
@@ -297,36 +326,40 @@ export function startDaemon(config: NodeConfig, paths: NodePaths, log: (line: st
         });
       }, SESSIONS_INTERVAL_MS);
       exchange = setInterval(() => {
+        if (!generation.current()) return;
         if (intakeWindow) { intakeWindow.tick(); return; }
         // Coalesce ticks while one round waits or runs so inbound receipts
         // cannot accumulate behind redundant periodic exchange work.
         if (exchangePending) return;
         exchangePending = true;
         chain = chain.then(enqueued(timed, "chain", "exchange-round", () => {
+          if (!generation.current()) return;
           if (!bindingStorage.recheck()) { indexedInbox.invalidate(); selectedReferences.clear(); }
           return exchangeRound({ client, paths, policyFile: config.policyFile,
           runner, inbox, log, inflight, requestsInflight, taskControlInflight: () => taskControlInflight, mcpInflight: () => mcpInflight,
-          send, publishRegistration, live: () => !stopped && socket === ws && ws.readyState === WebSocket.OPEN, defer: dispatchFrame,
+          send, publishRegistration, live: () => generation.current() && ws.readyState === WebSocket.OPEN, defer: dispatchFrame,
           window: (window) => { intakeWindow = window; }, diagnostics, tally }); }))
           .catch((error: unknown) => log(`kherep-node: message exchange failed: ${String(error)}`))
           .finally(() => { exchangePending = false; });
       }, EXCHANGE_INTERVAL_MS);
       directory = setInterval(() => {
-        chain = chain.then(enqueued(timed, "chain", "directory", () => { client.directoryRequest().forEach(send); }));
+        chain = chain.then(enqueued(timed, "chain", "directory", () => { if (generation.current()) client.directoryRequest().forEach(send); }));
       }, DIRECTORY_INTERVAL_MS);
     });
-    const connection: IntakeConnection = { live: () => socket === ws && ws.readyState === WebSocket.OPEN, send, publishRegistration };
+    const connection: IntakeConnection = { live: () => generation.current() && authenticated && ws.readyState === WebSocket.OPEN, send, publishRegistration };
     ws.addEventListener("message", (event) => {
-      if (typeof event.data !== "string") return;
+      if (!generation.current() || typeof event.data !== "string") return;
       const arrival = diagnostics.receive(event.data);
+      if (event.data === PONG_FRAME) watchdog.pong();
       if (!intakeWindow?.frame(event.data, arrival)) dispatchFrame(event.data, arrival);
     });
     // The listener after the Codex intake window, which also defers to it. Auth barrier: until
     // auth.ok is handled on chain, a delivery stays behind it there, never unauthenticated on intake.
     const dispatchFrame = (data: string, arrival?: FrameArrival): void => {
+      if (!generation.current()) return;
       const route = routeFrame(data, paths);
       const parsed = parseEnvelope(data);
-      if ((route.kind === "deliver" || parsed.ok && parsed.envelope.type === "message.resolve.request") && client.authenticated) intake(data, arrival?.wallMs ?? Date.now(), connection, arrival);
+      if ((route.kind === "deliver" || parsed.ok && parsed.envelope.type === "message.resolve.request") && authenticated) intake(data, arrival?.wallMs ?? Date.now(), connection, arrival);
       else if (route.kind !== "command") handleFrame(data, arrival);
       else {
         // Issue #197: a session command for a runtime without any readiness
@@ -335,17 +368,22 @@ export function startDaemon(config: NodeConfig, paths: NodePaths, log: (line: st
         const runtime = route.runtime;
         commands = commands.then(async () => {
           if (runtime) await readiness.check(runtime);
-          if (socket === ws) handleFrame(data, arrival);
+          if (generation.current()) handleFrame(data, arrival);
         }).catch((error: unknown) => log(`kherep-node: command handling failed: ${String(error)}`));
       }
     };
     const handleFrame = (data: string, arrival?: FrameArrival): void => {
       chain = chain.then(enqueued(timed, "chain", () => frameKind(data), () => diagnostics.process(arrival, async () => {
+        if (!generation.current()) return;
         tally.add(tallyKind(data));
-        publishRegistration(await client.refreshPolicy(loadPolicy(config.policyFile)));
+        const refreshed = await client.refreshPolicy(loadPolicy(config.policyFile));
+        if (!generation.current()) return;
+        publishRegistration(refreshed);
         const wasAuthed = client.authenticated;
         // Issue #408 (design r3 section 3.3): live is decided when the lane reaches the frame.
-        const frames = await client.onFrame(data, socket === ws && ws.readyState === WebSocket.OPEN);
+        const frames = await client.onFrame(data, generation.current() && ws.readyState === WebSocket.OPEN);
+        if (!generation.current()) return;
+        authenticated = client.authenticated;
         let sent = true;
         for (const frame of frames) if (!send(frame)) { sent = false; break; }
         if (!wasAuthed && client.authenticated && sent) client.registrationSent();
@@ -364,7 +402,7 @@ export function startDaemon(config: NodeConfig, paths: NodePaths, log: (line: st
             backgroundDiscovery = { controller, socket: ws };
             void source(controller.signal).then((listed) => {
               chain = chain.then(enqueued(timed, "chain", "snapshot", async () => {
-                if (socket !== ws || ws.readyState !== WebSocket.OPEN || controller.signal.aborted) return;
+                if (!generation.current() || ws.readyState !== WebSocket.OPEN || controller.signal.aborted) return;
                 await recordAndPublishSessions(client, paths, listed, send, log, controller.signal, () => inbox.records(), livenessAuthority);
               }));
               return chain;
@@ -377,31 +415,9 @@ export function startDaemon(config: NodeConfig, paths: NodePaths, log: (line: st
         }
       }))).catch((error: unknown) => log(`kherep-node: frame handling failed: ${String(error)}`));
     };
-    ws.addEventListener("close", (event) => {
-      intakeWindow?.close();
-      for (const timer of [ping, snapshots, exchange, directory]) if (timer) clearInterval(timer);
-      if (backgroundDiscovery?.socket === ws) {
-        backgroundDiscovery.controller.abort();
-        backgroundDiscovery = null;
-      }
-      client.connectionClosed();
-      state = { ...state, disconnectedAt: new Date().toISOString() };
-      recordDaemonState(paths, state, log);
-      if (stopped) return finish();
-      // Revoked keys and a connection superseded by the same node identity
-      // cannot succeed by reconnecting this daemon; stop instead of hammering.
-      if (event.code === 4403 || event.code === 4409) {
-        log(event.code === 4403
-          ? "kherep-node: the control plane refused this node (unknown or revoked); stopping"
-          : "kherep-node: another connection replaced this daemon for the same node; stopping");
-        stopped = true;
-        return finish();
-      }
-      const delay = reconnectDelay(attempt++);
-      log(`kherep-node: disconnected (${event.code}, clean=${event.wasClean === true}, error:${socketError}); reconnecting in ${Math.round(delay / 1000)} s`);
-      retry = setTimeout(connect, delay);
-    });
+    ws.addEventListener("close", event => generation.retireConnection({ code: event.code, wasClean: event.wasClean, error: socketError }));
     ws.addEventListener("error", (event) => {
+      if (!generation.current()) return;
       socketError = classifySocketError(event); // the close event follows, names it and schedules the reconnect
     });
   };
@@ -412,9 +428,11 @@ export function startDaemon(config: NodeConfig, paths: NodePaths, log: (line: st
       stopped = true;
       void drainProbes();
       stopSweep();
-      if (retry) clearTimeout(retry);
-      if (socket && socket.readyState <= WebSocket.OPEN) socket.close(1000, "node stopping");
-      else finish();
+      const closing = socket;
+      connections.stop();
+      if (closing && closing.readyState <= WebSocket.OPEN) {
+        try { closing.close(1000, "node stopping"); } catch { /* retirement already finished */ }
+      }
     },
     done,
   };

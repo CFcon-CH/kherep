@@ -107,7 +107,7 @@ for (const code of [4403, 4409]) {
     sockets[0].serverClose(code);
 
     assert.equal(await Promise.race([handle.done.then(() => true), wait(50).then(() => false)]), true);
-    assert.equal(cleared.size, 4);
+    assert.equal(cleared.size, 4); // three connection intervals plus the stopped listener sweep
     await wait(550);
     assert.equal(sockets.length, 1);
     assert.equal(logs.some((line) => line.includes("reconnecting")), false);
@@ -121,7 +121,7 @@ test("a transient close still retries with the existing backoff", async (t) => {
   sockets[0].serverClose(1012);
 
   assert.equal(await Promise.race([handle.done.then(() => true), wait(50).then(() => false)]), false);
-  assert.equal(cleared.size, 4);
+  assert.equal(cleared.size, 3);
   await wait(550);
   assert.equal(sockets.length, 2);
   assert.ok(logs.some((line) => line.includes("disconnected (1012, clean=false, error:none); reconnecting in 1 s")));

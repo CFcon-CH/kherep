@@ -9,7 +9,7 @@ import os from "node:os";
 import path from "node:path";
 import { mock, type TestContext } from "node:test";
 
-import { makeEnvelope, parseEnvelope, type Envelope, type SessionInfo } from "../protocol.mts";
+import { makeEnvelope, parseEnvelope, PING_FRAME, type Envelope, type SessionInfo } from "../protocol.mts";
 import type { TaskRuntime } from "../protocol-tasks.mts";
 import { nodePaths, type NodeConfig, type NodePaths } from "./config.mts";
 import { startDaemon } from "./daemon.mts";
@@ -75,6 +75,7 @@ export function intakeHarness(t: TestContext, options: HarnessOptions = {}) {
     }
     addEventListener(name: string, callback: Listener) { this.listeners.set(name, callback); }
     send(raw: string) {
+      if (raw === PING_FRAME) return; // application liveness has no envelope seq
       const parsed = parseEnvelope(raw);
       if (parsed.ok && parsed.envelope.seq >= 0) this.handle.sent.push(parsed.envelope);
       else invalid.push(raw.slice(0, 120));

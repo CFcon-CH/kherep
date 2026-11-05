@@ -91,7 +91,7 @@ class FakeSocket {
   readyState = 1;
   listeners = new Map<string, Listener>();
   addEventListener(name: string, callback: Listener): void { this.listeners.set(name, callback); }
-  send(raw: string): void { frames.push(JSON.parse(raw)); }
+  send(raw: string): void { if (raw !== '{"type":"ping"}') frames.push(JSON.parse(raw)); }
   close(code = 4403): void { this.readyState = 3; this.listeners.get("close")?.({ code }); }
   message(raw: string): void { this.listeners.get("message")?.({ data: raw }); }
   constructor() { socket = this; }

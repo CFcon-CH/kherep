@@ -216,6 +216,42 @@ network, TLS or kernel buffering. Wall time correlates samples; monotonic time
 measures age. Application silence is advisory and never retires a socket.
 A separately authorized node upgrade and restart is required; no Worker change.
 
+## Node connection watchdog (#764)
+
+`node/connection-watchdog.mts` uses an injected monotonic clock and scheduler.
+A socket must OPEN within 30 seconds. OPEN sends the existing application ping
+immediately; a pong schedules the next ping within 30 seconds. A pending probe
+waits 45 seconds, sends one confirmation ping, then gives a fresh five-second
+grace before `PONG_TIMEOUT`. A final cancellable timer turn lets queued pongs
+run even if sleep or blocking delayed the grace timer. A delayed probe timer
+always sends its confirmation and starts the grace at its actual firing time;
+a clock jump alone never bypasses that confirmation. Pong recognition is in
+the socket callback before discovery, the Codex window and every frame lane.
+
+The bound is 80 seconds plus scheduling delay, both from creation with a late
+OPEN and after the last successful pong (30 + 45 + 5). Following successful auth,
+the unchanged 0.5-1 second initial backoff starts a replacement within 81 seconds
+plus scheduling delay. Later failures retain the existing capped 30-60 second
+backoff. These bounds do not guarantee authentication, registration or delivery.
+Timeout logs contain only a fixed `OPEN_TIMEOUT`/`PONG_TIMEOUT` code and numeric
+`open_ms`, `pong_age_ms`, `delay_ms` fields.
+
+`node/connection-supervisor.mts` owns idempotent `retireConnection` for close and
+timeout. It invalidates the generation before clearing timers/window, aborting
+discovery, recording disconnect and planning exactly one retry. Authentication, Worker capability proof and selected leases are revoked immediately.
+The full client reset is queued on the existing frame chain before replacement frames. Best-effort socket
+close does not gate reconnect. Old events and awaited work cannot publish or
+change new connection health; current 4403/4409 remain terminal. Sends and queued
+frame work check the generation before and after waits. Replay retains existing
+lease, durable owner and inbox idempotency checks; no wire frame, capability or
+Worker change is introduced.
+
+This catches dead sockets. Continuing auto-pongs can mask stalled application
+frames; the November 5 stall's continuous pong history is UNKNOWN. Sleep and
+blocked event loops also delay the watchdog itself. Native macOS/Windows,
+blackhole recovery and live latency need separate acceptance after an authorized
+node upgrade and restart. No install or deployment is part of this change.
+
 ## Codex intake peer progress
 
 The daemon retains one runtime-mutation lane. Only around its awaited

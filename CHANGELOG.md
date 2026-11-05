@@ -34,6 +34,14 @@ increments the minor version; every other release increments the patch version.
 
 ### Fixed
 
+- Node connections have an OPEN deadline and pong watchdog, with a confirmation
+  ping and sleep-safe grace before retrying a silent socket. Connection retirement
+  invalidates old events immediately and reconnects without waiting for close;
+  replay keeps durable owners and one inbox record. Existing backoff and terminal
+  refusals remain. Dead-socket detection is bounded by 80 seconds plus scheduling
+  delay; it does not detect application stalls while pongs continue. Requires a
+  separately authorized node upgrade and restart, no Worker deployment (#764).
+
 - Intercom pending status now says no control-plane confirmation was received.
   An outbox record without sender status does not prove it was never sent (#706).
 

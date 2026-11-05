@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { FakeClock } from "./connection-test-fixture.mts";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -48,8 +49,9 @@ test("the daemon records its pid at start, each authenticated connection and eac
   const stale = path.join(listenerDir(paths), "s-gone.json");
   fs.mkdirSync(listenerDir(paths));
   fs.writeFileSync(stale, JSON.stringify({ token: "t", pid: gone, startedAt: Date.now(), event: "Stop" }));
+  const clock = new FakeClock();
   const handle = startDaemon(config, paths, () => {}, undefined, async (runtime) => (runtime === "claude"
-    ? { ok: true } : { ok: false, cause: "sign-in", detail: "SYNTHETIC_PROBE_OUTPUT" }));
+    ? { ok: true } : { ok: false, cause: "sign-in", detail: "SYNTHETIC_PROBE_OUTPUT" }), undefined, {}, {}, undefined, clock);
   t.after(() => {
     handle.stop();
     Object.defineProperty(globalThis, "WebSocket", { configurable: true, writable: true, value: original.socket });
@@ -89,6 +91,10 @@ test("the daemon records its pid at start, each authenticated connection and eac
   assert.equal(lost?.connectedAt, connected?.connectedAt);
   assert.ok(lost?.disconnectedAt && !Number.isNaN(Date.parse(lost.disconnectedAt)));
 
+  listeners.get("message")?.({ data: "stale-auth-must-be-ignored" });
+  await flush();
+  assert.equal(readDaemonState(paths)?.disconnectedAt, lost?.disconnectedAt);
+  clock.advance(1_000); // a real replacement generation, using the existing backoff
   listeners.get("message")?.({ data: "synthetic-auth-ok-again" });
   await flush();
   await flush();
