@@ -87,11 +87,11 @@ $i=[Console]::In.ReadToEnd().Split([char]10)
 try { $raw=[Security.AccessControl.RawSecurityDescriptor]::new([Convert]::FromBase64String($i[0]),0) } catch { [Console]::Out.Write('unparsed'); exit 0 }
 try { Test-KherepLevel $raw $i[1] ($i[2] -ceq 'true') ($i[3] -ceq 'true') ($i[4] -ceq 'true') ($i[5] -ceq 'true'); [Console]::Out.Write('ok') } catch { if ($_.Exception.Message -ceq 'refused') { [Console]::Out.Write('refused') } else { [Console]::Out.Write('error:' + $_.Exception.Message) } }
 `;
-type Level={isRoot?:boolean;private?:boolean;directory?:boolean;};
+type Level={isRoot?:boolean;private?:boolean;directory?:boolean;receiptFile?:boolean;};
 function evaluate(shape:Shape|string,level:Level={}):string {
   const sd=typeof shape==='string'?shape:descriptor(shape);
-  const {private:isPrivate=false,isRoot=false,directory=true}=level;
-  const result=powershell(HARNESS,[sd,ME,isPrivate,isRoot,directory,false].join('\n'));
+  const {private:isPrivate=false,isRoot=false,directory=true,receiptFile=false}=level;
+  const result=powershell(HARNESS,[sd,ME,isPrivate,isRoot,directory,receiptFile].join('\n'));
   assert.equal(result.error,undefined);assert.equal(result.status,0,result.stderr);
   return result.stdout;
 }
@@ -157,4 +157,7 @@ test('private tree rules are unchanged',{skip},()=>{
   assert.equal(evaluate({owner:ME,control:UNPROTECTED,aces:PRIVATE_ACES},level),'refused','unprotected DACL');
   assert.equal(evaluate({owner:ME,aces:[ace(ME,0,RX)]},{private:true,directory:false}),'ok','readable private file');
   assert.equal(evaluate({owner:ME,aces:[ace(SY,0,FA)]},{private:true,directory:false}),'refused','unreadable private file');
+  const unprotectedFile:Shape={owner:ME,control:UNPROTECTED,aces:[ace(ME,0,RX)]};
+  assert.equal(evaluate(unprotectedFile,{private:true,directory:false,receiptFile:true}),'ok','receipt file may inherit');
+  assert.equal(evaluate(unprotectedFile,{private:true,directory:false}),'refused','other private file may not');
 });
