@@ -7,6 +7,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { declareCopy } from "../../bootstrap/coverage-copy-fixture.mts";
 
 export interface DispatcherFixture { root: string; hooks: string; dispatch: string }
 
@@ -30,6 +31,7 @@ export function dispatcherFixture(prefix: string, { heartbeat = true } = {}): Di
   const dispatch = path.join(hooks, "guard-dispatch.mts");
   fs.mkdirSync(path.join(hooks, "lib"), { recursive: true });
   fs.copyFileSync(path.join(import.meta.dirname, "guard-dispatch.mts"), dispatch);
+  declareCopy(path.join(import.meta.dirname, "guard-dispatch.mts"), dispatch);
   fs.copyFileSync(path.join(import.meta.dirname, "lib", "guard-recheck.mts"), path.join(hooks, "lib", "guard-recheck.mts"));
   if (heartbeat) plantHeartbeat(root);
   return { root, hooks, dispatch };

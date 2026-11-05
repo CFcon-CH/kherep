@@ -6,6 +6,7 @@ import path from "node:path";
 import { test, type TestContext } from "node:test";
 import { pathToFileURL } from "node:url";
 import { withoutTypeStrippingWarning } from "../lib/node-warning-fixture.mts";
+import { declareCopy } from "../../bootstrap/coverage-copy-fixture.mts";
 
 const CATALOG = { complete: true, models: [{ id: "gpt-6-sol", model: "gpt-6-sol", hidden: false,
   supportedReasoningEfforts: [{ reasoningEffort: "high" }],
@@ -20,6 +21,7 @@ function fixture(t: TestContext) {
   fs.mkdirSync(path.dirname(script), { recursive: true });
   fs.mkdirSync(path.dirname(reader));
   fs.copyFileSync(new URL("./model-catalog.mts", import.meta.url), script);
+  declareCopy(path.join(import.meta.dirname, "model-catalog.mts"), script);
   fs.writeFileSync(reader, `import fs from "node:fs";
 export async function readAvailableModels() {
   fs.appendFileSync(${JSON.stringify(marker)}, "called\\n");

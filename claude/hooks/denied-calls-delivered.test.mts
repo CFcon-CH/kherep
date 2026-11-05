@@ -18,6 +18,7 @@ const RECORDER = "denied-calls-delivered.mts";
 function home(unchanged = true): Home {
   const h = runtimeHome("denied-calls-delivered-");
   fs.copyFileSync(path.join(import.meta.dirname, RECORDER), path.join(h.hooks, RECORDER));
+  declareCopy(path.join(import.meta.dirname, RECORDER), path.join(h.hooks, RECORDER));
   for (const lib of ["denial-journal.mts", "workspace-scope.mts"]) fs.copyFileSync(path.join(import.meta.dirname, "lib", lib), path.join(h.hooks, "lib", lib));
   if (unchanged) declareCopy(path.join(import.meta.dirname, "lib", "denial-journal.mts"), path.join(h.hooks, "lib", "denial-journal.mts"));
   return h;

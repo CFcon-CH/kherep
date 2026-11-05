@@ -10,12 +10,14 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { declareCopy } from "../../bootstrap/coverage-copy-fixture.mts";
 
 const ROOT = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "obs-handback-record-test-")));
 fs.mkdirSync(path.join(ROOT, "hooks"));
 fs.copyFileSync(path.join(import.meta.dirname, "obs-handback-record.mts"), path.join(ROOT, "hooks", "obs-handback-record.mts"));
 fs.cpSync(path.join(import.meta.dirname, "lib"), path.join(ROOT, "hooks", "lib"), { recursive: true });
 const HOOK = path.join(ROOT, "hooks", "obs-handback-record.mts");
+declareCopy(path.join(import.meta.dirname, "obs-handback-record.mts"), HOOK);
 const STATE = path.join(ROOT, ".cache", "obs-result-check");
 const SECRET = "Example Corp host.example.com";
 

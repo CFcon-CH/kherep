@@ -11,6 +11,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { after, describe, test } from "node:test";
+import { declareCopy } from "../../bootstrap/coverage-copy-fixture.mts";
 
 import { applyAcl, liftAcl, sameAcl } from "./acl-fixture.mts";
 import { child, childAsync, cleanup, database, entry, type Home, runtimeHome, until } from "./hook-runtime-fixture.mts";
@@ -46,6 +47,7 @@ async function stuck(rel = "guard.mts"): Promise<Stuck> {
 }
 
 function cli(home: Home, ...argv: string[]): { status: number | null; code: string; fields: Record<string, string>; stdout: string } {
+  declareCopy(path.resolve(import.meta.dirname, "../kherep/hook-runtime/replay-pending.mts"), path.join(home.runtime, "replay-pending.mts"));
   const run = spawnSync(process.execPath, [path.join(home.runtime, "replay-pending.mts"), ...argv], { encoding: "utf8" });
   const [first, ...rest] = run.stdout.trim().split("\n");
   const fields = Object.fromEntries(rest.map((line) => [line.slice(0, line.indexOf("=")), line.slice(line.indexOf("=") + 1)]));

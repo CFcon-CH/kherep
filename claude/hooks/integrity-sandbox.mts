@@ -8,6 +8,7 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { declareCopy } from "../../bootstrap/coverage-copy-fixture.mts";
 
 const HOOKS_SOURCE = import.meta.dirname;
 export const ENTRY = path.resolve(HOOKS_SOURCE, "..", "kherep", "hook-runtime", "entry.mts");
@@ -44,6 +45,7 @@ export interface Result { status: number | null; stdout: string; stderr: string 
 // The hook in hooksDir, admitted as the integrity writer.
 export function runIntegrity(hooksDir: string, input: string, env: NodeJS.ProcessEnv, args: string[] = []): Result {
   ensureRuntime(hooksDir);
+  declareCopy(path.join(HOOKS_SOURCE, HOOK), path.join(hooksDir, HOOK));
   const run = spawnSync(process.execPath, [entryFor(hooksDir), "writer", path.join(hooksDir, HOOK), ...args],
     { input, encoding: "utf8", env, windowsHide: true, timeout: 60_000 });
   return { status: run.status, stdout: run.stdout, stderr: run.stderr };
@@ -51,6 +53,7 @@ export function runIntegrity(hooksDir: string, input: string, env: NodeJS.Proces
 
 // The same hook started directly, without the runtime: it must repair nothing.
 export function runUncoordinated(hooksDir: string, input: string, env: NodeJS.ProcessEnv, args: string[] = []): Result {
+  declareCopy(path.join(HOOKS_SOURCE, HOOK), path.join(hooksDir, HOOK));
   const run = spawnSync(process.execPath, [path.join(hooksDir, HOOK), ...args], { input, encoding: "utf8", env, windowsHide: true });
   return { status: run.status, stdout: run.stdout, stderr: run.stderr };
 }
