@@ -337,6 +337,15 @@ existing serial lane may complete after the window closes, with fresh guards. Th
 revocation or fix waits in authentication, new MCP-intent registration, commands
 or other daemon phases. It does not identify the cause of a particular live stall.
 
+Queued message egress arms the target `NodeSession` alarm within 60 seconds.
+While queued work remains on an unchanged authenticated socket, the alarm retries
+the existing bounded queue concurrently through `prepareMessageDelivery`, with
+current lease, owner, registration and loop-hold checks. The alarm re-arms even
+when preparation throws, returns to five minutes when the queue empties, and
+keeps the existing three five-minute intervals for offline detection. Acceptance
+stops replay. Fresh leases never change the persisted exact owner binding;
+previously unbound legacy work cannot acquire a binding on a later retry.
+
 The Worker authenticates enrolled nodes over outbound WebSockets. `NodeSession`
 terminates each connection; `Registry` owns shared identities, messages, task
 requests and owner-control records in SQLite. Local node policy remains an

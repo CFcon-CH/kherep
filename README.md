@@ -102,6 +102,7 @@ flowchart LR
   nodeDaemon --> legacyInbox["Legacy inbox/UUID.json"]
   selectedBinding --> worker
   nodeDaemon <--> worker <--> peers
+  worker -->|queued acceptance retry within 60 seconds, same authenticated socket| nodeDaemon
   daemonService -->|starts and upgrades| nodeDaemon
   nodeDaemon -.->|delivers peer messages| runtimes
   nodeDaemon -.->|Codex CP admission and original-owner intake| codex

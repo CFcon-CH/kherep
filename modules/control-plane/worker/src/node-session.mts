@@ -1,5 +1,6 @@
 import { isResolveRequest, SELECTED_BINDING_CAPABILITY, type ResolveRequest, type ResolveResponse } from "../../protocol-message-binding.mts";
 import { NodeReferenceRpc } from "./node-reference-rpc.mts";
+import { AlarmSchedule } from "./alarm-schedule.mts";
 import { isIdentitySnapshot } from "../../protocol-session-identity.mts";
 import { loopCapability, type ConnectionEvidence } from "./message-loop-identity-api.mts";
 import { DurableObject } from "cloudflare:workers";
@@ -28,6 +29,7 @@ import { SessionStore, type CommandRecord } from "./session-store.mts";
 // Offline detection (issue #5 decision 2): while a node is online an alarm
 // fires every 5 minutes; after 3 intervals without activity it is offline.
 export const ALARM_INTERVAL_MS = 5 * 60_000;
+export const DELIVERY_RETRY_MS = 60_000;
 export const MISSED_INTERVALS = 3;
 export const MESSAGE_STATUS_PAGE_SIZE = 32;
 export const MCP_INBOX_TIMEOUT_MS = 5_000;
@@ -39,6 +41,7 @@ export type EnqueueResult = { ok: true; commandId: string; seq: number; delivere
 // WebSocket, the pending-command log and the liveness state.
 export class NodeSession extends DurableObject<Env> {
   private readonly store: SessionStore;
+  private readonly alarms: AlarmSchedule;
   private readonly references = new NodeReferenceRpc();
   private readonly pendingInbox = new Map<string, {
     socket: WebSocket;
@@ -49,6 +52,7 @@ export class NodeSession extends DurableObject<Env> {
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     this.store = new SessionStore(ctx.storage.sql);
+    this.alarms = new AlarmSchedule(ctx.storage);
     // Answered by the runtime without waking the object and without billed
     // duration; the last answer time is read back in alarm().
     // https://developers.cloudflare.com/durable-objects/api/state/#setwebsocketautoresponse
@@ -128,7 +132,22 @@ export class NodeSession extends DurableObject<Env> {
       for (const ws of this.ctx.getWebSockets()) ws.close(CLOSE.offline, "offline");
       return; // not re-armed while offline
     }
-    await this.ctx.storage.setAlarm(now + ALARM_INTERVAL_MS);
+    let queued = true; // Failure must retain a bounded retry, including lookup failure.
+    try {
+      const nodeId = this.store.get("nodeId"), ws = this.authedSocket();
+      const effects = nodeId && ws ? await registryStub(this.env).pendingMessagesFor(nodeId) : null;
+      queued = !!effects?.deliveries.length;
+      if (effects) {
+        await routeEffects(this.env, { deliveries: [], statuses: effects.statuses });
+        // The existing queue cap bounds fan-out. Start each attempt together so
+        // a slow lease lookup cannot put the last row behind 100 serial waits.
+        const attempts = await Promise.allSettled(effects.deliveries.map(d => this.pushFrame("message.deliver", { ...d.body })));
+        const failed = attempts.find(a => a.status === "rejected");
+        if (failed?.status === "rejected") throw failed.reason;
+      }
+    } finally {
+      await this.alarms.earlier(now + (queued ? DELIVERY_RETRY_MS : ALARM_INTERVAL_MS));
+    }
   }
 
   // Operator API: queue one Phase 1 command, or (task dispatch, item 5) one
@@ -185,7 +204,7 @@ export class NodeSession extends DurableObject<Env> {
     this.store.set("status", "online");
     this.store.set("lastSeen", now);
     await registryStub(this.env).setStatus(attachment.nodeId, "online", now, connectionToken);
-    await this.ctx.storage.setAlarm(now + ALARM_INTERVAL_MS);
+    await this.alarms.earlier(now + DELIVERY_RETRY_MS);
 
     // Resume: drop what the node already processed, resend the rest in order.
     if (envelope.ack > 0) this.store.ackThrough(envelope.ack);
@@ -210,11 +229,17 @@ export class NodeSession extends DurableObject<Env> {
   async pushFrame(type: "message.deliver" | "message.status" | "event", body: Record<string, unknown>): Promise<boolean> {
     const ws = this.authedSocket();
     if (!ws) return false;
-    const token = (ws.deserializeAttachment() as Attachment).connectionToken;
-    const prepared = type === "message.deliver" ? await registryStub(this.env).prepareMessageDelivery(String(body.messageId)) : body;
+    const attachment = ws.deserializeAttachment() as Attachment, token = attachment.connectionToken;
+    if (type === "message.deliver") await this.armDeliveryRetry();
+    const prepared = type === "message.deliver" ? await registryStub(this.env).prepareMessageDelivery(String(body.messageId),
+      attachment.registrationAccepted ? undefined : "auth") : body;
     if (!prepared || this.authedSocket() !== ws || (ws.deserializeAttachment() as Attachment).connectionToken !== token) return false;
     this.sendControl(ws, type, { ...prepared });
     return true;
+  }
+
+  private async armDeliveryRetry(): Promise<void> {
+    await this.alarms.earlier(Date.now() + DELIVERY_RETRY_MS);
   }
 
   resolveMessageReferences(request: ResolveRequest): Promise<ResolveResponse | null> {
@@ -246,7 +271,8 @@ export class NodeSession extends DurableObject<Env> {
   }
 
   private local(ws: WebSocket, nodeId: string): LocalNode {
-    return { nodeId, send: (type, body) => { if (this.authedSocket() === ws) this.sendControl(ws, type, body); } };
+    return { nodeId, scheduleRetry: () => this.armDeliveryRetry(),
+      send: (type, body) => { if (this.authedSocket() === ws) this.sendControl(ws, type, body); } };
   }
 
   private localControl(ws: WebSocket, nodeId: string): LocalControlNode {
@@ -265,7 +291,10 @@ export class NodeSession extends DurableObject<Env> {
           if (accepted && this.loopCapabilityEvidence().token === a.connectionToken) ws.serializeAttachment({ ...ws.deserializeAttachment() as Attachment,
             registrationAccepted: true, loopCapability: loopCapability(body.capabilities), selectedBindingCapability: body.capabilities.includes(SELECTED_BINDING_CAPABILITY) } satisfies Attachment);
         }
-        if (this.authedSocket() === ws) await routeEffects(this.env, await registry.pendingMessagesFor(nodeId), this.local(ws, nodeId), "registration");
+        if (this.authedSocket() === ws) {
+          await this.armDeliveryRetry();
+          await routeEffects(this.env, await registry.pendingMessagesFor(nodeId), this.local(ws, nodeId), "registration");
+        }
         return flushTaskControl(this.env, nodeId, this.localControl(ws, nodeId));
       case "capabilities.update":
         if (!isRuntimeList(body.runtimes)) return this.sendControl(ws, "error", { error: "invalid runtimes" });

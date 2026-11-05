@@ -1,3 +1,4 @@
+import { egressBinding } from "./message-egress-binding.mts";
 import { duplicateSendError, recoveryOwnerError } from "./message-dedup.mts";
 import { RESOLUTION_REQUIRED, type MessageBinding, type DeliveryBinding } from "../../protocol-message-binding.mts";
 import { bindingContext, selectedAgreesWithProof, type PreparedBinding } from "./message-binding.mts";
@@ -512,20 +513,17 @@ export class MessageStore {
     const stored = storedMessageBinding(row);
     if (stored === "invalid") return { body: null, effects };
     const required = !!stored || row.loop_identity !== null || this.loops.hasHeldNodeScope(message.from.nodeId, message.to.nodeId);
-    if (phase === "auth" && required || phase === "registration" && !required) return { body: null, effects };
-    if (required && (!prepared?.binding || !prepared.leaseId || prepared.error
-      || prepared.stamp !== bindingContext(this.sql, message).stamp
-      || stored && JSON.stringify(stored) !== JSON.stringify(prepared.binding))) return { body: null, effects };
+    const egress = egressBinding(this.sql, row, prepared, required, phase);
+    if (!egress) return { body: null, effects };
     const key = prepared?.denyKey ?? row.delivery_pair ?? row.loop_pair;
     const held = typeof key === "string" ? this.loops.held(key) : null;
     if (held) { this.setState(recordMetadata(row), "refused", held, "system", now, effects); return { body: null, effects }; }
-    let binding: DeliveryBinding | undefined;
-    if (required && prepared?.binding && prepared.leaseId) {
-      const stable = prepared.binding;
+    const binding = egress.binding;
+    if (binding) {
+      const stable = { version: binding.version, mode: binding.mode, from: binding.from, to: binding.to };
       this.sql.exec("UPDATE messages SET from_session=?,to_session=?,delivery_binding=?,delivery_pair=? WHERE id=? AND state='queued'",
-        stable.from.sessionId, stable.to.sessionId, JSON.stringify(stable), prepared.denyKey, messageId);
+        stable.from.sessionId, stable.to.sessionId, JSON.stringify(stable), prepared!.denyKey, messageId);
       row.from_session = stable.from.sessionId; row.to_session = stable.to.sessionId;
-      binding = { ...stable, leaseId: prepared.leaseId, localGeneration: prepared.localGeneration };
     }
     return { body: { ...deliverBodyOf(row), ...(binding ? { binding } : {}) }, effects };
   }
