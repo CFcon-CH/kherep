@@ -18,8 +18,8 @@ test("identity dimensions reject duplicates, unsorted, unknown and unbounded det
   assert.equal(isMessageDiagnostic(identity), true);
   for (const dimensions of [[], ["owner", "owner"], ["owner", "capability"], ["value"], Array(11).fill("owner")]) assert.equal(isMessageDiagnostic({ ...identity, dimensions }), false);
   assert.deepEqual(sortedDimensions(["owner", "capability", "owner"]), ["capability", "owner"]);
-  assert.match(renderMessageDiagnostic(identity as never), /Refused: identity changed \(capability, connection\)/);
-  assert.equal(renderMessageDiagnostic(null), "Waiting; detailed cause unavailable.");
+  assert.match(renderMessageDiagnostic(identity as never, "refused"), /Refused: identity changed \(capability, connection\)/);
+  assert.equal(renderMessageDiagnostic(null, "queued"), "Waiting; detailed cause unavailable.");
   const body = { messageId, state: "accepted", diagnostic: diagnostic as never };
   assert.deepEqual(compatibleDiagnostic(body, null), { messageId, state: "accepted" });
   assert.deepEqual(compatibleDiagnostic(body, [MESSAGING_DIAGNOSTICS_CAPABILITY]), body);
@@ -31,8 +31,24 @@ test("every closed code renders fixed plain words and compatibility passes archi
   for (const code of BLOCKER_CODES) {
     const detail = blockerDiagnostic(code, 0);
     assert.equal(isMessageStatusBody({ messageId, state: "queued", diagnostic: detail }), true);
-    assert.match(renderMessageDiagnostic(detail), /Observed 1970-01-01T00:00:00.000Z; stage target-progress/);
+    assert.match(renderMessageDiagnostic(detail, "queued"), /Observed 1970-01-01T00:00:00.000Z; stage target-progress/);
     assert.equal(archived.isMessageStatusBody(compatibleDiagnostic({ messageId, state: "queued", diagnostic: detail }, [])), true);
   }
-  assert.match(renderMessageDiagnostic(blockerDiagnostic("target-not-idle", 0, "target-progress", "unknown")), /Target state is unknown/);
+  assert.match(renderMessageDiagnostic(blockerDiagnostic("target-not-idle", 0, "target-progress", "unknown"), "accepted"), /Target state is unknown/);
+});
+
+test("blocker wording follows the current message state", async () => {
+  const { blockerDiagnostic, renderMessageDiagnostic } = await import("./protocol-diagnostics.mts");
+  for (const state of ["queued", "accepted", "offered", "refused", "delivered", "replied", "expired", "error"]) {
+    const prefix = ["queued", "accepted", "offered"].includes(state) ? "Waiting:" : state === "refused" ? "Refused:" : "Last blocker:";
+    assert.ok(renderMessageDiagnostic(blockerDiagnostic("runtime-pending", 0), state).startsWith(prefix), state);
+  }
+});
+
+test("the turn-budget lock has a precise code and wording without a storage alias", async () => {
+  const { renderMessageDiagnostic, isMessageDiagnostic } = await import("./protocol-diagnostics.mts");
+  const lock = { ...diagnostic, code: "budget-lock-unavailable" };
+  assert.equal(isMessageDiagnostic(lock), true);
+  assert.equal(isMessageDiagnostic({ ...lock, code: "budget-storage-unavailable" }), false);
+  assert.match(renderMessageDiagnostic(lock as never, "queued"), /Waiting: target turn-budget lock is unavailable/);
 });

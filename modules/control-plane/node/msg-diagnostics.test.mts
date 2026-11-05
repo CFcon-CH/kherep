@@ -10,6 +10,7 @@ import { taskId, T0 } from "./task-fixture.mts";
 import { writeTask } from "./task-records.mts";
 import { observeClaudeDeliveryProgress } from "./delivery-progress.mts";
 import { publishSynthetic } from "./session-authority-fixture.mts";
+import { blockerDiagnostic } from "../protocol-diagnostics.mts";
 async function output(node: ReturnType<typeof closedNode>, id: string) {
   const lines: string[] = [];
   assert.equal(await runMsg(["status", id], { paths: node.paths, env: {}, now: () => T0, out: line => lines.push(line), err: line => { throw new Error(line); } }), 0);
@@ -46,4 +47,11 @@ test("legacy waiting records state detailed cause unavailable", async t => {
   assert.match(await output(node, id), /Waiting; detailed cause unavailable\./, "old sent queued");
   recordSent(node.paths, id, "accepted", undefined, T0);
   assert.match(await output(node, id), /Waiting; detailed cause unavailable\./, "old sent accepted");
+});
+
+test("msg status identifies a refused send's blocker instead of presenting it as waiting", async t => {
+  const node = closedNode(t), id = deliver(node);
+  writeOutbox(node.paths, { messageId: id, fromSession: "synthetic", to: { nodeId: "00000000-0000-4000-8000-0000000000aa", session: SESSION }, text: "synthetic", createdAt: new Date(T0).toISOString() });
+  recordSent(node.paths, id, "refused", "loop-resolution-required", T0, undefined, blockerDiagnostic("resolution-unavailable", T0, "send-admission"));
+  assert.match(await output(node, id), /Refused: target owner resolution is unavailable/);
 });

@@ -1,5 +1,5 @@
 import type { BlockerCode } from "../../protocol-diagnostics.mts";
-import type { DeliveryBinding } from "../../protocol-message-binding.mts";
+import { RESOLUTION_REQUIRED, type DeliveryBinding } from "../../protocol-message-binding.mts";
 import { bindingContext, type PreparedBinding } from "./message-binding.mts";
 import { storedMessageBinding } from "./message-binding-store.mts";
 import { sameBinding } from "./message-semantic-identity.mts";
@@ -22,7 +22,8 @@ export function egressBinding(sql: SqlStorage, row: Row, prepared: PreparedBindi
   if (!stored || !prepared?.binding || !prepared.leaseId || prepared.error
     || prepared.stamp !== bindingContext(sql, message).stamp
     || !sameBinding(stored, prepared.binding)) {
-    detail.code = !stored ? "stored-binding-missing" : prepared?.diagnosticCode ?? (prepared?.binding ? "identity-changed" : "resolution-unavailable");
+    detail.code = !stored ? "stored-binding-missing" : prepared?.error && prepared.error !== RESOLUTION_REQUIRED ? undefined
+      : prepared?.diagnosticCode ?? (prepared?.binding ? "identity-changed" : "resolution-unavailable");
     return null;
   }
   return { binding: { ...prepared.binding, leaseId: prepared.leaseId, localGeneration: prepared.localGeneration } };

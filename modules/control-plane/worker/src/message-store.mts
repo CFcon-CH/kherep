@@ -253,7 +253,8 @@ export class MessageStore {
       const error = duplicateSendError(row, message, prepared, comparison?.matches === true);
       if (error) {
         const diagnostic = error === LOOP_STALE && prepared && comparison ? identityDiagnostic(prepared, comparison, "duplicate", now)
-          : prepared?.binding?.diagnosticCode ? blockerDiagnostic(prepared.binding.diagnosticCode, now, "duplicate") : undefined;
+          : error === RESOLUTION_REQUIRED && storedMessageBinding(row) !== "invalid" && prepared?.binding?.diagnosticCode
+            ? blockerDiagnostic(prepared.binding.diagnosticCode, now, "duplicate") : undefined;
         return { ok: false, error, ...(diagnostic ? { diagnostic: compatibleDiagnostic({ diagnostic }, this.capabilities(message.from.nodeId)).diagnostic } : {}) };
       }
       if (row.state === "queued") this.queueDeliveryAllowed(row, now, effects);
@@ -530,7 +531,8 @@ export class MessageStore {
   }
   observeDiagnostic(messageId: string, nodeId: string | null, diagnostic: MessageDiagnostic): MessageEffects {
     const effects = none(), record = this.get(messageId);
-    if (!record || record.state !== "queued" || record.toNode !== nodeId) return effects;
+    if (!record || record.state !== "queued" || record.toNode !== nodeId
+      || record.diagnostic && record.diagnostic.observedAt > diagnostic.observedAt) return effects;
     storeDiagnostic(this.sql, messageId, diagnostic);
     if (record.fromNode !== OPERATOR_NODE_ID && this.capabilities(record.fromNode)?.includes(MESSAGING_DIAGNOSTICS_CAPABILITY)) effects.statuses.push({ nodeId: record.fromNode, observational: true,
       body: this.statusFor(record.fromNode, statusBody(messageId, record.state, record.reason, record.progress, diagnostic)) });

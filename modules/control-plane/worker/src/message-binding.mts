@@ -39,9 +39,9 @@ export async function prepareMessageBinding(sql: SqlStorage, message: AddressPai
     const key = role as "from" | "to", address = message[key], reference = context.refs[index];
     if (stored && key === "from") continue; // An admitted source never reconnects or rebinds on replay.
     if (address.nodeId === OPERATOR_NODE_ID || !context.nodes[index]?.capable || reference.code === "AMBIGUOUS") {
-      if (address.nodeId !== OPERATOR_NODE_ID && !result.diagnosticCode) {
+      if (key === "to" && address.nodeId !== OPERATOR_NODE_ID && context.nodes[index] && !result.diagnosticCode) {
         const node = context.nodes[index];
-        result.diagnosticCode = !node?.token || node.registration !== node.token ? "registration-pending"
+        result.diagnosticCode = !node.token ? "node-offline" : node.registration !== node.token ? "registration-pending"
           : !node.capable ? "binding-capability-missing" : "resolution-unavailable";
       }
       continue;
@@ -59,12 +59,14 @@ export async function prepareMessageBinding(sql: SqlStorage, message: AddressPai
   }));
   for (const { request, answer, code } of answers) {
     if (!answer || answer.requestId !== request.requestId || answer.messageId !== request.messageId) {
-      result.diagnosticCode ??= code ?? "resolution-unavailable"; continue;
+      if (request.selections.some(selection => selection.role === "to")) result.diagnosticCode ??= code ?? "resolution-unavailable";
+      continue;
     }
     for (const r of answer.results) {
       const s = request.selections.find(s => s.role === r.role);
       if (!s || r.code !== "BOUND" || s.expected && (s.expected.sessionId !== r.owner.sessionId || s.expected.runtime !== r.owner.runtime)) {
-        result.diagnosticCode ??= r.code === "CONFLICT" ? "identity-changed" : "resolution-unavailable"; continue;
+        if (s?.role === "to") result.diagnosticCode ??= r.code === "CONFLICT" ? "identity-changed" : "resolution-unavailable";
+        continue;
       }
       selected.set(r.role, r);
     }
@@ -73,7 +75,10 @@ export async function prepareMessageBinding(sql: SqlStorage, message: AddressPai
     ? { sessionId: message.from.session, runtime: null, lifecycleGeneration: null }
     : selected.has("from") ? boundOwner(selected.get("from")!) : null);
   const target = selected.has("to") ? boundOwner(selected.get("to")!) : null;
-  if (!source || !target) { result.diagnosticCode ??= "resolution-unavailable"; return result; }
+  if (!source || !target) {
+    if (!target && context.nodes[1]) result.diagnosticCode ??= "resolution-unavailable";
+    return result;
+  }
   if (stored && JSON.stringify(stored.to) !== JSON.stringify(target)) return { ...result, diagnosticCode: "identity-changed" };
   const pair = pairIdentity({ nodeId: message.from.nodeId, session: source.sessionId }, { nodeId: message.to.nodeId, session: target.sessionId });
   try { result.denyKey = pair ? await sign("kherep-loop-pair-v1", pair.encoding) : null; }

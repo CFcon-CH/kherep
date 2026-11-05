@@ -1,7 +1,7 @@
 // Fixed metadata only. Never place operands, identifiers or proof values here.
 export const MESSAGING_DIAGNOSTICS_CAPABILITY = "messaging.diagnostics.v1";
 export const DIAGNOSTIC_STAGES = ["target-progress", "upstream-egress", "send-admission", "duplicate", "mcp-claim"] as const;
-export const BLOCKER_CODES = ["task-concurrency", "task-starts-daily", "runtime-pending", "turn-spacing", "budget-storage-unavailable",
+export const BLOCKER_CODES = ["task-concurrency", "task-starts-daily", "runtime-pending", "turn-spacing", "budget-lock-unavailable",
   "hint-capture-failed", "hint-invalidated", "hint-lock-busy", "hint-storage-failed", "target-not-idle", "task-active", "process-still-running",
   "node-offline", "registration-pending", "binding-capability-missing", "stored-binding-missing", "resolution-unavailable", "resolution-timeout",
   "resolution-capacity", "identity-changed", "acceptance-unconfirmed"] as const;
@@ -36,7 +36,7 @@ export function compatibleDiagnostic<T extends { diagnostic?: MessageDiagnostic 
 const WORDS: Record<BlockerCode, string> = {
   "task-concurrency": "target task limit reached", "task-starts-daily": "target daily task-start limit reached",
   "runtime-pending": "target runtime readiness is not confirmed", "turn-spacing": "target turn spacing has not elapsed",
-  "budget-storage-unavailable": "target turn-budget storage is unavailable", "hint-capture-failed": "target hint capture failed",
+  "budget-lock-unavailable": "target turn-budget lock is unavailable", "hint-capture-failed": "target hint capture failed",
   "hint-invalidated": "target hint admission was invalidated", "hint-lock-busy": "target hint lock is busy", "hint-storage-failed": "target hint storage failed",
   "target-not-idle": "target idle-loaded state was not established", "task-active": "target task is active", "process-still-running": "target process is still running",
   "node-offline": "target node is offline", "registration-pending": "target node registration is pending", "binding-capability-missing": "target binding capability is unavailable",
@@ -44,10 +44,11 @@ const WORDS: Record<BlockerCode, string> = {
   "resolution-timeout": "target owner resolution timed out", "resolution-capacity": "target owner resolution capacity reached",
   "identity-changed": "identity changed", "acceptance-unconfirmed": "target acceptance is not confirmed",
 };
-export function renderMessageDiagnostic(diagnostic: MessageDiagnostic | null | undefined): string {
+export function renderMessageDiagnostic(diagnostic: MessageDiagnostic | null | undefined, state: string): string {
   if (!diagnostic || !isMessageDiagnostic(diagnostic)) return "Waiting; detailed cause unavailable.";
-  const text = diagnostic.kind === "identity-change" ? `Refused: identity changed (${diagnostic.dimensions.join(", ")})`
+  const prefix = ["queued", "accepted", "offered"].includes(state) ? "Waiting:" : state === "refused" ? "Refused:" : "Last blocker:";
+  const text = diagnostic.kind === "identity-change" ? `identity changed (${diagnostic.dimensions.join(", ")})`
     : diagnostic.code === "target-not-idle" && diagnostic.observedState === "unknown"
-      ? "Target state is unknown; idle-loaded was not established" : `Waiting: ${WORDS[diagnostic.code]}`;
-  return `${text}. Observed ${diagnostic.observedAt}; stage ${diagnostic.stage}.`;
+      ? "Target state is unknown; idle-loaded was not established" : WORDS[diagnostic.code];
+  return `${prefix} ${text}. Observed ${diagnostic.observedAt}; stage ${diagnostic.stage}.`;
 }
