@@ -6,6 +6,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { findTrustedExecutable } from "./lib/trusted-executable.mts";
 
 const TOOLS = ["Edit", "Write", "MultiEdit", "NotebookEdit"];
 const ADDED_SCOPE = /^\+\s*-\s*[a-z]+:[\w-]+(?::[\w-]+)*\s*$/i;
@@ -32,7 +33,9 @@ function manifestPath(payload: ManifestPayload | null): string {
 // ($(), backticks, ;, |) cannot inject a command. Hardened from the prior
 // execSync template-string form (flagged HIGH command-injection 2026-06-11).
 function diffAgainstHead(repoDir: string, filePath: string): string {
-  const res = spawnSync("git", ["-C", repoDir, "diff", "HEAD", "--", filePath], {
+  const command = findTrustedExecutable("git");
+  if (!command) return "";
+  const res = spawnSync(command, ["-C", repoDir, "diff", "HEAD", "--", filePath], {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "ignore"],
   });

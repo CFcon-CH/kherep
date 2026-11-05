@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { after, test } from "node:test";
+import { declareCopy } from "../../bootstrap/coverage-copy-fixture.mts";
 
 import { denialFaultEnv, faultSpan, MARKER_SLOW_MS, readFaultReceipt, stallFor, type FaultReceipt } from "./denial-fault.fixture.mts";
 import { cleanup, entry, runtimeHome, type Home, type Run } from "./hook-runtime-fixture.mts";
@@ -14,10 +15,11 @@ import { readJournal, renderReport } from "./lib/denial-report.mts";
 after(cleanup);
 const RECORDER = "denied-calls-delivered.mts";
 
-function home(): Home {
+function home(unchanged = true): Home {
   const h = runtimeHome("denied-calls-delivered-");
   fs.copyFileSync(path.join(import.meta.dirname, RECORDER), path.join(h.hooks, RECORDER));
   for (const lib of ["denial-journal.mts", "workspace-scope.mts"]) fs.copyFileSync(path.join(import.meta.dirname, "lib", lib), path.join(h.hooks, "lib", lib));
+  if (unchanged) declareCopy(path.join(import.meta.dirname, "lib", "denial-journal.mts"), path.join(h.hooks, "lib", "denial-journal.mts"));
   return h;
 }
 const payload = (extra: Record<string, unknown> = {}): string => JSON.stringify({ hook_event_name: "PostToolUse", tool_name: "SubagentHandback",
@@ -191,9 +193,10 @@ export function markCaptureFailed(home, id, code, until, fsp) {
 }
 `;
 test("mutation: a marker wait cut to a fixed 400 ms slice is classified 4c when its receipt discriminates", (t) => {
-  const h = home();
+  const h = home(false);
   const lib = path.join(h.hooks, "lib");
   fs.renameSync(path.join(lib, "denial-journal.mts"), path.join(lib, "denial-journal.real.mts"));
+  declareCopy(path.join(import.meta.dirname, "lib", "denial-journal.mts"), path.join(lib, "denial-journal.real.mts"));
   fs.writeFileSync(path.join(lib, "denial-journal.mts"), SLICED);
   const receipt = path.join(h.root, "fault-receipt.json"), side = path.join(h.root, "wrapper-receipt.json");
   const run = record(h, payload(), denialFaultEnv("marker-slow", RECORDER, process.env, receipt));

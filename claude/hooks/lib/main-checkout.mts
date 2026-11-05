@@ -11,6 +11,7 @@
 // (git-dir equals common-dir), and which branch is the default.
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import { findTrustedExecutable } from "./trusted-executable.mts";
 
 import { commandSegments, gitSubcommand, resolveDir, type Segment } from "./command-walk.mts";
 import { isWithinWorkspace } from "./real-path-policy.mts";
@@ -76,7 +77,9 @@ export function checkoutIntents(command: string, cwd: string): CheckoutIntent[] 
 }
 
 function git(dir: string, args: string[]): string | null {
-  const result = spawnSync("git", ["-C", dir, ...args], { encoding: "utf8", windowsHide: true, timeout: 5000 });
+  const command = findTrustedExecutable("git");
+  if (!command) return null;
+  const result = spawnSync(command, ["-C", dir, ...args], { encoding: "utf8", windowsHide: true, timeout: 5000 });
   return result.status === 0 ? result.stdout.trim() : null;
 }
 

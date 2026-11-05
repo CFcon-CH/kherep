@@ -47,16 +47,59 @@ const AGENT_TYPE = /^[A-Za-z0-9._:-]{1,64}$/;
 const SHELL_TOOLS = new Set(["Bash", "PowerShell", "shell_command", "exec_command"]);
 const FILE_TOOLS = new Set(["Read", "Edit", "Write", "MultiEdit", "Grep", "Glob"]);
 const AGENT_TOOLS = new Set(["Agent", "Task", "spawn_agent"]);
-const ENV_PREFIX = /^(?:\$env:[A-Za-z_][A-Za-z0-9_]*\s*=\s*(?:'[^']*'|"[^"]*"|[^;\s]*)\s*;\s*)+/i;
+const COMMAND_MAX = 65_536;
+const space = (char: string): boolean => /\s/.test(char);
+const identifierStart = (char: string): boolean => /[A-Za-z_]/.test(char);
+const identifierPart = (char: string): boolean => /[A-Za-z0-9_]/.test(char);
+
+// One forward cursor, bounded before trimming or scanning. Malformed prefixes
+// and oversized commands have the neutral target; they never affect the deny.
+function programStart(command: string): number {
+  let at = 0;
+  const spaces = () => { while (at < command.length && space(command[at]!)) at++; };
+  spaces();
+  while (command.slice(at, at + 5).toLowerCase() === "$env:") {
+    at += 5;
+    if (!identifierStart(command[at] ?? "")) return -1;
+    while (at < command.length && identifierPart(command[at]!)) at++;
+    spaces();
+    if (command[at++] !== "=") return -1;
+    spaces();
+    const quote = command[at];
+    if (quote === "'" || quote === '"') {
+      at++;
+      while (at < command.length && command[at] !== quote) at++;
+      if (at === command.length) return -1;
+      at++;
+    } else while (at < command.length && command[at] !== ";" && !space(command[at]!)) at++;
+    spaces();
+    if (command[at++] !== ";") return -1;
+    spaces();
+  }
+  while (at < command.length) {
+    const start = at;
+    if (!identifierStart(command[at]!)) return at;
+    while (at < command.length && identifierPart(command[at]!)) at++;
+    if (command[at] !== "=") return start;
+    while (at < command.length && !space(command[at]!)) at++;
+    if (at === command.length) return start;
+    spaces();
+  }
+  return at;
+}
 
 // The basename of a command's program after leading environment assignments, or "-".
 function program(command: unknown): string {
-  if (typeof command !== "string") return "-";
-  let rest = command.trim().replace(ENV_PREFIX, "");
-  while (/^[A-Za-z_][A-Za-z0-9_]*=\S*\s/.test(rest)) rest = rest.replace(/^\S+\s+/, "");
+  if (typeof command !== "string" || command.length > COMMAND_MAX) return "-";
+  let at = programStart(command);
+  if (at < 0) return "-";
   // A quoted program runs to its closing quote; an unterminated one is no program.
-  const quoted = /^(["'])(.*?)\1/.exec(rest);
-  const first = quoted ? quoted[2]! : /^["']/.test(rest) ? "" : rest.split(/\s+/)[0]!;
+  const quote = command[at];
+  const quoted = quote === '"' || quote === "'";
+  const start = quoted ? ++at : at;
+  while (at < command.length && (quoted ? command[at] !== quote : !space(command[at]!))) at++;
+  if (quoted && at === command.length) return "-";
+  const first = command.slice(start, at);
   const base = first.split(/[\\/]/).pop() ?? "";
   return SAFE_WORD.test(base) ? base : "-";
 }

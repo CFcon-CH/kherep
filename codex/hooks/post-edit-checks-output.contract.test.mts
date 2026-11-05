@@ -6,6 +6,7 @@ import path from "node:path";
 import { after, test } from "node:test";
 
 import { copyAdapter } from "./hook-adapter.fixture.mts";
+import { declareCopy } from "../../bootstrap/coverage-copy-fixture.mts";
 
 const HERE = import.meta.dirname;
 const SOURCE = path.join(HERE, "post-edit-checks.mts");
@@ -30,11 +31,15 @@ function materialize(destination = INSTALLED): string {
   copyAdapter(destination);
   for (const watcher of WATCHERS) {
     fs.copyFileSync(path.join(SHARED, `${watcher}.mts`), path.join(destination, `${watcher}.mts`));
+    if (watcher === "manifest-watch" && destination === INSTALLED) {
+      declareCopy(path.join(SHARED, `${watcher}.mts`), path.join(destination, `${watcher}.mts`));
+    }
   }
-  fs.copyFileSync(
-    path.join(SHARED, "lib", "workspace-scope.mts"),
-    path.join(destination, "lib", "workspace-scope.mts"),
-  );
+  for (const library of ["workspace-scope.mts", "trusted-executable.mts"]) {
+    const original = path.join(SHARED, "lib", library), copy = path.join(destination, "lib", library);
+    fs.copyFileSync(original, copy);
+    if (library === "trusted-executable.mts" && destination === INSTALLED) declareCopy(original, copy);
+  }
   return path.join(destination, "post-edit-checks.mts");
 }
 

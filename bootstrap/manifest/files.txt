@@ -80,6 +80,7 @@ hooks/lib/git-push-match.test.mts
 hooks/lib/forge-match.mts
 hooks/lib/forge-match.test.mts
 hooks/lib/main-checkout.mts
+hooks/lib/trusted-executable.mts
 hooks/lib/main-checkout.test.mts
 hooks/lib/private-path-policy.mts
 hooks/lib/private-path-rules.mts

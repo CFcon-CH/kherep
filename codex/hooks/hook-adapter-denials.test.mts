@@ -124,7 +124,7 @@ test("a journal write that never settles: the same deny before the hook deadline
 });
 
 test("runAdaptedHook, the in-process path, writes nothing", async () => {
-  const home = codexHome(GUARDS);
+  const home = codexHome(GUARDS, "present", false);
   const adapter = await import(pathToFileURL(path.join(home.hookDir, "hook-adapter.mts")).href) as typeof import("./hook-adapter.mts");
   const result = adapter.runAdaptedHook(path.join(home.hookDir, "codex-guard.mts"), "pre", JSON.parse(shellPayload()), 5_000);
   assert.equal(JSON.parse(result.stdout).hookSpecificOutput.permissionDecision, "deny");

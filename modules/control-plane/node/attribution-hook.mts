@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import { findTrustedExecutable } from "../../../claude/hooks/lib/trusted-executable.mts";
 
 import { commandSegments, gitSubcommand } from "../../../claude/hooks/lib/command-walk.mts";
 import { isWithinWorkspace } from "../../../claude/hooks/lib/real-path-policy.mts";
@@ -43,7 +44,9 @@ export function attributionIntents(command: string, cwd: string): AttributionInt
 }
 
 function git(dir: string, args: string[]): string | null {
-  const result = spawnSync("git", ["-C", dir, ...args], { encoding: "utf8", windowsHide: true, timeout: 5000 });
+  const command = findTrustedExecutable("git");
+  if (!command) return null;
+  const result = spawnSync(command, ["-C", dir, ...args], { encoding: "utf8", windowsHide: true, timeout: 5000 });
   return result.status === 0 ? result.stdout.trim() || null : null;
 }
 
@@ -62,7 +65,9 @@ function pullRequest(text: string): { pr: number; repo: string } | null {
 }
 
 function ghPrView(dir: string): { number: number; url: string } | null {
-  const result = spawnSync("gh", ["pr", "view", "--json", "number,url"], { cwd: dir, encoding: "utf8", windowsHide: true,
+  const command = findTrustedExecutable("gh", { cwd: dir });
+  if (!command) return null;
+  const result = spawnSync(command, ["pr", "view", "--json", "number,url"], { cwd: dir, encoding: "utf8", windowsHide: true,
     timeout: 5000 });
   if (result.status !== 0) return null;
   try {

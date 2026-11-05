@@ -6,6 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { after, test } from "node:test";
+import { declareCopy } from "../../bootstrap/coverage-copy-fixture.mts";
 
 import { homeOf } from "./denied-calls.mts";
 import { journalPaths } from "./lib/denial-journal.mts";
@@ -69,6 +70,7 @@ test("the home is the installation's: parent of hooks/, or of hooks/kherep-maest
   fs.copyFileSync(CLI, path.join(hooks, "denied-calls.mts"));
   for (const lib of ["denial-report.mts", "denial-journal.mts", "workspace-scope.mts"]) {
     fs.copyFileSync(path.join(import.meta.dirname, "lib", lib), path.join(hooks, "lib", lib));
+    if (lib === "denial-journal.mts") declareCopy(path.join(import.meta.dirname, "lib", lib), path.join(hooks, "lib", lib));
   }
   fs.writeFileSync(journalPaths(root, "a1").journal, callWith([]));
   const run = cli(["render", "a1"], path.join(hooks, "denied-calls.mts"));

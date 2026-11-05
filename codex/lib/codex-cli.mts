@@ -1,41 +1,30 @@
 import childProcess from "node:child_process";
 import os from "node:os";
 import path from "node:path";
+import { fullyQualifiedPath, requireTrustedExecutable, type ExecutableLookup } from "../../claude/hooks/lib/trusted-executable.mts";
 
 function quoteWindowsArgument(value: string) {
   if (/^[A-Za-z0-9_./:@+-]+$/.test(value)) return value;
   return `"${value.replace(/"/g, '""')}"`;
 }
 
-export function normalizeWindowsCodexCommand(command: string) {
-  return /[\\/]WindowsApps[\\/]OpenAI\.Codex_/i.test(command) ? "codex" : command;
+export function resolveCodexCommand(options: ExecutableLookup = {}) {
+  return requireTrustedExecutable("codex", { ...options, preferNative: true });
 }
 
-export function resolveCodexCommand() {
-  if (process.platform !== "win32") return "codex";
-  const lookup = childProcess.spawnSync("where.exe", ["codex"], {
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "ignore"],
-    windowsHide: true,
-  });
-  const candidates = lookup.status === 0
-    ? lookup.stdout.split(/\r?\n/).map((entry) => entry.trim()).filter(Boolean)
-    : [];
-  const command = candidates.find((entry) => [".exe", ".com"].includes(path.extname(entry).toLowerCase())) ||
-    candidates.find((entry) => [".cmd", ".bat"].includes(path.extname(entry).toLowerCase())) ||
-    "codex.cmd";
-  return normalizeWindowsCodexCommand(command);
-}
-
-export function codexInvocation(command: string, args: string[], platform: string = process.platform, comSpec = process.env.ComSpec || "cmd.exe") {
+export function codexInvocation(command: string, args: string[], platform: string = process.platform,
+  comSpec = process.env.ComSpec || "", systemRoot = process.env.SystemRoot || process.env.WINDIR || "") {
   if (platform !== "win32") return { command, args };
+  if (!fullyQualifiedPath(command, platform)) throw new Error("Codex executable must have an absolute path");
   const extension = path.win32.extname(command).toLowerCase();
   if ([".exe", ".com"].includes(extension) && !/[\\/]WindowsApps[\\/]/i.test(command)) {
     return { command, args };
   }
   const commandLine = [command, ...args].map(quoteWindowsArgument).join(" ");
+  const shell = comSpec || path.win32.join(systemRoot, "System32", "cmd.exe");
+  if (!fullyQualifiedPath(shell, platform)) throw new Error("Codex shell must have an absolute path");
   return {
-    command: comSpec,
+    command: shell,
     args: ["/d", "/s", "/c", commandLine],
   };
 }
@@ -65,7 +54,7 @@ export function codexOutput(stdout: string | null | undefined, stderr: string | 
 }
 
 export function runCodex(args: string[], options: { cwd?: string; codexHome?: string; stdoutOnly?: boolean } = {}) {
-  const command = resolveCodexCommand();
+  const command = resolveCodexCommand({ cwd: options.cwd });
   const invocation = codexInvocation(command, args);
   const result = childProcess.spawnSync(invocation.command, invocation.args, {
     cwd: options.cwd,

@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { findTrustedExecutable } from "../../../claude/hooks/lib/trusted-executable.mts";
 
 export const SOURCE_MANIFEST = ".kherep-source.json";
 
@@ -28,7 +29,9 @@ const cleanGitEnv = (): NodeJS.ProcessEnv =>
   Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("GIT_")));
 
 function git(root: string, args: string[], encoding: BufferEncoding | "buffer" = "utf8"): string | Buffer {
-  const result = spawnSync("git", ["-C", root, ...args], {
+  const command = findTrustedExecutable("git");
+  if (!command) throw new Error(`source identity unavailable: git ${args[0]} failed`);
+  const result = spawnSync(command, ["-C", root, ...args], {
     encoding: encoding === "buffer" ? null : encoding,
     env: cleanGitEnv(), windowsHide: true, timeout: 30_000, stdio: ["ignore", "pipe", "pipe"],
   });
@@ -86,7 +89,9 @@ function checkoutIdentity(root: string, requireClean: boolean): SourceIdentity {
   if (fs.realpathSync.native(top) !== canonical) throw new Error("source must be a repository root");
   const commit = String(git(canonical, ["rev-parse", "--verify", "HEAD^{commit}"])).trim().toLowerCase();
   if (!validCommit(commit)) throw new Error("source commit is unknown");
-  const dirty = spawnSync("git", ["-C", canonical, "status", "--porcelain", "--untracked-files=no"], {
+  const command = findTrustedExecutable("git");
+  if (!command) throw new Error("source cleanliness is unknown");
+  const dirty = spawnSync(command, ["-C", canonical, "status", "--porcelain", "--untracked-files=no"], {
     encoding: "utf8", env: cleanGitEnv(), windowsHide: true, timeout: 30_000, stdio: ["ignore", "pipe", "pipe"],
   });
   if (dirty.status !== 0) throw new Error("source cleanliness is unknown");
