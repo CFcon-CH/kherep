@@ -460,7 +460,7 @@ test_default_confluence_brokers() {
   for tool in atlassian-credentials.mts atlassian-cli-args.mts confluence-contract.mts confluence-content.mts confluence-session.mts \
     confluence-related.mts confluence-text-search.mts confluence-semantic.mts confluence-neighbours.mts confluence-neighbour-cli.mts \
     confluence-topic-query.mts confluence-candidates.mts confluence-stitch.mts confluence-list-cli.mts \
-    confluence-runtime-label.mts confluence-label-cli.mts confluence-pagination.mts confluence-drainage-rules.mts confluence-drainage-snapshot.mts confluence-drainage-scan.mts confluence-drainage-cli.mts confluence-evidence.mts confluence-evidence-report.mts confluence-evidence-io.mts confluence-evidence-cli.mts confluence-claim-text.mts confluence-revision-staleness.mts confluence-revision-staleness-git.mts atl-confluence.mts atl-confluence-ccoder.mts; do
+    confluence-runtime-label.mts confluence-label-cli.mts confluence-pagination.mts confluence-drainage-rules.mts confluence-drainage-snapshot.mts confluence-drainage-scan.mts confluence-drainage-cli.mts confluence-evidence.mts confluence-evidence-report.mts confluence-evidence-io.mts confluence-evidence-cli.mts confluence-claim-text.mts confluence-observation-validate.mts confluence-revision-staleness.mts confluence-revision-staleness-git.mts atl-confluence.mts atl-confluence-ccoder.mts; do
     same "$HERE/../modules/atl-jira-brokers/$tool" "$W/tools/$tool"
   done
   for tool in atl-jira.mts atl-jira-ccoder.mts jira-adf.mts jira-config.mts; do
