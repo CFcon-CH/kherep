@@ -51,7 +51,10 @@ export function findTrustedExecutable(name: string, options: ExecutableLookup = 
     try { return normalize((options.realpath ?? fs.realpathSync.native)(value)); }
     catch { return normalize(value); }
   };
-  const cwd = canonical(options.cwd ?? process.cwd());
+  // A removed working directory makes process.cwd() throw; there is then nothing to exclude.
+  let current = options.cwd;
+  if (current === undefined) try { current = process.cwd(); } catch { /* removed working directory */ }
+  const cwd = current === undefined ? undefined : canonical(current);
   const dirs = (environment(env, "PATH", windows) ?? "").split(windows ? ";" : ":")
     .map((entry) => windows && entry.startsWith('"') && entry.endsWith('"') ? entry.slice(1, -1) : entry)
     .filter((entry) => fullyQualifiedPath(entry, platform) && canonical(entry) !== cwd);
