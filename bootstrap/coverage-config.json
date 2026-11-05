@@ -1,0 +1,7 @@
+{
+  "extension": [".mts", ".ts", ".js", ".mjs", ".cjs", ".cts"],
+  "include": ["**/*.mts", "**/*.ts", "**/*.js", "**/*.mjs", "**/*.cjs", "**/*.cts"],
+  "exclude": ["codex/parity/plugin-sources/**", "**/node_modules/**", "**/*.test.mts", "**/*.test.ts", "**/*.test.js", "**/*-test.mts", "**/test/**", "modules/control-plane/worker/src/**"],
+  "all": true,
+  "reporter": ["lcovonly"]
+}

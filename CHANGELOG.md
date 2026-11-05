@@ -11,6 +11,12 @@ increments the minor version; every other release increments the patch version.
 
 ### Changed
 
+- SonarQube Cloud (#772) consumes validated same-run LCOV from the existing
+  Ubuntu Node suites and Istanbul Worker tests through a reusable workflow.
+  Missing or mismatched reports fail visibly. Coverage stays honest, the 80%
+  new-code threshold is unchanged, and Sonar remains non-required. Raw coverage
+  artifacts expire after two days; fork pull requests skip only the scan.
+
 - Codex: the managed `atlassian-broker` role now defaults to medium reasoning
   instead of low. An existing install needs one explicit `--refresh-models`,
   because an ordinary install refuses the changed policy before writes (#786).
@@ -35,9 +41,9 @@ increments the minor version; every other release increments the patch version.
 ### Added
 
 - SonarQube Cloud analysis from GitHub Actions (#772): `sonar-project.properties` (organization `cfcon-ch`, project `CFcon-CH_kherep`)
-  and a `Sonar` workflow on pushes to main and same-repository pull requests,
+  and a reusable `Sonar` workflow called by CI on pushes to main and same-repository pull requests,
   reading `SONAR_TOKEN` from repository secrets; fork pull requests skip the job.
-  Vendored `codex/parity/plugin-sources` is excluded. CI and Sonar cancel the
+  Vendored `codex/parity/plugin-sources` is excluded. The CI caller cancels the
   older run when a newer commit is pushed to the same pull request.
 
 - The weekly usage recorder shows its notification on macOS through `osascript`.
