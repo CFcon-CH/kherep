@@ -1494,7 +1494,14 @@ hint-publication and busy-observer branches. The task-limit discriminator shares
 the existing population read; it never parses a reason or repeats a check.
 The local progress sidecar carries validated detail alongside its existing
 observation clock. Changing or clearing detail advances that clock and reuses
-the existing progress receipt, without a new receipt field. Hint attribution
+the existing progress receipt, without a new receipt field. Internal sidecar
+context binds detail to actual local state, offer time and closed-attempt time,
+so an advancement suppresses obsolete detail even before the next observer;
+later stuck-offer observations remain readable. Context never enters a wire
+status, and legacy progress sidecars remain readable. The existing reporter
+makes invalidation durable as a newer progress observation without diagnostic,
+then settles through the unchanged progress receipt; failed metadata replacement
+is retried by the existing poll. Hint attribution
 is restricted to checked ticket members, at most eight. Diagnostic write failure
 does not alter admission. The Worker persists optional diagnostic JSON separately
 from state transitions, replays it through the existing capability boundary, and
@@ -1515,6 +1522,18 @@ registration-pending, binding-capability-missing, stored-binding-missing,
 resolution-unavailable, resolution-timeout, resolution-capacity, identity-changed
 and acceptance-unconfirmed. An unacknowledged push establishes only the last
 code. These observations neither rebind nor retry nor spend a turn; optional
-storage/routing failure does not change the attempt result. No owner-scoped
+storage/routing failure does not change the attempt result. Diagnostic-only
+writes do not recompute or rearm expiry alarms. New observational pushes require
+both registered sender support and current socket support; old/unknown reconnects
+receive canonical statuses with their existing shape and no extra stripped
+observation frame. No owner-scoped
 `message.status.query` is implemented: senders can see pushed/stored metadata,
 but cannot refresh current upstream state through local `msg status`.
+
+`msg status` reads existing local sent/outbox/inbox records. The Node client
+validates optional detail on both status frames and correlated errors before
+persistence. The shared renderer prints fixed plain words, observation time and
+stage, and retains an already-known progress retry time. Received messages read
+the same progress sidecar. Legacy ambiguous waiting records say exactly
+"Waiting; detailed cause unavailable." No current remote lookup, historical
+cause reconstruction, new identifiers or message content is added.

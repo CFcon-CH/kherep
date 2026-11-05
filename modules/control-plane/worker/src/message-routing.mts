@@ -4,7 +4,7 @@ import type { MessageEffects } from "./message-store.mts";
 
 // The node the caller already holds a socket for. Frames for it go out on
 // that socket instead of through a call back into the same object.
-export interface LocalNode { nodeId: string; send(type: "message.deliver" | "message.status", body: Record<string, unknown>): void;
+export interface LocalNode { nodeId: string; send(type: "message.deliver" | "message.status", body: Record<string, unknown>, observational?: boolean): void;
   scheduleRetry?(): Promise<void> }
 
 // Pushes the frames a Registry message call produced to the nodes concerned.
@@ -13,7 +13,7 @@ export interface LocalNode { nodeId: string; send(type: "message.deliver" | "mes
 export async function routeEffects(env: Env, effects: MessageEffects, local?: LocalNode, phase?: "auth" | "registration"): Promise<void> {
   const frames = [
     ...effects.deliveries.map((d) => ({ nodeId: d.nodeId, type: "message.deliver" as const, body: { ...d.body } })),
-    ...effects.statuses.map((s) => ({ nodeId: s.nodeId, type: "message.status" as const, body: { ...s.body } })),
+    ...effects.statuses.map((s) => ({ nodeId: s.nodeId, type: "message.status" as const, body: { ...s.body }, observational: s.observational === true })),
   ];
   for (const frame of frames) {
     if (frame.type === "message.deliver") {
@@ -34,8 +34,8 @@ export async function routeEffects(env: Env, effects: MessageEffects, local?: Lo
     if (local && local.nodeId === frame.nodeId) {
       // Issue #408 (design r3 section 4.3): a proxy refused since its effect was produced is dropped here.
 
-      local.send(frame.type, frame.body);
-    } else await sessionStub(env, frame.nodeId).pushFrame(frame.type, frame.body);
+      local.send(frame.type, frame.body, frame.observational);
+    } else await sessionStub(env, frame.nodeId).pushFrame(frame.type, frame.body, frame.observational);
   }
 }
 

@@ -336,3 +336,69 @@ test("records every successful session listing in sessions.json and keeps it on 
   await assert.rejects(list());
   assert.equal(readLocalSessions(paths).length, 2);
 });
+
+test("correlated error detail is strictly validated while preserving legacy error handling", async t => {
+  const { blockerDiagnostic } = await import("../protocol-diagnostics.mts");
+  const good = blockerDiagnostic("identity-changed", 0, "duplicate");
+  for (const diagnostic of [good, { ...good, code: "invented" }, { ...good, operand: "synthetic-private-canary" }, { ...good, version: 2 }]) {
+    const paths = tempPaths(t), { client } = await connected(paths);
+    outbox(paths);
+    await client.onFrame(incoming("error", { messageId: ID_A, error: "fixed error", diagnostic }));
+    assert.equal(getSent(paths, ID_A)?.state, "error");
+    assert.deepEqual(getSent(paths, ID_A)?.diagnostic, diagnostic === good ? good : undefined);
+    assert.equal(JSON.stringify(getSent(paths, ID_A)).includes("synthetic-private-canary"), false);
+  }
+});
+test("pushed diagnostics persist, stale progress cannot replace them, and advancement clears detail", async t => {
+  const { blockerDiagnostic } = await import("../protocol-diagnostics.mts");
+  const paths = tempPaths(t), { client } = await connected(paths); outbox(paths);
+  const diagnostic = blockerDiagnostic("runtime-pending", 0);
+  const progress: MessageProgress = { phase: "waiting", code: "retry-pending", observedAt: diagnostic.observedAt };
+  await client.onFrame(incoming("message.status", { messageId: ID_A, state: "accepted", progress, diagnostic }));
+  assert.deepEqual(getSent(paths, ID_A)?.diagnostic, diagnostic);
+  await client.onFrame(incoming("message.status", { messageId: ID_A, state: "accepted", progress: { ...progress, observedAt: "1969-12-31T00:00:00.000Z" }, diagnostic: blockerDiagnostic("turn-spacing", -86400000) }));
+  assert.deepEqual(getSent(paths, ID_A)?.diagnostic, diagnostic);
+  await client.onFrame(incoming("message.status", { messageId: ID_A, state: "delivered" }));
+  assert.equal(getSent(paths, ID_A)?.diagnostic, undefined);
+});
+
+for (const advance of ["offer", "closed-attempt"] as const) test(`ACKed ${advance} detail invalidation is reported once through the existing progress receipt`, async t => {
+  const { blockerDiagnostic, MESSAGING_DIAGNOSTICS_CAPABILITY } = await import("../protocol-diagnostics.mts");
+  const { markClosedAttempt, progressFileOf } = await import("./inbox.mts");
+  const now = Date.UTC(2026, 8, 29, 12), paths = tempPaths(t), senderPaths = tempPaths(t);
+  const { client } = await connected(paths, () => now), { client: sender } = await connected(senderPaths, () => now);
+  await client.onFrame(incoming("directory", { nodes: [], sessions: [], fetchedAt: new Date(now).toISOString(), worker: { capabilities: [MESSAGING_DIAGNOSTICS_CAPABILITY] } }));
+  outbox(senderPaths);
+  storeMessage(paths.inbox, { messageId: ID_A, from: { nodeId: PEER, session: "synthetic-sender" }, toSession: "review", text: "synthetic", createdAt: new Date(now).toISOString() }, now);
+  const diagnostic = blockerDiagnostic("runtime-pending", now);
+  setMessageProgress(paths.inbox, ID_A, "waiting", "retry-pending", now, undefined, diagnostic);
+  const first = poll(client, paths, new Map(), true, now)[0].body as Record<string, unknown>;
+  await sender.onFrame(incoming("message.status", first));
+  assert.deepEqual(getSent(senderPaths, ID_A)?.diagnostic, diagnostic);
+  const ack = async (at: string) => client.onFrame(incoming("event", { name: "message.receipt", messageId: ID_A, requestedState: "accepted", storedState: "accepted", storedProgressAt: at }));
+  await ack((first.progress as MessageProgress).observedAt);
+  assert.deepEqual(poll(client, paths, new Map(), true, now), []);
+  if (advance === "offer") markOffered(paths.inbox, ID_A, now, "prompt");
+  else markClosedAttempt(paths.inbox, ID_A, now);
+  const original = fs.renameSync; let fail = true;
+  const fault = t.mock.method(fs, "renameSync", (from: fs.PathLike, to: fs.PathLike) => {
+    if (fail && to === progressFileOf(paths.inbox, ID_A)) { fail = false; throw new Error("synthetic metadata replacement failure"); }
+    return original(from, to);
+  });
+  assert.deepEqual(poll(client, paths, new Map(), true, now), [], "metadata persistence failure is observational and retried later");
+  fault.mock.restore();
+  const cleared = poll(client, paths, new Map(), true, now)[0]?.body as Record<string, unknown> | undefined;
+  assert.ok(cleared, "a same-millisecond local advance must produce a newer report even after the old ACK");
+  assert.equal(cleared.diagnostic, undefined);
+  const progress = cleared.progress as MessageProgress;
+  assert.ok(Date.parse(progress.observedAt) > Date.parse((first.progress as MessageProgress).observedAt));
+  await sender.onFrame(incoming("message.status", cleared));
+  assert.equal(getSent(senderPaths, ID_A)?.diagnostic, undefined, "actual sender storage clears the prior cause");
+  await ack(progress.observedAt);
+  assert.deepEqual(poll(client, paths, new Map(), true, now), [], "the unchanged receipt settles invalidation without perpetual resend");
+  setMessageProgress(paths.inbox, ID_A, "waiting", "retry-pending", now + 2, undefined, blockerDiagnostic("runtime-pending", now + 2));
+  const current = poll(client, paths, new Map(), true, now + 2)[0].body as Record<string, unknown>;
+  assert.ok(current.diagnostic, "later stuck-offer/current-attempt detail still propagates");
+  await sender.onFrame(incoming("message.status", current));
+  assert.equal(getSent(senderPaths, ID_A)?.diagnostic?.kind, "blocker");
+});

@@ -1,7 +1,7 @@
 import { expect, it, vi } from "vitest";
 import { runInDurableObject } from "cloudflare:test";
 import { blockerDiagnostic, MESSAGING_DIAGNOSTICS_CAPABILITY } from "../../protocol-diagnostics.mts";
-import { isMessageStatusBody as archivedStatus } from "../../fixtures/diagnostics-pre-v1.mts";
+import { isMessageStatusBody as archivedStatus } from "../../test/fixtures/diagnostics-pre-v1.mts";
 import { authenticate, enroll, FACTS, newKey, registry, session, until } from "./helpers.mts";
 import { makeEnvelope } from "../../protocol.mts";
 import { MessageStore } from "../src/message-store.mts";
@@ -72,4 +72,16 @@ it("failed diagnostic SQL replacement and clearing never replay an obsolete targ
       expect(store.statusPageFor(p.source, 0, 100).effects.statuses[0].body.diagnostic).toBeUndefined();
     } finally { spy.mockRestore(); }
   });
+});
+it("a newer accepted progress version clears prior detail and its receipt settles without another status update", async () => {
+  const p = await pair(), diagnostic = blockerDiagnostic("runtime-pending", Date.parse(progress.observedAt));
+  await registry().reportMessageStatus(p.target, { messageId: p.messageId, state: "accepted", progress, diagnostic });
+  const next = { ...progress, observedAt: "2026-11-05T00:00:00.001Z" };
+  const cleared = await registry().reportMessageStatus(p.target, { messageId: p.messageId, state: "accepted", progress: next });
+  expect(cleared.effects.statuses[0].body).toEqual({ messageId: p.messageId, state: "accepted", progress: next });
+  expect(cleared.receipt).toEqual({ name: "message.receipt", messageId: p.messageId, requestedState: "accepted", storedState: "accepted", storedProgressAt: next.observedAt });
+  expect((await registry().messageStatusPageFor(p.source, 0, 100)).effects.statuses[0].body.diagnostic).toBeUndefined();
+  const duplicate = await registry().reportMessageStatus(p.target, { messageId: p.messageId, state: "accepted", progress: next });
+  expect(duplicate.effects.statuses).toEqual([]);
+  expect(duplicate.receipt).toEqual(cleared.receipt);
 });

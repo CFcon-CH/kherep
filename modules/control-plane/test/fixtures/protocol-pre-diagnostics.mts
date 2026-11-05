@@ -111,7 +111,7 @@ export interface RuntimeInfo { name: string; kind: "cli" | "local-endpoint"; ver
 // "intercom: claude@sekhmet"; the session keeps its task-<8> name.
 // title (issue #88) is the Codex thread title the Codex app shows; display
 // only, never an address. Older nodes and Workers omit or ignore it.
-import { isCanonicalIdentity, type CanonicalIdentityV1 } from "../protocol-session-identity.mts";
+import { isCanonicalIdentity, type CanonicalIdentityV1 } from "../../protocol-session-identity.mts";
 export interface SessionInfo {
   sessionId: string; runtime: string; state: string; startedAt?: string; name?: string; cwd?: string; kind?: string; label?: string;
   title?: string; canonicalIdentity?: CanonicalIdentityV1;

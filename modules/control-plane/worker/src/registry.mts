@@ -446,7 +446,7 @@ export class Registry extends DurableObject<Env> {
     return result.body;
   }
   observeMessageDiagnostic(messageId: string, nodeId: string | null, diagnostic: MessageDiagnostic) {
-    return this.messageTx("observeMessageDiagnostic", () => this.messages.observeDiagnostic(messageId, nodeId, diagnostic));
+    return this.tx("observeMessageDiagnostic", () => this.messages.observeDiagnostic(messageId, nodeId, diagnostic));
   }
   // ---- Messages (issue #31). The caller pushes the returned effects. -------
 
@@ -483,11 +483,7 @@ export class Registry extends DurableObject<Env> {
 
   async messageDeliveryReady(messageId: string): Promise<boolean> {
     const result = await this.messageTx("messageDeliveryReady", () => this.messages.deliveryReady(messageId, Date.now()));
-    const canonical = result.effects.statuses.filter(effect => !effect.observational);
-    if (canonical.length) await routeEffects(this.env, { ...result.effects, statuses: canonical });
-    const observational = result.effects.statuses.filter(effect => effect.observational);
-    if (observational.length) try { await routeEffects(this.env, { deliveries: [], statuses: observational }); }
-    catch { /* Optional diagnostics must not interrupt blocked egress or later frames. */ }
+    if (result.effects.statuses.length) await routeEffects(this.env, result.effects);
     return result.ready;
   }
   listMessageHolds(limit: number) { return this.metered("listMessageHolds", () => this.messages.loops.listHolds(limit)); }

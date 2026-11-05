@@ -139,7 +139,7 @@ test("msg status of a queued message names its target's intake (issue #441)", as
   const status = await run(paths, ["status", toPeer]);
   assert.equal(status.code, 0, status.err);
   assert.deepEqual(status.out.split("\n"), [`${toPeer} queued (updated ${new Date(NOW).toISOString()})`,
-    `  target node-b (${PEER}) online; intake: NOT DRAINING: 3 queued, oldest 12 min (over 5 min) as of ${fetched}; last intake 25 min ago`]);
+    `  target node-b (${PEER}) online; intake: NOT DRAINING: 3 queued, oldest 12 min (over 5 min) as of ${fetched}; last intake 25 min ago`, "Waiting; detailed cause unavailable."]);
 
   const toSelf = await queuedTo("node-a/s-self");
   assert.equal((await run(paths, ["status", toSelf])).out.split("\n")[1],
@@ -155,7 +155,7 @@ test("msg status of a queued message names its target's intake (issue #441)", as
   // Later states add nothing.
   writeDirectory(paths, DIRECTORY);
   recordSent(paths, toPeer, "accepted", undefined, NOW);
-  assert.deepEqual((await run(paths, ["status", toPeer])).out.split("\n"), [`${toPeer} accepted (updated ${new Date(NOW).toISOString()})`]);
+  assert.deepEqual((await run(paths, ["status", toPeer])).out.split("\n"), [`${toPeer} accepted (updated ${new Date(NOW).toISOString()})`, "Waiting; detailed cause unavailable."]);
 });
 
 test("msg sessions shows a Codex thread title next to the name, and the title is never an address (issue #88)", async (t) => {
@@ -293,11 +293,11 @@ test("msg inbox shows this session's messages, msg status the state of a sent on
   // Issue #417: msg status answers for a message in this node's inbox too.
   const received = getMessage(paths.inbox, INCOMING)!.receivedAt;
   const before = await run(paths, ["status", INCOMING]);
-  assert.deepEqual([before.code, before.out], [0, `${INCOMING} accepted (received ${received})`]);
+  assert.deepEqual([before.code, before.out], [0, `${INCOMING} accepted (received ${received})\nWaiting; detailed cause unavailable.`]);
   markOffered(paths.inbox, INCOMING, NOW, "prompt");
   const offered = `  offered by: prompt at ${new Date(NOW).toISOString()} (offer 1)`;
   const after = await run(paths, ["status", INCOMING]);
-  assert.deepEqual([after.code, after.out], [0, `${INCOMING} offered (received ${received})\n${offered}`]);
+  assert.deepEqual([after.code, after.out], [0, `${INCOMING} offered (received ${received})\n${offered}\nWaiting; detailed cause unavailable.`]);
   assert.ok((await run(paths, ["inbox"])).out.includes(`\n${offered}\n  | line one`), "msg inbox shows the same line");
   assert.equal((await run(paths, ["status", "00000000-0000-4000-8000-0000000000f9"])).code, 1, "an unknown id still fails");
   assert.equal((await run(paths, ["frobnicate"])).code, 2);

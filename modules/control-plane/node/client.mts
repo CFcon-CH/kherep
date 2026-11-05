@@ -1,4 +1,4 @@
-import { compatibleDiagnostic, type MessageDiagnostic } from "../protocol-diagnostics.mts";
+import { compatibleDiagnostic, isMessageDiagnostic, type MessageDiagnostic } from "../protocol-diagnostics.mts";
 import { RecordLockBusy } from "./inbox-record-lock.mts";
 import type { BindingStorageSnapshot } from "./inbox-storage.mts";
 import { isResolveRequest, SELECTED_BINDING_CAPABILITY } from "../protocol-message-binding.mts";
@@ -62,7 +62,7 @@ export interface ClientOptions {
   localSessions?: () => { sessionId: string; name?: string }[];
   // Step 3a: the directory frame, and the state of a message this node sent.
   storeDirectory?: (body: DirectoryBody) => void;
-  sentUpdate?: (messageId: string, state: SentState, reason?: string, progress?: MessageProgress) => void;
+  sentUpdate?: (messageId: string, state: SentState, reason?: string, progress?: MessageProgress, diagnostic?: MessageDiagnostic) => void;
   receiptUpdate?: (body: MessageReceiptBody) => void;
   // Item 5: the Worker's answer to a task.request this node sent.
   taskRequestResult?: (result: TaskRequestResult) => void;
@@ -229,7 +229,7 @@ export class NodeClient {
       case "message.status": {
         const body = envelope.body;
         if (!isMessageStatusBody(body)) return [];
-        const recorded = this.callback(body.messageId, () => this.options.sentUpdate?.(body.messageId, body.state, body.reason, body.progress));
+        const recorded = this.callback(body.messageId, () => this.options.sentUpdate?.(body.messageId, body.state, body.reason, body.progress, body.diagnostic));
         // Issue #308: a final status recorded here (or with no local record) is acknowledged.
         return recorded && this.authenticated && isFinalMessageState(body.state)
           ? [this.frame("event", { ...messageStatusAck(body.messageId, body.state) })] : [];
@@ -279,8 +279,8 @@ export class NodeClient {
       case "error": {
         // The Worker answers a message.send it cannot take with an error frame
         // that names the message.
-        const { messageId, error } = envelope.body as { messageId?: unknown; error?: unknown };
-        if (isMessageId(messageId)) this.callback(messageId, () => this.options.sentUpdate?.(messageId, "error", String(error).slice(0, 256)));
+        const { messageId, error, diagnostic } = envelope.body as { messageId?: unknown; error?: unknown; diagnostic?: unknown };
+        if (isMessageId(messageId)) this.callback(messageId, () => this.options.sentUpdate?.(messageId, "error", String(error).slice(0, 256), undefined, isMessageDiagnostic(diagnostic) ? diagnostic : undefined));
         // Issue #441: otherwise the one signal that a frame bypassed the stamp or was malformed.
         else this.options.log?.(`kherep-node: control plane rejected a frame: ${String(error).slice(0, 256)}`);
         return [];

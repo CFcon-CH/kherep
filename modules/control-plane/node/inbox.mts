@@ -195,22 +195,26 @@ export function getMessageProgress(dir: string, messageId: string): MessageProgr
   if (!isMessageId(messageId)) return null;
   const value = readJson<unknown>(progressFileOf(dir, messageId));
   if (!value || typeof value !== "object") return null;
-  const { diagnostic: _diagnostic, ...progress } = value as Record<string, unknown>;
+  const { diagnostic: _diagnostic, diagnosticContext: _context, ...progress } = value as Record<string, unknown>;
   return isMessageProgress(progress) ? progress : null;
 }
+
+const diagnosticContext = (record: Pick<InboxRecord, "state" | "offeredAt" | "closedAttempt">) =>
+  [record.state, record.offeredAt ?? null, record.closedAttempt ?? null];
 
 export function getMessageDiagnostic(dir: string, messageId: string): MessageDiagnostic | null {
   const record = getMessage(dir, messageId);
   if (!record || record.state !== "accepted" && record.state !== "offered") return null;
-  const value = readJson<{ diagnostic?: unknown }>(progressFileOf(dir, messageId))?.diagnostic;
-  return isMessageDiagnostic(value) ? value : null;
+  const sidecar = readJson<{ diagnostic?: unknown; diagnosticContext?: unknown }>(progressFileOf(dir, messageId));
+  if (JSON.stringify(sidecar?.diagnosticContext) !== JSON.stringify(diagnosticContext(record))) return null;
+  return isMessageDiagnostic(sidecar?.diagnostic) ? sidecar.diagnostic : null;
 }
 
 // Progress is daemon-owned metadata in a sidecar. Delivery hooks keep sole
 // ownership of the message body file, so a stale progress writer cannot
 // restore accepted over a newer offered or delivered state.
 export function setMessageProgress(dir: string, messageId: string, phase: MessageProgress["phase"], code: MessageProgress["code"],
-  now: number = Date.now(), retryAt?: number, diagnostic?: MessageDiagnostic): MessageProgress | null {
+  now: number = Date.now(), retryAt?: number, diagnostic?: MessageDiagnostic, invalidateDiagnostic = false): MessageProgress | null {
   const record = getMessage(dir, messageId);
   if (!record || (record.state !== "accepted" && record.state !== "offered")) return null;
   const previous = getMessageProgress(dir, messageId);
@@ -219,13 +223,13 @@ export function setMessageProgress(dir: string, messageId: string, phase: Messag
     : new Date(Math.max(retryAt, now, Number.isNaN(previousAt) ? now : previousAt)).toISOString();
   const priorDetail = getMessageDiagnostic(dir, messageId);
   const detailKey = (d: MessageDiagnostic | null | undefined): string => JSON.stringify(d ? { ...d, observedAt: "" } : null);
-  if (previous?.phase === phase && previous.code === code && previous.retryAt === requestedRetryAt && detailKey(priorDetail) === detailKey(diagnostic)) return previous;
+  if (previous?.phase === phase && previous.code === code && previous.retryAt === requestedRetryAt && detailKey(priorDetail) === detailKey(diagnostic) && !invalidateDiagnostic) return previous;
   const observedMs = Math.max(now, Number.isNaN(previousAt) ? now : previousAt + 1);
   const observedAt = new Date(observedMs).toISOString();
   const nextRetryAt = retryAt === undefined ? undefined : new Date(Math.max(retryAt, observedMs)).toISOString();
   const progress: MessageProgress = { phase, code, observedAt, ...(nextRetryAt ? { retryAt: nextRetryAt } : {}) };
   ensureDir(path.dirname(progressFileOf(dir, messageId)));
-  writeJsonAtomic(progressFileOf(dir, messageId), { ...progress, ...(diagnostic ? { diagnostic: { ...diagnostic, observedAt } } : {}) });
+  writeJsonAtomic(progressFileOf(dir, messageId), { ...progress, ...(diagnostic ? { diagnostic: { ...diagnostic, observedAt }, diagnosticContext: diagnosticContext(record) } : {}) });
   return progress;
 }
 
@@ -361,7 +365,17 @@ export function unreportedStatuses(dir: string, now: number = Date.now(), record
     if (!state) return [];
     const receipt = receiptOf(record);
     const statePending = receipt?.reportedState !== state;
-    const progress = state === "accepted" ? getMessageProgress(dir, record.messageId) : null;
+    let progress = state === "accepted" ? getMessageProgress(dir, record.messageId) : null;
+    if (progress) {
+      const sidecar = readJson<{ diagnostic?: unknown; diagnosticContext?: unknown }>(progressFileOf(dir, record.messageId));
+      const current = sidecar?.diagnostic === undefined ? null : getMessage(dir, record.messageId);
+      if (current && JSON.stringify(sidecar?.diagnosticContext) !== JSON.stringify(diagnosticContext(current))) {
+        try {
+          progress = setMessageProgress(dir, record.messageId, progress.phase, progress.code, now,
+            progress.retryAt === undefined ? undefined : Date.parse(progress.retryAt), undefined, true) ?? progress;
+        } catch { /* Observational invalidation remains pending for the next poll. */ }
+      }
+    }
     const reportedProgressAt = Date.parse(receipt?.reportedProgressAt ?? "");
     const progressPending = progress !== null
       && (Number.isNaN(reportedProgressAt) || reportedProgressAt < Date.parse(progress.observedAt))

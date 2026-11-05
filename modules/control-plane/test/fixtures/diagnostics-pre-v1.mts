@@ -3,11 +3,11 @@
 // Session-to-session messages between nodes, routed and queued by the Worker.
 // Plain ECMAScript like protocol.mts, so the Worker and the node load it alike.
 
-import { isDeliveryBinding, type DeliveryBinding } from "../protocol-message-binding.mts";
-import { isLoopAdmissionV1, type LoopAdmissionV1 } from "../protocol-loop-brake.mts";
-export { isLoopAdmissionV1, type LoopAdmissionV1 } from "../protocol-loop-brake.mts";
+import { isDeliveryBinding, type DeliveryBinding } from "../../protocol-message-binding.mts";
+import { isLoopAdmissionV1, type LoopAdmissionV1 } from "../../protocol-loop-brake.mts";
+export { isLoopAdmissionV1, type LoopAdmissionV1 } from "../../protocol-loop-brake.mts";
 
-import { isNodeId, isSessionInfo, type SessionInfo } from "../protocol.mts";
+import { isNodeId, isSessionInfo, type SessionInfo } from "../../protocol.mts";
 
 // A node advertises this capability when it can take message.deliver. The
 // Worker routes only to nodes that registered it.
@@ -200,4 +200,3 @@ export function isMessageStatusBody(body: unknown): body is MessageStatusBody {
 export function isNodeMessageStatusBody(body: unknown): body is MessageStatusBody & { state: NodeReportedState } {
   return isMessageStatusBody(body) && isNodeReportedState(body.state);
 }
-

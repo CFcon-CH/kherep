@@ -21,6 +21,11 @@ increments the minor version; every other release increments the patch version.
 
 ### Changed
 
+- `msg status` renders stored sender and received-message diagnostics in plain
+  words with observation time and stage. Legacy waiting records explicitly say
+  detailed cause is unavailable. Status remains local and does not query the
+  current upstream owner state (#706).
+
 - Control Plane: negotiate optional, strictly validated fixed-code delivery diagnostics
   with `messaging.diagnostics.v1`; older peers retain their existing status shape
   (#706, step 4). Worker changes require a separately approved deploy; node
