@@ -772,6 +772,7 @@ test("installs the Mac-compatible projection without replacing user state", asyn
     "confluence-evidence-io.mts",
     "confluence-evidence-cli.mts",
     "confluence-claim-text.mts",
+    "confluence-observation-validate.mts",
     "confluence-revision-staleness.mts",
     "confluence-revision-staleness-git.mts",
 
@@ -1137,6 +1138,7 @@ test("default install projects observation delivery without optional Jira toolin
     "confluence-evidence-io.mts",
     "confluence-evidence-cli.mts",
     "confluence-claim-text.mts",
+    "confluence-observation-validate.mts",
     "confluence-revision-staleness.mts",
     "confluence-revision-staleness-git.mts",
 
@@ -1305,6 +1307,7 @@ test("rolls every managed target back when installation fails", (t) => {
     "confluence-evidence-io",
     "confluence-evidence-cli",
     "confluence-claim-text",
+    "confluence-observation-validate",
     "confluence-revision-staleness",
     "confluence-revision-staleness-git",
 

@@ -284,6 +284,8 @@ cmp_file "project/tools/confluence-evidence-cli.mts" \
   "$HERE/../modules/atl-jira-brokers/confluence-evidence-cli.mts" "$WS/tools/confluence-evidence-cli.mts"
 cmp_file "project/tools/confluence-claim-text.mts" \
   "$HERE/../modules/atl-jira-brokers/confluence-claim-text.mts" "$WS/tools/confluence-claim-text.mts"
+cmp_file "project/tools/confluence-observation-validate.mts" \
+  "$HERE/../modules/atl-jira-brokers/confluence-observation-validate.mts" "$WS/tools/confluence-observation-validate.mts"
 cmp_file "project/tools/confluence-revision-staleness.mts" \
   "$HERE/../modules/atl-jira-brokers/confluence-revision-staleness.mts" "$WS/tools/confluence-revision-staleness.mts"
 cmp_file "project/tools/confluence-revision-staleness-git.mts" \

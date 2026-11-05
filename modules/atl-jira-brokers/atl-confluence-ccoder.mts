@@ -1,89 +1,42 @@
 #!/usr/bin/env node
-// Claude Confluence broker. Credential values are read only through
-// KHEREP_ATL_CRED_FILE_CLAUDE; the Codex broker beside it reads its own
-// variable and neither can reach the other's. Paths, credentials and access
-// tokens are never printed.
-//
-// The placement of these files in a directory named after Jira is deliberate
-// and explained at the top of confluence-session.mts.
-import { createHash } from "node:crypto";
+// Claude Confluence broker. Credential values are read only through KHEREP_ATL_CRED_FILE_CLAUDE; the Codex broker beside it reads its own variable and neither can reach the other's. Paths, credentials and access tokens are never printed.  The placement of these files in a directory named after Jira is deliberate and explained at the top of confluence-session.mts.
 import { realpathSync } from "node:fs";
 import { readFile as nodeReadFile } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-
 import { CliArgsError, EN, helpText, isHelp, parseVerbArgs, type VerbTable } from "./atlassian-cli-args.mts";
 import { ConfluenceError } from "./confluence-contract.mts";
-import {
-  createPage,
-  deletePage,
-  findSpace,
-  getPage,
-  purgePage,
-  representationFor,
-  updatePage,
-  type Page,
-} from "./confluence-content.mts";
-import {
-  cmdChildren,
-  cmdContext,
-  cmdGetBody,
-  cmdMove,
-  cmdOrphans,
-  cmdRelated,
-  cmdSearch,
-  cmdSpace,
-  cmdStitch,
-  type NeighbourCliContext,
-} from "./confluence-neighbour-cli.mts";
+import { createPage, deletePage, findSpace, getPage, purgePage, representationFor, updatePage, type Page } from "./confluence-content.mts";
+import { cmdChildren, cmdContext, cmdGetBody, cmdMove, cmdOrphans, cmdRelated, cmdSearch, cmdSpace, cmdStitch, type NeighbourCliContext } from "./confluence-neighbour-cli.mts";
 import { cmdLabels, ensureRuntimeLabel } from "./confluence-label-cli.mts";
 import { cmdList } from "./confluence-list-cli.mts";
 import { requireResolvableAnchors } from "./confluence-related.mts";
 import { semanticProposals } from "./confluence-semantic.mts";
-import {
-  authenticationReport,
-  cloudId,
-  createSession,
-  currentUser,
-} from "./confluence-session.mts";
-
+import { authenticationReport, cloudId, createSession, currentUser } from "./confluence-session.mts";
 import { parseExpectedVersion } from './confluence-pagination.mts';
 import { cmdDrainage } from './confluence-drainage-cli.mts';
 import { cmdEvidence } from './confluence-evidence-cli.mts';
-import { DIRTY_LINE, NO_BINDING_LINE, scopedRevision } from './confluence-claim-text.mts';
-
+import { validateObservation } from './confluence-observation-validate.mts';
 const CRED_ENV = "KHEREP_ATL_CRED_FILE_CLAUDE";
-// An absent value is UNKNOWN and says so. A blank line here would read like an
-// answer, and an unverifiable author is the one thing this broker exists for.
+// An absent value is UNKNOWN and says so. A blank line here would read like an answer, and an unverifiable author is the one thing this broker exists for.
 const UNKNOWN = "UNKNOWN - not reported by the API";
-
-// The neighbour verbs define the widest context, so the CLI adopts theirs
-// rather than keeping a second copy that can drift away from it.
+// The neighbour verbs define the widest context, so the CLI adopts theirs rather than keeping a second copy that can drift away from it.
 export type CliContext = NeighbourCliContext & { readBodyBytes: (file: string) => Promise<Uint8Array> };
-
-// credEnv is omitted on purpose: which credential variable this CLI reads is
-// not injectable, or a caller could point the Claude broker at the Codex file.
+// credEnv is omitted on purpose: which credential variable this CLI reads is not injectable, or a caller could point the Claude broker at the Codex file.
 export type Injected = Partial<Omit<CliContext, "credEnv">>;
-
 export type Args = Record<string, string | undefined>;
-
-// Abort throws instead of ending the process, so every failure path stays
-// testable. The exit code is set only at the CLI boundary below.
+// Abort throws instead of ending the process, so every failure path stays testable. The exit code is set only at the CLI boundary below.
 class CliFailure extends Error {
   cliMessage: string;
-
   constructor(message: string) {
     super(message);
     this.cliMessage = message;
   }
 }
-
 function fail(message: string): never {
   throw new CliFailure(message);
 }
-
-// What each verb reads, and nothing else. The parser and the help text are
-// both generated from this table, so neither can drift from the other.
+// What each verb reads, and nothing else. The parser and the help text are both generated from this table, so neither can drift from the other.
 const BODY = { body: "<text>", "body-file": "<path>" };
 export const FLAGS = {
   create: {
@@ -111,9 +64,7 @@ export const FLAGS = {
   validate: { required: { format: "<storage>", "body-file": "<path>", labels: "<a,b>" } },
   selftest: {},
 } satisfies VerbTable;
-
 type Verb = keyof typeof FLAGS;
-
 async function bodyOf(ctx: CliContext, args: Args): Promise<string> {
   const file = args["body-file"];
   if (file) {
@@ -126,7 +77,6 @@ async function bodyOf(ctx: CliContext, args: Args): Promise<string> {
   if (args.body === undefined) fail("--body or --body-file is missing.");
   return args.body;
 }
-
 function printPage(ctx: CliContext, page: Page): void {
   ctx.log(`id: ${page.id}`);
   ctx.log(`title: ${page.title}`);
@@ -135,86 +85,8 @@ function printPage(ctx: CliContext, page: Page): void {
   ctx.log(`authorId: ${page.authorId || UNKNOWN}`);
   if (page.link) ctx.log(`link: ${page.link}`);
 }
-
-// Local observation-shape preflight only. Generic create deliberately does not call it.
-function observationProblem(value: string, csv: string): string | null {
-  // XML 1.0 Char and CharRef; references in comments/CDATA/PIs are literal data.
-  const xmlChar = (n: number): boolean => n === 9 || n === 10 || n === 13 || (n >= 0x20 && n <= 0xd7ff)
-    || (n >= 0xe000 && n <= 0xfffd) || (n >= 0x10000 && n <= 0x10ffff);
-  if ([...value].some(character => !xmlChar(character.codePointAt(0)!))) return "Body contains an XML-illegal character.";
-  const active = value.replace(/<!--[^]*?-->|<!\[CDATA\[[^]*?\]\]>|<\?[^]*?\?>/g, "");
-  let invalidReference = false;
-  const withoutReferences = active.replace(/&#(x[0-9a-fA-F]+|[0-9]+);/g, (_, digits: string) => {
-    const n = digits[0] === "x" ? parseInt(digits.slice(1), 16) : Number(digits);
-    if (!xmlChar(n)) invalidReference = true;
-    return "";
-  });
-  if (invalidReference || withoutReferences.includes("&#")) return "Body contains an invalid XML character reference.";
-  const labels = csv.split(",").map(label => label.trim());
-  const evidence = labels.filter(label => label.startsWith("evidence-"));
-  if (new Set(labels).size !== labels.length || labels.some(label => !label)
-    || !labels.includes("type-observation") || !labels.includes("status-author-model")
-    || labels.some(label => label.startsWith("status-author-") && label !== "status-author-model")
-    || evidence.length !== 1 || !/^evidence-(confirmed|assumed|refuted|superseded)$/.test(evidence[0])) {
-    return "Observation labels require one supported evidence value, type-observation and status-author-model.";
-  }
-  // Tokenize markup so comments, quoted attributes and pre/code content cannot supply metadata.
-  const stack: { name: string; start: number; metadata: boolean }[] = [], paragraphs: string[] = [];
-  const tokens = /<!--[^]*?-->|<!\[CDATA\[[^]*?\]\]>|<\?[^]*?\?>|<\/?([A-Za-z][\w:.-]*)(?:"[^"]*"|'[^']*'|[^'"<>])*>/g;
-  let cursor = 0;
-  for (const match of value.matchAll(tokens)) {
-    if (value.slice(cursor, match.index).includes("<")) return "Malformed storage markup.";
-    cursor = match.index + match[0].length;
-    if (!match[1]) continue;
-    const name = match[1].toLowerCase(), closing = match[0].startsWith("</");
-    if (closing) {
-      const open = stack.pop();
-      if (!open || open.name !== name) return "Malformed storage markup.";
-      if (open.metadata) paragraphs.push(value.slice(open.start, match.index));
-    } else if (!match[0].endsWith("/>")) {
-      if (name === "p" && stack.some(tag => tag.name === "p")) return "Malformed storage markup.";
-      const metadata = name === "p" && !stack.some(tag => /^(p|pre|code|script|style)$/.test(tag.name));
-      stack.push({ name, start: cursor, metadata });
-    }
-  }
-  if (stack.length || value.slice(cursor).includes("<")) return "Malformed storage markup.";
-  const entities: Record<string, string> = { nbsp: " ", amp: "&", lt: "<", gt: ">", quot: '"', apos: "'" };
-  const decode = (text: string): string => text.replace(/&(?:#(x[0-9a-fA-F]+|[0-9]+)|(nbsp|amp|lt|gt|quot|apos));/g,
-    (_, digits: string | undefined, name: string | undefined) => digits
-      ? String.fromCodePoint(digits[0] === "x" ? parseInt(digits.slice(1), 16) : Number(digits)) : entities[name!]);
-  const text = paragraphs.map(paragraph => {
-    let visible = "", at = 0;
-    for (const token of paragraph.matchAll(tokens)) {
-      visible += decode(paragraph.slice(at, token.index));
-      if (token[0].startsWith("<![CDATA[")) visible += token[0].slice(9, -3);
-      else if (/^<br\b/i.test(token[0])) visible += "\n";
-      at = token.index + token[0].length;
-    }
-    return (visible + decode(paragraph.slice(at))).trim();
-  });
-  for (const field of ["Finding", "Origin", "Source", "Timestamp"]) {
-    const entries = text.filter(line => new RegExp(`^${field}\\s*:` , "i").test(line));
-    if (entries.length !== 1 || !entries[0].replace(/^[^:]*:/, "").trim()) return `Require exactly one nonempty ${field} paragraph.`;
-  }
-  for (const line of text.filter(line => /^Revision\s*:/i.test(line))) {
-    const revision = line.replace(/^Revision\s*:\s*/i, ""), bound = scopedRevision(revision);
-    if (!bound && !NO_BINDING_LINE.test(revision) && !scopedRevision(DIRTY_LINE.exec(revision)?.[1] ?? "")) return "Malformed Revision paragraph.";
-    if (!bound && evidence[0] === "evidence-confirmed") return "Unbound or dirty revisions cannot be evidence-confirmed.";
-  }
-  return null;
-}
-
 async function cmdValidate(ctx: CliContext, args: Args): Promise<number> {
-  if (args.format !== "storage") fail("validate takes --format storage only.");
-  let bytes: Uint8Array;
-  try { bytes = await ctx.readBodyBytes(args["body-file"] ?? ""); }
-  catch { fail("--body-file is not readable."); }
-  const digest = createHash("sha256").update(bytes).digest("hex");
-  let problem: string | null;
-  try {
-    const value = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
-    problem = observationProblem(value, args.labels ?? "");
-  } catch { problem = "Body is not valid UTF-8."; }
+  const { problem, bytes, digest } = await validateObservation(args, ctx, fail);
   ctx.log(`valid: ${problem === null}`);
   ctx.log(`bytes: ${bytes.byteLength}`);
   ctx.log(`sha256: ${digest}`);
@@ -222,7 +94,6 @@ async function cmdValidate(ctx: CliContext, args: Args): Promise<number> {
   if (problem) fail(problem);
   return 0;
 }
-
 async function cmdCreate(ctx: CliContext, args: Args): Promise<number> {
   // Before anything reaches the network: an unsupported representation is a
   // caller error, not a site error.
@@ -272,34 +143,26 @@ async function cmdUpdate(ctx: CliContext, args: Args): Promise<number> {
   printPage(ctx, result.page);
   return 0;
 }
-
 async function cmdGet(ctx: CliContext, args: Args): Promise<number> {
   if ("body-only" in args || "format" in args) return cmdGetBody(ctx, args);
   printPage(ctx, await getPage(createSession(ctx), args.id ?? ""));
   return 0;
 }
-
 async function cmdDelete(ctx: CliContext, args: Args): Promise<number> {
   const session = createSession(ctx);
   await deletePage(session, args.id ?? "");
   ctx.log("deleted: the page moved to the trash. Permanent removal is the separate purge verb.");
-  // Read back WITH the trashed status, otherwise a successful delete reports
-  // "no longer readable", which reads like a failure and hides the state the
-  // separate purge verb depends on.
+  // Read back WITH the trashed status, otherwise a successful delete reports "no longer readable", which reads like a failure and hides the state the separate purge verb depends on.
   const after = await getPage(session, args.id ?? "", ["current", "trashed"]).catch(() => null);
   ctx.log(`readback status: ${after ? after.status || UNKNOWN : "the page is no longer readable"}`);
   return 0;
 }
-
 async function cmdPurge(ctx: CliContext, args: Args): Promise<number> {
   await purgePage(createSession(ctx), args.id ?? "");
   ctx.log("purged: the page is permanently removed.");
   return 0;
 }
-
-// Proves the credential and the site binding and touches no content: no space
-// and no page are required, so a broken credential cannot surface as a failed
-// page lookup.
+// Proves the credential and the site binding and touches no content: no space and no page are required, so a broken credential cannot surface as a failed page lookup.
 async function cmdSelftest(ctx: CliContext): Promise<number> {
   const report = await authenticationReport(ctx);
   for (const line of report.lines) ctx.log(line);
@@ -310,7 +173,6 @@ async function cmdSelftest(ctx: CliContext): Promise<number> {
     : "account: not reported - this binding cannot read the identity endpoint");
   return report.ok ? 0 : 1;
 }
-
 const COMMANDS: Record<Verb, (ctx: CliContext, args: Args) => Promise<number>> = {
   create: cmdCreate,
   update: cmdUpdate,
@@ -332,7 +194,6 @@ const COMMANDS: Record<Verb, (ctx: CliContext, args: Args) => Promise<number>> =
   validate: cmdValidate,
   selftest: cmdSelftest,
 };
-
 export async function runCli(argv: string[], injected: Injected = {}): Promise<number> {
   const ctx: CliContext = {
     readBodyBytes: injected.readBodyBytes ?? ((file) => nodeReadFile(file)),
@@ -354,8 +215,7 @@ export async function runCli(argv: string[], injected: Injected = {}): Promise<n
     return 0;
   }
   try {
-    // One line on purpose: the contract test reads this source and requires the
-    // verbs of this usage string to be exactly the keys of FLAGS.
+    // One line on purpose: the contract test reads this source and requires the verbs of this usage string to be exactly the keys of FLAGS.
     if (!Object.hasOwn(FLAGS, command)) fail("Usage: create | update | get | delete | purge | labels | move | space | children | related | search | list | context | orphans | stitch | drainage | evidence | validate | selftest. Run help for the flags of each verb.");
     const verb = command as Verb;
     return await COMMANDS[verb](ctx, parseVerbArgs(verb, FLAGS[verb], rest, EN));
@@ -364,8 +224,7 @@ export async function runCli(argv: string[], injected: Injected = {}): Promise<n
     if (error instanceof CliFailure || error instanceof ConfluenceError) message = error.cliMessage;
     else if (error instanceof CliArgsError) message = error.message;
     ctx.logError(message);
-    // search keeps its research contract: exit 1 is a measured "no match", so a
-    // call that never searched is unavailable (2), not a zero.
+    // search keeps its research contract: exit 1 is a measured "no match", so a call that never searched is unavailable (2), not a zero.
     if (command === "search" && error instanceof CliArgsError) {
       ctx.log("status: unavailable");
       return 2;
@@ -374,10 +233,7 @@ export async function runCli(argv: string[], injected: Injected = {}): Promise<n
   }
 }
 
-// Node loads the main module from its real path, so a script started through a
-// symlinked directory (macOS /var -> /private/var) matches only after realpath;
-// under --preserve-symlinks-main it keeps the path as given, so both count.
-// It needs no main flag on import.meta, which Node 23 and 24.0-24.1 lack.
+// Node loads the main module from its real path, so a script started through a symlinked directory (macOS /var -> /private/var) matches only after realpath; under --preserve-symlinks-main it keeps the path as given, so both count. It needs no main flag on import.meta, which Node 23 and 24.0-24.1 lack.
 function isMainModule(): boolean {
   const entry = process.argv[1] || "";
   try {
@@ -388,8 +244,7 @@ function isMainModule(): boolean {
   }
 }
 
-// Only on a direct call. Without this guard every import - and therefore every
-// test - would execute the command.
+// Only on a direct call. Without this guard every import - and therefore every test - would execute the command.
 if (isMainModule()) {
   process.exitCode = await runCli(process.argv.slice(2));
 }
