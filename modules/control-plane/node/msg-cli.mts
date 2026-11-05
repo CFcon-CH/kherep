@@ -254,11 +254,11 @@ function status(io: Io, messageId: string): number {
   const sent = getSent(io.paths, messageId);
   if (sent) {
     io.out(`${messageId} ${stateText(sent, io.now())} (updated ${sent.updatedAt})`);
-    if (isMessageDiagnostic(sent.diagnostic)) io.out(renderMessageDiagnostic(sent.diagnostic));
+    if (isMessageDiagnostic(sent.diagnostic)) io.out(renderMessageDiagnostic(sent.diagnostic, sent.state));
     // Issue #441: while queued, whether its target node takes its messages.
     if (sent.state === "queued" && sent.to?.nodeId) io.out(targetLine(directoryFor(io), sent.to.nodeId, io.now()));
     if (!isMessageDiagnostic(sent.diagnostic) && (sent.state === "queued"
-      || sent.state === "accepted" && (!sent.progress || ["retry-pending", "target-busy"].includes(sent.progress.code)))) io.out(renderMessageDiagnostic(null));
+      || sent.state === "accepted" && (!sent.progress || ["retry-pending", "target-busy"].includes(sent.progress.code)))) io.out(renderMessageDiagnostic(null, sent.state));
     for (const line of replyLines(io.paths, sent)) io.out(line);
     return 0;
   }
@@ -271,11 +271,11 @@ function status(io: Io, messageId: string): number {
   if (received) {
     io.out(`${messageId} ${received.state} (received ${received.receivedAt})`);
     const diagnostic = getMessageDiagnostic(io.paths.inbox, messageId);
-    if (diagnostic) io.out(renderMessageDiagnostic(diagnostic));
+    if (diagnostic) io.out(renderMessageDiagnostic(diagnostic, received.state));
     for (const line of offerLine(received)) io.out(line);
     const progress = getMessageProgress(io.paths.inbox, messageId);
     if (!diagnostic && ["accepted", "offered"].includes(received.state)
-      && (!progress || ["retry-pending", "target-busy"].includes(progress.code))) io.out(renderMessageDiagnostic(null));
+      && (!progress || ["retry-pending", "target-busy"].includes(progress.code))) io.out(renderMessageDiagnostic(null, received.state));
     return 0;
   }
   return fail(io, `unknown message ${messageId}: not in the outbox, sent messages or inbox of this node`);

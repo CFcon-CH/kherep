@@ -69,7 +69,7 @@ it("a delivery effect held while the owner replied is dropped at the local push;
     if (replied) await send(owner, "s-owner", peer, "s-peer", { inReplyTo: id });
     expect(await row(held.messageId)).toMatchObject({ state: replied ? "refused" : "queued" });
     const local: { type: string; body: Record<string, unknown> }[] = [];
-    await routeEffects(env, effects(held.result), { nodeId: peer, send: (type, body) => { local.push({ type, body }); } });
+    await routeEffects(env, effects(held.result), { nodeId: peer, send: (type, body) => { local.push({ type, body }); return true; } });
     expect(local.filter((f) => f.type === "message.deliver" && f.body.messageId === held.messageId)).toHaveLength(replied ? 0 : 1);
   }
 });

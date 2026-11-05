@@ -132,7 +132,7 @@ test("a resumed Codex task run reads as running until its turn confirms delivery
   assert.equal(code(node, carried), "awaiting-turn-confirmation", "the carried message keeps running");
 });
 
-for (const cause of ["task-concurrency", "runtime-pending", "turn-spacing", "budget-storage-unavailable", "process-still-running"] as const) {
+for (const cause of ["task-concurrency", "runtime-pending", "turn-spacing", "budget-lock-unavailable", "process-still-running"] as const) {
   test(`Codex wake derives ${cause} without an offer, new process or extra budget debit`, async t => {
     const { createReadiness } = await import("./runtime-readiness.mts");
     const node = taskNode(t, { runtimes: ["codex"], maxConcurrent: 1 }), ended = task(node, cause === "process-still-running" ? { pid: process.pid, pidStart: "synthetic" } : {});
@@ -142,7 +142,7 @@ for (const cause of ["task-concurrency", "runtime-pending", "turn-spacing", "bud
     if (cause === "task-concurrency") task(node, { state: "running" }, 2);
     if (cause === "runtime-pending") deps.readiness = createReadiness(async () => ({ ok: false, cause: "timeout", detail: "synthetic timeout" }), { now: () => T0 });
     if (cause === "turn-spacing") assert.equal(takeTurn(node.paths, ended.sessionId!, T0 - 1), "ok");
-    if (cause === "budget-storage-unavailable") {
+    if (cause === "budget-lock-unavailable") {
       fs.mkdirSync(path.join(node.paths.dir, "listeners"), { recursive: true });
       fs.writeFileSync(path.join(node.paths.dir, "listeners", `${ended.sessionId}.turns.json.lock`), "held");
     }

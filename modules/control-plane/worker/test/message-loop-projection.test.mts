@@ -24,7 +24,7 @@ for (const [field, value] of [["loop_pair", null], ["loop_pair", "invalid"], ["l
       expect(replay.statuses).toContainEqual({ nodeId: a, body: { messageId: id, state: "refused", reason: "loop-lineage-unavailable" } });
     }
     const delivered: unknown[] = [];
-    await routeEffects(env, sent.effects, { nodeId: b, send: (type, body) => { if (type === "message.deliver") delivered.push(body); } });
+    await routeEffects(env, sent.effects, { nodeId: b, send: (type, body) => { if (type === "message.deliver") delivered.push(body); return true; } });
     expect(delivered).toEqual([]);
     expect(await registry().messageDeliveryReady(id)).toBe(false);
     const status = await registry().mcpMessageStatus(a, id);
@@ -46,7 +46,7 @@ for (const legacy of [false, true]) it(`${legacy ? "all-NULL legacy" : "complete
   expect(replay.deliveries).toHaveLength(1);
   expect(replay.deliveries[0].body.loop?.version).toBe(legacy ? undefined : 1);
   const delivered: unknown[] = [];
-  await routeEffects(env, sent.effects, { nodeId: b, send: (type, body) => { if (type === "message.deliver") delivered.push(body); } });
+  await routeEffects(env, sent.effects, { nodeId: b, send: (type, body) => { if (type === "message.deliver") delivered.push(body); return true; } });
   expect(delivered).toHaveLength(1);
   expect(await registry().messageDeliveryReady(sent.status.messageId)).toBe(true);
 });

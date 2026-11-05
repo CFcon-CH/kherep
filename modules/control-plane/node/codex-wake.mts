@@ -176,7 +176,7 @@ async function wakeTask(deps: RunnerDeps, record: TaskRecord, log: (line: string
   }
   if (livenessAdmission(paths, target, "wake", deps.now?.() ?? Date.now(), generation, deps.livenessAuthority) === null) return explain(waiting, "awaiting-user-turn");
   const budget = takeTurn(paths, sessionId, now, wakeBudget(policy));
-  if (budget === "spacing" || budget === "locked") return explain(waiting, "retry-pending", budget === "spacing" ? "turn-spacing" : "budget-storage-unavailable");
+  if (budget === "spacing" || budget === "locked") return explain(waiting, "retry-pending", budget === "spacing" ? "turn-spacing" : "budget-lock-unavailable");
   if (budget === "exhausted") {
     explain(waiting, "budget-exhausted");
     return note(paths, now, sessionId, due, "budget");

@@ -4,7 +4,7 @@ import type { MessageEffects } from "./message-store.mts";
 
 // The node the caller already holds a socket for. Frames for it go out on
 // that socket instead of through a call back into the same object.
-export interface LocalNode { nodeId: string; send(type: "message.deliver" | "message.status", body: Record<string, unknown>, observational?: boolean): void;
+export interface LocalNode { nodeId: string; send(type: "message.deliver" | "message.status", body: Record<string, unknown>, observational?: boolean): boolean;
   scheduleRetry?(): Promise<void> }
 
 // Pushes the frames a Registry message call produced to the nodes concerned.
@@ -20,8 +20,7 @@ export async function routeEffects(env: Env, effects: MessageEffects, local?: Lo
       if (local?.nodeId === frame.nodeId) {
         await local.scheduleRetry?.();
         const body = await registryStub(env).prepareMessageDelivery(String(frame.body.messageId), phase);
-        if (body) {
-          local.send("message.deliver", { ...body });
+        if (body && local.send("message.deliver", { ...body })) {
           try {
             const observed = await registryStub(env).observeMessageDiagnostic(String(frame.body.messageId), frame.nodeId,
               blockerDiagnostic("acceptance-unconfirmed", Date.now(), "upstream-egress"));

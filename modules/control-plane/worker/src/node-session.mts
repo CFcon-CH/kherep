@@ -307,8 +307,12 @@ export class NodeSession extends DurableObject<Env> {
 
   private local(ws: WebSocket, nodeId: string): LocalNode {
     return { nodeId, scheduleRetry: () => this.armDeliveryRetry(),
-      send: (type, body, observational = false) => { if (this.authedSocket() === ws
-        && (!observational || (ws.deserializeAttachment() as Attachment).diagnosticCapabilities?.includes(MESSAGING_DIAGNOSTICS_CAPABILITY))) this.sendControl(ws, type, body); } };
+      send: (type, body, observational = false) => {
+        if (this.authedSocket() !== ws || observational
+          && !(ws.deserializeAttachment() as Attachment).diagnosticCapabilities?.includes(MESSAGING_DIAGNOSTICS_CAPABILITY)) return false;
+        this.sendControl(ws, type, body);
+        return true;
+      } };
   }
 
   private localControl(ws: WebSocket, nodeId: string): LocalControlNode {

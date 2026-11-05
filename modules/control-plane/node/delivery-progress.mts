@@ -23,7 +23,8 @@ const refsOf = (session: { sessionId: string; name?: string }): string[] =>
 export function progressRecords(paths: NodePaths, records: InboxRecord[], phase: Parameters<typeof setMessageProgress>[2],
   code: Parameters<typeof setMessageProgress>[3], now: number, retryAt?: number, diagnostic?: MessageDiagnostic): void {
   for (const record of records) {
-    try { setMessageProgress(paths.inbox, record.messageId, phase, code, now, retryAt, diagnostic); } catch { /* Observational persistence cannot change admission. */ }
+    try { setMessageProgress(paths.inbox, record.messageId, phase, code, now, retryAt, diagnostic); }
+    catch (error) { if (!diagnostic) throw error; /* Observational persistence cannot change admission. */ }
   }
 }
 

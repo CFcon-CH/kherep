@@ -27,11 +27,11 @@ for (const code of ["task-concurrency", "task-starts-daily"] as const) test(`clo
   assert.equal(takeTurn(node.paths, SESSION, T0), "ok");
   assert.equal(node.calls.length, 0);
 });
-for (const code of ["runtime-pending", "turn-spacing", "budget-storage-unavailable"] as const) test(`closed fallback derives ${code} from its real admission operands`, async t => {
+for (const code of ["runtime-pending", "turn-spacing", "budget-lock-unavailable"] as const) test(`closed fallback derives ${code} from its real admission operands`, async t => {
   const node = closedNode(t), id = deliver(node), deps = node.deps();
   if (code === "runtime-pending") deps.readiness = createReadiness(async () => ({ ok: false, cause: "timeout", detail: "synthetic timeout" }), { now: () => T0 });
   if (code === "turn-spacing") assert.equal(takeTurn(node.paths, SESSION, T0 - 1), "ok");
-  if (code === "budget-storage-unavailable") {
+  if (code === "budget-lock-unavailable") {
     fs.mkdirSync(listenerDir(node.paths), { recursive: true });
     fs.writeFileSync(path.join(listenerDir(node.paths), `${SESSION}.turns.json.lock`), "held");
   }

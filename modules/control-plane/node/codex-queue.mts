@@ -198,8 +198,9 @@ function queueFor(deps: RunnerDeps, sessionId: string, live: string[], selectInb
     if (tuiReachable) decide(due, "tui-reachable");
     const ticket = captureBusyHint(deps, sessionId, valid ? hintDue : due, now);
     if (!ticket) {
-      progressRecords(paths, due, "waiting", "retry-pending", now);
-      progressRecords(paths, (valid ? hintDue : due).slice(0, 8), "waiting", "retry-pending", now, undefined, blockerDiagnostic("hint-capture-failed", now));
+      const checked = new Set((valid ? hintDue : due).slice(0, 8).map(record => record.messageId));
+      progressRecords(paths, due.filter(record => !checked.has(record.messageId)), "waiting", "retry-pending", now);
+      progressRecords(paths, due.filter(record => checked.has(record.messageId)), "waiting", "retry-pending", now, undefined, blockerDiagnostic("hint-capture-failed", now));
       return;
     }
     admission = { ticket, messageIds: ids(due), recovery: due.flatMap(record => recovery.has(record.messageId) ? [recovery.get(record.messageId)!] : []) };
@@ -228,12 +229,11 @@ function queueFor(deps: RunnerDeps, sessionId: string, live: string[], selectInb
         log("kherep-node: Codex CP publication bookkeeping failed; inbox remains accepted");
       }
     }
-    progressRecords(paths, due, "waiting", published ? "awaiting-user-turn" : "retry-pending", deps.now?.() ?? Date.now());
-    if (!published) {
-      const checked = new Set(admission.ticket.messages.map(message => message.messageId));
-      progressRecords(paths, due.filter(record => checked.has(record.messageId)).slice(0, 8), "waiting", "retry-pending", deps.now?.() ?? Date.now(), undefined,
-        blockerDiagnostic(result === "invalid" ? "hint-invalidated" : result === "busy" ? "hint-lock-busy" : "hint-storage-failed", deps.now?.() ?? Date.now()));
-    }
+    const observedAt = deps.now?.() ?? Date.now();
+    const checked = new Set(published ? [] : admission.ticket.messages.slice(0, 8).map(message => message.messageId));
+    progressRecords(paths, due.filter(record => !checked.has(record.messageId)), "waiting", published ? "awaiting-user-turn" : "retry-pending", observedAt);
+    progressRecords(paths, due.filter(record => checked.has(record.messageId)), "waiting", "retry-pending", observedAt, undefined,
+      blockerDiagnostic(result === "invalid" ? "hint-invalidated" : result === "busy" ? "hint-lock-busy" : "hint-storage-failed", observedAt));
     if (published) decide(due, "wake");
     else if (result !== "invalid") log("kherep-node: Codex CP hint publication pending; inbox remains accepted");
   }).catch((error: unknown) => {

@@ -222,7 +222,7 @@ async function deliver(deps: RunnerDeps, found: Target, all: InboxRecord[], now:
   if (!stillEligible()) return false;
   const budget = takeTurn(paths, reusable?.sessionId ?? sessionId, now, wakeBudget(policy));
   if (budget === "spacing" || budget === "locked") {
-    progressRecords(paths, records, "waiting", "retry-pending", now, undefined, blockerDiagnostic(budget === "spacing" ? "turn-spacing" : "budget-storage-unavailable", now));
+    progressRecords(paths, records, "waiting", "retry-pending", now, undefined, blockerDiagnostic(budget === "spacing" ? "turn-spacing" : "budget-lock-unavailable", now));
     return false;
   }
   if (budget === "exhausted") return refuse("budget of autonomous turns exhausted", "budget-exhausted");
