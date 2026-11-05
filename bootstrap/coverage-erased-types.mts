@@ -4,7 +4,8 @@ import { containedFile } from "./coverage-paths.mts";
 
 export function dropErasedTypes(lcov: string, root: string): { lcov: string; dropped: string[] } {
   const dropped: string[] = [];
-  const records = lcov.match(/[^]*?end_of_record(?:\r?\n|$)/g) ?? [];
+  const records = lcov.split(/(?<=end_of_record\r?\n)/);
+  const tail = records.at(-1)?.includes("end_of_record") ? "" : records.pop() ?? "";
   const kept = records.filter(record => {
     const name = /^SF:(.+)$/m.exec(record)?.[1];
     if (!name || !/\.(mts|cts|ts)$/.test(name)) return true;
@@ -15,5 +16,5 @@ export function dropErasedTypes(lcov: string, root: string): { lcov: string; dro
     if (erased) dropped.push(name);
     return !erased;
   });
-  return { lcov: kept.join("") + lcov.slice(records.join("").length), dropped };
+  return { lcov: kept.join("") + tail, dropped };
 }
