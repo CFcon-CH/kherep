@@ -21,7 +21,7 @@ const HOOK = path.join(TMP, "hooks", "deploy-guard.mts");
 const PROJECT = path.join(TMP, "projects", "synthetic-project");
 fs.mkdirSync(path.dirname(HOOK), { recursive: true });
 fs.mkdirSync(PROJECT, { recursive: true });
-for (const relative of ["deploy-guard.mts", "lib/git-push-match.mts", "lib/forge-match.mts"]) {
+for (const relative of ["deploy-guard.mts", "lib/git-push-match.mts", "lib/forge-match.mts", "lib/deploy-transcript.mts"]) {
   const target = path.join(TMP, "hooks", relative);
   fs.mkdirSync(path.dirname(target), { recursive: true });
   fs.copyFileSync(path.join(import.meta.dirname, relative), target);

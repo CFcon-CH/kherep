@@ -78,6 +78,7 @@
     "maestro-discipline.mts",
     "orchestra-default.mts",
     "live-hook-integrity.mts",
+    "lib/deploy-transcript.mts",
     "lib/forge-match.mts",
     "lib/git-commit-match.mts",
     "lib/git-push-match.mts",
