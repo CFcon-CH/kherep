@@ -254,6 +254,17 @@ An existing Codex installation can use the [observation-only updater](CODEX.md#o
 
 ## Upgrades and rollback
 
+Codex is reached through `codex exec` or the Control Plane intercom in place of
+the retired Claude Code plugin `codex@openai-codex`; the global npm `@openai/codex`
+stays. A separately authorized upgrade disables only that exact plugin ID in user
+`settings.json` when enabled or registered, and any entry in the selected
+workspace's `settings.local.json`.
+Its registry, cache and marketplaces remain for recovery; the transaction backs
+up the previous settings. Start a new Claude Code session after upgrading.
+Other workspaces and external higher-precedence settings require separate review.
+The existing settings renderer normalizes JSON formatting while preserving
+unrelated setting values; it does not promise arbitrary input whitespace.
+
 ### Failed managed service activation (#746)
 
 Upgrade and rollback distinguish a daemon instance by PID and `startedAt`. A reused

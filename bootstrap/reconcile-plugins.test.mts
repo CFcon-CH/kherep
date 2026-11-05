@@ -194,6 +194,19 @@ test("converged state performs zero mutators and ignores enabled=false", (t) => 
   assert.doesNotMatch(output(result), new RegExp(SECRET));
 });
 
+test("manifest omission leaves an old enabled plugin and marketplace untouched", (t) => {
+  const ctx = fixture(t);
+  const old = { ...ctx.plugin, id: "codex@openai-codex" };
+  ctx.state.plugins.push(old);
+  ctx.state.marketplaces.push({ ...ctx.marketplace, name: "openai-codex", repo: "openai/codex-plugin-cc" });
+  ctx.save();
+  const before = fs.readFileSync(ctx.files.state);
+  const result = invoke(ctx);
+  assert.equal(result.status, 0, output(result));
+  assert.deepEqual(mutations(ctx), []);
+  assert.deepEqual(fs.readFileSync(ctx.files.state), before, "omission is not a retirement mechanism");
+});
+
 test("adds a missing marketplace and installs its missing user plugin", (t) => {
   const ctx = fixture(t);
   ctx.state.marketplaces = [];

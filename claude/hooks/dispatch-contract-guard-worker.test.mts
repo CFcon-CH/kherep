@@ -75,8 +75,12 @@ expect("reviewer word gets the notice", agent("general-purpose", "sonnet", "Act 
 expect("a brief without review is silent", agent("general-purpose", "sonnet", "Look it up."), "silent");
 expect("the description never triggers the notice", agent("general-purpose", "sonnet", "Look it up.", "Review"), "silent");
 
-// Untouched paths.
-expect("rescue forwarder is not checked", { tool_name: "Agent", tool_input: { subagent_type: "codex:codex-rescue", prompt: "Review it.\nrevision: x@y" } }, "silent");
+// Retired plugin names cannot bypass either model or worker-brief checks.
+expect("retired rescue with malformed brief is denied", { tool_name: "Agent", tool_input: { subagent_type: "codex:codex-rescue", prompt: "Review it.\nrevision: x@y" } }, deny("CODEX_AGENT_DIRECT_FORBIDDEN"));
+expect("retired rescue with valid model effort and brief is denied", {
+  ...agent("codex:codex-rescue", "opus", WORKER),
+  tool_input: { subagent_type: "codex:codex-rescue", model: "opus", effort: "high", prompt: WORKER },
+}, deny("codex exec"));
 const obs = (prompt: string) => agent("claude-obs", "haiku", prompt, "Record observations");
 expect("observation brief is not a worker brief", obs(`- measured: code kherep@${SHA} -- x.test.mts \`node x.test.mts\` -> 12 pass\nrevision: kherep`), "silent");
 expect("observation brief mentioning review gets no worker notice", obs("- relayed: the review session"), "silent");

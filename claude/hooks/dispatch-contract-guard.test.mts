@@ -100,7 +100,9 @@ check("custom artifact root cannot cross Agent boundary", {
   tool_name: "Task",
   tool_input: { subagent_type: "general-purpose", model: "sonnet", prompt: "Summarize /Volumes/results-17/run.json" },
 }, true, "PRIVACY_AGENT_FORBIDDEN", { KHEREP_LOCAL_OUTPUT_ROOT: "/Volumes/results-17", HOME: "/Users/example" });
-check("plugin rescue forwarder exception", call("codex:codex-rescue"), false);
+check("retired plugin rescue without model denied", call("codex:codex-rescue"), true, "CODEX_AGENT_DIRECT_FORBIDDEN");
+check("retired plugin rescue with a valid brief and model denied", call("codex:codex-rescue", "opus"), true, "codex exec");
+check("retired plugin rescue denial names intercom recovery", call("codex:codex-rescue", "opus"), true, "Control Plane intercom");
 check("other direct codex agent denied", call("codex:other", "opus"), true, "CODEX_AGENT_DIRECT_FORBIDDEN");
 // Issue #331. The observation brief format is checked at dispatch.
 const obs = (prompt: string, description = "Record observations", model = "haiku") => ({

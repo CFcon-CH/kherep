@@ -10,12 +10,13 @@ const claudeHome = path.join(root, ".claude");
 fs.mkdirSync(path.join(claudeHome, "plugins"), { recursive: true });
 
 fs.writeFileSync(path.join(claudeHome, "settings.json"), JSON.stringify({
-  enabledPlugins: { "good@market": true, "missing@market": true },
+  enabledPlugins: { "good@market": true, "missing@market": true, "codex@openai-codex": false },
 }));
 fs.writeFileSync(path.join(claudeHome, "plugins", "installed_plugins.json"), JSON.stringify({
   plugins: {
     "good@market": [{ version: "2.0.0", lastUpdated: "2026-01-02" }],
     "disabled@market": [{ version: "1.0.0", lastUpdated: "2026-01-01" }],
+    "codex@openai-codex": [{ version: "1.0.0", lastUpdated: "2026-01-01" }],
   },
 }));
 fs.writeFileSync(path.join(root, ".claude.json"), JSON.stringify({
@@ -65,6 +66,9 @@ check("hook exits zero", scoped.status === 0);
 check("installed version reported", context.includes("good@market@2.0.0"));
 check("enabled missing reported", context.includes("missing@market"));
 check("installed disabled reported", context.includes("disabled@market"));
+check("retired plugin is reported only as installed but disabled",
+  context.split("\n").find((line) => line.startsWith("Installed but disabled"))?.includes("codex@openai-codex") === true
+  && !context.split("\n").find((line) => line.startsWith("Enabled+installed"))?.includes("codex@openai-codex"));
 check("configured MCP names reported", context.includes("forge") && context.includes("rovo"));
 check("local backend contract reported", context.includes("win=configured-engine@http://localhost:9000/v1#fixture-model"));
 check("workspace evidence is explicit", context.includes("Workspace: cwd="));

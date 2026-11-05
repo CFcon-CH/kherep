@@ -7,14 +7,6 @@
     "installLocation": "C:\\Users\\ExampleUser\\.claude\\plugins\\marketplaces\\claude-plugins-official",
     "lastUpdated": "2026-06-03T19:14:15.425Z"
   },
-  "openai-codex": {
-    "source": {
-      "source": "github",
-      "repo": "openai/codex-plugin-cc"
-    },
-    "installLocation": "C:\\Users\\ExampleUser\\.claude\\plugins\\marketplaces\\openai-codex",
-    "lastUpdated": "2026-06-03T19:24:55.953Z"
-  },
   "caveman": {
     "source": {
       "source": "github",

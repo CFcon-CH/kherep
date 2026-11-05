@@ -9,6 +9,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { retireCentralBrainHooks } from "./central-brain-retirement.mts";
+import { retiredCodexRegistered, retireCodexPlugin } from "./codex-plugin-retirement.mts";
 import { captureIntercom, intercomValues, renderIntercom } from "./render-intercom.mts";
 import { substituteTemplatePaths, toBashPath, workspaceEnvPath } from "./render-profile-paths.mts";
 import { filterMacPermissions, filterManagedDisallowedPermissions, mergeSettings, unique, type OnReplace, type Settings } from "./render-profile-settings.mts";
@@ -82,8 +83,10 @@ export function renderSettings(args: string[], platform: string = process.platfo
   // Issue #568. Event, matcher and main come from the template group; nothing operator-written is printed.
   const replace: OnReplace = (event, matcher, main) =>
     console.log(`hooks: replace ${event}${matcher ? ` [${matcher}]` : ""} hooks/${main}`);
-  const user = mergeSettings(sourceUser, existingUser, replace);
-  const project = mergeSettings(sourceProject, existingProject, replace);
+  const registryFile = path.join(claudeHome, "plugins", "installed_plugins.json");
+  const installed = fs.existsSync(registryFile) && retiredCodexRegistered(readJson(registryFile));
+  const user = retireCodexPlugin(mergeSettings(sourceUser, existingUser, replace), installed);
+  const project = retireCodexPlugin(mergeSettings(sourceProject, existingProject, replace));
   filterManagedDisallowedPermissions(user);
   filterManagedDisallowedPermissions(project);
   if (profile === "mac") {
