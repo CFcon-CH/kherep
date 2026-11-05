@@ -44,6 +44,7 @@ export class NodeSession extends DurableObject<Env> {
   private readonly store: SessionStore;
   private readonly alarms: AlarmSchedule;
   private readonly references = new NodeReferenceRpc();
+  private retryPass: { delivery: boolean } | null = null;
   private readonly pendingInbox = new Map<string, {
     socket: WebSocket;
     resolve: (body: McpInboxResponseBody) => void;
@@ -133,8 +134,13 @@ export class NodeSession extends DurableObject<Env> {
       for (const ws of this.ctx.getWebSockets()) ws.close(CLOSE.offline, "offline");
       return; // not re-armed while offline
     }
+    const pass = { delivery: false };
+    this.retryPass = pass;
     let queued = true; // Failure must retain a bounded retry, including lookup failure.
     try {
+      // Keep a durable fallback even if lookup or status routing fails before
+      // the first pushFrame. Completion moves it to the end of the pass + 60s.
+      await this.alarms.earlier(now + DELIVERY_RETRY_MS);
       const nodeId = this.store.get("nodeId"), ws = this.authedSocket();
       const effects = nodeId && ws ? await registryStub(this.env).pendingMessagesFor(nodeId) : null;
       queued = !!effects?.deliveries.length;
@@ -154,7 +160,11 @@ export class NodeSession extends DurableObject<Env> {
     } catch {
       console.error("DELIVERY_RETRY_FAILED");
     } finally {
-      await this.alarms.earlier(queued ? Date.now() + DELIVERY_RETRY_MS : now + ALARM_INTERVAL_MS);
+      // Enqueue the replacement before clearing the token, without yielding:
+      // fresh egress afterwards serializes behind it, preserving its retry.
+      const scheduled = this.alarms.replace(Date.now() + (queued || pass.delivery ? DELIVERY_RETRY_MS : ALARM_INTERVAL_MS));
+      this.retryPass = null;
+      try { await scheduled; } catch { console.error("DELIVERY_RETRY_FAILED"); }
     }
   }
 
@@ -247,6 +257,7 @@ export class NodeSession extends DurableObject<Env> {
   }
 
   private async armDeliveryRetry(): Promise<void> {
+    if (this.retryPass) this.retryPass.delivery = true;
     await this.alarms.earlier(Date.now() + DELIVERY_RETRY_MS);
   }
 

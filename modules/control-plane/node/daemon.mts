@@ -21,10 +21,10 @@ import { exchangeRound } from "./daemon-round.mts";
 import { captureRuntimeSourceIdentity } from "./daemon-source.mts";
 import { detectFacts, discoverRuntimes } from "./discovery.mts";
 import { enqueued, frameKind, intakeLane, laneTimer, lockRounds, type IntakeConnection, type LaneOptions } from "./frame-lanes.mts";
-import { deliveryDepth, DIRECTORY_INTERVAL_MS, EXCHANGE_INTERVAL_MS, exchangeOptions, recordingSessions } from "./exchange.mts";
+import { DIRECTORY_INTERVAL_MS, EXCHANGE_INTERVAL_MS, exchangeOptions, recordingSessions } from "./exchange.mts";
 import { readPrivateKey } from "./identity.mts";
 import { installPaused, markedProbe, noticeInterruptedProbe } from "./install-pause.mts";
-import { storeMessage } from "./inbox.mts";
+import { storeDaemonMessage } from "./daemon-message-store.mts";
 import { inboxIndex } from "./inbox-index.mts";
 import { DAEMON_RECORD_LOCK_WAIT_MS, runRecordLockRound, setRecordLockWait } from "./inbox-record-lock.mts";
 import { MAINTENANCE_FALLBACK_MS, runInboxMaintenance, type MaintenanceOptions } from "./inbox-start.mts";
@@ -34,7 +34,6 @@ import { routeFrame } from "./readiness-lane.mts";
 import { classifySocketError, roundTally, tallyKind, type SocketErrorClass } from "./round-tally.mts";
 import { probeRuntime, type ProbeResult } from "./runtime-probe.mts";
 import { createReadiness } from "./runtime-readiness.mts";
-import { settleReplied } from "./sent-notices.mts";
 import { retainServiceAdmission, waitForServiceAdmission } from "./service-drain.mts";
 import { reportSlowSync } from "./sync-timing.mts";
 import { continueTask, startTask, stopTask, type RunnerDeps } from "./session-runner.mts";
@@ -190,12 +189,7 @@ export function startDaemon(config: NodeConfig, paths: NodePaths, log: (line: st
     facts: detectFacts, runtimes: runtimeDiscovery, readyRuntimes: () => readiness.ready(),
     sessions, deferInitialSessions: true,
     // Issue #520: a reply records the sent message it answers replied; settleReplied never throws.
-    storeMessage: (body) => {
-      const now = Date.now();
-      try { storeMessage(paths.inbox, body, now, deliveryDepth(paths, body)); }
-      catch (error) { storageFault(); throw error; }
-      settleReplied(paths, body, now, (error) => log(`kherep-node: could not record ${body.inReplyTo} replied: ${String((error as Error).message ?? error)}`));
-    },
+    storeMessage: (body) => storeDaemonMessage(paths, body, Date.now(), storageFault, log),
     taskRequestResult: (result) => recordRequestResult(paths, result),
     taskControlRegistrationReceipt: (body) => {
       taskControlInflight.delete("register:" + body.registrationId);

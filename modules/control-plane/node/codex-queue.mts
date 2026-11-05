@@ -182,7 +182,7 @@ function queueFor(deps: RunnerDeps, sessionId: string, live: string[], selectInb
     return !item || !item.fastRecovered && now - item.firstPublishedAt >= BUSY_HINT_RECOVERY_MS
       || now - item.lastPublishedAt >= REOFFER_AFTER_MS;
   });
-  const pending = valid && previous.publishedAt !== undefined && hintDue.length === 0;
+  const pending = valid && hintDue.length === 0;
   if (pending) {
     progressRecords(paths, due, "waiting", "awaiting-user-turn", now);
     return;

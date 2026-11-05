@@ -127,7 +127,7 @@ it("does not send binding-required rows until this socket's registration is acce
   expect((await registry().mcpMessageStatus(f.nodeId, sent.status.messageId))?.state).toBe("queued");
 });
 
-it("schedules the queued retry sixty seconds after a slow pass completes", async () => {
+for (const writeFailure of [false, true]) for (const failed of [false, true]) it(`schedules the queued retry sixty seconds after a slow real pass, failure=${failed}, alarm failure=${writeFailure}`, async () => {
   const f = await attestedPair(), sent = await f.send();
   if (!sent.ok) throw new Error(sent.error);
   await runInDurableObject(session(f.nodeId), async (instance, state) => {
@@ -135,10 +135,63 @@ it("schedules the queued retry sixty seconds after a slow pass completes", async
     const startedAt = Date.now();
     let clock = startedAt;
     const date = vi.spyOn(Date, "now").mockImplementation(() => clock);
-    const push = vi.spyOn(instance, "pushFrame").mockImplementation(async () => { clock += 65_000; return false; });
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    const realSet = state.storage.setAlarm.bind(state.storage);
+    let writes = 0;
+    const set = vi.spyOn(state.storage, "setAlarm").mockImplementation(async (due, options) => {
+      if (++writes === 2 && writeFailure) throw new Error("synthetic one-shot completion alarm failure");
+      await realSet(due, options);
+    });
+    const ws = state.getWebSockets()[0], send = ws.send.bind(ws);
+    const push = vi.spyOn(ws, "send").mockImplementation(message => {
+      if (typeof message === "string" && JSON.parse(message).type === "message.deliver") {
+        clock += 65_000;
+        if (failed) throw new Error("synthetic socket failure");
+      }
+      send(message);
+    });
     try {
       await instance.alarm();
+      expect(clock - startedAt).toBe(65_000);
       expect(await state.storage.getAlarm()).toBe(clock + 60_000);
-    } finally { push.mockRestore(); date.mockRestore(); }
+      expect(log).toHaveBeenCalledTimes(failed ? 1 : 0);
+    } finally { push.mockRestore(); date.mockRestore(); log.mockRestore(); set.mockRestore(); }
   });
+});
+
+for (const [at, persistent] of [[1, false], [2, false], [2, true]] as const) it(`retains a retry and does not reject after alarm write failure ${at}, persistent=${persistent}`, async () => {
+  const f = await attestedPair(), sent = await f.send();
+  if (!sent.ok) throw new Error(sent.error);
+  await runInDurableObject(session(f.nodeId), async (instance, state) => {
+    await state.storage.deleteAlarm();
+    const real = state.storage.setAlarm.bind(state.storage);
+    let writes = 0;
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    const set = vi.spyOn(state.storage, "setAlarm").mockImplementation(async (due, options) => {
+      if (++writes === at || persistent && writes > at) throw new Error("synthetic alarm storage failure");
+      await real(due, options);
+    });
+    try {
+      await expect(instance.alarm()).resolves.toBeUndefined();
+      expect(await state.storage.getAlarm()).not.toBeNull();
+      if (at === 1 || persistent) expect(log).toHaveBeenCalledExactlyOnceWith("DELIVERY_RETRY_FAILED");
+      else expect(log).not.toHaveBeenCalled(); // serialized completion retry recovered
+    } finally { set.mockRestore(); log.mockRestore(); }
+  });
+});
+
+it("serializes a completion retry before an interleaved fresh delivery alarm", async () => {
+  let due: number | null = 60_000, writes = 0, release = () => {}, entered = () => {};
+  const pause = new Promise<void>(resolve => { release = resolve; });
+  const ready = new Promise<void>(resolve => { entered = resolve; });
+  const schedule = new AlarmSchedule({ getAlarm: async () => due, setAlarm: async next => {
+    if (++writes === 1) throw new Error("synthetic transient alarm write");
+    if (writes === 2) { entered(); await pause; }
+    due = Number(next);
+  } });
+  const completion = schedule.replace(ALARM_INTERVAL_MS);
+  await ready;
+  const fresh = schedule.earlier(60_000);
+  release(); await Promise.all([completion, fresh]);
+  expect(due).toBe(60_000);
 });

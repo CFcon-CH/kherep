@@ -37,6 +37,8 @@ increments the minor version; every other release increments the patch version.
   without Receive get one fresh guarded recovery after 60 seconds per retained
   message, then wait the existing ten-minute reoffer interval. New and excess
   messages get their own recovery, without normal republish progress churn.
+  Received messages whose hint publication failed cannot erase another retained
+  message's recovery state by replacing it with an empty hint ticket.
   Transient listener guards keep polling through the early-rearm margin; finite
   exits audit and preserve replacement owners. Global offer intervals, turn
   budgets and the ten-minute busy fallback stay unchanged. Existing hook settings need a separately authorized upgrade (#706).
@@ -52,7 +54,10 @@ increments the minor version; every other release increments the patch version.
   uses eight oldest-first concurrent lanes below the 32-slot resolve limit,
   leaving room for fresh admission. It catches retry failures with a fixed code,
   re-arms 60 seconds after pass completion even after failure, and returns to
-  its normal cadence when drained. Inbox
+  its normal cadence when drained. A 65-second pass therefore starts the next
+  pass after 125 seconds; changing lane positions can take up to 185 seconds
+  to the next attempt, excluding RPC, storage and scheduling delays. Fresh
+  egress during a pass still attempts and retains its retry. Inbox
   record-lock contention defers the receipt without faulting binding storage.
   Retries cannot change an already emitted owner binding. A required queued
   row without a stored binding deliberately waits until its hold ends or it
