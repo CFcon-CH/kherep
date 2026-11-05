@@ -34,6 +34,9 @@ increments the minor version; every other release increments the patch version.
 
 ### Fixed
 
+- Intercom pending status now says no control-plane confirmation was received.
+  An outbox record without sender status does not prove it was never sent (#706).
+
 - Intercom node intake diagnostics retain original socket arrival times through
   deferral, count fixed frame classes and measure lane age, pongs and event-loop
   lag. Bounded content-free threshold logs and numeric doctor samples distinguish
