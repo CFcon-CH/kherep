@@ -45,7 +45,7 @@ const WORDS: Record<BlockerCode, string> = {
   "identity-changed": "identity changed", "acceptance-unconfirmed": "target acceptance is not confirmed",
 };
 export function renderMessageDiagnostic(diagnostic: MessageDiagnostic | null | undefined, state: string): string {
-  if (!diagnostic || !isMessageDiagnostic(diagnostic)) return "Waiting; detailed cause unavailable.";
+  if (!isMessageDiagnostic(diagnostic)) return "Waiting; detailed cause unavailable.";
   const prefix = ["queued", "accepted", "offered"].includes(state) ? "Waiting:" : state === "refused" ? "Refused:" : "Last blocker:";
   const text = diagnostic.kind === "identity-change" ? `identity changed (${diagnostic.dimensions.join(", ")})`
     : diagnostic.code === "target-not-idle" && diagnostic.observedState === "unknown"

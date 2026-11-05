@@ -61,7 +61,7 @@ export function changedReferenceDimensions(a: readonly Ref[], b: readonly Ref[])
       : (!!ap !== !!bp && [before?.code, after?.code].some(c => c === "LEGACY_KNOWN" || c === "UNPROVEN"))) dimensions.push("proof-kind");
     if (differs([before?.eligible, before?.code, before?.unknown], [after?.eligible, after?.code, after?.unknown])) dimensions.push("eligibility");
   }
-  return sortedDimensions(dimensions);
+  return dimensions;
 }
 export function changedNodeDimensions(a: ReturnType<typeof semanticNodes>, b: ReturnType<typeof semanticNodes>): IdentityDimension[] {
   const dimensions: IdentityDimension[] = [];

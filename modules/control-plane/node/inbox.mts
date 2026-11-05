@@ -380,7 +380,9 @@ export function unreportedStatuses(dir: string, now: number = Date.now(), record
     const progressPending = progress !== null
       && (Number.isNaN(reportedProgressAt) || reportedProgressAt < Date.parse(progress.observedAt))
       && now >= Date.parse(receipt?.progressRetryAt ?? new Date(0).toISOString());
-    return statePending || progressPending ? [{ ...record, state, ...(progress ? { progress } : {}), ...(getMessageDiagnostic(dir, record.messageId) ? { diagnostic: getMessageDiagnostic(dir, record.messageId)! } : {}) }] : [];
+    if (!statePending && !progressPending) return [];
+    const diagnostic = getMessageDiagnostic(dir, record.messageId);
+    return [{ ...record, state, ...(progress ? { progress } : {}), ...(diagnostic ? { diagnostic } : {}) }];
   });
 }
 
