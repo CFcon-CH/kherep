@@ -69,12 +69,12 @@ test("real V8 copy hits land on the original and preserve zero lines and branche
   console.log("copy integration: assemble exit 0; SF:src/original.mts line 3 hit, line 5 zero, untaken branch zero");
 });
 
-for (const failure of ["sha mismatch", "traversal", "stale declaration"]) {
+for (const failure of ["sha mismatch", "traversal"]) {
   test(`assembly refuses ${failure}`, t => {
     const f = fixture(t);
     f.declare({ ...f.declaration, ...(failure === "sha mismatch" ? { sha256: "b".repeat(64) } : failure === "traversal" ? { original: "../escape.mts" } : {}) });
     const result = f.assemble(); assert.notEqual(result.status, 0);
-    assert.match(result.stderr, failure === "sha mismatch" ? /sha256 mismatch/ : failure === "traversal" ? /traversal|outside/ : /stale copy declaration/);
+    assert.match(result.stderr, failure === "sha mismatch" ? /sha256 mismatch/ : /traversal|outside/);
     console.log(`${failure}: exit ${result.status}, ${result.stderr.trim()}`);
   });
 }
@@ -88,8 +88,8 @@ test("an undeclared same-basename URL stays ignored and cannot consume a declara
   const used = new Set<string>();
   const relocated = relocateV8Report(raw, f.root, f.root, declarations, used);
   assert.equal(relocated.ignored, 1); assert.deepEqual(relocated.report.result, []); assert.equal(used.size, 0);
-  const result = f.assemble(); assert.notEqual(result.status, 0); assert.match(result.stderr, /stale copy declaration/);
-  console.log(`exact URL: different same-basename URL ignored; assembly exit ${result.status}, stale copy declaration`);
+  // A declared copy without a report is no data, not a failure: a killed child must not block every merge.
+  const result = f.assemble(); assert.match(result.stdout, /1 declared copies without a report/); assert.doesNotMatch(result.stderr, /declar/);
 });
 
 test("malformed and conflicting declaration lines fail visibly", t => {

@@ -48,7 +48,7 @@ async function main(args: string[]): Promise<void> {
           ignored += result.ignored; raw++;
           writeFileSync(join(union, `${manifest.producer}-${name}`), JSON.stringify(result.report));
         }
-        if (usedCopies.size !== copies.size) throw new Error(`stale copy declaration in ${manifest.producer}`);
+        if (usedCopies.size !== copies.size) console.log(`coverage: ${copies.size - usedCopies.size} declared copies without a report in ${manifest.producer}`);
       }
       const nodeDir = join(output, "node"); mkdirSync(nodeDir, { recursive: true });
       const c8 = resolve(here, "../node_modules/c8/bin/c8.js");
