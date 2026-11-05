@@ -15,7 +15,7 @@ permissions:
 
 jobs:
   # Called only after CI validates coverage. Fork PRs skip the caller.
-  # Sonar remains non-required until the Director separately approves it.
+  # The resulting SonarCloud check is required on main.
   sonar:
     runs-on: ubuntu-26.04
     steps:

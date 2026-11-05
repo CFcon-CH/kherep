@@ -14,8 +14,9 @@ increments the minor version; every other release increments the patch version.
 - SonarQube Cloud (#772) consumes validated same-run LCOV from the existing
   Ubuntu Node suites and Istanbul Worker tests through a reusable workflow.
   Missing or mismatched reports fail visibly. Coverage stays honest, the 80%
-  new-code threshold is unchanged, and Sonar remains non-required. Raw coverage
-  artifacts expire after two days; fork pull requests skip only the scan.
+  new-code threshold is unchanged, and `SonarCloud Code Analysis` is now a
+  required check on `main`. Raw coverage artifacts expire after two days; fork
+  pull requests skip the scan and therefore cannot satisfy that check.
 
 - Codex: the managed `atlassian-broker` role now defaults to medium reasoning
   instead of low. An existing install needs one explicit `--refresh-models`,
