@@ -1,4 +1,4 @@
-import { compatibleDiagnostic, type MessageDiagnostic } from "../../protocol-diagnostics.mts";
+import { blockerDiagnostic, compatibleDiagnostic, type BlockerCode, type MessageDiagnostic } from "../../protocol-diagnostics.mts";
 import { isResolveRequest, SELECTED_BINDING_CAPABILITY, type ResolveRequest, type ResolveResponse } from "../../protocol-message-binding.mts";
 import { NodeReferenceRpc } from "./node-reference-rpc.mts";
 import { AlarmSchedule } from "./alarm-schedule.mts";
@@ -247,13 +247,14 @@ export class NodeSession extends DurableObject<Env> {
   // in the object that sends, and is dropped unless it is still queued.
   async pushFrame(type: "message.deliver" | "message.status" | "event", body: Record<string, unknown>): Promise<boolean> {
     const ws = this.authedSocket();
-    if (!ws) return false;
+    if (!ws) { if (type === "message.deliver") await this.observeDelivery(String(body.messageId), "node-offline"); return false; }
     const attachment = ws.deserializeAttachment() as Attachment, token = attachment.connectionToken;
     if (type === "message.deliver") await this.armDeliveryRetry();
     const prepared = type === "message.deliver" ? await registryStub(this.env).prepareMessageDelivery(String(body.messageId),
       attachment.registrationAccepted ? undefined : "auth") : body;
     if (!prepared || this.authedSocket() !== ws || (ws.deserializeAttachment() as Attachment).connectionToken !== token) return false;
     this.sendControl(ws, type, { ...prepared });
+    if (type === "message.deliver") await this.observeDelivery(String(body.messageId), "acceptance-unconfirmed");
     return true;
   }
 
@@ -262,14 +263,27 @@ export class NodeSession extends DurableObject<Env> {
     await this.alarms.earlier(Date.now() + DELIVERY_RETRY_MS);
   }
 
-  resolveMessageReferences(request: ResolveRequest): Promise<ResolveResponse | null> {
+  async resolveMessageReferencesDetailed(request: ResolveRequest): Promise<{ answer: ResolveResponse | null; code?: BlockerCode }> {
     const ws = this.authedSocket();
     const a = ws?.deserializeAttachment() as Attachment | undefined;
-    if (!ws || !a?.connectionToken || !a.registrationAccepted || !a.selectedBindingCapability || !isResolveRequest(request)) return Promise.resolve(null);
+    if (!ws) return { answer: null, code: "node-offline" };
+    if (!a?.connectionToken || !a.registrationAccepted) return { answer: null, code: "registration-pending" };
+    if (!a.selectedBindingCapability) return { answer: null, code: "binding-capability-missing" };
+    if (!isResolveRequest(request)) return { answer: null, code: "resolution-unavailable" };
     const current = () => this.authedSocket() === ws && (ws.deserializeAttachment() as Attachment).connectionToken === a.connectionToken
       && (ws.deserializeAttachment() as Attachment).registrationAccepted === true;
-    return this.references.request(ws, a.connectionToken, request,
-      () => this.sendControl(ws, "message.resolve.request", { ...request }), current);
+    let code: BlockerCode | undefined;
+    const answer = await this.references.request(ws, a.connectionToken, request,
+      () => this.sendControl(ws, "message.resolve.request", { ...request }), current, value => { code = value; });
+    return { answer, ...(code ? { code } : {}) };
+  }
+  async resolveMessageReferences(request: ResolveRequest): Promise<ResolveResponse | null> { return (await this.resolveMessageReferencesDetailed(request)).answer; }
+  private async observeDelivery(messageId: string, code: BlockerCode): Promise<void> {
+    try {
+      const nodeId = this.store.get("nodeId");
+      const effects = await registryStub(this.env).observeMessageDiagnostic(messageId, nodeId, blockerDiagnostic(code, Date.now(), "upstream-egress"));
+      await routeEffects(this.env, effects);
+    } catch { /* Diagnostic persistence or routing never changes a delivery result. */ }
   }
   // messageId (issue #308): one item, for an MCP reply whose parent row is
   // gone; the node marks it answered. An older node ignores both fields.
@@ -344,7 +358,7 @@ export class NodeSession extends DurableObject<Env> {
           to: { nodeId: body.to.nodeId, session: body.to.session }, text: body.text, inReplyTo: body.inReplyTo, taskId: body.taskId,
           proxyOf: body.proxyOf, connectionToken: (ws.deserializeAttachment() as Attachment).connectionToken },
         `node:${nodeId}`);
-        if (!result.ok) return this.sendControl(ws, "error", { error: result.error, messageId: body.messageId });
+        if (!result.ok) return this.sendControl(ws, "error", { error: result.error, messageId: body.messageId, ...(result.diagnostic ? { diagnostic: result.diagnostic } : {}) });
         this.sendControl(ws, "message.status", { ...result.status });
         return routeEffects(this.env, result.effects, this.local(ws, nodeId));
       }

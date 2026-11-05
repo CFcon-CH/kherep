@@ -1,3 +1,5 @@
+import { identityDiagnostic } from "./message-identity-diagnostics.mts";
+import { type MessageDiagnostic } from "../../protocol-diagnostics.mts";
 import { bindingContext, prepareMessageBinding } from "./message-binding.mts";
 import { isSelectedPair, loopCapability, type SelectedPair, type SelectedIdentityEvidence } from "./message-loop-identity-api.mts";
 import { RegistrySessionIdentity } from "./registry-session-identity.mts";
@@ -371,7 +373,12 @@ export class Registry extends DurableObject<Env> {
     return this.messageTx("sendMcpMessage", () => {
       const current = this.mcp.peekClaimSession(intent, Date.now());
       if (!current.ok) return { ...current, denied: true as const };
-      if (current.sessionId !== peek.sessionId || !this.messages.contextMatches(message, prepared)) return { ok: false as const, error: prepared.error ?? LOOP_STALE };
+      const comparison = current.sessionId !== peek.sessionId ? { matches: false } : this.messages.compareContext(message, prepared);
+      if (current.sessionId !== peek.sessionId || !comparison.matches) {
+        const error = prepared.error ?? LOOP_STALE;
+        const diagnostic = error === LOOP_STALE ? identityDiagnostic(prepared, comparison, "mcp-claim", Date.now(), current.sessionId !== peek.sessionId ? ["owner"] : []) : undefined;
+        return { ok: false as const, error, ...(diagnostic ? { diagnostic } : {}) };
+      }
       const claim = this.mcp.claim(intent, Date.now());
       if (!claim.ok) return { ...claim, denied: true as const };
       const sent = this.messages.send({ messageId: claim.effectId,
@@ -404,7 +411,12 @@ export class Registry extends DurableObject<Env> {
     return this.messageTx("replyMcpMessage", () => {
       const current = this.mcp.peekClaimSession(intent, Date.now());
       if (!current.ok) return { ...current, denied: true as const };
-      if (current.sessionId !== peek.sessionId || !this.messages.contextMatches(message, prepared)) return { ok: false as const, error: prepared.error ?? LOOP_STALE };
+      const comparison = current.sessionId !== peek.sessionId ? { matches: false } : this.messages.compareContext(message, prepared);
+      if (current.sessionId !== peek.sessionId || !comparison.matches) {
+        const error = prepared.error ?? LOOP_STALE;
+        const diagnostic = error === LOOP_STALE ? identityDiagnostic(prepared, comparison, "mcp-claim", Date.now(), current.sessionId !== peek.sessionId ? ["owner"] : []) : undefined;
+        return { ok: false as const, error, ...(diagnostic ? { diagnostic } : {}) };
+      }
       const claim = this.mcp.claim(intent, Date.now());
       if (!claim.ok) return { ...claim, denied: true as const };
       const sent = this.messages.send(message, `mcp:${intent.nodeId}`, Date.now(), prepared);
@@ -417,17 +429,24 @@ export class Registry extends DurableObject<Env> {
     const signer = await this.loopSigner;
     const prepared = await this.messages.prepare(message, signer);
     const binding = await prepareMessageBinding(this.sql, message, signer,
-      (nodeId, request) => sessionStub(this.env, nodeId).resolveMessageReferences(request));
-    if (message.connectionToken && bindingContext(this.sql, message).nodes[0]?.token !== message.connectionToken) binding.error = LOOP_STALE;
+      (nodeId, request) => sessionStub(this.env, nodeId).resolveMessageReferencesDetailed(request));
+    if (message.connectionToken && bindingContext(this.sql, message).nodes[0]?.token !== message.connectionToken) { binding.error = LOOP_STALE; binding.connectionChanged = true; }
     return { ...prepared, binding };
   }
   async prepareMessageDelivery(messageId: string, phase?: "auth" | "registration") {
     const candidate = this.messages.deliveryCandidate(messageId);
     const prepared = candidate?.required && candidate.binding ? await prepareMessageBinding(this.sql, candidate.message, await this.loopSigner,
-      (nodeId, request) => sessionStub(this.env, nodeId).resolveMessageReferences(request), "egress", candidate.binding ?? undefined) : null;
+      (nodeId, request) => sessionStub(this.env, nodeId).resolveMessageReferencesDetailed(request), "egress", candidate.binding ?? undefined) : null;
     const result = await this.messageTx("prepareMessageDelivery", () => this.messages.prepareDelivery(messageId, prepared, Date.now(), phase));
-    if (result.effects.statuses.length) await routeEffects(this.env, result.effects);
+    const canonical = result.effects.statuses.filter(effect => !effect.observational);
+    if (canonical.length) await routeEffects(this.env, { ...result.effects, statuses: canonical });
+    const observational = result.effects.statuses.filter(effect => effect.observational);
+    if (observational.length) try { await routeEffects(this.env, { deliveries: [], statuses: observational }); }
+    catch { /* Optional diagnostics must not interrupt blocked egress or later frames. */ }
     return result.body;
+  }
+  observeMessageDiagnostic(messageId: string, nodeId: string | null, diagnostic: MessageDiagnostic) {
+    return this.messageTx("observeMessageDiagnostic", () => this.messages.observeDiagnostic(messageId, nodeId, diagnostic));
   }
   // ---- Messages (issue #31). The caller pushes the returned effects. -------
 
@@ -437,7 +456,7 @@ export class Registry extends DurableObject<Env> {
       if (message.taskId !== undefined && !this.tasks.taskOnEitherNode(message.taskId, message.from.nodeId, message.to.nodeId)) {
         return { ok: false, error: "unknown task for this message" };
       }
-      if (message.connectionToken && bindingContext(this.sql, message).nodes[0]?.token !== message.connectionToken) prepared.binding.error = LOOP_STALE;
+      if (message.connectionToken && bindingContext(this.sql, message).nodes[0]?.token !== message.connectionToken) { prepared.binding.error = LOOP_STALE; prepared.binding.connectionChanged = true; }
       return this.messages.send(message, actor, Date.now(), prepared);
     });
   }
@@ -464,7 +483,11 @@ export class Registry extends DurableObject<Env> {
 
   async messageDeliveryReady(messageId: string): Promise<boolean> {
     const result = await this.messageTx("messageDeliveryReady", () => this.messages.deliveryReady(messageId, Date.now()));
-    if (result.effects.statuses.length) await routeEffects(this.env, result.effects);
+    const canonical = result.effects.statuses.filter(effect => !effect.observational);
+    if (canonical.length) await routeEffects(this.env, { ...result.effects, statuses: canonical });
+    const observational = result.effects.statuses.filter(effect => effect.observational);
+    if (observational.length) try { await routeEffects(this.env, { deliveries: [], statuses: observational }); }
+    catch { /* Optional diagnostics must not interrupt blocked egress or later frames. */ }
     return result.ready;
   }
   listMessageHolds(limit: number) { return this.metered("listMessageHolds", () => this.messages.loops.listHolds(limit)); }

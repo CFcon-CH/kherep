@@ -18,7 +18,7 @@ it("persists reported diagnostics, replays them, and clears waiting detail on ad
   const p = await pair(), diagnostic = blockerDiagnostic("runtime-pending", Date.parse(progress.observedAt));
   const result = await registry().reportMessageStatus(p.target, { messageId: p.messageId, state: "accepted", progress, diagnostic });
   expect(result.effects.statuses[0].body.diagnostic).toEqual(diagnostic);
-  expect(Object.keys(result.receipt!).sort()).toEqual(["messageId", "name", "requestedState", "storedProgressAt", "storedState"].sort());
+  expect(Object.keys(result.receipt!).sort((a, b) => a < b ? -1 : a > b ? 1 : 0)).toEqual(["messageId", "name", "requestedState", "storedProgressAt", "storedState"].sort((a, b) => a < b ? -1 : a > b ? 1 : 0));
   expect((await registry().messageStatusPageFor(p.source, 0, 100)).effects.statuses[0].body.diagnostic).toEqual(diagnostic);
   await registry().reportMessageStatus(p.target, { messageId: p.messageId, state: "delivered" });
   expect((await registry().messageStatusPageFor(p.source, 0, 100)).effects.statuses[0].body.diagnostic).toBeUndefined();

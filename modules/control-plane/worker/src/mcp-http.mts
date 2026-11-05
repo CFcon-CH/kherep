@@ -1,3 +1,4 @@
+import { isMessageDiagnostic, type MessageDiagnostic } from "../../protocol-diagnostics.mts";
 import { safeLoopReason } from "../../protocol-loop-brake.mts";
 import { createMcpHandler } from "agents/mcp/server";
 import { McpServer } from "@modelcontextprotocol/server";
@@ -22,8 +23,8 @@ const baseResult = z.object({ ok: z.boolean() }).passthrough();
 const SILENCE_HINT = `no delivery progress from the target node for at least ${ACCEPTED_SILENCE_MS / 60_000} minutes; `
   + `${ACCEPTED_SILENCE_CAUSES}; check the sessions tool`;
 
-function error(message: string) {
-  return { isError: true as const, content: [{ type: "text" as const, text: message }], structuredContent: { ok: false, error: message } };
+function error(message: string, diagnostic?: MessageDiagnostic) {
+  return { isError: true as const, content: [{ type: "text" as const, text: message }], structuredContent: { ok: false, error: message, ...(diagnostic ? { diagnostic } : {}) } };
 }
 
 function result(value: Record<string, unknown>) {
@@ -97,14 +98,14 @@ function server(env: Env, principal: Principal): McpServer {
     const prepared = await prepareIntentClaim(principal, "send", id, args, ctx.mcpReq._meta);
     if (!prepared.ok) return error(prepared.error);
     const sent = await registryStub(env).sendMcpMessage(prepared.intent, to, text);
-    if (!sent.ok) return error("denied" in sent ? sent.error : "message was not accepted");
+    if (!sent.ok) return error("denied" in sent ? sent.error : "message was not accepted", "diagnostic" in sent && isMessageDiagnostic(sent.diagnostic) ? sent.diagnostic : undefined);
     try {
       await routeEffects(env, sent.effects);
     } catch {
       await registryStub(env).recordMcpOutcome(principal.nodeId, id, "uncertain");
       return error("message state is uncertain; retry the same native call");
     }
-    return result({ ok: true, messageId: prepared.intent.requestId, state: sent.status.state });
+    return result({ ok: true, messageId: prepared.intent.requestId, state: sent.status.state, ...(sent.status.diagnostic ? { diagnostic: sent.status.diagnostic } : {}) });
   });
 
   mcp.registerTool("status", { description: `Read metadata-only status for one message visible to this node. ${REQUEST_ID_INSTRUCTION}`,
@@ -118,7 +119,7 @@ function server(env: Env, principal: Principal): McpServer {
     const progress = record.state === "accepted" && isMessageProgress(record.progress) ? record.progress : undefined;
     const silent = silentlyAccepted(record.state, progress, record.updatedAt, Date.now());
     return result({ ok: true, messageId, state: record.state, senderState: senderState(record.state, progress), updatedAt: record.updatedAt,
-      ...(safeLoopReason(record.reason) ? { reason: safeLoopReason(record.reason) } : {}), ...(progress ? { progress } : {}), ...(silent ? { hint: SILENCE_HINT } : {}),
+      ...(safeLoopReason(record.reason) ? { reason: safeLoopReason(record.reason) } : {}), ...(progress ? { progress } : {}), ...(isMessageDiagnostic(record.diagnostic) ? { diagnostic: record.diagnostic } : {}), ...(silent ? { hint: SILENCE_HINT } : {}),
       ...(record.replyMessageId ? { replyMessageId: record.replyMessageId } : {}) });
   });
 
@@ -145,14 +146,14 @@ function server(env: Env, principal: Principal): McpServer {
       sent = await registryStub(env).replyMcpMessage(prepared.intent, inReplyTo, text,
         inbox.ok ? inbox.items.find((item) => item.messageId === inReplyTo) ?? null : null);
     }
-    if (!sent.ok) return error("denied" in sent ? sent.error : "reply was not accepted");
+    if (!sent.ok) return error("denied" in sent ? sent.error : "reply was not accepted", "diagnostic" in sent && isMessageDiagnostic(sent.diagnostic) ? sent.diagnostic : undefined);
     try {
       await routeEffects(env, sent.effects);
     } catch {
       await registryStub(env).recordMcpOutcome(principal.nodeId, id, "uncertain");
       return error("message state is uncertain; retry the same native call");
     }
-    return result({ ok: true, messageId: prepared.intent.requestId, state: sent.status.state });
+    return result({ ok: true, messageId: prepared.intent.requestId, state: sent.status.state, ...(sent.status.diagnostic ? { diagnostic: sent.status.diagnostic } : {}) });
   });
 
   return mcp;

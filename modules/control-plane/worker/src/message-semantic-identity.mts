@@ -1,3 +1,4 @@
+import { sortedDimensions, type IdentityDimension } from "../../protocol-diagnostics.mts";
 import { SELECTED_BINDING_CAPABILITY, type MessageBinding } from "../../protocol-message-binding.mts";
 import { MESSAGING_CAPABILITY } from "../../protocol-messages.mts";
 import { MESSAGING_LOOP_BRAKE_CAPABILITY } from "../../protocol-loop-brake.mts";
@@ -44,13 +45,41 @@ function semanticParent(parent: Parent) {
 const semanticLoop = (s: LoopSnapshot) => ({ ...s, parent: semanticParent(s.parent) });
 export const sameLoopIdentity = (a: LoopSnapshot, b: LoopSnapshot): boolean => JSON.stringify(semanticLoop(a)) === JSON.stringify(semanticLoop(b));
 
-// Fixed audit metadata, never a new refusal/wire code or an identity dump.
-export function changedIdentityDimension(a: LoopSnapshot, b: LoopSnapshot): string {
-  for (const [code, before, after] of [
-    ["owner", [a.from, a.to, a.encoding, a.direction], [b.from, b.to, b.encoding, b.direction]],
-    ["connection", a.connections, b.connections], ["lifecycle", a.identityBinding, b.identityBinding],
-    ["eligibility", [a.proofs, a.compatibility], [b.proofs, b.compatibility]],
-    ["capability", a.both, b.both], ["lineage", semanticParent(a.parent), semanticParent(b.parent)],
-  ]) if (JSON.stringify(before) !== JSON.stringify(after)) return String(code);
-  return "selected-binding";
+// Compare the same semantic leaves used by equality, returning codes only.
+const differs = (a: unknown, b: unknown): boolean => JSON.stringify(a) !== JSON.stringify(b);
+type Ref = ReturnType<typeof semanticReference>;
+export function changedReferenceDimensions(a: readonly Ref[], b: readonly Ref[]): IdentityDimension[] {
+  const dimensions: IdentityDimension[] = [];
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    const before = a[i] as unknown as Record<string, unknown> | undefined, after = b[i] as unknown as Record<string, unknown> | undefined;
+    const ap = before?.proof as Record<string, unknown> | null | undefined, bp = after?.proof as Record<string, unknown> | null | undefined;
+    if (differs(before?.address, after?.address) || ap && bp && differs(ap.sessionId, bp.sessionId)) dimensions.push("owner");
+    if (before?.address && after?.address && before.match !== after.match) dimensions.push("reference-match");
+    if (before?.runtime !== after?.runtime || ap && bp && ap.runtime !== bp.runtime) dimensions.push("runtime");
+    if (ap && bp && ap.lifecycleGeneration !== bp.lifecycleGeneration) dimensions.push("lifecycle");
+    if (ap && bp ? differs([ap.version, ap.source], [bp.version, bp.source])
+      : (!!ap !== !!bp && [before?.code, after?.code].some(c => c === "LEGACY_KNOWN" || c === "UNPROVEN"))) dimensions.push("proof-kind");
+    if (differs([before?.eligible, before?.code, before?.unknown], [after?.eligible, after?.code, after?.unknown])) dimensions.push("eligibility");
+  }
+  return sortedDimensions(dimensions);
 }
+export function changedNodeDimensions(a: ReturnType<typeof semanticNodes>, b: ReturnType<typeof semanticNodes>): IdentityDimension[] {
+  const dimensions: IdentityDimension[] = [];
+  const tokens = (nodes: typeof a) => nodes.map(n => [n?.token, n?.registration]);
+  if (differs(tokens(a), tokens(b))) dimensions.push("connection");
+  // capable includes registration. A changed connection alone cannot establish
+  // a capability change; compare this derived bit only on equal connections.
+  const capabilities = (nodes: typeof a) => nodes.map((n, i) => [n?.messaging, n?.brake,
+    !differs(tokens([a[i]]), tokens([b[i]])) ? n?.capable : null]);
+  if (differs(capabilities(a), capabilities(b))) dimensions.push("capability");
+  return dimensions;
+}
+export function changedIdentityDimensions(a: LoopSnapshot, b: LoopSnapshot): IdentityDimension[] {
+  const dimensions = [...changedReferenceDimensions(a.proofs as Ref[], b.proofs as Ref[]), ...changedNodeDimensions(a.connections, b.connections)];
+  if (differs(a.compatibility, b.compatibility)) dimensions.push("eligibility");
+  if (a.both !== b.both) dimensions.push("capability");
+  if (differs(semanticParent(a.parent), semanticParent(b.parent))) dimensions.push("lineage");
+  return sortedDimensions(dimensions);
+}
+// Retain the fixed audit field without the old unsupported selected-binding fallback.
+export const changedIdentityDimension = (a: LoopSnapshot, b: LoopSnapshot): IdentityDimension | undefined => changedIdentityDimensions(a, b)[0];

@@ -1,3 +1,4 @@
+import { blockerDiagnostic } from "../../protocol-diagnostics.mts";
 import { registryStub, sessionStub, type Env } from "./env.mts";
 import type { MessageEffects } from "./message-store.mts";
 
@@ -19,7 +20,14 @@ export async function routeEffects(env: Env, effects: MessageEffects, local?: Lo
       if (local?.nodeId === frame.nodeId) {
         await local.scheduleRetry?.();
         const body = await registryStub(env).prepareMessageDelivery(String(frame.body.messageId), phase);
-        if (body) local.send("message.deliver", { ...body });
+        if (body) {
+          local.send("message.deliver", { ...body });
+          try {
+            const observed = await registryStub(env).observeMessageDiagnostic(String(frame.body.messageId), frame.nodeId,
+              blockerDiagnostic("acceptance-unconfirmed", Date.now(), "upstream-egress"));
+            await routeEffects(env, observed, local);
+          } catch { /* Observation failure cannot change a pushed frame. */ }
+        }
       } else await sessionStub(env, frame.nodeId).pushFrame(frame.type, frame.body);
       continue;
     }
