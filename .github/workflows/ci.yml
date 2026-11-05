@@ -335,7 +335,7 @@ jobs:
       - name: Coverage fixtures with installed c8
         env:
           NODE_V8_COVERAGE: ${{ runner.temp }}/kherep-coverage/typescript/raw
-        run: node --test bootstrap/coverage-report.test.mts
+        run: node --test bootstrap/coverage-report.test.mts bootstrap/coverage-copies.test.mts bootstrap/coverage-erased-types.test.mts
       - name: Coverage manifest (typescript)
         if: always() && !cancelled()
         continue-on-error: true

@@ -21,13 +21,14 @@ type Range = { startOffset: number; endOffset: number; count: number };
 type V8Function = { ranges: Range[]; [key: string]: unknown };
 type Script = { url: string; functions: V8Function[]; [key: string]: unknown };
 type V8Report = { result: Script[]; "source-map-cache"?: Record<string, unknown>; [key: string]: unknown };
-export function relocateV8Report(value: unknown, sourceRoot: string, repositoryRoot: string): { report: V8Report; ignored: number } {
+export function relocateV8Report(value: unknown, sourceRoot: string, repositoryRoot: string, copies: ReadonlyMap<string, string> = new Map(), usedCopies = new Set<string>()): { report: V8Report; ignored: number } {
   if (!value || typeof value !== "object" || !Array.isArray((value as V8Report).result)) throw new Error("malformed V8 report");
   const report = value as V8Report;
   let ignored = 0;
   function relocate(url: string): string | null {
     if (!url.startsWith("file:")) return null;
     noTraversal(url);
+    if (copies.has(url)) return copies.get(url)!;
     const path = fileURLToPath(url); const rel = relative(resolve(sourceRoot), path);
     if (!rel || rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel) || rel.split(sep).includes("node_modules")) return null;
     if (!/\.(mts|ts|js|mjs|cjs|cts)$/.test(rel)) return null;
@@ -43,6 +44,7 @@ export function relocateV8Report(value: unknown, sourceRoot: string, repositoryR
       }
     }
     const url = relocate(script.url);
+    if (copies.has(script.url)) usedCopies.add(script.url);
     if (url) scripts.push({ ...script, url }); else ignored++;
   }
   const cache = report["source-map-cache"];

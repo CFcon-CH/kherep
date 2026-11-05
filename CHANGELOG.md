@@ -24,6 +24,12 @@ increments the minor version; every other release increments the patch version.
 
 ### Fixed
 
+- Coverage assembly attributes explicitly declared identical test copies to their
+  original source by exact URL and SHA-256, preserving real hits and uncovered
+  branches. The first adopter is the Codex shell dispatcher suite. Parser-proven
+  erased types-only files lose their whole LCOV record and are listed in the
+  coverage summary; Sonar source analysis and exclusions stay unchanged (#792).
+
 - GitHub App issue broker: installation tokens in GitHub's current format
   contain dots and are about 390 characters long; the token format check now
   allows `.`, so authentication no longer fails with `auth-refused` (#780).

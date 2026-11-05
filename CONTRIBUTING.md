@@ -66,15 +66,37 @@ installed copies may remain uncovered. Environment sanitization is preserved.
 Raw coverage is about 1.3 GB for `unit` and 599 MB for `typescript` on the runner;
 the compressed artifacts measured 168 MB and 78 MB in the #790 run.
 
+Tests that execute unchanged copies can call `declareCopy(original, copy)` from
+`bootstrap/coverage-copy-fixture.mts`. It checks identical bytes. When
+`NODE_V8_COVERAGE` is already set, it appends a `coverage-copies.jsonl` sidecar in
+that directory, carried by the existing raw artifact upload. It never enables
+coverage or changes a child environment. Without the variable it only checks
+the bytes. A test that edits its copy after declaring it must not declare it;
+this simple mechanism does not track later mutations or file identity.
+Assembly maps only an exact declared script URL to its repository original,
+after checking the original's SHA-256 against the declaration. Invalid hashes,
+paths, conflicting mappings and declarations with no matching script in that
+producer's reports fail assembly. Undeclared external scripts remain ignored;
+synthetic dependencies receive no attribution. V8 ranges and counts are retained
+for the single c8 union conversion. Initially only `shell-checks.test.mts` adopts
+the helper.
+
+After conversion, the pinned TypeScript parser removes an entire LCOV record
+only when every statement is an erased type-only import, interface or type alias.
+Mixed files, value imports, runtime constants, unknown syntax and parse failures
+keep their records unchanged. `coverage/summary.json` lists the dropped paths.
+These sources remain analysed, with no new Sonar exclusion. Whether Sonar stops
+counting `contracts.mts` after omission is UNKNOWN until a real pull request.
+
 For a local typed-source and child-process diagnostic after `npm ci`, run:
 
 ```sh
-node --test bootstrap/coverage-report.test.mts
+node --test bootstrap/coverage-report.test.mts bootstrap/coverage-copies.test.mts bootstrap/coverage-erased-types.test.mts
 ```
 
-Only the c8 integration fixture explicitly skips when dependencies are unavailable
-in a dependency-free compatibility job. CI also runs it after `npm ci` in
-`coverage-report`. Pure validation fixtures always run. To assemble local real
+The c8 integration and TypeScript parser fixtures explicitly skip when dependencies are unavailable
+in a dependency-free compatibility job. CI runs these fixtures after `npm ci` in
+`typescript`. Pure validation fixtures always run. To assemble local real
 reports, collect `NODE_V8_COVERAGE` into each producer's `raw/` directory, create
 its manifest with `npm run coverage:report -- manifest`, and provide the four
 producer directories (Worker contains `lcov.info`) to:
@@ -88,8 +110,9 @@ npm run coverage:report -- verify --run-id 1 --attempt 1 \
 
 Use a single real checkout identity throughout. `--source-root` explicitly names
 the trusted collection checkout root when relocation is needed; only contained
-repository file URLs are relocated. Temporary installation paths are not mapped
-back. Outputs are `coverage/node/lcov.info` and `coverage/worker/lcov.info`, with
+repository file URLs and byte-verified copy declarations are relocated. Other
+temporary installation paths are not mapped back. Outputs are
+`coverage/node/lcov.info` and `coverage/worker/lcov.info`, with
 unique repository-relative `SF:` paths. Generated coverage stays out of Git.
 
 ## Submitting changes
