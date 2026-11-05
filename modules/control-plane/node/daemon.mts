@@ -240,7 +240,13 @@ export function startDaemon(config: NodeConfig, paths: NodePaths, log: (line: st
 
   const connections = createConnectionSupervisor({ clock, connect: () => connect(), log,
     delay: () => reconnectDelay(attempt++),
-    reset: () => { chain = chain.then(() => { client.connectionClosed(); }); },
+    reset: () => {
+      const reset = (): void => { client.connectionClosed(); };
+      chain = chain.then(reset, (error: unknown) => {
+        log(`kherep-node: connection chain failed: ${String(error)}`);
+        reset();
+      });
+    },
     disconnected: () => {
       state = { ...state, disconnectedAt: new Date().toISOString() }; recordDaemonState(paths, state, log);
     },

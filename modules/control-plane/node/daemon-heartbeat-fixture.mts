@@ -9,12 +9,23 @@ import { makeEnvelope, PING_FRAME, PONG_FRAME } from "../protocol.mts";
 import { nodePaths, type NodeConfig } from "./config.mts";
 import { FakeClock, flush } from "./connection-test-fixture.mts";
 import { generateIdentity, writePrivateKey } from "./identity.mts";
+import { NodeClient } from "./client.mts";
+import { DIRECTORY_INTERVAL_MS } from "./exchange.mts";
 
 export async function heartbeatFixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "kherep-heartbeat-")), clock = new FakeClock();
   const paths = nodePaths(root), logs: string[] = [], sockets: FakeSocket[] = [];
   const original = { ws: globalThis.WebSocket, interval: globalThis.setInterval, clear: globalThis.clearInterval, random: Math.random };
   const intervals = new Map<number, () => void>();
+  let rejectDirectory = false, resets = 0;
+  const directoryRequest = NodeClient.prototype.directoryRequest, connectionClosed = NodeClient.prototype.connectionClosed;
+  mock.method(NodeClient.prototype, "directoryRequest", function (this: NodeClient) {
+    if (rejectDirectory) { rejectDirectory = false; throw new Error("synthetic chain rejection"); }
+    return directoryRequest.call(this);
+  });
+  mock.method(NodeClient.prototype, "connectionClosed", function (this: NodeClient) {
+    resets++; connectionClosed.call(this);
+  });
   // Confine every discovery and process operation to synthetic fixtures.
   mock.method(os, "homedir", () => root);
   for (const method of ["spawn", "spawnSync", "exec", "execSync", "execFile", "execFileSync"] as const)
@@ -59,6 +70,7 @@ export async function heartbeatFixture() {
     return blockDiscovery ? new Promise<[]>(resolve => { discoveryResolve = resolve; }) : Promise.resolve([]);
   }, undefined, undefined, {}, { fallbackMs: 2_000_000 }, undefined, clock);
   return { clock, sockets, logs, paths, intervals, handle,
+    rejectChain: () => { rejectDirectory = true; intervals.get(DIRECTORY_INTERVAL_MS)!(); }, resets: () => resets,
     auth: (socket = sockets.at(-1)!) => socket.receive(JSON.stringify(makeEnvelope("event", { name: "auth.ok" }, 0, 0))),
     blockDiscovery: () => { blockDiscovery = true; }, discoverySignal: () => discoverySignal,
     releaseDiscovery: () => { blockDiscovery = false; discoveryResolve?.([]); },

@@ -54,7 +54,7 @@ test("spurious reconnect replays lost acceptance with fresh consumed leases and 
   const durable = getMessage(paths.inbox, messageId); assert.ok(durable);
   assert.equal(durable.binding?.to.sessionId, owner);
   assert.deepEqual(await client.onFrame(delivery), [], "the first lease was consumed");
-  clock.advance(50_500); await chain; await flush(); assert.equal(connects, 1); assert.equal(client.authenticated, false);
+  clock.advance(80_500); await chain; await flush(); assert.equal(connects, 1); assert.equal(client.authenticated, false);
   supervisor.begin(() => {}); await authenticate();
   assert.deepEqual(await client.onFrame(delivery), [], "a retired lease cannot acknowledge replay");
   const replay = await resolve(); assert.notEqual(replay.binding.leaseId, first.binding.leaseId);

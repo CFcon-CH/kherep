@@ -43,7 +43,7 @@ export function createConnectionWatchdog(options: Options) {
   return {
     open(): void {
       if (phase !== "opening") return;
-      opened = clock.now(); pongAt = opened; phase = "probe"; arm(PONG_DEADLINE_MS); ping();
+      opened = clock.now(); pongAt = opened; phase = "idle"; arm(PING_INTERVAL_MS);
     },
     pong(): void {
       if (phase === "opening" || phase === "stopped") return;
