@@ -345,8 +345,21 @@ current lease, owner, registration and loop-hold checks. The alarm re-arms even
 when preparation throws, logs only the fixed `DELIVERY_RETRY_FAILED` code without
 rethrowing, schedules the next queued retry 60 seconds after the pass completes,
 returns to five minutes when the queue empties, and
-keeps the existing three five-minute intervals for offline detection. Acceptance
-stops replay. Fresh leases never change the persisted exact owner binding;
+keeps the existing three five-minute intervals for offline detection.
+Fresh egress during a pass still attempts immediately and retains a retry even
+after an empty queue snapshot. Completion replaces the pass's fallback alarm,
+retrying one transient write failure within the same serialized operation;
+fresh egress after completion serializes behind that replacement. With 100
+queued rows, eight lanes and five-second resolve timeouts, a pass can take 65
+seconds and successive pass starts are then 125 seconds apart. A short pass of
+duration T has a 60+T-second same-position attempt interval. Across changing
+positions, a retained row or an arrival excluded from the current snapshot has
+at most 65+60+60 = 185 seconds to its next attempt start, or 190 seconds to its
+completion, assuming it remains eligible in the next bounded snapshot. These
+are resolve-timeout budgets, excluding storage, RPC, event-loop and platform
+delays, not unconditional wall-clock guarantees. A persistent alarm-storage
+failure cannot guarantee durable scheduling; failures log the fixed code.
+Acceptance stops replay. Fresh leases never change the persisted exact owner binding;
 previously unbound legacy work cannot acquire a binding on a later retry.
 Historical required rows with no stored owner binding also remain deferred until
 expiry rather than inventing a different binding for a possibly accepted frame;

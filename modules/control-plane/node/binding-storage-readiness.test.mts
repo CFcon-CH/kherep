@@ -5,8 +5,10 @@ import test from "node:test";
 import { makeEnvelope } from "../protocol.mts";
 import { SELECTED_BINDING_CAPABILITY } from "../protocol-message-binding.mts";
 import { NodeClient } from "./client.mts";
+import { storeDaemonMessage } from "./daemon-message-store.mts";
 import { recordLockFile, setRecordLockWait, RECORD_LOCK_WAIT_MS } from "./inbox-record-lock.mts";
 import { createBindingStorage } from "./inbox-storage.mts";
+import { inboxIndex } from "./inbox-index.mts";
 import { MessageReferenceResolver } from "./message-reference.mts";
 import { writeLocalSessions } from "./exchange-sessions.mts";
 import { generateIdentity } from "./identity.mts";
@@ -22,7 +24,7 @@ test("storage capability transitions invalidate leases and unsent registrations 
     facts: () => ({ hostname: "synthetic.example", os: "linux", arch: "x64", cpus: 1, memoryBytes: 1 }),
     runtimes: async () => [], sessions: async () => [], readyRuntimes: () => [],
     selectedReferences: new MessageReferenceResolver(f.paths), bindingStorageReady: storage.snapshot,
-    bindingStorageFault: storage.fault, storeMessage: body => { storeMessage(f.paths.inbox, body); } });
+    bindingStorageFault: storage.fault, storeMessage: body => storeDaemonMessage(f.paths, body, Date.now(), storage.fault, () => {}) });
   const auth = await client.onFrame(frame("event", { name: "auth.ok" }));
   const has = (frames: string[]) => frames.some(s => JSON.parse(s).type === "register" && JSON.parse(s).body.capabilities.includes(SELECTED_BINDING_CAPABILITY));
   assert.equal(has(auth), true); // intentionally leave unsent
@@ -73,7 +75,7 @@ test("redelivery under an existing record lock defers without faulting storage o
     facts: () => ({ hostname: "synthetic.example", os: "linux", arch: "x64", cpus: 1, memoryBytes: 1 }),
     runtimes: async () => [], sessions: async () => [], selectedReferences: references,
     bindingStorageReady: storage.snapshot, bindingStorageFault: storage.fault,
-    storeMessage: body => { storeMessage(f.paths.inbox, body); } });
+    storeMessage: body => storeDaemonMessage(f.paths, body, Date.now(), () => { storage.fault(); references.clear(); }, () => {}) });
   await client.onFrame(frame("event", { name: "auth.ok" })); client.registrationSent();
   const resolve = async () => {
     const [response] = await client.onFrame(frame("message.resolve.request", { version: 1, requestId: crypto.randomUUID(), messageId: ID,
@@ -88,6 +90,9 @@ test("redelivery under an existing record lock defers without faulting storage o
   fs.writeFileSync(lock, JSON.stringify({ pid: process.pid, at: new Date().toISOString() }));
   setRecordLockWait(0);
   try {
+    const index = inboxIndex(f.paths.inbox);
+    assert.equal(index.records().length, 1, "the daemon's index reader takes no record lock");
+    assert.equal(index.unreported(Date.now()).length, 1, "status reads take no record lock either");
     assert.deepEqual(await client.onFrame(frame("message.deliver", delivery)), []);
     assert.deepEqual(storage.snapshot(), snapshot);
     assert.deepEqual(await client.refreshPolicy(DEFAULT_POLICY), [], "no capability withdrawal or re-registration");

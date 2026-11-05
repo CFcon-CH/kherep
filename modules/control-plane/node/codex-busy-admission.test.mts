@@ -6,10 +6,11 @@ import test from "node:test";
 
 import { listenerDir, takeTurn, TURN_SPACING_MS } from "./autonomy.mts";
 import { codexQueueIdle, pollCodexQueue } from "./codex-queue.mts";
+import { readBusyAdmission } from "./codex-busy-admission.mts";
 import { REOFFER_AFTER_MS } from "./deliver-core.mts";
 import { CODEX_ACTIVE_MS, recordCodexSession } from "./codex-sessions.mts";
 import { deliverForCodex } from "./deliver-codex.mts";
-import { getMessage, getMessageProgress, storeMessage } from "./inbox.mts";
+import { getMessage, getMessageProgress, markOffered, storeMessage } from "./inbox.mts";
 import { T0, taskNode } from "./task-fixture.mts";
 
 const OWNER = "01a0db74-0000-7000-8000-000000000001";
@@ -266,4 +267,34 @@ test("interleaved arrivals cannot postpone an older message's normal reoffer", a
   node.tick(2_000); await node.poll();
   assert.deepEqual(node.admission().ticket.messages.map((m: { messageId: string }) => m.messageId), [ID]);
   assert.equal(node.admission().recovery.find((r: { messageId: string }) => r.messageId === messageId).fastRecovered, false);
+});
+
+test("Received after failed publication preserves another message's spent fast recovery", async t => {
+  const node = setup(t);
+  await node.poll(); node.tick(60_000); await node.poll();
+  const recovered = node.admission().recovery;
+  assert.equal(recovered[0].fastRecovered, true);
+  node.tick(2_000);
+  const newId = crypto.randomUUID();
+  storeMessage(node.paths.inbox, { messageId: newId, toSession: OWNER, text: "synthetic failed hint",
+    from: { nodeId: "00000000-0000-4000-8000-0000000000bb", session: "synthetic-peer" },
+    createdAt: new Date(T0 + 62_000).toISOString() }, T0 + 62_000);
+  fs.writeFileSync(node.ticket + ".lock", "held");
+  await node.poll();
+  const failed = node.admission();
+  assert.equal(failed.publishedAt, undefined);
+  assert.deepEqual(failed.ticket.messages.map((m: { messageId: string }) => m.messageId), [newId]);
+  fs.unlinkSync(node.ticket + ".lock");
+  markOffered(node.paths.inbox, newId, T0 + 62_000, "receive");
+  const ticketBefore = fs.readFileSync(node.ticket, "utf8");
+  await node.poll();
+  assert.ok(readBusyAdmission(node.paths, OWNER), "no empty invalid ticket may replace durable recovery metadata");
+  assert.equal(node.admission().ticket.generation, failed.ticket.generation);
+  assert.deepEqual(node.admission().recovery, recovered);
+  node.tick(60_000); await node.poll();
+  assert.equal(fs.readFileSync(node.ticket, "utf8"), ticketBefore, "M2 gets neither an extra hint nor a second fast recovery");
+  node.tick(REOFFER_AFTER_MS - 62_000); await node.poll();
+  assert.notEqual(node.admission().ticket.generation, failed.ticket.generation, "normal reoffer remains due");
+  assert.deepEqual(node.admission().ticket.messages.map((m: { messageId: string }) => m.messageId), [ID]);
+  assert.equal(node.admission().recovery[0].fastRecovered, true);
 });
