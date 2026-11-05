@@ -28,11 +28,17 @@ export async function heartbeatFixture() {
   });
   // Confine every discovery and process operation to synthetic fixtures.
   mock.method(os, "homedir", () => root);
+  mock.method(os, "userInfo", () => { throw new Error("forbidden native identity"); });
   for (const method of ["spawn", "spawnSync", "exec", "execSync", "execFile", "execFileSync"] as const)
     mock.method(cp, method, () => { throw new Error("forbidden native process"); });
   mock.method(process, "kill", () => { throw new Error("forbidden process probe"); });
   mock.method(globalThis, "fetch", () => { throw new Error("forbidden network"); });
   syncBuiltinESMExports();
+  // Windows service admission obtains its owner through PowerShell. Keep
+  // that identity synthetic too, without allowing native process launches.
+  const { defaultServiceOwnerProbe } = await import("./service-owner-probe.mts");
+  mock.method(defaultServiceOwnerProbe, "current", () => ({ version: 1 as const, pid: process.pid,
+    startedAt: "2026-01-01T00:00:00.000Z", owner: "S-1-5-21-1-2-3-1001" }));
   const source = await import("./daemon-source.mts");
   mock.module(new URL("./daemon-source.mts", import.meta.url).href, { namedExports: { ...source,
     captureRuntimeSourceIdentity: () => ({ root, commit: "0".repeat(40), digest: "0".repeat(64), kind: "checkout", verified: true }),
