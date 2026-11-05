@@ -1,3 +1,5 @@
+import { readDiagnostic, storeDiagnostic } from "./message-diagnostics.mts";
+import type { MessageDiagnostic } from "../../protocol-diagnostics.mts";
 import { compatibleDiagnostic } from "../../protocol-diagnostics.mts";
 import { egressBinding } from "./message-egress-binding.mts";
 import { changedIdentityDimension, sameLoopIdentity } from "./message-semantic-identity.mts";
@@ -33,6 +35,7 @@ CREATE TABLE IF NOT EXISTS messages (
   text TEXT,
   state TEXT NOT NULL,
   reason TEXT,
+  diagnostic_json TEXT,
   progress_phase TEXT,
   progress_code TEXT,
   progress_observed_at TEXT,
@@ -57,7 +60,7 @@ const RANK: Partial<Record<MessageState, number>> = { queued: 0, accepted: 1, de
 
 export interface MessageRecord {
   messageId: string; fromNode: string; fromSession: string; toNode: string; toSession: string; inReplyTo: string | null;
-  proxyOf: string | null; state: MessageState; reason: string | null; progress: MessageProgress | null;
+  proxyOf: string | null; state: MessageState; reason: string | null; progress: MessageProgress | null; diagnostic?: MessageDiagnostic;
   loop?: LoopAdmissionV1;
   createdAt: number; updatedAt: number; expiresAt: number;
 }
@@ -81,7 +84,7 @@ type Audit = (actor: string, action: string, target: string | null, detail: unkn
 // Registered capabilities of an enrolled, non-revoked node, or null.
 type Capabilities = (nodeId: string) => string[] | null;
 
-const COLUMNS = "id, from_node, from_session, to_node, to_session, in_reply_to, proxy_of, state, reason, progress_phase, progress_code, progress_observed_at, progress_retry_at, created_at, updated_at, expires_at, depth, " + LOOP_COLUMNS + ", " + BINDING_COLUMNS;
+const COLUMNS = "diagnostic_json, id, from_node, from_session, to_node, to_session, in_reply_to, proxy_of, state, reason, progress_phase, progress_code, progress_observed_at, progress_retry_at, created_at, updated_at, expires_at, depth, " + LOOP_COLUMNS + ", " + BINDING_COLUMNS;
 
 // The queries that run on every send, status report and sender reconnect.
 // Each names its index of SCHEMA (INDEXED BY fails the query rather than fall
@@ -124,6 +127,7 @@ function recordMetadata(row: Record<string, SqlStorageValue>): MessageRecord {
       observedAt: String(row.progress_observed_at),
       ...(row.progress_retry_at === null || row.progress_retry_at === undefined ? {} : { retryAt: String(row.progress_retry_at) }),
     },
+    ...(readDiagnostic(row.diagnostic_json, String(row.state), row.progress_observed_at) ? { diagnostic: readDiagnostic(row.diagnostic_json, String(row.state), row.progress_observed_at) } : {}),
     createdAt: Number(row.created_at), updatedAt: Number(row.updated_at), expiresAt: Number(row.expires_at),
   };
 }
@@ -137,12 +141,12 @@ function toRecord(row: Record<string, SqlStorageValue>): MessageRecord {
   return { ...metadata, ...(loop ? { loop } : {}) };
 }
 
-function statusBody(messageId: string, state: MessageState, reason: string | null, progress: MessageProgress | null = null): MessageStatusBody {
-  return { messageId, state, ...(reason === null || progress ? {} : { reason }), ...(state === "accepted" && progress ? { progress } : {}) };
+function statusBody(messageId: string, state: MessageState, reason: string | null, progress: MessageProgress | null = null, diagnostic?: MessageDiagnostic): MessageStatusBody {
+  return { messageId, state, ...(reason === null || progress ? {} : { reason }), ...(state === "accepted" && progress ? { progress } : {}), ...(diagnostic ? { diagnostic } : {}) };
 }
 
 function statusOf(record: MessageRecord): MessageStatusBody {
-  return statusBody(record.messageId, record.state, record.reason, record.progress);
+  return statusBody(record.messageId, record.state, record.reason, record.progress, record.diagnostic);
 }
 
 // Builds the deliver body from a queued row, which always still has its text.
@@ -179,7 +183,7 @@ export class MessageStore {
     // Item 5: the task a message belongs to, added to an existing table.
     const columns = this.sql.exec("PRAGMA table_info(messages)").toArray().map((c) => String(c.name));
     if (!columns.includes("task_id")) this.sql.exec("ALTER TABLE messages ADD COLUMN task_id TEXT");
-    for (const [name, type] of [["progress_phase", "TEXT"], ["progress_code", "TEXT"], ["progress_observed_at", "TEXT"],
+    for (const [name, type] of [["diagnostic_json", "TEXT"], ["progress_phase", "TEXT"], ["progress_code", "TEXT"], ["progress_observed_at", "TEXT"],
       ["progress_retry_at", "TEXT"], ["reply_message_id", "TEXT"], ["depth", "INTEGER"], ["delete_after", "INTEGER"],
       ["deletable", "INTEGER"], ["proxy_of", "TEXT"], ["settled_state", "TEXT"], ...ALL_LOOP_FIELDS.map((name) => [name, loopColumnType(name)] as const)] as const) {
       if (!columns.includes(name)) this.sql.exec(`ALTER TABLE messages ADD COLUMN ${name} ${type}`);
@@ -346,7 +350,7 @@ export class MessageStore {
     let advancedFrom: MessageState | undefined;
     if (this.mayAdvance(record.state, status.state)) {
       advancedFrom = record.state;
-      this.setState(record, status.state, status.reason ?? null, `node:${nodeId}`, now, effects, status.progress);
+      this.setState(record, status.state, status.reason ?? null, `node:${nodeId}`, now, effects, status.progress, status.diagnostic);
       // Issue #408: the owner read (or refused) the original; a proxy of it not yet delivered loses.
       if (status.state === "delivered" || status.state === "refused") {
         this.refuseQueuedProxies(record, PROXY_SUPERSEDED_READ, `node:${nodeId}`, now, effects);
@@ -354,7 +358,7 @@ export class MessageStore {
       record = this.get(status.messageId) ?? record;
     } else if (record.state === "accepted" && status.state === "accepted" && status.progress
       && (!record.progress || Date.parse(status.progress.observedAt) > Date.parse(record.progress.observedAt))) {
-      this.setProgress(record, status.progress, `node:${nodeId}`, now, effects);
+      this.setProgress(record, status.progress, `node:${nodeId}`, now, effects, status.diagnostic);
       record = this.get(status.messageId) ?? record;
     }
     return { effects, ...(advancedFrom ? { advancedFrom } : {}), receipt: {
@@ -562,27 +566,29 @@ export class MessageStore {
   }
 
   private setState(record: MessageRecord, state: MessageState, reason: string | null, actor: string, now: number,
-    effects: MessageEffects, progress?: MessageProgress): void {
+    effects: MessageEffects, progress?: MessageProgress, diagnostic?: MessageDiagnostic): void {
     // Only a queued message keeps its text. Progress belongs only to accepted.
     const kept = state === "accepted" ? progress ?? null : null;
     this.sql.exec(`UPDATE messages SET state = ?, reason = ?, text = NULL, progress_phase = ?, progress_code = ?,
       progress_observed_at = ?, progress_retry_at = ?, updated_at = ? WHERE id = ?`, state, reason, kept?.phase ?? null,
     kept?.code ?? null, kept?.observedAt ?? null, kept?.retryAt ?? null, now, record.messageId);
     this.audit(actor, "message.state", record.toNode, { messageId: record.messageId, state, reason, ...(kept ? { progress: kept } : {}) });
+    storeDiagnostic(this.sql, record.messageId, state === "accepted" ? diagnostic : undefined);
     this.retention.finalized(record.messageId, record.fromNode, state, now);
     if (record.fromNode !== OPERATOR_NODE_ID) {
-      const body = statusBody(record.messageId, state, reason, kept);
+      const body = statusBody(record.messageId, state, reason, kept, state === "accepted" ? diagnostic : undefined);
       effects.statuses.push({ nodeId: record.fromNode, body: this.statusFor(record.fromNode, body) });
     }
   }
 
-  private setProgress(record: MessageRecord, progress: MessageProgress, actor: string, now: number, effects: MessageEffects): void {
+  private setProgress(record: MessageRecord, progress: MessageProgress, actor: string, now: number, effects: MessageEffects, diagnostic?: MessageDiagnostic): void {
     this.sql.exec(`UPDATE messages SET progress_phase = ?, progress_code = ?, progress_observed_at = ?, progress_retry_at = ?,
       updated_at = ? WHERE id = ? AND state = 'accepted'`, progress.phase, progress.code, progress.observedAt,
     progress.retryAt ?? null, now, record.messageId);
+    storeDiagnostic(this.sql, record.messageId, diagnostic);
     this.audit(actor, "message.progress", record.toNode, { messageId: record.messageId, progress });
     if (record.fromNode !== OPERATOR_NODE_ID) {
-      const body = statusBody(record.messageId, "accepted", null, progress);
+      const body = statusBody(record.messageId, "accepted", null, progress, diagnostic);
       effects.statuses.push({ nodeId: record.fromNode, body: this.statusFor(record.fromNode, body) });
     }
   }

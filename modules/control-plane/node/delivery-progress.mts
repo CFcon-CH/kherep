@@ -1,3 +1,4 @@
+import { blockerDiagnostic, type MessageDiagnostic } from "../protocol-diagnostics.mts";
 import { boundRecordValid, messageOwnerMatches } from "./message-owner.mts";
 import fs from "node:fs";
 
@@ -20,15 +21,17 @@ const refsOf = (session: { sessionId: string; name?: string }): string[] =>
   session.name ? [session.sessionId, session.name] : [session.sessionId];
 
 export function progressRecords(paths: NodePaths, records: InboxRecord[], phase: Parameters<typeof setMessageProgress>[2],
-  code: Parameters<typeof setMessageProgress>[3], now: number, retryAt?: number): void {
-  for (const record of records) setMessageProgress(paths.inbox, record.messageId, phase, code, now, retryAt);
+  code: Parameters<typeof setMessageProgress>[3], now: number, retryAt?: number, diagnostic?: MessageDiagnostic): void {
+  for (const record of records) {
+    try { setMessageProgress(paths.inbox, record.messageId, phase, code, now, retryAt, diagnostic); } catch { /* Observational persistence cannot change admission. */ }
+  }
 }
 
 function observeAccepted(deps: RunnerDeps, session: LocalSession, accepted: InboxRecord[], now: number,
   requests: () => RequestIndex): void {
   if (accepted.length === 0) return;
   if (session.state !== "idle-loaded") {
-    progressRecords(deps.paths, accepted, "waiting", "target-busy", now);
+    progressRecords(deps.paths, accepted, "waiting", "target-busy", now, undefined, blockerDiagnostic("target-not-idle", now, "target-progress", session.state as MessageDiagnostic["observedState"]));
     return;
   }
   const refs = refsOf(session);
@@ -134,6 +137,6 @@ export function observeCodexTaskProgress(deps: RunnerDeps): void {
   for (const task of held) {
     const records = waiting.filter((record) => messageOwnerMatches(record, { sessionId: task.sessionId!, runtime: "codex" }, [task.sessionId!, task.name]));
     const code = task.operatorStoppedAt !== undefined ? "operator-stopped" : "target-busy";
-    progressRecords(deps.paths, records, "waiting", code, now);
+    progressRecords(deps.paths, records, "waiting", code, now, undefined, code === "target-busy" ? blockerDiagnostic("task-active", now) : undefined);
   }
 }

@@ -1,3 +1,4 @@
+import { blockerDiagnostic } from "../protocol-diagnostics.mts";
 import { automaticReplyDecision } from "./reply-admission.mts";
 import fs from "node:fs";
 
@@ -198,6 +199,7 @@ function queueFor(deps: RunnerDeps, sessionId: string, live: string[], selectInb
     const ticket = captureBusyHint(deps, sessionId, valid ? hintDue : due, now);
     if (!ticket) {
       progressRecords(paths, due, "waiting", "retry-pending", now);
+      progressRecords(paths, (valid ? hintDue : due).slice(0, 8), "waiting", "retry-pending", now, undefined, blockerDiagnostic("hint-capture-failed", now));
       return;
     }
     admission = { ticket, messageIds: ids(due), recovery: due.flatMap(record => recovery.has(record.messageId) ? [recovery.get(record.messageId)!] : []) };
@@ -227,6 +229,11 @@ function queueFor(deps: RunnerDeps, sessionId: string, live: string[], selectInb
       }
     }
     progressRecords(paths, due, "waiting", published ? "awaiting-user-turn" : "retry-pending", deps.now?.() ?? Date.now());
+    if (!published) {
+      const checked = new Set(admission.ticket.messages.map(message => message.messageId));
+      progressRecords(paths, due.filter(record => checked.has(record.messageId)).slice(0, 8), "waiting", "retry-pending", deps.now?.() ?? Date.now(), undefined,
+        blockerDiagnostic(result === "invalid" ? "hint-invalidated" : result === "busy" ? "hint-lock-busy" : "hint-storage-failed", deps.now?.() ?? Date.now()));
+    }
     if (published) decide(due, "wake");
     else if (result !== "invalid") log("kherep-node: Codex CP hint publication pending; inbox remains accepted");
   }).catch((error: unknown) => {

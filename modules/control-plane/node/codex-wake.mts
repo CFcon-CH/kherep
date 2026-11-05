@@ -1,3 +1,4 @@
+import { blockerDiagnostic, type BlockerCode } from "../protocol-diagnostics.mts";
 import { messageOwnerMatches } from "./message-owner.mts";
 import { automaticReplyDecision } from "./reply-admission.mts";
 import fs from "node:fs";
@@ -15,7 +16,7 @@ import { getMessage, markRefused as refuseRecord, markRetry, messageIds, type In
 import { wakeAllowed, wakeBudget } from "./policy.mts";
 import { notReadyNow } from "./runtime-readiness.mts";
 import type { RunnerDeps } from "./session-runner.mts";
-import { overLimit } from "./task-admission.mts";
+import { taskLimit } from "./task-admission.mts";
 import { isActive, listTasks, taskGrants, type TaskRecord } from "./task-records.mts";
 import { resolveCwd } from "./task-prompt.mts";
 import { killSwitch, STUCK_TEXT, wakeText } from "./wake-hook.mts";
@@ -107,8 +108,8 @@ async function wakeTask(deps: RunnerDeps, record: TaskRecord, log: (line: string
   const unlisted = all.filter((r) => !granted(r) && r.state === "accepted");
   // Every early return below leaves a fixed progress code on the waiting
   // messages, so none stays accepted without a reason (issue #197).
-  const explain = (records: InboxRecord[], code: MessageProgressCode): void =>
-    progressRecords(paths, records, code === "wake-failed" ? "failed" : "waiting", code, now);
+  const explain = (records: InboxRecord[], code: MessageProgressCode, detail?: BlockerCode): void =>
+    progressRecords(paths, records, code === "wake-failed" ? "failed" : "waiting", code, now, undefined, detail ? blockerDiagnostic(detail, now) : undefined);
   if (unlisted.length > 0) {
     explain(unlisted, "wake-not-authorized");
     note(paths, now, sessionId, ids(unlisted), "not-allowlisted");
@@ -143,7 +144,8 @@ async function wakeTask(deps: RunnerDeps, record: TaskRecord, log: (line: string
     explain(waiting, "permission-restricted");
     return note(paths, now, sessionId, due, "permission-mode");
   }
-  if (overLimit(deps, now, record.taskId)) return explain(waiting, "retry-pending");
+  const limit = taskLimit(deps, now, record.taskId);
+  if (limit) return explain(waiting, "retry-pending", limit.code);
   // The turn is taken before deliveryContext because that marks the messages
   // offered: a turn denied afterwards (spacing) would count an offer for
   // nothing and refuse the message after MAX_OFFERS rounds. With due messages
@@ -163,18 +165,18 @@ async function wakeTask(deps: RunnerDeps, record: TaskRecord, log: (line: string
   // The previous run may still be ending (a stop's grace period); a failed read throws.
   // Issue #473: read after the guards that start no process, before the
   // readiness verdict that refuses and the turn that counts against the budget.
-  if (await stillRuns(deps.codex ?? {}, record.pid, record.pidStart)) return explain(waiting, "target-busy");
+  if (await stillRuns(deps.codex ?? {}, record.pid, record.pidStart)) return explain(waiting, "target-busy", "process-still-running");
   // Issue #197: a Codex that cannot run a turn gets no resume; the messages are
   // refused with a fixed reason. A pending probe keeps them waiting.
   const blocked = notReadyNow(deps.readiness, "codex");
-  if (blocked === "pending") return explain(waiting, "retry-pending");
+  if (blocked === "pending") return explain(waiting, "retry-pending", "runtime-pending");
   if (blocked) {
     for (const r of waiting) markRefused(paths.inbox, r.messageId, blocked);
     return note(paths, now, sessionId, due, "runtime-not-ready");
   }
   if (livenessAdmission(paths, target, "wake", deps.now?.() ?? Date.now(), generation, deps.livenessAuthority) === null) return explain(waiting, "awaiting-user-turn");
   const budget = takeTurn(paths, sessionId, now, wakeBudget(policy));
-  if (budget === "spacing" || budget === "locked") return explain(waiting, "retry-pending");
+  if (budget === "spacing" || budget === "locked") return explain(waiting, "retry-pending", budget === "spacing" ? "turn-spacing" : "budget-storage-unavailable");
   if (budget === "exhausted") {
     explain(waiting, "budget-exhausted");
     return note(paths, now, sessionId, due, "budget");

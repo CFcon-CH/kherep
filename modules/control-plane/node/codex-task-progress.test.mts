@@ -9,7 +9,7 @@ import { takeTurn, TURN_SPACING_MS, TURNS_PER_HOUR } from "./autonomy.mts";
 import { codexNode, THREAD, waitFor } from "./codex-fixture.mts";
 import { pollCodexInbound } from "./codex-wake.mts";
 import { observeCodexTaskProgress } from "./delivery-progress.mts";
-import { getMessage, getMessageProgress, markClosedAttempt, setMessageProgress, storeMessage } from "./inbox.mts";
+import { getMessage, getMessageDiagnostic, getMessageProgress, markClosedAttempt, setMessageProgress, storeMessage } from "./inbox.mts";
 import { taskId, taskNode, T0 } from "./task-fixture.mts";
 import { writeTask, type TaskRecord } from "./task-records.mts";
 import { fixtureEvidence, publishSynthetic } from "./session-authority-fixture.mts";
@@ -60,6 +60,7 @@ test("a busy or operator-stopped Codex task explains its waiting messages withou
   observeCodexTaskProgress(node.deps());
   assert.equal(code(node, ids.quiet), undefined, "an ended task is left to the wake path");
   assert.equal(code(node, ids.busy), "target-busy");
+  assert.equal((getMessageDiagnostic(node.paths.inbox, ids.busy) as { code?: string })?.code, "task-active");
   assert.equal(code(node, ids.resuming), "target-busy");
   assert.equal(code(node, ids.stopped), "operator-stopped");
   assert.equal(code(node, ids.handedOver), "fallback-running");
@@ -130,3 +131,26 @@ test("a resumed Codex task run reads as running until its turn confirms delivery
   assert.equal(code(node, waiting), "target-busy");
   assert.equal(code(node, carried), "awaiting-turn-confirmation", "the carried message keeps running");
 });
+
+for (const cause of ["task-concurrency", "runtime-pending", "turn-spacing", "budget-storage-unavailable", "process-still-running"] as const) {
+  test(`Codex wake derives ${cause} without an offer, new process or extra budget debit`, async t => {
+    const { createReadiness } = await import("./runtime-readiness.mts");
+    const node = taskNode(t, { runtimes: ["codex"], maxConcurrent: 1 }), ended = task(node, cause === "process-still-running" ? { pid: process.pid, pidStart: "synthetic" } : {});
+    const target = { runtime: "codex", sessionId: ended.sessionId! };
+    publishSynthetic(node.paths, [fixtureEvidence(target, "idle-loaded", T0)], T0, [{ ...target, state: "idle-loaded" }], node.livenessAuthority);
+    const id = message(node, ended.name, { taskId: ended.taskId }), deps = node.deps();
+    if (cause === "task-concurrency") task(node, { state: "running" }, 2);
+    if (cause === "runtime-pending") deps.readiness = createReadiness(async () => ({ ready: false, cause: "timeout" }), { now: () => T0 });
+    if (cause === "turn-spacing") assert.equal(takeTurn(node.paths, ended.sessionId!, T0 - 1), "ok");
+    if (cause === "budget-storage-unavailable") {
+      fs.mkdirSync(path.join(node.paths.dir, "listeners"), { recursive: true });
+      fs.writeFileSync(path.join(node.paths.dir, "listeners", `${ended.sessionId}.turns.json.lock`), "held");
+    }
+    deps.codex = { processStart: async () => "synthetic", findCodex: () => null };
+    await pollCodexInbound(deps);
+    assert.equal((getMessageDiagnostic(node.paths.inbox, id) as { code?: string })?.code, cause);
+    assert.equal(getMessage(node.paths.inbox, id)?.state, "accepted");
+    assert.equal(getMessage(node.paths.inbox, id)?.offers, undefined);
+    assert.equal(node.calls.length, 0);
+  });
+}

@@ -23,15 +23,17 @@ export function refuse(deps: RunnerDeps, taskId: string, reason: string): never 
 }
 
 // The reason a start (or, with except, a continue) exceeds a limit, or null.
-export function overLimit(deps: RunnerDeps, now: number, except?: string): string | null {
+export function taskLimit(deps: RunnerDeps, now: number, except?: string): { reason: string; code: "task-concurrency" | "task-starts-daily" } | null {
   const policy = deps.policy.sessions!;
   const tasks = listTasks(deps.paths).filter((t) => t.taskId !== except);
-  if (tasks.filter(isActive).length >= policy.maxConcurrent) return `this node runs at most ${policy.maxConcurrent} task sessions at a time`;
+  if (tasks.filter(isActive).length >= policy.maxConcurrent) return { reason: `this node runs at most ${policy.maxConcurrent} task sessions at a time`, code: "task-concurrency" };
   if (except === undefined && tasks.filter((t) => now - Date.parse(t.startedAt) < DAY_MS).length >= policy.maxStartsPerDay) {
-    return `this node starts at most ${policy.maxStartsPerDay} task sessions per day`;
+    return { reason: `this node starts at most ${policy.maxStartsPerDay} task sessions per day`, code: "task-starts-daily" };
   }
   return null;
 }
+
+export const overLimit = (deps: RunnerDeps, now: number, except?: string): string | null => taskLimit(deps, now, except)?.reason ?? null;
 
 export interface Admitted { record: TaskRecord; prompt: string }
 

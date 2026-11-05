@@ -251,7 +251,7 @@ export function pollExchange(client: NodeClient, paths: NodePaths, inflight: Map
   schedule.reports.retain(pending.map(reportKey));
   for (const record of pending) {
     const key = reportKey(record);
-    if (schedule.reports.due(key, now) && sendAll(client.reportStatus(record.messageId, record.state, record.reason, record.progress))) {
+    if (schedule.reports.due(key, now) && sendAll(client.reportStatus(record.messageId, record.state, record.reason, record.progress, record.diagnostic))) {
       schedule.reports.sent(key, now, random);
       counts.status++;
     }

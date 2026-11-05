@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
@@ -9,7 +10,7 @@ import { codexQueueIdle, guardQueue, pollCodexQueue, queueArgs } from "./codex-q
 import { codexSessionName, legacyCodexSessionName, readCodexSession, recordCodexSession } from "./codex-sessions.mts";
 import { deliverForCodex } from "./deliver-codex.mts";
 import { writeLocalSessions } from "./exchange.mts";
-import { getMessage, getMessageProgress, markOffered, storeMessage } from "./inbox.mts";
+import { getMessage, getMessageDiagnostic, getMessageProgress, markOffered, storeMessage } from "./inbox.mts";
 import { T0, TASK } from "./task-fixture.mts";
 import { writeTask } from "./task-records.mts";
 
@@ -232,4 +233,28 @@ test("CP-only admission returns at once without a native executable or turn budg
   await poll(node);
   assert.notEqual(generation(node, HANG), initial, "later CP admission uses fresh guards");
   assert.equal(fs.existsSync(path.join(listenerDir(node.paths), `${HANG}.turns.json`)), false);
+});
+
+for (const cause of ["capture", "invalid", "busy", "storage"] as const) test(`real CP hint ${cause} failure diagnoses only the eight checked members`, async t => {
+  const node = wakeNode(t), members = Array.from({ length: 10 }, () => deliver(node, "synthetic hint member"));
+  fs.mkdirSync(listenerDir(node.paths), { recursive: true });
+  if (cause === "capture") {
+    const original = crypto.randomUUID.bind(crypto); let first = true;
+    t.mock.method(crypto, "randomUUID", () => { if (first) { first = false; throw new Error("synthetic entropy unavailable"); } return original(); });
+  }
+  if (cause === "busy") fs.writeFileSync(path.join(listenerDir(node.paths), `${SID}.busy-hint.json.lock`), "held");
+  if (cause === "storage") fs.mkdirSync(path.join(listenerDir(node.paths), `${SID}.busy-hint.json`));
+  pollCodexQueue(node.deps());
+  if (cause === "invalid") {
+    const policy = JSON.parse(fs.readFileSync(node.paths.policy, "utf8"));
+    policy.wake.enabled = false; fs.writeFileSync(node.paths.policy, JSON.stringify(policy));
+  }
+  await codexQueueIdle();
+  const codes = { capture: "hint-capture-failed", invalid: "hint-invalidated", busy: "hint-lock-busy", storage: "hint-storage-failed" };
+  for (const [i, id] of members.entries()) {
+    const detail = getMessageDiagnostic(node.paths.inbox, id);
+    assert.equal(detail?.kind === "blocker" ? detail.code : undefined, i < 8 ? codes[cause] : undefined);
+    assert.equal(getMessage(node.paths.inbox, id)?.state, "accepted");
+  }
+  assert.deepEqual(node.runs(), []);
 });

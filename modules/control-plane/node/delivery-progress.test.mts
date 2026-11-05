@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
 import test from "node:test";
 
 import { listenerDir, listenerLock, listenerScope } from "./autonomy.mts";
@@ -67,6 +69,7 @@ test("Claude progress distinguishes busy, offered, and task-granted sessions", (
   const busyId = deliver(busy, "working");
   observeClaudeDeliveryProgress(busy.deps());
   assert.equal(code(busy, busyId), "target-busy");
+  assert.equal(JSON.parse(fs.readFileSync(path.join(busy.paths.inbox, "progress", `${busyId}.json`), "utf8")).diagnostic?.code, "target-not-idle");
 
   const offered = taskNode(t, {}, { wake: { enabled: true, sessions: ["another-session"] } });
   const offeredId = deliver(offered);

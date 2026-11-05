@@ -1,3 +1,4 @@
+import { isMessageDiagnostic, type MessageDiagnostic } from "../protocol-diagnostics.mts";
 import { readInboxRecord, inboxRecordIds, recordWriteLocation } from "./inbox-storage.mts";
 import { isDeliveryBinding, stableBinding, type MessageBinding } from "../protocol-message-binding.mts";
 import { boundRecordValid, mayRetarget } from "./message-owner.mts";
@@ -193,27 +194,38 @@ export function getReceipt(dir: string, messageId: string): ReceiptRecord | null
 export function getMessageProgress(dir: string, messageId: string): MessageProgress | null {
   if (!isMessageId(messageId)) return null;
   const value = readJson<unknown>(progressFileOf(dir, messageId));
-  return isMessageProgress(value) ? value : null;
+  if (!value || typeof value !== "object") return null;
+  const { diagnostic: _diagnostic, ...progress } = value as Record<string, unknown>;
+  return isMessageProgress(progress) ? progress : null;
+}
+
+export function getMessageDiagnostic(dir: string, messageId: string): MessageDiagnostic | null {
+  const record = getMessage(dir, messageId);
+  if (!record || record.state !== "accepted" && record.state !== "offered") return null;
+  const value = readJson<{ diagnostic?: unknown }>(progressFileOf(dir, messageId))?.diagnostic;
+  return isMessageDiagnostic(value) ? value : null;
 }
 
 // Progress is daemon-owned metadata in a sidecar. Delivery hooks keep sole
 // ownership of the message body file, so a stale progress writer cannot
 // restore accepted over a newer offered or delivered state.
 export function setMessageProgress(dir: string, messageId: string, phase: MessageProgress["phase"], code: MessageProgress["code"],
-  now: number = Date.now(), retryAt?: number): MessageProgress | null {
+  now: number = Date.now(), retryAt?: number, diagnostic?: MessageDiagnostic): MessageProgress | null {
   const record = getMessage(dir, messageId);
   if (!record || (record.state !== "accepted" && record.state !== "offered")) return null;
   const previous = getMessageProgress(dir, messageId);
   const previousAt = Date.parse(previous?.observedAt ?? "");
   const requestedRetryAt = retryAt === undefined ? undefined
     : new Date(Math.max(retryAt, now, Number.isNaN(previousAt) ? now : previousAt)).toISOString();
-  if (previous?.phase === phase && previous.code === code && previous.retryAt === requestedRetryAt) return previous;
+  const priorDetail = getMessageDiagnostic(dir, messageId);
+  const detailKey = (d: MessageDiagnostic | null | undefined): string => JSON.stringify(d ? { ...d, observedAt: "" } : null);
+  if (previous?.phase === phase && previous.code === code && previous.retryAt === requestedRetryAt && detailKey(priorDetail) === detailKey(diagnostic)) return previous;
   const observedMs = Math.max(now, Number.isNaN(previousAt) ? now : previousAt + 1);
   const observedAt = new Date(observedMs).toISOString();
   const nextRetryAt = retryAt === undefined ? undefined : new Date(Math.max(retryAt, observedMs)).toISOString();
   const progress: MessageProgress = { phase, code, observedAt, ...(nextRetryAt ? { retryAt: nextRetryAt } : {}) };
   ensureDir(path.dirname(progressFileOf(dir, messageId)));
-  writeJsonAtomic(progressFileOf(dir, messageId), progress);
+  writeJsonAtomic(progressFileOf(dir, messageId), { ...progress, ...(diagnostic ? { diagnostic: { ...diagnostic, observedAt } } : {}) });
   return progress;
 }
 
@@ -341,7 +353,7 @@ function reportState(record: InboxRecord): ReportedState | null {
 
 // records and receiptOf: the daemon's index (inbox-index.mts, issue #487)
 // supplies both; every other caller reads the files.
-export type UnreportedStatus = InboxRecord & { state: ReportedState; progress?: MessageProgress };
+export type UnreportedStatus = InboxRecord & { state: ReportedState; progress?: MessageProgress; diagnostic?: MessageDiagnostic };
 export function unreportedStatuses(dir: string, now: number = Date.now(), records: InboxRecord[] = listInbox(dir),
   receiptOf: (record: InboxRecord) => ReceiptRecord | null = (record) => getReceipt(dir, record.messageId)): UnreportedStatus[] {
   return records.flatMap((record) => {
@@ -354,7 +366,7 @@ export function unreportedStatuses(dir: string, now: number = Date.now(), record
     const progressPending = progress !== null
       && (Number.isNaN(reportedProgressAt) || reportedProgressAt < Date.parse(progress.observedAt))
       && now >= Date.parse(receipt?.progressRetryAt ?? new Date(0).toISOString());
-    return statePending || progressPending ? [{ ...record, state, ...(progress ? { progress } : {}) }] : [];
+    return statePending || progressPending ? [{ ...record, state, ...(progress ? { progress } : {}), ...(getMessageDiagnostic(dir, record.messageId) ? { diagnostic: getMessageDiagnostic(dir, record.messageId)! } : {}) }] : [];
   });
 }
 
