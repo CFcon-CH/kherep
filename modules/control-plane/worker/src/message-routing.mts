@@ -3,7 +3,8 @@ import type { MessageEffects } from "./message-store.mts";
 
 // The node the caller already holds a socket for. Frames for it go out on
 // that socket instead of through a call back into the same object.
-export interface LocalNode { nodeId: string; send(type: "message.deliver" | "message.status", body: Record<string, unknown>): void }
+export interface LocalNode { nodeId: string; send(type: "message.deliver" | "message.status", body: Record<string, unknown>): void;
+  scheduleRetry?(): Promise<void> }
 
 // Pushes the frames a Registry message call produced to the nodes concerned.
 // A node that is not connected gets nothing now: queued messages are flushed
@@ -16,6 +17,7 @@ export async function routeEffects(env: Env, effects: MessageEffects, local?: Lo
   for (const frame of frames) {
     if (frame.type === "message.deliver") {
       if (local?.nodeId === frame.nodeId) {
+        await local.scheduleRetry?.();
         const body = await registryStub(env).prepareMessageDelivery(String(frame.body.messageId), phase);
         if (body) local.send("message.deliver", { ...body });
       } else await sessionStub(env, frame.nodeId).pushFrame(frame.type, frame.body);

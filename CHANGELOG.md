@@ -31,6 +31,11 @@ increments the minor version; every other release increments the patch version.
 
 ### Fixed
 
+- Intercom retries queued acceptance on the same authenticated socket within
+  60 seconds, retaining lease, owner, registration and loop checks. The alarm
+  always re-arms after retry failure and returns to its normal cadence when
+  drained. Retries cannot change an already emitted owner binding (#706).
+
 - Coverage assembly attributes explicitly declared identical test copies to their
   original source by exact URL and SHA-256, preserving real hits and uncovered
   branches. The first adopter is the Codex shell dispatcher suite. Parser-proven
