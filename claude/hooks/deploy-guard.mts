@@ -1,18 +1,11 @@
 #!/usr/bin/env node
 // PreToolUse hook: blocks risky production deploys without explicit user confirmation.
-// Triggers on:
-//   - forge deploy --environment production / -e production
-//   - npm/pnpm/yarn production-deploy wrappers (for example deploy:jira:prod)
-//   - forge install on any named site
-//   - git force-push (--force / -f / --force-with-lease / +refspec)
-//   - kubectl apply (mutates the live cluster)
-//   - destructive kubectl verbs: delete, drain, cordon, uncordon, taint,
-//     replace, edit, patch, rollout undo (OP-1045; rollout restart stays allowed)
-//   - kubectl scale
-//   - destructive helm verbs: uninstall, delete, rollback (upgrade/install stay allowed)
+// Covers Forge production deploys and package wrappers, named-site installs,
+// force-pushes, kubectl apply/scale/destructive verbs and destructive Helm verbs.
 // Rationale: CLAUDE.md (project-level) requires dev-deploy-first + explicit user OK for prod.
 
 import fs from 'node:fs';
+import path from 'node:path';
 import { forcePushVerdict, legacyForcePush } from './lib/git-push-match.mts';
 import {
   forgeDeployVerdict, forgeInstallVerdict, forgeTunnelVerdict, legacyForgeDeploy, legacyForgeInstall, legacyForgeTunnel,
@@ -33,24 +26,51 @@ function read(stream: NodeJS.ReadableStream): Promise<string> {
   });
 }
 
+// The executed installation, never an event field or environment override,
+// supplies the projects root. This does not authenticate a native session.
+function transcriptLines(transcriptPath: unknown): string[] {
+  if (typeof transcriptPath !== 'string' || !path.isAbsolute(transcriptPath) || transcriptPath.includes('\0')) return [];
+  try {
+    const hooks = fs.realpathSync.native(import.meta.dirname);
+    if (path.basename(hooks) !== 'hooks') return [];
+    const projects = path.join(path.dirname(hooks), 'projects');
+    if (fs.realpathSync.native(projects) !== projects || !fs.statSync(projects).isDirectory()) return [];
+    const file = fs.realpathSync.native(transcriptPath);
+    const relative = path.relative(projects, file);
+    if (!relative || relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) return [];
+    const before = fs.lstatSync(transcriptPath);
+    if (!before.isFile()) return [];
+    const fd = fs.openSync(file, 'r');
+    try {
+      const opened = fs.fstatSync(fd);
+      if (!opened.isFile() || opened.dev !== before.dev || opened.ino !== before.ino) return [];
+      return fs.readFileSync(fd, 'utf8').split(/\r?\n/).filter(Boolean);
+    } finally { fs.closeSync(fd); }
+  } catch { return []; }
+}
+
+function humanText(text: string): string {
+  // Public deliver-core markers also survive the task-admission/session-runner
+  // wrappers. A peer row ends the search; it must not revive older approval.
+  return /=== Kherep peer message |--- (?:end of )?message text \[|^(?:Task |Follow-up for task ).*via the Kherep Control Plane/m.test(text) ? '' : text;
+}
+
 function lastUserText(transcriptPath: unknown): string {
-  if (!transcriptPath) return '';
-  let lines: string[];
-  try { lines = fs.readFileSync(transcriptPath as string, 'utf8').split(/\r?\n/).filter(Boolean); }
-  catch { return ''; }
+  const lines = transcriptLines(transcriptPath);
   for (let i = lines.length - 1; i >= 0; i--) {
     let row: { message?: { role?: unknown; content?: unknown } } | null;
     try { row = JSON.parse(lines[i]); } catch { continue; }
     const message = row && row.message;
     if (!message || message.role !== 'user') continue;
-    if (typeof message.content === 'string') return message.content;
+    if (typeof message.content === 'string') return humanText(message.content);
     if (Array.isArray(message.content)) {
       const text = message.content
         .filter((block: { type?: unknown; text?: unknown } | null) => block && block.type === 'text' && typeof block.text === 'string')
         .map((block: { text: string }) => block.text)
         .join('\n');
-      if (text) return text;
+      if (text) return humanText(text);
     }
+    return '';
   }
   return '';
 }
