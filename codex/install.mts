@@ -59,7 +59,7 @@ export { ATLASSIAN_MCP_SERVER };
 const RETIRED_MCP_SERVERS = ["claude-baton"];
 const SHARED_HOOKS = [
   "commit-guard.mts", "deploy-guard.mts", "playwright-file-guard.mts", "main-checkout-guard.mts",
-  "atlassian-destructive-guard.mts",
+  "module-label-guard.mts", "atlassian-destructive-guard.mts",
   "manifest-watch.mts", "loc-watch.mts", "umlaut-translit-watch.mts", "simplify-nudge.mts",
 ];
 

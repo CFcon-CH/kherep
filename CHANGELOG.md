@@ -9,6 +9,19 @@ increments the minor version; every other release increments the patch version.
 
 ## [Unreleased]
 
+### Added
+
+- Module labels are checked where issues and pull requests are created. The new
+  `module-label-guard` (Claude and the Codex shell dispatcher) blocks `gh issue
+  create` and `gh pr create` without a module label in a repository that committed
+  `.github/module-labels.json`, and when that file is invalid; a repository without
+  the file has no rule. It also recognises the alias `new`, flags before the
+  subcommand, and `env` or `command` in front of `gh`. `--web`, `--help` and a visible
+  `KHEREP_MODULE_LABEL=none` pass. The GitHub broker accepts `labels` on `issue.create` and verifies them on
+  readback; a repository entry with `moduleLabels` in `policy.json` refuses a create
+  without a listed label with the new `label-required`. A module label `github-broker`
+  joins the CONTRIBUTING.md table (#833).
+
 ### Fixed
 
 - Control Plane Worker: preserve reply admission across validated guarded-parent

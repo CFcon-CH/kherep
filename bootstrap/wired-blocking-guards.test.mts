@@ -160,6 +160,11 @@ for (const args of [["init", "-q", "-b", "main"], ["commit", "-q", "--allow-empt
     "-c", "user.email=synthetic@example.com", ...args], { cwd: MAIN_CHECKOUT, encoding: "utf8" });
   assert.equal(result.status, 0, `git ${args.join(" ")}: ${result.stderr}`);
 }
+// Issue #833. A repository that opted in to the module label rule.
+const LABELLED = path.join(WORKSPACE, "labelled");
+fs.mkdirSync(path.join(LABELLED, ".github"), { recursive: true });
+fs.mkdirSync(path.join(LABELLED, ".git"));
+fs.writeFileSync(path.join(LABELLED, ".github", "module-labels.json"), JSON.stringify({ version: 1, repository: "example/project", labels: ["area"] }));
 // Synthetic private markers, assembled so this file itself carries none.
 const PRIVATE_FILE = `D:/Work-${"credentials"}/fixture.env`;
 const PRIVATE_TAG = `<${"private"}>synthetic</${"private"}>`;
@@ -171,6 +176,9 @@ const PRETOOL_GUARDS: { hook: string; matcher: string; mode: Mode; blocking: Too
   { hook: "main-checkout-guard.mts", matcher: "Bash|PowerShell", mode: "exit2",
     blocking: [bash(`git -C "${MAIN_CHECKOUT}" switch feat`), bash(`git -C "${MAIN_CHECKOUT}" checkout -b feat`, "PowerShell")],
     benign: bash(`git -C "${MAIN_CHECKOUT}" switch main`) },
+  { hook: "module-label-guard.mts", matcher: "Bash|PowerShell", mode: "exit2",
+    blocking: [bash(`cd "${LABELLED}" && gh issue create -t x`), bash(`cd "${LABELLED}"; gh pr create --fill`, "PowerShell")],
+    benign: bash(`cd "${LABELLED}" && gh issue create -t x --label area`) },
   { hook: "secret-output-guard.mts", matcher: "", mode: "exit2",
     blocking: [bash("printenv"), bash("Get-ChildItem Env:", "PowerShell")], benign: bash("git status") },
   { hook: "privacy-boundary-guard.mts", matcher: "", mode: "deny",

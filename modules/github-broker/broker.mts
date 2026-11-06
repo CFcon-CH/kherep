@@ -15,6 +15,7 @@ export async function execute(runtime:Runtime, text:string, deps:Dependencies={}
   try {
     const request=parseRequest(text), isVerify=request.operation==='verify', root=deps.root??canonicalRoot();
     const identity=await loadPolicy(root,runtime,request), repo=identity.repositories.find(r=>r.slug===request.repository)!;
+    if(request.operation==='issue.create'&&repo.moduleLabels&&!request.labels?.some(l=>repo.moduleLabels!.includes(l))) fail('label-required');
     const store=new ReceiptStore(root,runtime,identity.appId,repo.slug,request.operationId,!isVerify);
     if(!isVerify) release=store.acquire();
     receipt=store.read();

@@ -23,7 +23,7 @@ flowchart LR
 ```
 
 `contract.mts` owns strict input and fixed errors; `config.mts` selects canonical
-policy and validates runtime/repository scope. `key-access.mts` composes the metadata-only `windows-access.mts` gate and refuses unsafe
+policy and validates runtime/repository scope, including a repository's optional `moduleLabels`, which `broker.mts` enforces on `issue.create` before reading a key. `key-access.mts` composes the metadata-only `windows-access.mts` gate and refuses unsafe
 selected files. The Windows gate's per-level decision is one PowerShell function inside the constant script, so tests can evaluate real descriptors. `auth.mts` signs, constrains installation authentication and validates the public bot numeric ID before mutation. Canonical policy is fixed under the OS-account home, independently of runtime homes and environment selectors.
 `transport.mts` alone constructs fixed GitHub requests. `issues.mts` projects
 payloads and checks targets, fields and bot authors. `receipt.mts` owns atomic

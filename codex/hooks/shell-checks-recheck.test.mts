@@ -19,7 +19,7 @@ import { ADAPTER_MODULES } from "./hook-adapter.fixture.mts";
 const MIN = 60_000;
 const REPO = path.resolve(import.meta.dirname, "..", "..");
 const PAYLOAD = JSON.stringify({ hook_event_name: "PreToolUse", tool_name: "shell_command", tool_input: { command: "git status ü" } });
-const GUARDS = ["commit-guard", "deploy-guard", "main-checkout-guard"];
+const GUARDS = ["commit-guard", "deploy-guard", "main-checkout-guard", "module-label-guard"];
 const BROKEN = "export const broken = ;\n";
 // One source literal: the test parses it as data, the fake integrity hook embeds it as code.
 const PEERS_SOURCE = '["codex-hook-adapter.mts", "hook-adapter.mts", "codex-shell-checks.mts"]';

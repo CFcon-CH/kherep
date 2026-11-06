@@ -49,7 +49,7 @@ function installed(t: TestContext, linked = false): { root: string; dir: string;
   fs.copyFileSync(path.join(import.meta.dirname, "shell-checks.mts"), path.join(dir, "codex-shell-checks.mts"));
   fs.copyFileSync(path.join(REPO, "claude", "hooks", "lib", "guard-recheck.mts"), path.join(dir, "lib", "guard-recheck.mts"));
   const guards = { "commit-guard.mts": "process.exit(1);\n", "deploy-guard.mts": "process.exit(0);\n",
-    "main-checkout-guard.mts": "process.exit(0);\n", "empty.mts": "", "quiet.mts": "process.exit(2);\n" };
+    "main-checkout-guard.mts": "process.exit(0);\n", "module-label-guard.mts": "process.exit(0);\n", "empty.mts": "", "quiet.mts": "process.exit(2);\n" };
   for (const [name, body] of Object.entries(guards)) fs.writeFileSync(path.join(dir, name), body);
   if (!linked) return { root, dir, via: dir };
   const link = path.join(fs.realpathSync(os.tmpdir()), `kherep-adapter-labels-link-${process.pid}-${path.basename(root)}`);

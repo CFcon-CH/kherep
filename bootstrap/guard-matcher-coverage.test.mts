@@ -106,6 +106,16 @@ test("main-checkout-guard.mts covers Bash and PowerShell in a group of its own",
     ["guard-dispatch.mts", "commit-guard.mts", "deploy-guard.mts"]);
 });
 
+// Issue #833. A further command of the shell tools; the group of #325 fits it, so
+// no new group is added and no matcher changes.
+test("module-label-guard.mts runs in the main-checkout group", () => {
+  assert.equal(templateMatcher("PreToolUse", "module-label-guard.mts"), templateMatcher("PreToolUse", "main-checkout-guard.mts"));
+  const group = template.hooks.PreToolUse!.filter((entry) => entry.matcher === "Bash|PowerShell");
+  assert.equal(group.length, 1);
+  assert.deepEqual(group[0]!.hooks!.flatMap((entry) => hookFiles(entry.command)),
+    ["guard-dispatch.mts", "main-checkout-guard.mts", "module-label-guard.mts"]);
+});
+
 test("no template entry wires a .js script", () => {
   const files = Object.values(template.hooks).flat().flatMap((group) => group.hooks ?? []).flatMap((h) => hookFiles(h.command));
   assert.deepEqual(files.filter((file) => file.endsWith(".js")), []);

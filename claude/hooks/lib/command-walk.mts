@@ -7,13 +7,15 @@ import { joinPathLike, normalizePathLike } from "./workspace-scope.mts";
 
 // One command of the line: its name (lower case, without a directory or .exe),
 // its arguments, the directory it runs in and its text from the name on.
-// escaped: the caller's escape marker covers it.
+// escaped: the caller's escape marker covers it. assignments: the NAME=value
+// tokens in front of the name, as written.
 export interface Segment {
   name: string;
   args: string[];
   dir: string;
   text: string;
   escaped: boolean;
+  assignments: string[];
 }
 
 // An inline marker sits among the assignments that start a segment; the
@@ -24,7 +26,7 @@ export interface EscapeMarker {
 }
 
 const SEPARATORS = new Set([";", "&", "|", "\n", "\r", "(", ")"]);
-const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
+export const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
 export const CHANGE_DIR = new Set(["cd", "chdir", "pushd", "set-location", "sl", "push-location"]);
 export const SHELLS = new Set(["bash", "sh", "zsh", "dash", "pwsh", "powershell"]);
 export const SHELL_SCRIPT_FLAG = /^-(?:[A-Za-z]*c|command)$/i;
@@ -112,7 +114,7 @@ export function resolveDir(dir: string, value: string): string {
   return resolved.length > 4096 ? dir : resolved;
 }
 
-function commandName(token: string | undefined): string {
+export function commandName(token: string | undefined): string {
   return (token ?? "").split(/[\\/]/).pop()!.toLowerCase().replace(/\.exe$/, "");
 }
 
@@ -149,7 +151,7 @@ export function commandSegments(command: string, cwd: string, marker?: EscapeMar
       const flag = args.findIndex((arg) => SHELL_SCRIPT_FLAG.test(arg));
       if (flag >= 0 && args[flag + 1] !== undefined) found.push(...commandSegments(args[flag + 1]!, dir, marker, escaped));
     } else if (name) {
-      found.push({ name, args, dir, text: tokens.slice(i).join(" "), escaped });
+      found.push({ name, args, dir, text: tokens.slice(i).join(" "), escaped, assignments: tokens.slice(0, i) });
     }
   }
   return found;

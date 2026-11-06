@@ -118,7 +118,7 @@ test("an upgrade from direct guard entries leaves each guard in one dispatcher e
   const upgraded = JSON.parse(fs.readFileSync(path.join(dir, "upgraded.json"), "utf8")) as Settings;
   const commands = upgraded.hooks!.PreToolUse!.flatMap((group) => (group.hooks ?? []).map((hook) => String(hook.command)));
   const guards = ["privacy-boundary-guard", "secret-output-guard", "playwright-file-guard", "dispatch-contract-guard",
-    "commit-guard", "deploy-guard", "main-checkout-guard", "atlassian-destructive-guard", "obs-handback-gate"];
+    "commit-guard", "deploy-guard", "main-checkout-guard", "module-label-guard", "atlassian-destructive-guard", "obs-handback-gate"];
   for (const guard of guards) {
     const wiring = commands.filter((command) => command.includes(`/hooks/${guard}.mts`));
     assert.equal(wiring.length, 1, `${guard} is wired once: ${JSON.stringify(wiring)}`);

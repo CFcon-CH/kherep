@@ -121,7 +121,7 @@ Keep changes focused and preserve unrelated work. Include the problem, resulting
 
 Track changes to Kherep in the repository's GitHub Issues. Open or reference an issue before a non-trivial change and close it from the pull request with `Closes #<number>`. Typo and documentation fixes can go straight to a pull request. Commits and branch names in this repository carry no external tracker keys.
 
-Give every issue and every pull request at least one module label when you open it, so the work can be reported per module. Use several when a change spans modules:
+Give every issue and every pull request at least one module label when you open it, so the work can be reported per module. Use several when a change spans modules. `module-label-guard` and the GitHub broker check this at creation; `.github/module-labels.json` is the list they read and must name the same labels as this table:
 
 | Label | Area |
 | --- | --- |
@@ -139,6 +139,7 @@ Give every issue and every pull request at least one module label when you open 
 | `codex:install-parity` | Codex installer, parity projection, Codex lib and scripts |
 | `bootstrap` | Installers, drift check, manifests, transactions |
 | `atlassian-brokers` | Jira and Confluence brokers, the evidence verb, brain drainage |
+| `github-broker` | GitHub issue broker |
 | `local-inference`, `mcp-auth-bridge`, `twg` | The module of the same name |
 
 Add `flaky-test` to an intermittent or load-dependent test failure, and `documentation` to a change that touches only documentation. When you work on an existing issue without a module label, add one.

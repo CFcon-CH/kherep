@@ -8,7 +8,7 @@ import { test } from "node:test";
 import { withoutTypeStrippingWarning } from "../lib/node-warning-fixture.mts";
 import { copyAdapter } from "./hook-adapter.fixture.mts";
 
-const PROCESSES = 4; // the dispatcher and its three guards, each warning at most once
+const PROCESSES = 5; // the dispatcher and its four guards, each warning at most once
 
 // Issue #503. The shell dispatcher names the stable entry point as its
 // attribution argument. It runs every guard first, unchanged, then resolves the
@@ -16,7 +16,7 @@ const PROCESSES = 4; // the dispatcher and its three guards, each warning at mos
 // it already read. A missing pointer costs attribution only: one stderr line,
 // every guard ran, and the decision keeps its bytes.
 
-const GUARDS = ["commit-guard", "deploy-guard", "main-checkout-guard"];
+const GUARDS = ["commit-guard", "deploy-guard", "main-checkout-guard", "module-label-guard"];
 const PAYLOAD = { hook_event_name: "PreToolUse", session_id: "fixture-session", cwd: "/synthetic/cwd",
   tool_name: "shell_command", tool_input: { command: "git push origin main" } };
 
@@ -74,8 +74,8 @@ test("the shell dispatcher hands the full PreToolUse payload to the pointer's at
   assert.equal(withoutTypeStrippingWarning(r.stderr, PROCESSES), "");
   const rows = f.rows();
   assert.deepEqual(rows.map((row) => row.guard), [...GUARDS, "attribution"]);
-  assert.deepEqual(rows[3]!.payload, PAYLOAD);
-  assert.equal(rows[3]!.runtime, "codex");
+  assert.deepEqual(rows[4]!.payload, PAYLOAD);
+  assert.equal(rows[4]!.runtime, "codex");
 });
 
 for (const failure of ["missing pointer", "invalid pointer", "throwing entry point"]) {

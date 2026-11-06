@@ -14,7 +14,7 @@ import { ADAPTER_MODULES, copyAdapter } from "./hook-adapter.fixture.mts";
 
 const REPO = path.resolve(import.meta.dirname, "..", "..");
 const PAYLOAD = JSON.stringify({ hook_event_name: "PreToolUse", tool_name: "shell_command", tool_input: { command: "git status" } });
-const GUARDS = ["commit-guard", "deploy-guard", "main-checkout-guard"];
+const GUARDS = ["commit-guard", "deploy-guard", "main-checkout-guard", "module-label-guard"];
 const PEERS = ["codex-hook-adapter.mts", "hook-adapter.mts", "codex-shell-checks.mts"];
 const BROKEN = "export const broken = ;\n";
 // A fake integrity hook: restores every empty or BROKEN .mts from pristine/, records the peers, counts its runs.

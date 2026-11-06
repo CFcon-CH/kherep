@@ -9,17 +9,17 @@ import { run as codex } from './github-codex.mts';
 const pair=generateKeyPairSync('rsa',{modulusLength:2048});
 const key=pair.privateKey.export({type:'pkcs8',format:'pem'});
 const now=Date.now();
-function fixture(t: {after:(fn:()=>void)=>void}, selected:'claude'|'codex') {
+function fixture(t: {after:(fn:()=>void)=>void}, selected:'claude'|'codex', moduleLabels?:unknown) {
   const root=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'github-broker-functional-')));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
   fs.mkdirSync(path.join(root,'keys'),{mode:0o700});
-  const runtimes=Object.fromEntries(['claude','codex'].map((runtime,i)=>[runtime,{appId:11+i,clientId:`Iv.synthetic${i}`,botId:33+i,botLogin:`synthetic${i}[bot]`,installationId:44+i,keyRef:`synthetic${i}.pem`,operations:['issue.create','issue.comment','issue.update'],repositories:[{slug:'example/project',id:55}]}]));
+  const runtimes=Object.fromEntries(['claude','codex'].map((runtime,i)=>[runtime,{appId:11+i,clientId:`Iv.synthetic${i}`,botId:33+i,botLogin:`synthetic${i}[bot]`,installationId:44+i,keyRef:`synthetic${i}.pem`,operations:['issue.create','issue.comment','issue.update'],repositories:[{slug:'example/project',id:55,...(moduleLabels===undefined?{}:{moduleLabels})}]}]));
   const identity=runtimes[selected];fs.writeFileSync(path.join(root,'policy.json'),JSON.stringify({version:1,enabled:true,runtimes}),{mode:0o600});
   // Only selected key exists. A cross-runtime fallback cannot pass.
   fs.writeFileSync(path.join(root,'keys',identity.keyRef),key,{mode:0o600});
-  const issue={id:81,number:7,title:'Synthetic',body:'Body',state:'open',repository_url:'https://api.github.com/repos/example/project',user:{id:identity.botId,login:identity.botLogin,type:'Bot'}};
+  const issue:Record<string,unknown>={id:81,number:7,title:'Synthetic',body:'Body',state:'open',repository_url:'https://api.github.com/repos/example/project',user:{id:identity.botId,login:identity.botLogin,type:'Bot'}};
   const comment={id:82,body:'Body',issue_url:'https://api.github.com/repos/example/project/issues/7',user:issue.user};
   const calls:{method:string;url:string;body:unknown}[]=[];
-  const control={ambiguous:false,wrongActor:false,privateRepo:false,pr:false,readbackFail:false,scope:false,expired:false,suspended:false,wrongInstall:false,wrongRepo:false,wrongBot:false,wrongLogin:false,wrongType:false,wrongApp:false,wrongClient:false,wrongSlug:false,wrongTarget:false,wrongAssociation:false,wrongFields:false,installationOverride:0};
+  const control={ambiguous:false,wrongActor:false,privateRepo:false,pr:false,readbackFail:false,scope:false,expired:false,suspended:false,wrongInstall:false,wrongRepo:false,wrongBot:false,wrongLogin:false,wrongType:false,wrongApp:false,wrongClient:false,wrongSlug:false,wrongTarget:false,wrongAssociation:false,wrongFields:false,dropLabels:false,installationOverride:0};
   const fetcher:typeof fetch=async(url,init)=>{
     const endpoint=new URL(String(url)).pathname, method=init?.method??'GET', body=init?.body?JSON.parse(String(init.body)):undefined;
     calls.push({method,url:endpoint,body});assert.equal(new URL(String(url)).origin,'https://api.github.com');
@@ -37,6 +37,8 @@ function fixture(t: {after:(fn:()=>void)=>void}, selected:'claude'|'codex') {
     if(method==='POST'||method==='PATCH') {
       if(control.ambiguous) throw new Error('secret-canary');
       if(method==='PATCH') Object.assign(issue,body,{user:{id:999,login:'original-author',type:'User'}});
+      // GitHub answers with label objects, in its own order, and silently drops what the caller may not set.
+      if(body?.labels) issue.labels=control.dropLabels?[]:[...body.labels].reverse().map((name:string,i:number)=>({id:i+1,name,color:'ededed'}));
       return Response.json(endpoint.endsWith('/comments')?comment:issue);
     }
     if(control.readbackFail) return new Response('secret-canary',{status:503});
@@ -132,3 +134,43 @@ for(const [runtime,run] of [['claude',claude],['codex',codex]] as const)test(`${
   const dir=path.join(f.root,'receipts'),file=path.join(dir,fs.readdirSync(dir)[0]),saved=JSON.parse(fs.readFileSync(file,'utf8'));
   for(const pending of [true,false]){saved.status=pending?'pending':'known';saved.fieldHashes.title='0'.repeat(64);fs.writeFileSync(file,JSON.stringify(saved));const before=fs.readFileSync(file,'utf8'),count=f.calls.length,result=await run(JSON.stringify({operationId,repository:'example/project',operation:'verify'}),f);assert.equal(result.ok,false);assert.equal(result.error,pending?'outcome-unknown':'verification-failed');for(const field of ['targetId','issueNumber','status','attribution'])assert.equal(result[field],undefined);assert.equal(fs.readFileSync(file,'utf8'),before);if(pending)assert.equal(f.calls.length,count);}
 });
+
+const labelled={repository:'example/project',operation:'issue.create',title:'Synthetic',body:'Body'};
+for(const [runtime,run] of [['claude',claude],['codex',codex]] as const) {
+  test(`${runtime} moduleLabels refuses a create without a listed label before any provider call`,async t=>{
+    const f=fixture(t,runtime,['cp:intercom','bootstrap']);
+    for(const extra of [{},{labels:['bug']}]) {
+      const result=await run(JSON.stringify({operationId:randomUUID(),...labelled,...extra}),f);
+      assert.deepEqual(result,{ok:false,error:'label-required'});assert.equal(f.calls.length,0);
+    }
+  });
+  test(`${runtime} moduleLabels posts the labels and verifies them against GitHub's label objects`,async t=>{
+    const f=fixture(t,runtime,['cp:intercom','bootstrap']),operationId=randomUUID(),request={operationId,...labelled,labels:['cp:intercom','bug']};
+    const result=await run(JSON.stringify(request),f);assert.equal(result.ok,true,JSON.stringify(result));
+    const posts=f.calls.filter(c=>c.method==='POST'&&c.url.endsWith('/issues'));assert.equal(posts.length,1);
+    assert.deepEqual(posts[0].body,{title:'Synthetic',body:'Body',labels:['cp:intercom','bug']});
+    assert.equal((await run(JSON.stringify({operationId,repository:'example/project',operation:'verify'}),f)).ok,true);
+    assert.equal((await run(JSON.stringify(request),f)).ok,true);assert.equal(f.calls.filter(c=>c.method==='POST'&&c.url.endsWith('/issues')).length,1);
+    assert.equal((await run(JSON.stringify({...request,labels:['bootstrap']}),f)).error,'operation-conflict');
+  });
+  test(`${runtime} labels GitHub dropped fail the readback`,async t=>{
+    const f=fixture(t,runtime,['cp:intercom']);f.control.dropLabels=true;
+    const result=await run(JSON.stringify({operationId:randomUUID(),...labelled,labels:['cp:intercom']}),f);
+    assert.equal(result.error,'verification-failed');assert.equal(result.targetId,81);
+  });
+  test(`${runtime} a repository without moduleLabels keeps creating without labels, and labels still reach GitHub`,async t=>{
+    const f=fixture(t,runtime);
+    assert.equal((await run(JSON.stringify({operationId:randomUUID(),...labelled}),f)).ok,true);
+    assert.deepEqual(f.calls.filter(c=>c.method==='POST'&&c.url.endsWith('/issues'))[0].body,{title:'Synthetic',body:'Body'});
+    assert.equal((await run(JSON.stringify({operationId:randomUUID(),...labelled,labels:['bug']}),f)).ok,true);
+  });
+  test(`${runtime} moduleLabels leaves comments and updates alone`,async t=>{
+    const f=fixture(t,runtime,['cp:intercom']);
+    assert.equal((await run(JSON.stringify({operationId:randomUUID(),repository:'example/project',operation:'issue.comment',issueNumber:7,body:'Body'}),f)).ok,true);
+    assert.equal((await run(JSON.stringify({operationId:randomUUID(),repository:'example/project',operation:'issue.update',issueNumber:7,title:'Changed'}),f)).ok,true);
+  });
+  for(const bad of [[],'cp:intercom',[1],[''],Array.from({length:101},(_,i)=>`l${i}`)]) test(`${runtime} policy moduleLabels ${JSON.stringify(bad).slice(0,24)} is invalid`,async t=>{
+    const f=fixture(t,runtime,bad);
+    assert.deepEqual(await run(JSON.stringify({operationId:randomUUID(),...labelled,labels:['cp:intercom']}),f),{ok:false,error:'policy-invalid'});assert.equal(f.calls.length,0);
+  });
+}

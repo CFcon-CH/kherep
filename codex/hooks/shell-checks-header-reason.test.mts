@@ -16,7 +16,7 @@ const EM_DASH = "commit message contains an em dash (U+2014)";
 
 test("the real commit-guard through the Codex shell dispatcher: the em dash violation is the reason", async () => {
   const guard = fs.readFileSync(path.join(CLAUDE_HOOKS, "commit-guard.mts"), "utf8");
-  const home = codexHome({ "commit-guard.mts": guard, "deploy-guard.mts": "process.exit(0);\n", "main-checkout-guard.mts": "process.exit(0);\n" });
+  const home = codexHome({ "commit-guard.mts": guard, "deploy-guard.mts": "process.exit(0);\n", "main-checkout-guard.mts": "process.exit(0);\n", "module-label-guard.mts": "process.exit(0);\n" });
   fs.copyFileSync(path.join(CLAUDE_HOOKS, "lib", "git-commit-match.mts"), path.join(home.hookDir, "lib", "git-commit-match.mts"));
   const env = { ...process.env };
   for (const name of ["KHEREP_WORK_ITEM_REQUIRED", "KHEREP_DENIAL_FAULT", "KHEREP_DENIAL_FAULT_MAIN"]) delete env[name];

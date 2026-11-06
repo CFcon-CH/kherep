@@ -30,6 +30,8 @@ hooks/hook-runtime-root.test.mts
 hooks/hook-runtime-replay.test.mts
 hooks/main-checkout-guard.mts
 hooks/main-checkout-guard.test.mts
+hooks/module-label-guard.mts
+hooks/module-label-guard.test.mts
 hooks/maestro-discipline.mts
 hooks/manifest-watch.mts
 hooks/manifest-watch.test.mts
@@ -81,6 +83,8 @@ hooks/lib/forge-match.mts
 hooks/lib/forge-match.test.mts
 hooks/lib/deploy-transcript.mts
 hooks/lib/main-checkout.mts
+hooks/lib/module-label.mts
+hooks/lib/module-label.test.mts
 hooks/lib/trusted-executable.mts
 hooks/lib/main-checkout.test.mts
 hooks/lib/private-path-policy.mts

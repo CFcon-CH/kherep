@@ -24,7 +24,7 @@ export const COMPUTED: Record<string, string[]> = {
 export const ALWAYS_CHECK = Object.values(COMPUTED).flat().map((name) => `./lib/${name}.mts`);
 export const computedImports = (rel: string): string => (COMPUTED[rel] || []).map((name) => `\nimport "./lib/${name}.mts";`).join("")
   + (rel === "kherep-maestro/codex-shell-checks.mts"
-    ? ["commit-guard", "deploy-guard", "main-checkout-guard"].map(name => `\nimport "./${name}.mts";`).join("") : "");
+    ? ["commit-guard", "deploy-guard", "main-checkout-guard", "module-label-guard"].map(name => `\nimport "./${name}.mts";`).join("") : "");
 // Issue #507, part 4. Files no hook checks for itself; each dispatcher compares the other's stat
 // with the record a proven run leaves in heartbeat.json "peers" (lib/integrity-heartbeat.mts provenPeer).
 export const DISPATCHERS = new Set(["kherep-maestro/codex-hook-adapter.mts", "kherep-maestro/hook-adapter.mts", "kherep-maestro/codex-shell-checks.mts"]);

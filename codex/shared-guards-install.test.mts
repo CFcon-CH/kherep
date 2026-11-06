@@ -250,7 +250,7 @@ test("missing or empty installed shell guards deny benign commands", (t) => {
   const { hookDir, options } = fixture(t);
   const config = fs.readFileSync(install(options).targets.config, "utf8");
   for (const broken of ["missing", "empty"] as const) {
-    for (const guard of [...GUARDS, "main-checkout-guard"]) {
+    for (const guard of [...GUARDS, "main-checkout-guard", "module-label-guard"]) {
       const file = path.join(hookDir, `${guard}.mts`);
       const original = fs.readFileSync(file);
       if (broken === "missing") fs.rmSync(file); else fs.writeFileSync(file, "");
