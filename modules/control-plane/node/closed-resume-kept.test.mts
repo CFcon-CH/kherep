@@ -11,7 +11,7 @@ import {
   COPY, copyOutput, resumeNode, resumingExec, runs, secondBurst, SESSION2, type Fault,
 } from "./closed-resume-fault-fixture.mts";
 import { deliverForHook } from "./deliver-hook.mts";
-import { recordingSessions, writeLocalSessions } from "./exchange.mts";
+import { readLocalSessions, recordingSessions, writeLocalSessions } from "./exchange.mts";
 import { getMessage, UNDELIVERABLE_AFTER_MS } from "./inbox.mts";
 import { readTask } from "./task-records.mts";
 import { watchTasks } from "./task-watch.mts";
@@ -99,6 +99,21 @@ test("a malformed listed id is never written to tasks, inbox, directory or repor
   };
   walk(node.paths.dir);
   assert.ok(!files.some((f) => f.includes("bad\\nid") || f.includes("bad\nid")));
+});
+
+// Issue #769: the row a resume writes serves the delivery hook of the first turn. It
+// claims no runtime and no coverage, so a listing without the session removes it.
+test("the row a resume writes carries no runtime and the next listing without it drops it", async (t) => {
+  const { node, task } = await resumeNode(t);
+  const { deps } = resumingExec(t, node, { output: copyOutput(true), listed: COPY });
+  await deliverToClosed(deps);
+  const stored = JSON.parse(fs.readFileSync(node.paths.sessions, "utf8"));
+  assert.deepEqual(stored.sessions.find((s: { sessionId: string }) => s.sessionId === COPY),
+    { sessionId: COPY, ...(task.name ? { name: task.name } : {}), state: "unknown" });
+  assert.equal(stored.unseen.includes("*"), false);
+  const returned = await recordingSessions(node.paths, async () => [], () => {}, () => deps.now!() + 60_000)();
+  assert.equal(returned.some((s) => s.sessionId === COPY), false);
+  assert.equal(readLocalSessions(node.paths).some((s) => s.sessionId === COPY), false);
 });
 
 // The documented limit: messages of a kept invalid-id resume stay at the old

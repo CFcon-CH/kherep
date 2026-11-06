@@ -3,7 +3,8 @@ import path from "node:path";
 
 import { ensureDir, type NodePaths } from "./config.mts";
 import { readJson, writeJsonAtomic } from "./inbox.mts";
-import { classifyExclusiveCreate, pauseSync } from "./lock-contention.mts";
+import { takeTurn } from "./autonomy-budget.mts";
+export { takeTurn, BUDGET_LOCK_STALE_MS, type Budget } from "./autonomy-budget.mts";
 import { DEFAULT_TURN_BUDGET, type TurnBudget } from "./policy.mts";
 
 // Guards for autonomous turns (issue #31): model turns no user prompt started,
@@ -19,8 +20,6 @@ import { DEFAULT_TURN_BUDGET, type TurnBudget } from "./policy.mts";
 export const TURNS_PER_HOUR = DEFAULT_TURN_BUDGET.perHour;
 export const TURNS_PER_DAY = DEFAULT_TURN_BUDGET.perDay;
 export const TURN_SPACING_MS = DEFAULT_TURN_BUDGET.spacingMs;
-const HOUR_MS = 60 * 60_000;
-const DAY_MS = 24 * HOUR_MS;
 
 export type AutonomyAction = "listener-timeout" | "wake" | "stuck-offer" | "budget" | "depth-limit" | "superseded" | "disabled" | "rearm"
   | "permission-mode" | "not-allowlisted" | "parent-gone" | "continue" | "continue-budget" | "continue-permission-mode"
@@ -53,7 +52,6 @@ export type AutonomyAction = "listener-timeout" | "wake" | "stuck-offer" | "budg
 export const listenerDir = (paths: NodePaths): string => path.join(paths.dir, "listeners");
 export const wakeAudit = (paths: NodePaths): string => path.join(paths.dir, "wake.jsonl");
 export const listenerLock = (paths: NodePaths, sessionId: string): string => path.join(listenerDir(paths), `${sessionId}.json`);
-const turnsFile = (paths: NodePaths, sessionId: string): string => path.join(listenerDir(paths), `${sessionId}.turns.json`);
 
 // Session ids name files, so only a plain token is accepted.
 export const isPlainSessionId = (value: unknown): value is string =>
@@ -84,82 +82,6 @@ export function audit(paths: NodePaths, now: number, sessionId: string, messageI
   ensureDir(paths.dir);
   fs.appendFileSync(wakeAudit(paths), `${JSON.stringify({ ts: new Date(now).toISOString(), sessionId, messageIds, action,
     ...(grant ? { grant } : {}) })}\n`, { mode: 0o600 });
-}
-
-// "spacing": the last turn is too recent; "exhausted": an hour or day window is
-// full; "locked": another process held the budget too long, so the turn is
-// denied rather than counted blind.
-export type Budget = "ok" | "spacing" | "exhausted" | "locked";
-
-// The listener and the delivery hooks run as separate processes, so the
-// read-modify-write of the turns file is serialised by a lock file made with
-// exclusive create. A lock older than BUDGET_LOCK_STALE_MS belongs to a process
-// that died holding it and is removed. Two processes can both judge one lock
-// stale; the loser of that rare race is told "locked" at worst. A create failing
-// with EPERM, EACCES or EBUSY (Windows delete pending, issue #602) uses one of
-// the LOCK_ATTEMPTS and is never taken for a stale lock.
-export const BUDGET_LOCK_STALE_MS = 5_000;
-const LOCK_ATTEMPTS = 50;
-const LOCK_RETRY_MS = 10;
-
-function withBudgetLock(file: string, body: () => Budget): Budget {
-  const lock = `${file}.lock`;
-  for (let attempt = 0; attempt < LOCK_ATTEMPTS; attempt++) {
-    let fd: number;
-    try {
-      fd = fs.openSync(lock, "wx", 0o600);
-    } catch (error) {
-      const outcome = classifyExclusiveCreate(error);
-      if (outcome === "other") return "locked";
-      if (outcome === "retry") {
-        pauseSync(LOCK_RETRY_MS);
-        continue;
-      }
-      try {
-        if (Date.now() - fs.statSync(lock).mtimeMs > BUDGET_LOCK_STALE_MS) fs.rmSync(lock, { force: true });
-        else pauseSync(LOCK_RETRY_MS);
-      } catch {
-        // released meanwhile: try again
-      }
-      continue;
-    }
-    let closing = false;
-    try {
-      fs.writeFileSync(fd, String(process.pid));
-      closing = true;
-      fs.closeSync(fd);
-    } catch {
-      // Ours by the exclusive create: removed, not left to the stale rule. A
-      // descriptor is closed at most once.
-      if (!closing) try { fs.closeSync(fd); } catch { /* the write failed already */ }
-      try { fs.rmSync(lock, { force: true }); } catch { /* left to the stale rule */ }
-      return "locked";
-    }
-    try {
-      return body();
-    } finally {
-      fs.rmSync(lock, { force: true });
-    }
-  }
-  return "locked";
-}
-
-function recentTurns(paths: NodePaths, sessionId: string, now: number): number[] {
-  const turns = readJson<{ turns?: unknown }>(turnsFile(paths, sessionId))?.turns;
-  return Array.isArray(turns) ? turns.filter((t): t is number => typeof t === "number" && now - t < DAY_MS) : [];
-}
-
-// Takes one autonomous turn when the budget allows it.
-export function takeTurn(paths: NodePaths, sessionId: string, now: number, budget: TurnBudget = DEFAULT_TURN_BUDGET): Budget {
-  const file = turnsFile(paths, sessionId);
-  ensureDir(listenerDir(paths));
-  return withBudgetLock(file, () => {
-    const turns = recentTurns(paths, sessionId, now);
-    if (turns.filter((t) => now - t < HOUR_MS).length >= budget.perHour || turns.length >= budget.perDay) return "exhausted";
-    if (turns.some((t) => now - t < budget.spacingMs)) return "spacing";
-    writeJsonAtomic(file, { turns: [...turns, now] });
-    return "ok";
-  });
 }
 
 // The delivery hook's gate for a Stop that would keep the turn going.

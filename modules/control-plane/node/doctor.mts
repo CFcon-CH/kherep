@@ -9,6 +9,7 @@ import { checkQueueDrain } from "./doctor-drain.mts";
 import { checkHooks } from "./doctor-hooks.mts";
 import { checkIntakeLatency } from "./doctor-intake.mts";
 import { checkIntercom } from "./doctor-intercom.mts";
+import { checkWakeBudget } from "./doctor-wake-budget.mts";
 import {
   checkCodexForkAttempts, checkCodexSessions, checkDaemon, checkEnrollment, checkListeners, checkPolicy, checkWakeReadiness, daemonReadiness, type Check,
 } from "./doctor-local.mts";
@@ -52,16 +53,23 @@ export async function runDoctor(deps: DoctorDeps): Promise<DoctorReport> {
   const repoRoot = deps.repoRoot ?? REPO_ROOT;
   const { check: enrollment, config } = checkEnrollment(deps.paths);
   const { check: policy, policy: parsed } = checkPolicy(config?.policyFile ?? deps.paths.policy);
-  const now = deps.now?.() ?? Date.now();
   const claudeConfigDir = deps.claudeConfigDir ?? defaultConfigDir();
   const codex = deps.codexHome ?? codexHome();
+  const clock = deps.now ?? Date.now;
+  const worker = config ? await checkWorker(config.controlUrl, deps.fetch ?? fetch) : notEnrolled;
+  const runtimes = await checkRuntimes(parsed?.sessions?.enabled ? parsed.sessions.runtimes : [],
+    deps.find ?? findRuntime, deps.versionOf ?? runtimeVersion, daemonReadiness(deps.paths, alive), clock());
+  // The other checks are judged against one clock taken after the awaited probes.
+  // Wake readiness and budget sample theirs after reading the snapshot and each
+  // ledger instead, so a listing or turn written while doctor runs is not
+  // future-dated.
+  const now = clock();
   const checks: Record<string, Check> = {
     enrollment,
     daemon: checkDaemon(deps.paths, alive, repoRoot),
-    worker: config ? await checkWorker(config.controlUrl, deps.fetch ?? fetch) : notEnrolled,
+    worker,
     policy,
-    runtimes: await checkRuntimes(parsed?.sessions?.enabled ? parsed.sessions.runtimes : [],
-      deps.find ?? findRuntime, deps.versionOf ?? runtimeVersion, daemonReadiness(deps.paths, alive), now),
+    runtimes,
     hooks: checkHooks({
       claude: path.join(claudeConfigDir, "settings.json"),
       codex: path.join(codex, "config.toml"),
@@ -69,7 +77,8 @@ export async function runDoctor(deps: DoctorDeps): Promise<DoctorReport> {
     // Issue #436: the stable intercom command and the files that name it.
     intercom: checkIntercom({ paths: deps.paths, claudeConfigDir, codexHome: codex }),
     listeners: checkListeners(deps.paths, alive, now),
-    wakeReadiness: checkWakeReadiness(deps.paths, parsed, alive, now),
+    wakeReadiness: checkWakeReadiness(deps.paths, parsed, alive, clock),
+    wakeBudget: checkWakeBudget(deps.paths, parsed, clock),
     codexSessions: checkCodexSessions(deps.paths, now),
     // Issue #441: control-plane accept to local store, last two hours; only messages that arrived.
     intakeLatency: checkIntakeLatency(deps.paths, now),

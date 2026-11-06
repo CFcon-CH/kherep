@@ -1012,6 +1012,7 @@ The config directory is `KHEREP_CONFIG_DIR` when set, otherwise `%APPDATA%\khere
 | `hooks` | at least one delivery or wake hook is installed, every one names this checkout or a complete verified source pin with the same content identity, and no control-plane script the installer wires is wired more than once on an event it wires it for in the Claude file (issue #590) | `checkout`, per runtime (the hook `command` fields of Claude `settings.json`, the `command` and `commandWindows` keys of Codex `[hooks.*]` tables) the hooks of this checkout, accepted verified pins and the script paths of `foreign` ones, without the rest of the command; for Claude `duplicates` (`event`, `script` as `modules/control-plane/node/<name>`, `count`) when a script is wired twice on one event, or `duplicatesUnknown: true` when the installer template of this source cannot be read, which fails the check (issue #592); for both runtimes `pointer` (`valid`, `missing`, `invalid`, `unresolved`), `stable` and `legacy`, and `entry` (`valid`, `missing`, `symlink`, `stale`, `unchecked`) when a command is stable (issue #503 for Codex, #592 for Claude): a stable command resolves through this home's entry point and source record, and fails the check when the record or the entry point is unusable; a command still in the path form is `legacy`, with a note that does not fail the check |
 | `listeners` | always; the listener directory is unreadable otherwise | `live` and `stale` wake listener locks; the daemon removes the locks of exited listeners ([stale locks](#listening-while-idle)); `orphaned`, the ended sessions' state files the daemon's next pass removes, or why it would remove none (`listing-stale`, `listing-partial`, `listing-unreadable`, `known-unreadable`, `tasks-unreadable`, `dir-unreadable`) |
 | `wakeReadiness` | the local session snapshot is fresh and readable | snapshot completeness and aggregate observed rows: idle Claude Code sessions, policy eligibility, exact restart authorization, recognized, restricted or unknown remembered permission mode, and verified, missing, stale, mismatched or unreadable live listed-listener evidence |
+| `wakeBudget` | stored budget evidence can be inspected; observed exhaustion alone passes | effective limits, stored-owner coverage and per-session `usedHour`, `usedDay`, remaining capacity, blocking limits and `nextAvailableAt`; no turns are consumed |
 | `codexForkAttempts` | always; the `codex-fork-attempts/` directory is unreadable, or an owner's store cannot be read completely | `states`, the Codex fork reply attempts per state, and `unreadableOwners` (issue #408); counts only, no ids, answers or reasons |
 | `codexSessions` | always; the `codex-sessions/` directory is unreadable otherwise | `recorded`, the Codex session records seen within 12 hours, and `lastEvent`, their count per last hook event (`SessionStart`, `UserPromptSubmit`, `PostToolUse`, `Stop`, and `unknown` for a record of an older hook), the [idle evidence](#codex-sessions) of issue #408; counts only, no session ids, and no record is removed |
 | `queueDrain` | the last fetched `directory.json` shows this node's queue at the control plane empty (also with no intake recorded yet) or waiting (oldest queued message at most 5 minutes old) | `state` (`empty`, `waiting`, `stalled`, `unknown`), `measured`, `fetchedAt`, `directoryAgeSeconds`, `truncated`, `queued`, `oldestQueuedAgeSeconds`, `lastAcceptedAgeSeconds`, `connection` (the directory status, a separate fact) and `peers` (`listed`, `stalled`, `waiting`, `empty`, `unknown`, over the listed peers only) (issue #441); counts, states and times only, no names, ids, paths or text |
@@ -1024,6 +1025,44 @@ The `intercom` check (issue #436) covers the stable command `node "<configRoot>/
 The `queueDrain` check (issue #441) reads `directory.json` and `node.json` only; it never asks for a refresh or fetches. A queue it did not measure is `ok: false, measured: false` with a fixed `detail`, never zero: no or an invalid `directory.json`, one older than 3 minutes or dated ahead of this clock, no `intake` for this node (an older Worker), or this node not listed (in a complete or a truncated directory). On a truncated directory `peers` describes the listed peers only and `detail` says so. `intakeLatency` (issue #441, part A) sees only messages that reached this node's inbox; `queueDrain` sees those still queued at the control plane, and the daemon's `lane` log lines say why a queue stalls: `lane <lane> item <kind> took <s> s` for an item that ran over 5 seconds (ending `, waited <s> s` when it also waited that long), `lane <lane> item <kind> waited <s> s, took <s> s` for one that waited over 5 seconds behind earlier items of its lane (issue #487), and `round sent <n> status/<m> outbox frames, handled <k> inbound items` after an exchange round that sent, or a period between two rounds that handled, more than 32 frames. When it handled any, the line goes on with `: <kind> <n>, ...` (issue #493): the eight most frequent kinds by count (ties in a fixed order), then `other <n>` for the rest. Kinds come from a closed list of 43 labels, never from a received string: `pong`; `auth`; `frame:event:receipt`; `task-control:status|stop`; `frame:event` for any other event; `command:<name>` for the six node commands, `command:unknown` for any other command name and `command:invalid` for a malformed command; `frame:message.status:<state>` for the six message states and `frame:message.status:invalid`; `frame:<type>` for each other protocol message type; `frame:invalid` for a frame that does not parse (oversize, not JSON, an unknown type); and `unknown` as a defensive bucket. Each frame is counted once, on the lane that finally handles it; the count resets after every round, also one that logs nothing. After a connection ends, `disconnected (<code>, clean=<true|false>, error:<class>); reconnecting in <s> s` gives the close code, whether the close was clean, and the class of the last socket error on that connection: one of `ECONNRESET`, `ETIMEDOUT`, `ECONNREFUSED`, `ENOTFOUND`, `EAI_AGAIN`, `EPIPE`, `EHOSTUNREACH`, `ENETUNREACH`, `ENETDOWN`, `UND_ERR_SOCKET`, `UND_ERR_CONNECT_TIMEOUT` when the error's `code` is that string, `unknown` for another code, `missing` when the error carries no string code, and `none` without an error event. No error message, close reason or URL is logged. All of them carry kinds, closed codes and counts only.
 
 The `wakeReadiness` check uses only a successful local session snapshot no older than two daemon scan intervals. The snapshot writer preserves which runtimes the listing could not see. Doctor labels a fresh snapshot `complete`, `partial`, or `unknown` for a legacy file; every count describes only observed rows, so a zero from a partial or legacy snapshot is not a total-population claim. A missing, unreadable, malformed, future-dated or stale snapshot makes observed idle state `"unknown"`. It reports observed policy eligibility separately from exact `SessionStart` authorization, remembered permission evidence and live listed-listener evidence. A verified listener entry requires matching lock and scope tokens, `listed: true`, a live process and an age within the listener deadline. It does not prove that the listener is currently idle, that the kill switch permits waking, or that a message was received, so the check derives no ready verdict. A missing lock is distinct from a failed lock read. Missing explicit restart authorization is reported as a prerequisite, not asserted as the cause of every absent listener. The check reports only aggregate counts and fixed details: no key material, listener tokens, session ids, paths, response bodies or message text.
+
+Wake snapshot diagnostics validate rows individually and expose `reasonCode`,
+`rejectedRows`, `incompleteRows`, `unseenRuntimes`, `truncated` and
+`countScope: "observed-valid-rows"`. Canonical `idle-loaded` and legacy Claude
+`idle` count as idle; unknown state never does. A listed row with a runtime and
+state `unknown` counts as a state fact: it does not lower `completeness` and is
+never idle, so a `complete` listing can still hold rows whose idleness is
+unobserved. A dotted display identity cannot authorize a listener or budget
+filename. A resume inserts an incomplete row; the snapshot stays fresh and
+reports it as `incompleteRows`. `reasonCode` is `observed`, `missing`,
+`io-error`, `invalid-json`, `invalid-envelope`, `missing-timestamp` (rows without
+any listing time, as a resume into a home without a listing writes),
+`future-timestamp` or `stale`.
+
+Doctor samples its clock after reading the wake snapshot and after reading each
+budget ledger, so a listing or turn written while it runs is not future-dated.
+The listener lock count is the known exception: `wakeReadiness` samples its clock
+before the lock reads, so a lock created meanwhile counts as `stale`, which moves
+that count and never `doctor.ok`. Other doctor checks keep their earlier clock.
+
+`wakeBudget` inspects stored ledgers only, with a 512-owner and 256-KiB-per-file
+bound. Coverage distinguishes an uninitialized, empty, unreadable or capped
+store; `coverage.unsupported` counts ledgers whose filename the guard excludes,
+which are never opened and make coverage `partial`. It identifies exhausted
+owners even when the session snapshot omits them. `nextAvailableAt` is the
+earliest slot assuming no further autonomous turns, not a guaranteed wake time.
+`blocked` at the top level means an hour or day window is full for at least one
+stored owner; a spacing hold appears only on that owner's row. Observed
+exhaustion remains visible as `blocked` while `doctor.ok` stays true if all
+checks succeed. Failed budget
+inspection fails its check. Missing ledgers do not establish zero usage for
+unobserved sessions. No ledger is charged or repaired.
+
+Stage 1 (#769, related #827) renders existing `budget-exhausted` progress on the
+sent route of `msg status`, on accepted received messages and on offered received
+messages whose progress is newer than the offer, with observation and retry times.
+An expired retry time does not prove a current hold. Exact per-message hold production remains a
+separate stage; no Worker update is required for these existing fields.
 
 ### Node messaging
 

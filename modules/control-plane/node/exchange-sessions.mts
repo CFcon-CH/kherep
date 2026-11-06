@@ -9,6 +9,7 @@ import type { SessionInfo } from "../protocol.mts";
 import { ensureDir, type NodePaths } from "./config.mts";
 import { readJson, refuseUndeliverable, UNDELIVERABLE_AFTER_MS, writeJsonAtomic, type InboxRecord } from "./inbox.mts";
 import { markUnseen, rememberSessions, unlistedRuntimes } from "./known-sessions.mts";
+import { snapshotObject } from "./wake-snapshot.mts";
 
 // sessions.json, the node's sessions from the last successful listing, and the
 // listing wrapper that records it (moved here from exchange.mts, issue #487).
@@ -32,12 +33,14 @@ export function readLocalSessions(paths: NodePaths, now: number = Date.now()): L
 
 // Adds a session this node just resumed (issue #102), so the delivery hook of
 // its first turn finds it by name before the next listing replaces the file.
-export function addLocalSession(paths: NodePaths, session: LocalSession): void {
-  const value = readJson<{ sessions?: unknown; updatedAt?: string }>(paths.sessions);
-  const sessions = readLocalSessions(paths).filter((s) => s.sessionId !== session.sessionId || s.runtime !== session.runtime);
-  const verdict = session.runtime ? sessionVerdict(paths, { runtime: session.runtime, sessionId: session.sessionId }, Date.now()) : undefined;
-  const added = verdict && !directoryVisibility(verdict) ? [] : [{ ...session, state: verdict?.state ?? "unknown" }];
-  writeJsonAtomic(paths.sessions, { ...value, generation: readLivenessSnapshot(paths)?.generation, sessions: [...sessions, ...added] });
+// The row has no runtime on purpose: a row with one survives the next listing
+// (recordingSessions carries prior runtime rows), a provisional row must not.
+export function addLocalSession(paths: NodePaths, session: { sessionId: string; name?: string }): void {
+  const value = readJson<{ sessions?: unknown }>(paths.sessions);
+  const sessions = (Array.isArray(value?.sessions) ? value.sessions : [])
+    .filter((s): s is LocalSession => snapshotObject(s) && typeof s.sessionId === "string")
+    .filter((s) => s.sessionId !== session.sessionId || s.runtime !== undefined);
+  writeJsonAtomic(paths.sessions, { ...value, generation: readLivenessSnapshot(paths)?.generation, sessions: [...sessions, { ...session, state: "unknown" }] });
 }
 
 // The name sessions.json records for a local session id, if any.
