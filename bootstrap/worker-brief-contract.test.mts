@@ -84,3 +84,33 @@ test("the files of this contract stay within 250 lines", () => {
     assert.ok(read(file).split("\n").length <= 251, `${file} has at most 250 lines`);
   }
 });
+
+test("build routing requires a completed lookup before dispatch and pauses unavailable routes", () => {
+  for (const file of ROUTING_FILES) {
+    const text = section(file, "Dispatch");
+    for (const needle of ["Central Brain lookup is always part of build and infrastructure work", "before the first action",
+      "dispatcher owns the initial completed lookup", "authoritative project execution documentation", "read-only discovery worker",
+      "test-route:", "route-source:", "literal ` :: `", "every occurrence", "terminate a preceding multi-line `decided:`",
+      "UNKNOWN", "wait", "tool missing", "permitted availability check", "not proof", "Follow-up assignments"]) {
+      assert.ok(text.includes(needle), `${file}: ${needle}`);
+    }
+  }
+});
+
+test("both builder source contracts and Codex projections preserve the lookup and failure procedure", () => {
+  for (const name of ["kherep-builder", "dc-plugin-build-runner"]) {
+    const source = read(`claude/agents/${name}.md`);
+    const options = capabilities.agents[name];
+    const projected = renderAgent(options.as || name, source, options);
+    for (const text of [source, projected]) {
+      for (const needle of ["test-route:", "route-source:", "Central Brain", "before the first action", "dispatcher",
+        "revision and execution context", "UNKNOWN", "wait", "tool missing", "permitted availability check",
+        "follow-up", "VERIFY"]) assert.ok(text.includes(needle), `${name}: ${needle}`);
+    }
+  }
+});
+
+test("both installed adapters ship the same shared worker parser", () => {
+  assert.ok(read("bootstrap/manifest/files.txt").includes("hooks/lib/worker-brief-policy.mts"));
+  assert.ok(read("codex/install.mts").includes('transaction.installDir(path.join(sources.claudeHooks, "lib"), path.join(targets.hookDir, "lib"))'));
+});

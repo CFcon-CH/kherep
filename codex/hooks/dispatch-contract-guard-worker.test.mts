@@ -9,6 +9,7 @@ import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 
+import { declareCopy } from "../../bootstrap/coverage-copy-fixture.mts";
 import { CODE_BOUND_AGENTS } from "../../claude/hooks/lib/dispatch-policy.mts";
 import { fixtureResolution } from "../lib/model-policy.fixture.mts";
 import { resolveCapabilities } from "../lib/model-policy.mts";
@@ -21,7 +22,8 @@ const capabilities = resolveCapabilities(JSON.parse(fs.readFileSync(MANIFEST, "u
 const POLICY = dispatchPolicy(capabilities);
 const OBS_MODEL = POLICY.pins.get("codex-obs") ?? "";
 const SHA = "2733b35e2c102ac54295568509c68b18b6d92cab";
-const WORKER = `Objective: build it.\nrevision: kherep@${SHA}\ndecided: none`;
+const ROUTES = "test-route: Node fixture :: node fixture.test.mts :: report.txt\nroute-source: page KB-EXAMPLE";
+const WORKER = `Objective: build it.\nrevision: kherep@${SHA}\ndecided: none\n${ROUTES}`;
 const OBS_BRIEF = `- measured: code kherep@${SHA} \`node x.test.mts\` -> 12 pass`;
 
 const dispatch = (message: string, agent_type?: string) =>
@@ -38,7 +40,7 @@ test("a code-bound role needs both markers, well formed", () => {
     assert.match(validate(dispatch(`revision: kherep@HEAD\ndecided: none`, agent), POLICY) ?? "", /revision 1 has a malformed token/, agent);
     assert.match(validate(dispatch(`revision: kherep@${SHA}\ndecided:`, agent), POLICY) ?? "", /decided 1 is empty/, agent);
     assert.equal(validate(dispatch(WORKER, agent), POLICY), null, agent);
-    assert.equal(validate(dispatch(`revision: kherep@${SHA}..${SHA}-dirty\ndecided:\n- keep the API`, agent), POLICY), null, agent);
+    assert.equal(validate(dispatch(`revision: kherep@${SHA}..${SHA}-dirty\ndecided:\n- keep the API\n${ROUTES}`, agent), POLICY), null, agent);
   }
 });
 
@@ -83,7 +85,13 @@ function installed(t: { after: (fn: () => void) => void }, libs: string[], edit:
   fs.mkdirSync(path.join(root, "hooks", "parity"));
   const guard = path.join(hookDir, "codex-dispatch-contract-guard.mts");
   fs.copyFileSync(GUARD, guard);
-  for (const lib of libs) fs.writeFileSync(path.join(hookDir, "lib", lib), edit(lib, fs.readFileSync(path.join(REPO, "claude", "hooks", "lib", lib), "utf8")));
+  declareCopy(GUARD, guard);
+  for (const lib of libs) {
+    const original = path.join(REPO, "claude", "hooks", "lib", lib), copy = path.join(hookDir, "lib", lib);
+    const source = fs.readFileSync(original, "utf8"), edited = edit(lib, source);
+    fs.writeFileSync(copy, edited);
+    if (source === edited) declareCopy(original, copy);
+  }
   fs.writeFileSync(path.join(root, "hooks", "parity", "capabilities.json"), JSON.stringify(capabilities));
   return (message: string, agent_type?: string) =>
     spawnSync(process.execPath, [guard], { encoding: "utf8", input: JSON.stringify(dispatch(message, agent_type)) }).stdout;
@@ -100,6 +108,10 @@ test("the installed guard denies, reports and stays silent through its lib sibli
   const run = installed(t, ["obs-brief-policy.mts", "worker-brief-policy.mts"]);
   assert.match(decision(run("Build it.", "kherep-builder")).deny ?? "", /^Worker brief format/);
   assert.equal(run(WORKER, "kherep-builder"), "");
+  for (const role of ["kherep-builder", "dc-plugin-build-runner"]) {
+    assert.match(decision(run(`revision: kherep@${SHA}\ndecided: none\nroute-source: page KB-EXAMPLE`, role)).deny ?? "", /names no test-route:/);
+    assert.match(decision(run(`revision: kherep@${SHA}\ndecided: none\ntest-route: Node :: check :: report`, role)).deny ?? "", /names no route-source:/);
+  }
   assert.match(decision(run("Review the guard diff.")).notice ?? "", /^Worker brief revision: /);
   assert.equal(run("Look it up."), "");
 });
@@ -118,4 +130,55 @@ test("an installed lib that predates workerBriefNotice reports nothing and keeps
   assert.match(decision(run("Build it.", "kherep-builder")).deny ?? "", /^Worker brief format/);
   assert.match(decision(run("revision: kherep", "personal-agent")).deny ?? "", /^Worker brief format/);
   assert.equal(run(WORKER, "kherep-builder"), "");
+});
+
+test("actual installed hook processes enforce build routes for both roles and tool paths", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "kherep-route-process-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const hookDir = path.join(root, "hooks", "kherep-maestro");
+  fs.mkdirSync(path.join(hookDir, "lib"), { recursive: true });
+  fs.mkdirSync(path.join(root, "hooks", "parity"));
+  const hook = path.join(hookDir, "codex-dispatch-contract-guard.mts");
+  fs.copyFileSync(GUARD, hook);
+  declareCopy(GUARD, hook);
+  for (const lib of ["worker-brief-policy.mts", "obs-brief-policy.mts"]) {
+    const original = path.join(REPO, "claude", "hooks", "lib", lib), copy = path.join(hookDir, "lib", lib);
+    fs.copyFileSync(original, copy);
+    declareCopy(original, copy);
+  }
+  const renamed = structuredClone(capabilities);
+  renamed.agents["kherep-builder"].as = "builder-x";
+  (renamed.projectedAgents as Record<string, unknown>)["builder-x"] = (renamed.projectedAgents as Record<string, unknown>)["kherep-builder"];
+  fs.writeFileSync(path.join(root, "hooks", "parity", "capabilities.json"), JSON.stringify(renamed));
+  for (const role of ["builder-x", "dc-plugin-build-runner"]) {
+    for (const tool_name of ["Agent", "spawn_agent"]) {
+      const run = (message: string, description = "Build it") => {
+        const result = spawnSync(process.execPath, [hook], { encoding: "utf8", input: JSON.stringify({
+          tool_name, tool_input: { task_name: "route", agent_type: role, message, description },
+        }) });
+        assert.equal(result.status, 0);
+        return decision(result.stdout);
+      };
+      const old = `revision: kherep@${SHA}\ndecided: none\n`;
+      assert.match(run(old + "route-source: page KB-EXAMPLE").deny ?? "", /names no test-route:/);
+      assert.match(run(old + "test-route: Node :: check :: report").deny ?? "", /names no route-source:/);
+      assert.deepEqual(run(old + ROUTES.replace(/^test-route:/m, "  - test-route:").replace(/^route-source:/m, "2) route-source:")), {});
+      assert.match(run(WORKER + "\ntest-route: TBD").deny ?? "", /test-route 2 is malformed/);
+      assert.match(run(WORKER + "\nroute-source: UNKNOWN").deny ?? "", /route-source 2 is malformed/);
+      for (const marker of ["test-route", "route-source"]) {
+        assert.match(run(`revision: kherep@${SHA}\ndecided:\n${marker}: actual`).deny ?? "", /decided 1 is empty/);
+      }
+      assert.match(run(old, ROUTES).deny ?? "", /names no test-route:/);
+      for (const [marker, values] of [["test-route", ["", "Node :: check", "Node :: TBD :: report", "\nNode :: check :: report"]],
+        ["route-source", ["", "query route", "query route :: unavailable", "page UNKNOWN"]]] as const) {
+        for (const value of values) {
+          const result = run(WORKER.replace(new RegExp(`^${marker}:.*$`, "m"), `${marker}: ${value}`));
+          assert.match(result.deny ?? "", new RegExp(`${marker} 1 is malformed`), `${role} ${tool_name} ${value}`);
+        }
+      }
+      for (const source of ["page KB-EXAMPLE", "query route :: hit documented Node tests", "query route :: no-match"]) {
+        assert.deepEqual(run(WORKER.replace("page KB-EXAMPLE", source)), {});
+      }
+    }
+  }
 });
