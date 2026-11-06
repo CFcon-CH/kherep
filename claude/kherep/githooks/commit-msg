@@ -37,7 +37,7 @@ KHEREP_WORK_ITEM_PATTERN=${KHEREP_WORK_ITEM_PATTERN:-$P_PATTERN}
 TOPLEVEL=$(git rev-parse --show-toplevel 2>/dev/null) || TOPLEVEL=$(pwd)
 canonical_dir() {
   KHEREP_PATH=$(printf '%s' "$1" | tr '\\' '/')
-  (CDPATH=; export CDPATH; cd -P "$KHEREP_PATH" && pwd -P) 2>/dev/null
+  (CDPATH=; export CDPATH; cd -P "$KHEREP_PATH" && { pwd -W 2>/dev/null || pwd -P; }) 2>/dev/null
 }
 TOP_REAL=$(canonical_dir "$TOPLEVEL") || {
   printf '\nKherep commit policy could not resolve the repository directory.\n' >&2
