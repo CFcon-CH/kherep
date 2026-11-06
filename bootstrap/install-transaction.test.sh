@@ -266,7 +266,7 @@ test_retire_declared() {
     grep -qF "retire: SKIP project/tools/mpac/README.md" "$root/out" || fail "an absent workspace entry did not report SKIP"
     [[ ! -e "$ws/tools/mpac/_deprecated/README.md" ]] && [[ ! -e "$backup/one/retired/project/tools/mpac/README.md" ]] ||
       fail "an absent workspace entry was parked or backed up"
-    [ "$(grep -c 'retire: KEEP' "$root/out")" -eq 1 ] && grep -qxF "$keep" "$root/out" ||
+    [[ "$(grep -c 'retire: KEEP' "$root/out")" -eq 1 ]] && grep -qxF "$keep" "$root/out" ||
       fail "unknown workspace content did not produce exactly one KEEP line: $(cat "$root/out")"
     [[ "$(cat "$ws/tools/edited/tool.ps1")" = 'operator edit' ]] && [[ ! -e "$ws/tools/edited/_deprecated" ]] ||
       fail "unknown workspace content was moved"
@@ -568,7 +568,7 @@ test_upgrade_retires_mpac() {
   set -e
   [[ "$rc" -eq 0 ]] || { cat "$ROOT/log"; fail "upgrade install with the Atlassian switch failed (rc=$rc)"; }
   b="$(latest "$H")"
-  [ "$(grep -c 'retire: KEEP' "$ROOT/log")" -eq 1 ] &&
+  [[ "$(grep -c 'retire: KEEP' "$ROOT/log")" -eq 1 ]] &&
     grep -qxF 'retire: KEEP project/tools/mpac/mpac.ps1 (content not placed by the installer)' "$ROOT/log" ||
     { cat "$ROOT/log"; fail "the upgrade did not keep the operator's mpac.ps1 with exactly one KEEP line"; }
   same "$W/tools/mpac/mpac.ps1" "$ROOT/mpac.before/mpac.ps1"
@@ -689,7 +689,7 @@ JSON
   same "$C/settings.json" "$ROOT/settings.before"
   set +e; legacy_install > "$ROOT/log" 2>&1; rc=$?; set -e
   [[ "$rc" -eq 0 ]] || { cat "$ROOT/log"; fail "upgrade install over legacy hook groups failed (rc=$rc)"; }
-  [ "$(grep -c '^retire: unwire ' "$ROOT/log")" -eq 3 ] &&
+  [[ "$(grep -c '^retire: unwire ' "$ROOT/log")" -eq 3 ]] &&
     grep -qxF 'retire: unwire SessionStart node ~/.claude/hooks/live-hook-integrity.js' "$ROOT/log" &&
     grep -qxF 'retire: unwire SessionStart node "$HOME/.claude/hooks/orchestra-default.js"' "$ROOT/log" &&
     grep -qxF 'retire: unwire Stop node ~/.claude/hooks/clq-accept-gate.js' "$ROOT/log" ||
@@ -829,9 +829,9 @@ test_upgrade_retires_guard_js_hooks() {
   set -e
   [[ "$rc" -eq 0 ]] || { cat "$ROOT/log"; fail "upgrade install over the .js guards failed (rc=$rc)"; }
   # Six managed and four legacy commands, one line each (two legacy groups ran privacy-boundary-guard.js).
-  [ "$(grep -c '^retire: unwire PreToolUse ' "$ROOT/log")" -eq 10 ] &&
-    [ "$(grep -c '^retire: unwire PreToolUse node ".*/hooks/[a-z-]*-guard\.js"$' "$ROOT/log")" -eq 6 ] &&
-    [ "$(grep -cxF 'retire: unwire PreToolUse node ~/.claude/hooks/privacy-boundary-guard.js' "$ROOT/log")" -eq 2 ] &&
+  [[ "$(grep -c '^retire: unwire PreToolUse ' "$ROOT/log")" -eq 10 ]] &&
+    [[ "$(grep -c '^retire: unwire PreToolUse node ".*/hooks/[a-z-]*-guard\.js"$' "$ROOT/log")" -eq 6 ]] &&
+    [[ "$(grep -cxF 'retire: unwire PreToolUse node ~/.claude/hooks/privacy-boundary-guard.js' "$ROOT/log")" -eq 2 ]] &&
     grep -qxF 'retire: unwire PreToolUse node ~/.claude/hooks/secret-output-guard.js' "$ROOT/log" &&
     grep -qxF 'retire: unwire PreToolUse node ~/.claude/hooks/playwright-file-guard.js' "$ROOT/log" ||
     { cat "$ROOT/log"; fail "the install did not report exactly the ten unwired guard commands"; }

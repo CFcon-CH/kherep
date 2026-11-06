@@ -409,8 +409,8 @@ esac
 [[ -f "$RETIRED_MANIFEST" ]] || { echo "FATAL: retirement manifest missing: $RETIRED_MANIFEST" >&2; exit 2; }
 while IFS= read -r line || [[ -n "$line" ]]; do
   parse_rc=0; bootstrap_retired_parse_line "$line" || parse_rc=$?
-  [ "$parse_rc" -ne 1 ] || continue
-  [ "$parse_rc" -eq 0 ] || exit 2
+  [[ "$parse_rc" -ne 1 ]] || continue
+  [[ "$parse_rc" -eq 0 ]] || exit 2
   rel="$RETIRED_REL"
   case "$rel" in project/*) ;; *) [[ "$DRIFT_SCOPE" = "all" ]] || continue ;; esac
   live="$(bootstrap_retired_live_path "$rel" "$CLAUDE_HOME" "$WS")"
@@ -420,7 +420,7 @@ while IFS= read -r line || [[ -n "$line" ]]; do
 done < "$RETIRED_MANIFEST"
 
 echo ""
-if [ "$drift" -eq 0 ]; then echo "DRIFT-CHECK PASS (repo == live)"; else echo "DRIFT-CHECK FOUND DRIFT (see above)"; fi
+if [[ "$drift" -eq 0 ]]; then echo "DRIFT-CHECK PASS (repo == live)"; else echo "DRIFT-CHECK FOUND DRIFT (see above)"; fi
 
 if [[ -n "$REPORT_TMP" ]]; then
   exec 1>&3

@@ -56,5 +56,5 @@ fi
 
 cat "$TMP"
 mv -f "$TMP" "$REPORT" 2>/dev/null || rm -f "$TMP"
-[ "$count" -eq 0 ] && exit 0
+[[ "$count" -eq 0 ]] && exit 0
 exit 1

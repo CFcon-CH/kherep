@@ -35,16 +35,16 @@ IFS='|' read -r cwd model used five_h week sessId weekResets <<< "$parsed"
 dir=$(echo "$cwd" | awk -F'/' '{if(NF>=2) print $(NF-1)"/"$NF; else print $NF}' | sed 's|\\|/|g')
 
 # Topic: resolve via session-id -> sessions/{pid}.json -> topic-{pid}.txt
-[ -z "$sessId" ] && sessId="${CLAUDE_SESSION_ID:-}"
+[[ -z "$sessId" ]] && sessId="${CLAUDE_SESSION_ID:-}"
 
 topic=""
-if [ -n "$sessId" ]; then
+if [[ -n "$sessId" ]]; then
   for sf in "$HOME/.claude/sessions/"*.json; do
-    [ -f "$sf" ] || continue
+    [[ -f "$sf" ]] || continue
     if grep -q "\"sessionId\":\"$sessId\"" "$sf" 2>/dev/null; then
       pid=$(basename "$sf" .json)
       tf="$HOME/.claude/session-kickoff/topic-$pid.txt"
-      if [ -f "$tf" ]; then
+      if [[ -f "$tf" ]]; then
         topic=$(awk -F'|' '{print $2}' "$tf" 2>/dev/null | tr -d '\n\r')
       fi
       break
@@ -53,22 +53,22 @@ if [ -n "$sessId" ]; then
 fi
 
 topicSeg=""
-if [ -n "$topic" ]; then
+if [[ -n "$topic" ]]; then
   topicSeg=" | topic: $topic"
 fi
 
 # Context usage
 ctx=""
-if [ -n "$used" ]; then
+if [[ -n "$used" ]]; then
   ctx=" | ctx:$(printf '%.0f' "$used")%"
 fi
 
 # Rate limits
 limits=""
-if [ -n "$five_h" ]; then
+if [[ -n "$five_h" ]]; then
   limits=" | 5h:$(printf '%.0f' "$five_h")%"
 fi
-if [ -n "$week" ]; then
+if [[ -n "$week" ]]; then
   limits="${limits} 7d:$(printf '%.0f' "$week")%"
 fi
 
@@ -76,8 +76,8 @@ fi
 # weekly window, detached, and only when the pair changed since the recorder last wrote it.
 # The recorder writes last-input at its end, so a run that Claude Code cancelled is redone later.
 usageHome="${CLAUDE_HOME:-$HOME/.claude}"
-if [ -n "$week" ] && [ -n "$weekResets" ] && [ -f "$usageHome/hooks/usage-record.mts" ]; then
-  if [ "$(cat "$usageHome/.cache/usage-watch/last-input" 2>/dev/null)" != "$week|$weekResets" ]; then
+if [[ -n "$week" ]] && [[ -n "$weekResets" ]] && [[ -f "$usageHome/hooks/usage-record.mts" ]]; then
+  if [[ "$(cat "$usageHome/.cache/usage-watch/last-input" 2>/dev/null)" != "$week|$weekResets" ]]; then
     node "$usageHome/hooks/usage-record.mts" --used "$week" --resets-at "$weekResets" \
       </dev/null >/dev/null 2>&1 &
   fi
@@ -92,7 +92,7 @@ cwdNorm=$(printf '%s' "$cwd" | tr '\\' '/' | tr 'A-Z' 'a-z' | sed 's|/*$||')
 workspaceNorm=$(printf '%s' "$configuredWorkspace" | tr '\\' '/' | tr 'A-Z' 'a-z' | sed 's|/*$||')
 case "$cwdNorm" in
   "$workspaceNorm"|"$workspaceNorm"/*)
-    if [ -f "$HOME/.claude/teams/kherep/ROUTING.md" ]; then
+    if [[ -f "$HOME/.claude/teams/kherep/ROUTING.md" ]]; then
       maestroSeg=" | Maestro: on"
     else
       maestroSeg=" | Maestro: no-routing"
