@@ -115,7 +115,7 @@ const GENERIC = new Set(
 export function contentTerms(source: string): Set<string> {
   const out = new Set<string>();
   for (const raw of String(source).split(/[^A-Za-z0-9.+-]+/)) {
-    const token = raw.replace(/^[.+-]+|[.+-]+$/g, "");
+    const token = raw.replace(/^[.+-]+|(?<![.+-])[.+-]+$/g, "");
     if (!token) continue;
     const acronym = /^[A-Z][A-Z0-9]{1,}$/.test(token);
     const lower = token.toLowerCase();

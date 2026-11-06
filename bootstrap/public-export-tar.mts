@@ -42,7 +42,7 @@ function paxRecords(data: Buffer): Map<string, string> {
 }
 
 function safePath(name: string): string {
-  const trimmed = name.replace(/\/+$/, "");
+  const trimmed = name.replace(/(?<!\/)\/+$/, "");
   const parts = trimmed.split("/");
   // Backslashes and colons would act as separators or streams on Windows.
   if (!trimmed || trimmed.startsWith("/") || /[\\:]/.test(trimmed)

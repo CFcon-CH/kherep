@@ -145,7 +145,7 @@ export const ABSOLUTE_PATH = /\\\\[^\s"'`()<>|]+|[A-Za-z]:[\\/][^\s"'`()<>|]*|~[
 const ABSOLUTE_PATHS = new RegExp(ABSOLUTE_PATH.source, "g");
 
 function basenameOf(match: string): string {
-  const trail = /[.,;:]+$/.exec(match)?.[0] ?? "";
+  const trail = /(?<![.,;:])[.,;:]+$/.exec(match)?.[0] ?? "";
   const body = match.slice(0, match.length - trail.length);
   return (body.split(/[\\/]/).filter(Boolean).pop() ?? "") + trail;
 }

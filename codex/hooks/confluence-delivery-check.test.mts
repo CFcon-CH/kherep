@@ -124,6 +124,8 @@ test("scope follows the configured workspace", () => {
   assert.equal(isKherepScope({ cwd: "D:/CFcon-DEV/kherep" }, env), true);
   assert.equal(isKherepScope({ cwd: "D:/elsewhere" }, env), false);
   assert.equal(isKherepScope({}, env), false);
+  assert.equal(isKherepScope({ cwd: "D:/Work/app///" }, { KHEREP_WORKSPACE: "D:/Work///" }), true);
+  assert.equal(isKherepScope({ cwd: "D:/Work-copy///" }, { KHEREP_WORKSPACE: "D:/Work///" }), false);
 });
 
 test("the paths it uses follow the configured workspace and CODEX_HOME", () => {

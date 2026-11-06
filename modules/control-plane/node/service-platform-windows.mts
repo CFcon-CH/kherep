@@ -31,7 +31,7 @@ const xml = (value: string): string => value.replace(/&/g, "&amp;").replace(/</g
 export function normalizeTaskPath(value = "\\"): string {
   const normalized = value.replace(/\//g, "\\");
   if (!normalized.startsWith("\\") || /(?:^|\\)\.\.(?:\\|$)/.test(normalized)) throw new Error("invalid Scheduled Task path");
-  return normalized === "\\" ? normalized : `${normalized.replace(/\\+$/, "")}\\`;
+  return normalized === "\\" ? normalized : `${normalized.replace(/(?<!\\)\\+$/, "")}\\`;
 }
 
 export function splitWindowsService(value: string, taskPath?: string): { serviceName: string; taskPath: string } {

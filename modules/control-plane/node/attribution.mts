@@ -104,7 +104,7 @@ export function readAttribution(paths: NodePaths): AttributionRecord[] {
 // The marker file name: sha256 of the toplevel with forward slashes and no
 // trailing slash, lower case on Windows, where git prints the drive either way.
 export function markerKey(toplevel: string, platform: NodeJS.Platform = process.platform): string {
-  const normalized = toplevel.replace(/\\/g, "/").replace(/\/+$/, "");
+  const normalized = toplevel.replace(/\\/g, "/").replace(/(?<!\/)\/+$/, "");
   return crypto.createHash("sha256").update(platform === "win32" ? normalized.toLowerCase() : normalized).digest("hex");
 }
 

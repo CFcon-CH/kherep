@@ -16,6 +16,8 @@ function run(command: string, env: Record<string, string> = {}, cwd = "/work/rep
 }
 assert.equal(run('git commit -m "plain subject"'), 0);
 assert.equal(run('git commit -m "plain subject"', { KHEREP_WORK_ITEM_REQUIRED: "1" }), 2);
+assert.equal(run('git commit -m "plain subject"', { KHEREP_WORK_ITEM_REQUIRED: "1", KHEREP_WORKSPACE: "/work///" }, "/work/repo///"), 2);
+assert.equal(run('git commit -m "plain subject"', { KHEREP_WORK_ITEM_REQUIRED: "1", KHEREP_WORKSPACE: "/work///" }, "/work-copy///"), 0);
 assert.equal(run('git commit -m "ABC-12 valid subject"', { KHEREP_WORK_ITEM_REQUIRED: "1" }), 0);
 assert.equal(run('KHEREP_WORK_ITEM=none git commit -m "exception"', { KHEREP_WORK_ITEM_REQUIRED: "1" }), 0);
 assert.equal(run('git commit -m "plain subject"', { KHEREP_WORK_ITEM_REQUIRED: "1" }, "/elsewhere/repo"), 0);

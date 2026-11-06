@@ -17,6 +17,16 @@ const custom = (name: string, input: string): string => line("response_item", {
 });
 const rollout = (...items: string[]): string => items.join("\n");
 
+test("relative edit targets preserve repository detection after trailing separator runs", () => {
+  const parsed = parseRollout(rollout(started("current"), call("Edit", { file_path: "src/module.mts" })), "current")!;
+  const candidates: string[] = [];
+  assert.equal(researchFacts(parsed, "D:/Work/repo///", (candidate) => {
+    candidates.push(candidate);
+    return candidate === "D:/Work/repo/.git";
+  }).codeWork, true);
+  assert.deepEqual(candidates, ["D:/Work/repo/src/module.mts/.git", "D:/Work/repo/src/.git", "D:/Work/repo/.git"]);
+});
+
 test("selects the requested task_started turn and does not reset on steering user messages", () => {
   const parsed = parseRollout(rollout(
     started("old"), call("exec_command", { cmd: "npm test" }), message("assistant", "old"),

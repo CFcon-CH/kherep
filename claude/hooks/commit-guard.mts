@@ -26,7 +26,7 @@ function inlineMessage(command: string): string | null {
     ? value.slice(1, -1) : value;
 }
 function normalized(value: unknown): string {
-  return String(value || "").replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+  return String(value || "").replace(/\\/g, "/").replace(/(?<!\/)\/+$/, "").toLowerCase();
 }
 function targetPath(command: string, cwd: unknown): string {
   const match = command.match(/\bgit\b[^|;&]*?\s-C\s+("[^"]+"|'[^']+'|\S+)/);

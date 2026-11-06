@@ -116,7 +116,7 @@ function reanchor(
     });
     if (!matches) continue;
     const moved = [...lifted.map(({ piece }) => text(piece)), text(block.carry), ...stateBehind.map(({ span }) => text(span))]
-      .join("").replace(/^\n+|\n+$/g, "");
+      .join("").replace(/^\n+|(?<!\n)\n+$/g, "");
     const last = tail.at(-1);
     const consumed = last ? last.span.start + text(last.span).trimEnd().length : stateBehind.at(-1)?.span.end ?? block.carry.end;
     const remainder = config.slice(consumed).replace(/^\n+/, "");

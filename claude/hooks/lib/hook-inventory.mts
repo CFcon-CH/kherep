@@ -65,7 +65,7 @@ function commandsIn(settings: { hooks?: unknown } | null): string[] {
 }
 
 function expandToken(token: string, home: string): string {
-  let raw = String(token).replace(/^['"]+|['"]+$/g, "").replace(/\$\{?CLAUDE_HOME\}?/g, home);
+  let raw = String(token).replace(/^['"]+|(?<!['"])['"]+$/g, "").replace(/\$\{?CLAUDE_HOME\}?/g, home);
   if (raw === "~" || raw.startsWith("~/") || raw.startsWith("~\\")) raw = os.homedir() + raw.slice(1);
   return normalizePathLike(raw);
 }
@@ -78,7 +78,7 @@ const ENTRY_MODES = new Set(["pretool", "reader", "writer"]);
 function coordinated(command: string, tokens: string[], home: string, hooksDir: string): boolean {
   const call = tokens[0] === "&";
   if (!singleCommand(call ? command.replace(/^\s*&/, "") : command)) return false;
-  const [node, entry, mode, main] = tokens.slice(call ? 1 : 0).map((token) => token.replace(/^['"]+|['"]+$/g, ""));
+  const [node, entry, mode, main] = tokens.slice(call ? 1 : 0).map((token) => token.replace(/^['"]+|(?<!['"])['"]+$/g, ""));
   return node === "node" && sameEntryPath(expandToken(entry ?? "", home), `${home}/kherep/hook-runtime/entry.mts`)
     && ENTRY_MODES.has(mode ?? "") && isWithinPath(expandToken(main ?? "", home), hooksDir);
 }

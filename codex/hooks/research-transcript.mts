@@ -156,7 +156,7 @@ function fileToolPaths(call: ToolCall): string[] {
 function resolvePathLike(cwd: string, target: string): string {
   const normalizedTarget = target.replace(/\\/g, "/");
   if (normalizedTarget.startsWith("/") || /^[A-Za-z]:\//.test(normalizedTarget)) return normalizedTarget;
-  return `${cwd.replace(/\\/g, "/").replace(/\/+$/, "")}/${normalizedTarget}`;
+  return `${cwd.replace(/\\/g, "/").replace(/(?<!\/)\/+$/, "")}/${normalizedTarget}`;
 }
 
 function inRepository(target: string, cwd: string, exists: Exists): boolean {
