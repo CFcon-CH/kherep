@@ -24,7 +24,7 @@ kherep_validate_shell_path KHEREP_CREDENTIALS_ROOT "$CREDENTIALS_ROOT" || exit $
 kherep_validate_workspace_command_path "$WS" || exit $?
 
 bootstrap_cleanup_preflight() {
-  [ -n "$PREFLIGHT_DIR" ] || return 0
+  [[ -n "$PREFLIGHT_DIR" ]] || return 0
   case "$PREFLIGHT_DIR" in
     "$CLAUDE_HOME"/backups/bootstrap/preflight-*) rm -rf -- "$PREFLIGHT_DIR" ;;
     *) echo "ERROR: refusing to remove unexpected preflight path: $PREFLIGHT_DIR" >&2; return 1 ;;
@@ -34,7 +34,7 @@ bootstrap_cleanup_preflight() {
 
 bootstrap_on_err() {
   local rc="$1" line="$2"
-  [ -n "$TX_FAILURE_REASON" ] || TX_FAILURE_REASON="command failed with exit $rc at install.sh:$line"
+  [[ -n "$TX_FAILURE_REASON" ]] || TX_FAILURE_REASON="command failed with exit $rc at install.sh:$line"
   return 0
 }
 
@@ -53,12 +53,12 @@ claude_probe_resume() {
 bootstrap_on_exit() {
   local rc="$1" rollback_rc=0
   trap - ERR INT TERM EXIT
-  if [ "$TX_ACTIVE" = 1 ]; then
+  if [[ "$TX_ACTIVE" = "1" ]]; then
     if transaction_commit_is_durable; then
       transaction_accept_durable_commit || rollback_rc=1
       echo "install: durable commit retained after interrupted finalization -> $INSTALL_BACKUP" >&2
     else
-      if [ "$rc" = 0 ]; then
+      if [[ "$rc" = "0" ]]; then
         rc=1
         TX_FAILURE_REASON="unexpected exit before transaction commit"
       fi
@@ -67,9 +67,9 @@ bootstrap_on_exit() {
     fi
   fi
   bootstrap_cleanup_preflight || rollback_rc=1
-  [ "$CLAUDE_PROBE_PAUSED" != 1 ] || claude_probe_resume
+  [[ "$CLAUDE_PROBE_PAUSED" != "1" ]] || claude_probe_resume
   bootstrap_lock_release || rollback_rc=1
-  [ "$rollback_rc" = 0 ] || rc=1
+  [[ "$rollback_rc" = "0" ]] || rc=1
   exit "$rc"
 }
 
@@ -80,12 +80,12 @@ trap 'bootstrap_on_exit $?' EXIT
 
 command -v node >/dev/null || { echo "FATAL: node required"; exit 1; }
 echo "install: profile=$KHEREP_PROFILE workspace=$WS"
-if [ "$SKIP_SECRETS" = "0" ]; then
+if [[ "$SKIP_SECRETS" = "0" ]]; then
   command -v sops >/dev/null || { echo "FATAL: sops required (or SKIP_SECRETS=1)"; exit 1; }
-  [ -n "$SECRETS_BUNDLE" ] || { echo "FATAL: KHEREP_SECRETS_BUNDLE is required when SKIP_SECRETS=0"; exit 1; }
-  [ -f "$SECRETS_BUNDLE" ] || { echo "FATAL: external secrets bundle not found"; exit 1; }
-  [ -n "$AGE_KEY" ] || { echo "FATAL: SOPS_AGE_KEY_FILE is required when SKIP_SECRETS=0"; exit 1; }
-  [ -f "$AGE_KEY" ] || { echo "FATAL: external age key not found"; exit 1; }
+  [[ -n "$SECRETS_BUNDLE" ]] || { echo "FATAL: KHEREP_SECRETS_BUNDLE is required when SKIP_SECRETS=0"; exit 1; }
+  [[ -f "$SECRETS_BUNDLE" ]] || { echo "FATAL: external secrets bundle not found"; exit 1; }
+  [[ -n "$AGE_KEY" ]] || { echo "FATAL: SOPS_AGE_KEY_FILE is required when SKIP_SECRETS=0"; exit 1; }
+  [[ -f "$AGE_KEY" ]] || { echo "FATAL: external age key not found"; exit 1; }
   kherep_validate_shell_path KHEREP_SECRETS_BUNDLE "$SECRETS_BUNDLE" || exit $?
   kherep_validate_shell_path SOPS_AGE_KEY_FILE "$AGE_KEY" || exit $?
 fi
@@ -93,11 +93,11 @@ fi
 # Fail before the first managed mutation if the source contract or a merged
 # host profile cannot be rendered. Rendered settings are later installed via
 # the same atomic path swap as every other managed file.
-while IFS= read -r rel || [ -n "$rel" ]; do
-  [ -z "$rel" ] && continue
+while IFS= read -r rel || [[ -n "$rel" ]]; do
+  [[ -z "$rel" ]] && continue
   kherep_validate_manifest_relative_path "bootstrap manifest entry" "$rel" || exit $?
   case "$rel" in settings.json|CLAUDE.md) continue;; esac
-  [ -e "$CLAUDE_SRC/$rel" ] || { echo "FATAL: managed source missing: claude/$rel"; exit 1; }
+  [[ -e "$CLAUDE_SRC/$rel" ]] || { echo "FATAL: managed source missing: claude/$rel"; exit 1; }
 done < "$REPO_ROOT/bootstrap/manifest/files.txt"
 for required in \
   "$CLAUDE_SRC/CLAUDE.user.md" "$CLAUDE_SRC/CLAUDE.project.md" "$CLAUDE_SRC/AGENTS.project.md" \
@@ -105,16 +105,16 @@ for required in \
   "$REPO_ROOT/modules/local-inference/runner.mts" \
   "$REPO_ROOT/modules/local-inference/lib" "$REPO_ROOT/bootstrap/manifest/local-inference.json" \
   "$REPO_ROOT/modules/twg/runtime"; do
-  [ -e "$required" ] || { echo "FATAL: managed source missing: $required"; exit 1; }
+  [[ -e "$required" ]] || { echo "FATAL: managed source missing: $required"; exit 1; }
 done
 # OP-1432. The Confluence brokers and exactly the modules they import ship with
 # the observation agent, so they are installed by default, not behind the switch.
 CONFLUENCE_TOOLS="atlassian-credentials.mts atlassian-cli-args.mts confluence-contract.mts confluence-content.mts confluence-session.mts confluence-related.mts confluence-text-search.mts confluence-semantic.mts confluence-neighbours.mts confluence-neighbour-cli.mts confluence-topic-query.mts confluence-candidates.mts confluence-stitch.mts confluence-list-cli.mts confluence-runtime-label.mts confluence-label-cli.mts confluence-pagination.mts confluence-drainage-rules.mts confluence-drainage-snapshot.mts confluence-drainage-scan.mts confluence-drainage-cli.mts confluence-evidence.mts confluence-evidence-report.mts confluence-evidence-io.mts confluence-evidence-cli.mts confluence-claim-text.mts confluence-observation-validate.mts confluence-revision-staleness.mts confluence-revision-staleness-git.mts atl-confluence.mts atl-confluence-ccoder.mts"
 for tool in $CONFLUENCE_TOOLS; do
-  [ -e "$REPO_ROOT/modules/atl-jira-brokers/$tool" ] || { echo "FATAL: managed source missing: modules/atl-jira-brokers/$tool"; exit 1; }
+  [[ -e "$REPO_ROOT/modules/atl-jira-brokers/$tool" ]] || { echo "FATAL: managed source missing: modules/atl-jira-brokers/$tool"; exit 1; }
 done
-if [ "$INSTALL_ATLASSIAN_TOOLS" = "1" ]; then
-  [ -e "$REPO_ROOT/modules/atl-jira-brokers" ] || { echo "FATAL: optional Atlassian source missing"; exit 1; }
+if [[ "$INSTALL_ATLASSIAN_TOOLS" = "1" ]]; then
+  [[ -e "$REPO_ROOT/modules/atl-jira-brokers" ]] || { echo "FATAL: optional Atlassian source missing"; exit 1; }
 fi
 
 GITHUB_BROKER_FILES="$(node "$REPO_ROOT/lib/github-broker-projection.mts" "$REPO_ROOT")"
@@ -122,8 +122,8 @@ GITHUB_BROKER_FILES="$(node "$REPO_ROOT/lib/github-broker-projection.mts" "$REPO
 # Validate every managed destination before creating bootstrap state. Target
 # leaves may themselves be symlinks (the atomic swap replaces them), but no
 # ancestor below an explicitly configured root may redirect the operation.
-while IFS= read -r rel || [ -n "$rel" ]; do
-  [ -z "$rel" ] && continue
+while IFS= read -r rel || [[ -n "$rel" ]]; do
+  [[ -z "$rel" ]] && continue
   kherep_validate_manifest_relative_path "bootstrap manifest entry" "$rel" || exit $?
   case "$rel" in
     settings.json) target="$CLAUDE_HOME/settings.json" ;;
@@ -137,7 +137,7 @@ transaction_validate_path_under_root "project settings" "$WS/.claude/settings.lo
 for target in $CONFLUENCE_TOOLS; do
   transaction_validate_path_under_root "Confluence broker" "$WS/tools/$target" "$WS" 0 || exit $?
 done
-if [ "$INSTALL_ATLASSIAN_TOOLS" = "1" ]; then
+if [[ "$INSTALL_ATLASSIAN_TOOLS" = "1" ]]; then
   for target in atl-jira.mts atl-jira-ccoder.mts jira-adf.mts jira-adf-text.mts jira-attach.mts jira-download.mts jira-config.mts jira-transition-guard.mts jira-fields.mts jira-links.mts jira-search.mts jira-discovery.mts; do
     transaction_validate_path_under_root "optional Atlassian tool" "$WS/tools/$target" "$WS" 0 || exit $?
   done
@@ -153,7 +153,7 @@ transaction_validate_path_under_root "commit policy" "$CLAUDE_HOME/kherep/githoo
 transaction_validate_path_under_root "Confluence configuration" "$CLAUDE_HOME/kherep/confluence.json" "$CLAUDE_HOME" 0 || exit $?
 transaction_validate_path_under_root "control-plane pointer" "$CLAUDE_HOME/kherep/control-plane/source.json" "$CLAUDE_HOME" 0 || exit $?
 transaction_validate_path_under_root "model policy user override" "$CLAUDE_HOME/kherep/model-policy.user.json" "$CLAUDE_HOME" 0 || exit $?
-if [ "$SKIP_SECRETS" = "0" ]; then
+if [[ "$SKIP_SECRETS" = "0" ]]; then
   for target in \
     "$CLAUDE_HOME/.mcp.json"; do
     transaction_validate_path_under_root "secret target" "$target" "$CLAUDE_HOME" 0 || exit $?
@@ -186,7 +186,7 @@ node "$REPO_ROOT/bootstrap/commit-policy.mts" render "$WS" \
 # credential and space steps (C2/C3), so an upgrade whose space step is skipped
 # or fails still names this workspace. Merged into a copy of the live file, so
 # only `broker` changes; an unreadable live file stops the run here.
-[ ! -f "$CLAUDE_HOME/kherep/confluence.json" ] ||
+[[ ! -f "$CLAUDE_HOME/kherep/confluence.json" ]] ||
   cp "$CLAUDE_HOME/kherep/confluence.json" "$PREFLIGHT_DIR/confluence.json"
 node "$REPO_ROOT/bootstrap/confluence-space.mts" --broker-only --runtime claude \
   --profile "$KHEREP_PROFILE" --workspace "$WS" --out "$PREFLIGHT_DIR/confluence.json" >/dev/null
@@ -218,14 +218,14 @@ node "$REPO_ROOT/bootstrap/render-profile.mts" intercom \
 USER_MODEL_POLICY="$CLAUDE_HOME/kherep/model-policy.user.json"
 node "$REPO_ROOT/bootstrap/migrate-model-policy.mts" \
   "$CLAUDE_HOME" "$CLAUDE_SRC/kherep/model-policy.json" "$PREFLIGHT_DIR/model-policy.user.json"
-[ ! -f "$PREFLIGHT_DIR/model-policy.user.json" ] || USER_MODEL_POLICY="$PREFLIGHT_DIR/model-policy.user.json"
+[[ ! -f "$PREFLIGHT_DIR/model-policy.user.json" ]] || USER_MODEL_POLICY="$PREFLIGHT_DIR/model-policy.user.json"
 node "$REPO_ROOT/bootstrap/model-policy-render.mts" agents \
   "$CLAUDE_SRC/agents" "$PREFLIGHT_DIR/agents" "$CLAUDE_SRC/kherep/model-policy.json" "$USER_MODEL_POLICY"
 
 # Decrypt and validate the complete bundle before the first live mutation.
 # Decrypted YAML stays in the sops->node pipe; decoded staging files are mode
 # 0600/0700 inside the mode-0700 preflight directory.
-if [ "$SKIP_SECRETS" = "0" ]; then
+if [[ "$SKIP_SECRETS" = "0" ]]; then
   SOPS_AGE_KEY_FILE="$AGE_KEY" sops -d "$SECRETS_BUNDLE" | \
     node "$REPO_ROOT/bootstrap/prepare-secrets.mts" "$PREFLIGHT_DIR/secrets"
 fi
@@ -235,8 +235,8 @@ chmod 700 "$INSTALL_BACKUP" 2>/dev/null || true
 transaction_begin "$INSTALL_BACKUP" "$CLAUDE_HOME" "$WS"
 
 # ---- A. files (claude/ -> ~/.claude) ----
-while IFS= read -r rel || [ -n "$rel" ]; do
-  [ -z "$rel" ] && continue
+while IFS= read -r rel || [[ -n "$rel" ]]; do
+  [[ -z "$rel" ]] && continue
   case "$rel" in settings.json|CLAUDE.md) continue;; esac
   # Issue #436. Rendered in the preflight, installed from there.
   # Issue #737: agents too, rendered from the model policy.
@@ -247,7 +247,7 @@ while IFS= read -r rel || [ -n "$rel" ]; do
   esac
   install_entry "$rel" "$CLAUDE_SRC" "$CLAUDE_HOME" "$INSTALL_BACKUP"
 done < "$REPO_ROOT/bootstrap/manifest/files.txt"
-if [ -f "$PREFLIGHT_DIR/model-policy.user.json" ]; then
+if [[ -f "$PREFLIGHT_DIR/model-policy.user.json" ]]; then
   install_path "kherep/model-policy.user.json" "$PREFLIGHT_DIR/model-policy.user.json" \
     "$CLAUDE_HOME/kherep/model-policy.user.json" "$INSTALL_BACKUP/kherep/model-policy.user.json"
   echo "install: model policy user override migrated -> $CLAUDE_HOME/kherep/model-policy.user.json"
@@ -294,7 +294,7 @@ for tool in $GITHUB_BROKER_FILES; do
     "$INSTALL_BACKUP/project/tools/github-broker/$tool"
 done
 
-if [ "$INSTALL_ATLASSIAN_TOOLS" = "1" ]; then
+if [[ "$INSTALL_ATLASSIAN_TOOLS" = "1" ]]; then
 install_path "project/tools/jira-adf.mts" \
   "$REPO_ROOT/modules/atl-jira-brokers/jira-adf.mts" "$WS/tools/jira-adf.mts" \
   "$INSTALL_BACKUP/project/tools/jira-adf.mts"
@@ -370,7 +370,7 @@ node "$REPO_ROOT/bootstrap/record-install-source.mts" "$CLAUDE_HOME" "$REPO_ROOT
   echo "install: source checkout NOT recorded (self-heal falls back to the session workspace)"
 
 # ---- B. secrets via SOPS (age key on NAS) ----
-if [ "$SKIP_SECRETS" = "0" ]; then
+if [[ "$SKIP_SECRETS" = "0" ]]; then
   install_path "secrets/.mcp.json" "$PREFLIGHT_DIR/secrets/mcp.json" \
     "$CLAUDE_HOME/.mcp.json" "$INSTALL_BACKUP/secrets/.mcp.json"
   echo "install: encrypted bundle installed"
@@ -401,16 +401,16 @@ post_rc=0
 # a sign-out that existed before this install. The readiness check makes a real
 # model call with the account's login, so a candidate home skips both (profile.sh).
 SKIP_CLAUDE_READINESS="$(kherep_install_skip_reason CLAUDE_READINESS)"
-if [ "$SKIP_DEPS" = "0" ]; then
+if [[ "$SKIP_DEPS" = "0" ]]; then
   CLAUDE_PROBE_PAUSED=1
   node "$REPO_ROOT/bootstrap/claude-readiness-check.mts" pause "$$" ||
     echo "install: WARNING Kherep node Claude probe not paused; it may run during the deps phase"
-  [ -n "$SKIP_CLAUDE_READINESS" ] || node "$REPO_ROOT/bootstrap/claude-readiness-check.mts" precheck || true
+  [[ -n "$SKIP_CLAUDE_READINESS" ]] || node "$REPO_ROOT/bootstrap/claude-readiness-check.mts" precheck || true
   node "$REPO_ROOT/bootstrap/npm-globals.mts" "$REPO_ROOT/bootstrap/manifest/npm-globals.txt" \
     "?$REPO_ROOT/bootstrap/manifest/npm-globals.${KHEREP_PROFILE}.txt" || post_rc=1
   node "$REPO_ROOT/bootstrap/reconcile-plugins.mts" \
     "$REPO_ROOT/bootstrap/manifest/marketplaces.json" "$REPO_ROOT/bootstrap/manifest/plugins.json" || post_rc=1
-  if [ "$post_rc" = 0 ]; then
+  if [[ "$post_rc" = "0" ]]; then
     echo "install: npm globals + marketplaces + plugins done."
   else
     echo "install: WARNING deps phase incomplete (npm globals and/or plugins) - managed files stay committed"
@@ -420,9 +420,9 @@ if [ "$SKIP_DEPS" = "0" ]; then
   # registry (~/.claude.json), live host state outside CLAUDE_HOME, so it has
   # the same skip rules as the credential step. The OAuth plugin is disabled
   # only after the server reads back as registered.
-  if [ "$INSTALL_ATLASSIAN_TOOLS" = "1" ]; then
+  if [[ "$INSTALL_ATLASSIAN_TOOLS" = "1" ]]; then
     SKIP_ATL_MCP="$(kherep_install_skip_reason ATL_MCP)"
-    if [ -n "$SKIP_ATL_MCP" ]; then
+    if [[ -n "$SKIP_ATL_MCP" ]]; then
       echo "install: SKIP_ATL_MCP=1 (by $SKIP_ATL_MCP; Atlassian MCP server not registered, ~/.claude.json untouched)"
     elif ! node "$REPO_ROOT/bootstrap/atl-mcp-claude.mts" --claude-home "$CLAUDE_HOME"; then
       post_rc=1
@@ -449,7 +449,7 @@ fi
 # step too, unless KHEREP_INSTALL_ALLOW_ATL_CREDENTIAL=1 (issue #256, profile.sh).
 SKIP_ATL_CREDENTIAL="$(kherep_install_skip_reason ATL_CREDENTIAL)"
 atl_credential_ok=0
-if [ -n "$SKIP_ATL_CREDENTIAL" ]; then
+if [[ -n "$SKIP_ATL_CREDENTIAL" ]]; then
   echo "install: SKIP_ATL_CREDENTIAL=1 (by $SKIP_ATL_CREDENTIAL; Atlassian service-account credential not read or verified, no broker selftest; $CLAUDE_HOME/kherep/atl-credential-claude.txt untouched)"
 elif node "$REPO_ROOT/bootstrap/atl-credential.mts" --runtime claude --out "$CLAUDE_HOME/kherep/atl-credential-claude.txt"; then
   atl_credential_ok=1
@@ -476,14 +476,14 @@ fi
 # passes the same profile and workspace, so it writes the same value, and it
 # merges: every key it does not own survives.
 SKIP_KNOWLEDGE_SPACE="$(kherep_install_skip_reason KNOWLEDGE_SPACE)"
-if [ -n "$SKIP_KNOWLEDGE_SPACE" ]; then
+if [[ -n "$SKIP_KNOWLEDGE_SPACE" ]]; then
   echo "install: SKIP_KNOWLEDGE_SPACE=1 (by $SKIP_KNOWLEDGE_SPACE; Confluence knowledge space not resolved; the space keys in $CLAUDE_HOME/kherep/confluence.json stay as they were)"
-elif [ "$atl_credential_ok" = "1" ]; then
+elif [[ "$atl_credential_ok" = "1" ]]; then
   KHEREP_ATL_CRED_FILE_CLAUDE="${KHEREP_ATL_CRED_FILE_CLAUDE:-$CLAUDE_HOME/kherep/atl-credential-claude.txt}" \
     node "$REPO_ROOT/bootstrap/confluence-space.mts" --out "$CLAUDE_HOME/kherep/confluence.json" \
       --runtime claude --profile "$KHEREP_PROFILE" --workspace "$WS" \
     || { post_rc=1; echo "install: WARNING no Confluence knowledge space configured - observation agents will not write"; }
-elif [ -n "$SKIP_ATL_CREDENTIAL" ]; then
+elif [[ -n "$SKIP_ATL_CREDENTIAL" ]]; then
   post_rc=1
   echo "install: WARNING Confluence knowledge space was not checked because the credential step was skipped"
 else
@@ -514,10 +514,10 @@ fi
 # needs the bit too, attribution-record.mts beside it is run through node.
 SKIP_GITCONFIG="$(kherep_install_skip_reason GITCONFIG)"
 GITHOOKS_DIR="$CLAUDE_HOME/kherep/githooks"
-if [ -n "$SKIP_GITCONFIG" ]; then
+if [[ -n "$SKIP_GITCONFIG" ]]; then
   chmod +x "$GITHOOKS_DIR/commit-msg" "$GITHOOKS_DIR/post-checkout" "$GITHOOKS_DIR/pre-push" 2>/dev/null || true
   echo "install: SKIP_GITCONFIG=1 (by $SKIP_GITCONFIG; global, system and repo-local core.hooksPath untouched; hook file still placed)"
-elif [ -f "$GITHOOKS_DIR/commit-msg" ]; then
+elif [[ -f "$GITHOOKS_DIR/commit-msg" ]]; then
   # Windows checkouts routinely drop the mode bit; without +x git skips the hook
   # silently and the rule would bind on one host but not the other.
   chmod +x "$GITHOOKS_DIR/commit-msg" "$GITHOOKS_DIR/post-checkout" "$GITHOOKS_DIR/pre-push" 2>/dev/null || true
@@ -525,7 +525,7 @@ elif [ -f "$GITHOOKS_DIR/commit-msg" ]; then
   # so the same directory must not read as a replacement (issue #99).
   source "$REPO_ROOT/bootstrap/bind-repo-hookspath.sh"
   PREV_HOOKS_PATH="$(git config --global core.hooksPath 2>/dev/null || true)"
-  if [ -n "$PREV_HOOKS_PATH" ] && [ "$(norm_hookspath "$PREV_HOOKS_PATH")" != "$(norm_hookspath "$GITHOOKS_DIR")" ]; then
+  if [[ -n "$PREV_HOOKS_PATH" ]] && [[ "$(norm_hookspath "$PREV_HOOKS_PATH")" != "$(norm_hookspath "$GITHOOKS_DIR")" ]]; then
     echo "install: WARNING core.hooksPath was '$PREV_HOOKS_PATH' and is being replaced by '$GITHOOKS_DIR'. The previous directory is NOT merged; move any hooks you still need."
   fi
   # Post-Commit: gesammelt statt abgebrochen, wie die Nachbarzeilen (OP-1085 Review).
@@ -542,10 +542,10 @@ elif [ -f "$GITHOOKS_DIR/commit-msg" ]; then
   # unless KHEREP_INSTALL_SYSTEM_HOOKSPATH is exactly 1. Git for Windows stores
   # the drive form of a /c/... path, so compare like the repo-local binding does.
   SYSTEM_HOOKS_PATH="$(git config --system --get core.hooksPath 2>/dev/null || true)"
-  if [ "$(norm_hookspath "$SYSTEM_HOOKS_PATH")" != "$(norm_hookspath "$GITHOOKS_DIR")" ]; then
+  if [[ "$(norm_hookspath "$SYSTEM_HOOKS_PATH")" != "$(norm_hookspath "$GITHOOKS_DIR")" ]]; then
     SYSTEM_HOOKS_SHOWN="'$SYSTEM_HOOKS_PATH'"
-    [ -n "$SYSTEM_HOOKS_PATH" ] || SYSTEM_HOOKS_SHOWN="unset"
-    if [ "$(kherep_env INSTALL_SYSTEM_HOOKSPATH 0)" != "1" ]; then
+    [[ -n "$SYSTEM_HOOKS_PATH" ]] || SYSTEM_HOOKS_SHOWN="unset"
+    if [[ "$(kherep_env INSTALL_SYSTEM_HOOKSPATH 0)" != "1" ]]; then
       echo "install: system core.hooksPath is $SYSTEM_HOOKS_SHOWN, not '$GITHOOKS_DIR' - left unchanged; KHEREP_INSTALL_SYSTEM_HOOKSPATH=1 replaces it for EVERY account on this host"
     elif git config --system core.hooksPath "$GITHOOKS_DIR"; then
       echo "install: git core.hooksPath -> $GITHOOKS_DIR (system, binds EVERY account; replaced $SYSTEM_HOOKS_SHOWN)"
@@ -570,20 +570,20 @@ fi
 # the install with the fix named; a timeout or another failure only warns.
 # Without SKIP_DEPS (a test that runs section D onward) nothing is probed.
 claude_rc=0
-if [ "${SKIP_DEPS:-1}" != "0" ]; then
+if [[ "${SKIP_DEPS:-1}" != "0" ]]; then
   :
-elif [ -n "${SKIP_CLAUDE_READINESS:-}" ]; then
+elif [[ -n "${SKIP_CLAUDE_READINESS:-}" ]]; then
   echo "install: SKIP_CLAUDE_READINESS=1 (by $SKIP_CLAUDE_READINESS; claude sign-in not probed)"
 else
   # Refreshes the lock: a credential prompt above may have aged it past 30 min.
   node "$REPO_ROOT/bootstrap/claude-readiness-check.mts" pause "$$" >/dev/null || true
   node "$REPO_ROOT/bootstrap/claude-readiness-check.mts" check || claude_rc=1
 fi
-[ "${CLAUDE_PROBE_PAUSED:-0}" != 1 ] || claude_probe_resume
+[[ "${CLAUDE_PROBE_PAUSED:-0}" != "1" ]] || claude_probe_resume
 
-if [ "$post_rc" = 0 ] && [ "$claude_rc" = 0 ]; then
+if [[ "$post_rc" = "0" ]] && [[ "$claude_rc" = "0" ]]; then
   echo "install done."
-elif [ "$post_rc" = 0 ]; then
+elif [[ "$post_rc" = "0" ]]; then
   echo "install: DONE WITH ERRORS (Claude sign-in lost, see above; managed files stay committed)"
   exit 1
 else

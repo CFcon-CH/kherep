@@ -12,7 +12,7 @@ kherep_validate_shell_path CLAUDE_HOME "$CLAUDE_HOME" || exit $?
 # requires an explicit settings skip; shared settings changes need a reviewed
 # source edit until profile overlays exist.
 SKIP_SETTINGS="$(kherep_env CAPTURE_SKIP_SETTINGS 0)"
-if [ "$KHEREP_PROFILE" = "mac" ] && [ "$SKIP_SETTINGS" != "1" ]; then
+if [[ "$KHEREP_PROFILE" = "mac" ]] && [[ "$SKIP_SETTINGS" != "1" ]]; then
   echo "FATAL: Mac settings capture is merge-unsafe. Re-run with KHEREP_CAPTURE_SKIP_SETTINGS=1 to capture managed files without settings; review shared settings edits separately." >&2
   exit 2
 fi
@@ -21,13 +21,13 @@ mkdir -p "$CLAUDE_SRC" "$CLAUDE_SRC/_deprecated"
 
 # 1. In-scope files (settings.json + CLAUDE.md handled specially in step 2)
 while read -r rel; do
-  [ -z "$rel" ] && continue
+  [[ -z "$rel" ]] && continue
   case "$rel" in settings.json|CLAUDE.md) continue;; esac
   copy_entry "$rel" "$CLAUDE_HOME" "$CLAUDE_SRC"
 done < "$REPO_ROOT/bootstrap/manifest/files.txt"
 
 # 2. settings + CLAUDE.md get repo-side names; portable-path the settings copy
-if [ "$SKIP_SETTINGS" = "1" ]; then
+if [[ "$SKIP_SETTINGS" = "1" ]]; then
   echo "capture: settings skipped (host-merged state is not safe for the shared source)"
 else
   cp -a "$CLAUDE_HOME/settings.json" "$CLAUDE_SRC/settings.user.json"; portable_paths "$CLAUDE_SRC/settings.user.json"
@@ -42,7 +42,7 @@ node "$REPO_ROOT/bootstrap/model-policy-render.mts" portable "$CLAUDE_SRC/agents
 # project-scoped settings + CLAUDE live in the Work workspace
 WS="$(kherep_shell_path "$(kherep_env WORKSPACE "$(kherep_default_workspace)")")"
 kherep_validate_shell_path KHEREP_WORKSPACE "$WS" || exit $?
-if [ "$SKIP_SETTINGS" != "1" ]; then
+if [[ "$SKIP_SETTINGS" != "1" ]]; then
   cp -a "$WS/.claude/settings.local.json" "$CLAUDE_SRC/settings.project.json"; portable_paths "$CLAUDE_SRC/settings.project.json"
 fi
 # OP-1425. Only the marked Kherep block is captured; the operator text around it
@@ -53,12 +53,12 @@ node "$REPO_ROOT/bootstrap/project-rules-block.mts" capture "$WS/CLAUDE.md" "$CL
 
 # 3. Deprecated -> parked, never installed
 while read -r rel; do
-  [ -z "$rel" ] && continue
+  [[ -z "$rel" ]] && continue
   copy_entry "$rel" "$CLAUDE_HOME" "$CLAUDE_SRC/_deprecated"
 done < "$REPO_ROOT/bootstrap/manifest/deprecated.txt"
 
 # 4. team config: blank the hardcoded cwd (portability fix)
-if [ -f "$CLAUDE_SRC/teams/kherep/config.json" ]; then
+if [[ -f "$CLAUDE_SRC/teams/kherep/config.json" ]]; then
   node -e 'const f=process.argv[1],fs=require("fs");const j=JSON.parse(fs.readFileSync(f));if(j.members)j.members.forEach(m=>{if(m.cwd!==undefined)m.cwd="";});fs.writeFileSync(f,JSON.stringify(j,null,2)+"\n");' \
     "$CLAUDE_SRC/teams/kherep/config.json"
 fi

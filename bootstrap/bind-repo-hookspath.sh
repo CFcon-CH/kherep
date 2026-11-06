@@ -42,15 +42,15 @@ norm_hookspath() {
 
 # install.sh sources this file for norm_hookspath alone (issue #23); only a
 # direct run goes on to the self-test and the binding.
-[ "${BASH_SOURCE[0]}" = "$0" ] || return 0
+[[ "${BASH_SOURCE[0]}" = "$0" ]] || return 0
 
 # Der Selbsttest steht VOR der Argumentpruefung: sonst faengt ihn die
 # usage-Meldung ab, und ein Test, der nie laeuft, ist kein Test.
-if [ "${1:-}" = "--selftest" ]; then
+if [[ "${1:-}" = "--selftest" ]]; then
   fails=0
   check() {
     local got; got="$(norm_hookspath "$1")"
-    if [ "$got" = "$2" ]; then echo "PASS  $1 -> $got"
+    if [[ "$got" = "$2" ]]; then echo "PASS  $1 -> $got"
     else echo "FAIL  $1 -> $got (erwartet $2)"; fails=$((fails + 1)); fi
   }
   check 'C:/Users/X/.claude/kherep/githooks' '/c/Users/X/.claude/kherep/githooks'
@@ -66,15 +66,15 @@ fi
 WS="${1:-}"
 GITHOOKS_DIR="${2:-}"
 
-if [ -z "$WS" ] || [ -z "$GITHOOKS_DIR" ]; then
+if [[ -z "$WS" ]] || [[ -z "$GITHOOKS_DIR" ]]; then
   echo "bind-repo-hookspath: usage: $0 <workspace> <githooks-dir>" >&2
   exit 2
 fi
-if [ ! -d "$WS" ]; then
+if [[ ! -d "$WS" ]]; then
   echo "bind-repo-hookspath: workspace '$WS' is not a directory, nothing bound" >&2
   exit 2
 fi
-if [ ! -f "$GITHOOKS_DIR/commit-msg" ]; then
+if [[ ! -f "$GITHOOKS_DIR/commit-msg" ]]; then
   echo "bind-repo-hookspath: no commit-msg under '$GITHOOKS_DIR', refusing to point repos at an empty directory" >&2
   exit 2
 fi
@@ -90,14 +90,14 @@ failed=0
 # coverage scan skips them (issue #99).
 while IFS= read -r gitdir; do
   repo="$(dirname "$gitdir")"
-  if [ ! -e "$gitdir/HEAD" ]; then
+  if [[ ! -e "$gitdir/HEAD" ]]; then
     echo "bind-repo-hookspath: SKIP $repo (.git without HEAD, not a repository)"
     skipped=$((skipped + 1))
     continue
   fi
   if git -C "$repo" config --local core.hooksPath "$GITHOOKS_DIR" 2>/dev/null &&
-     [ "$(norm_hookspath "$(git -C "$repo" config --local --get core.hooksPath 2>/dev/null)")" \
-       = "$(norm_hookspath "$GITHOOKS_DIR")" ]; then
+     [[ "$(norm_hookspath "$(git -C "$repo" config --local --get core.hooksPath 2>/dev/null)")" \
+       = "$(norm_hookspath "$GITHOOKS_DIR")" ]]; then
     bound=$((bound + 1))
   else
     # Read back, never trust the write call: a repo owned by another account

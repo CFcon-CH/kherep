@@ -82,6 +82,6 @@ test("a config root the command cannot quote fails the render instead of passing
 test("the manifest loop compares CLAUDE.md and the Kherep routing file through the renderer", () => {
   const script = fs.readFileSync(path.join(HERE, "drift-check.sh"), "utf8");
   assert.match(script, /cmp_rendered "\$rel" "\$CLAUDE_SRC\/CLAUDE\.user\.md" "\$CLAUDE_HOME\/CLAUDE\.md"/);
-  assert.match(script, /if \[ "\$rel" = "teams\/kherep\/ROUTING\.md" \]; then\n\s+cmp_rendered "\$rel" "\$CLAUDE_SRC\/teams\/kherep\/ROUTING\.md" "\$CLAUDE_HOME\/teams\/kherep\/ROUTING\.md"/);
+  assert.match(script, /if \[\[ "\$rel" = "teams\/kherep\/ROUTING\.md" \]\]; then\n\s+cmp_rendered "\$rel" "\$CLAUDE_SRC\/teams\/kherep\/ROUTING\.md" "\$CLAUDE_HOME\/teams\/kherep\/ROUTING\.md"/);
   assert.doesNotMatch(script, /cmp_file "\$rel" "\$CLAUDE_SRC\/CLAUDE\.user\.md"/);
 });

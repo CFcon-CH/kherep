@@ -58,14 +58,14 @@ kherep_default_credentials_root() {
 # counts, for every switch.
 kherep_install_skip_reason() {
   local step="$1" default home claude
-  if [ "$(kherep_env "INSTALL_SKIP_$step" 0)" = 1 ]; then
+  if [[ "$(kherep_env "INSTALL_SKIP_$step" 0)" = "1" ]]; then
     printf 'KHEREP_INSTALL_SKIP_%s=1\n' "$step"; return 0
   fi
-  if [ "$(kherep_env INSTALL_PREVIEW 0)" = 1 ]; then
+  if [[ "$(kherep_env INSTALL_PREVIEW 0)" = "1" ]]; then
     printf 'KHEREP_INSTALL_PREVIEW=1\n'; return 0
   fi
   case "$step" in GITCONFIG|ATL_CREDENTIAL|ATL_MCP|CLAUDE_READINESS) ;; *) return 0 ;; esac
-  [ "$(kherep_env "INSTALL_ALLOW_$step" 0)" = 1 ] && return 0
+  [[ "$(kherep_env "INSTALL_ALLOW_$step" 0)" = "1" ]] && return 0
   # lib.sh builds the default as $HOME/.claude, so HOME=/u/ gives /u//.claude:
   # repeated and trailing slashes do not make another home. Git Bash paths are
   # case-insensitive: /c/Users/Me and /c/users/me are one home.
@@ -74,10 +74,10 @@ kherep_install_skip_reason() {
   # Git Bash unconverted; compare the Git Bash form (/c/x).
   home="$(printf '%s/.claude' "$(kherep_shell_path "${HOME-}")" | tr -s /)"
   claude="$(kherep_shell_path "${CLAUDE_HOME-}" | tr -s /)"; claude="${claude%/}"
-  if [ "$KHEREP_PROFILE" = win ]; then
+  if [[ "$KHEREP_PROFILE" = "win" ]]; then
     home="$(printf '%s' "$home" | tr 'A-Z' 'a-z')"; claude="$(printf '%s' "$claude" | tr 'A-Z' 'a-z')"
   fi
-  [ "$claude" = "$home" ] && return 0
+  [[ "$claude" = "$home" ]] && return 0
   printf "CLAUDE_HOME '%s', not the default '%s'; KHEREP_INSTALL_ALLOW_%s=1 runs this step for it\n" \
     "${CLAUDE_HOME-}" "$default" "$step"
 }
@@ -89,7 +89,7 @@ kherep_install_skip_reason() {
 # mac profile still refuses a drive path below.
 kherep_shell_path() {
   local value="$1"
-  if [ "$KHEREP_PROFILE" = "win" ]; then
+  if [[ "$KHEREP_PROFILE" = "win" ]]; then
     case "$value" in
       [A-Za-z]:[/\\]*|[A-Za-z]:)
         local letter rest
@@ -108,7 +108,7 @@ kherep_shell_path() {
 # normalize it.
 kherep_validate_shell_path() {
   local label="$1" value="$2"
-  [ -n "$value" ] || { echo "FATAL: $label must not be empty" >&2; return 2; }
+  [[ -n "$value" ]] || { echo "FATAL: $label must not be empty" >&2; return 2; }
   case "$value" in
     /*) ;;
     *) echo "FATAL: $label must be an absolute forward-slash path for bash: $value" >&2; return 2 ;;
@@ -123,7 +123,7 @@ kherep_validate_shell_path() {
       return 2
       ;;
   esac
-  if [ "$KHEREP_PROFILE" = "mac" ]; then
+  if [[ "$KHEREP_PROFILE" = "mac" ]]; then
     case "$value" in
       //[A-Za-z]/*|/[A-Za-z]:/*|/[cCdD]/*)
         echo "FATAL: $label is a Windows drive/mount path, not a macOS path: $value" >&2
@@ -149,7 +149,7 @@ kherep_validate_workspace_command_path() {
   for (( i = 0; i < ${#unsafe}; i++ )); do
     case "$value" in *"${unsafe:i:1}"*) refused=1 ;; esac
   done
-  [ "$refused" = 0 ] && return 0
+  [[ "$refused" = "0" ]] && return 0
   echo "FATAL: KHEREP_WORKSPACE contains whitespace or a shell metacharacter: $value" >&2
   echo "Kherep names the workspace unquoted in its tool commands (permission rules, claude-obs broker), so no quoting can make this path work." >&2
   echo "Choose a workspace path without whitespace and without any of $unsafe and set it with KHEREP_WORKSPACE." >&2
@@ -161,7 +161,7 @@ kherep_validate_workspace_command_path() {
 # authority over where a manifest entry can land.
 kherep_validate_manifest_relative_path() {
   local label="$1" value="$2"
-  [ -n "$value" ] || { echo "FATAL: $label must not be empty" >&2; return 2; }
+  [[ -n "$value" ]] || { echo "FATAL: $label must not be empty" >&2; return 2; }
   case "$value" in
     /*|*\\*|../*|*/../*|*/..|..|./*|*/./*|*/.|.|*/)
       echo "FATAL: $label must be a strict traversal-free relative path: $value" >&2

@@ -11,11 +11,11 @@ AGE_KEY="${SOPS_AGE_KEY_FILE:-}"
 SECRETS_BUNDLE="${KHEREP_SECRETS_BUNDLE:-}"
 kherep_validate_shell_path CLAUDE_HOME "$CLAUDE_HOME" || exit $?
 kherep_validate_shell_path KHEREP_CREDENTIALS_ROOT "$CREDENTIALS_ROOT" || exit $?
-[ -n "$AGE_KEY" ] || { echo "FATAL: SOPS_AGE_KEY_FILE is required" >&2; exit 2; }
-[ -n "$SECRETS_BUNDLE" ] || { echo "FATAL: KHEREP_SECRETS_BUNDLE is required" >&2; exit 2; }
+[[ -n "$AGE_KEY" ]] || { echo "FATAL: SOPS_AGE_KEY_FILE is required" >&2; exit 2; }
+[[ -n "$SECRETS_BUNDLE" ]] || { echo "FATAL: KHEREP_SECRETS_BUNDLE is required" >&2; exit 2; }
 kherep_validate_shell_path SOPS_AGE_KEY_FILE "$AGE_KEY" || exit $?
 kherep_validate_shell_path KHEREP_SECRETS_BUNDLE "$SECRETS_BUNDLE" || exit $?
-[ -f "$AGE_KEY" ] || { echo "FATAL: SOPS_AGE_KEY_FILE does not exist" >&2; exit 2; }
+[[ -f "$AGE_KEY" ]] || { echo "FATAL: SOPS_AGE_KEY_FILE does not exist" >&2; exit 2; }
 
 command -v sops      >/dev/null || { echo "FATAL: sops not installed"; exit 1; }
 mkdir -p "$(dirname "$SECRETS_BUNDLE")"
@@ -26,7 +26,7 @@ trap 'rm -f "$TMP" "$ENC_TMP" "$SOPS_CFG_TMP"' EXIT
 
 # 1. read the recipient from the explicitly supplied key.
 PUB="$(grep '^# public key:' "$AGE_KEY" | grep -oE 'age1[0-9a-z]+' | head -1)"
-[ -n "$PUB" ] || { echo "FATAL: cannot read public key from $AGE_KEY"; exit 1; }
+[[ -n "$PUB" ]] || { echo "FATAL: cannot read public key from $AGE_KEY"; exit 1; }
 SOPS_CFG_TMP="$(mktemp)"
 cat > "$SOPS_CFG_TMP" <<EOF
 creation_rules:
@@ -54,7 +54,7 @@ fs.writeFileSync(process.argv[1],"data:\n"+Object.entries(out).map(([k,v])=>"  "
 # prior bundle only after sops succeeds and produced non-empty ciphertext.
 ENC_TMP="$(mktemp "$(dirname "$SECRETS_BUNDLE")/.kherep-secrets.XXXXXX")"
 SOPS_AGE_KEY_FILE="$AGE_KEY" sops --config "$SOPS_CFG_TMP" --age "$PUB" --input-type yaml --output-type yaml -e "$TMP" > "$ENC_TMP"
-[ -s "$ENC_TMP" ] || { echo "FATAL: sops produced an empty bundle" >&2; exit 1; }
+[[ -s "$ENC_TMP" ]] || { echo "FATAL: sops produced an empty bundle" >&2; exit 1; }
 mv "$ENC_TMP" "$SECRETS_BUNDLE"
 ENC_TMP=""
 echo "wrote external encrypted bundle"

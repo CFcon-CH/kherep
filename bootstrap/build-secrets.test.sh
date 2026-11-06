@@ -52,7 +52,7 @@ test_missing_required_secret_fails_closed() {
   local missing rc
   for missing in mcp_json; do
     make_repo_fixture "missing-$missing"
-    [ "$missing" = mcp_json ] || \
+    [[ "$missing" = "mcp_json" ]] || \
       printf '%s\n' '{"mcpServers":{}}' > "$TEST_CLAUDE_HOME/.mcp.json"
 
     set +e
@@ -60,10 +60,10 @@ test_missing_required_secret_fails_closed() {
     rc=$?
     set -e
 
-    [ "$rc" -ne 0 ] || fail "$missing missing returned success"
+    [[ "$rc" -ne 0 ]] || fail "$missing missing returned success"
     cmp "$TEST_BUNDLE" "$CASE_ROOT/bundle.before" >/dev/null || \
       fail "$missing missing changed the existing encrypted bundle"
-    [ ! -e "$TOOL_MARKER" ] || fail "sops/age-keygen ran after $missing validation failed"
+    [[ ! -e "$TOOL_MARKER" ]] || fail "sops/age-keygen ran after $missing validation failed"
     grep -q "FATAL missing required live secrets:.*$missing" "$CASE_ROOT/output.log" || \
       fail "$missing was not identified"
   done
@@ -79,11 +79,11 @@ test_windows_age_path_is_rejected_before_mutation() {
   rc=$?
   set -e
 
-  [ "$rc" -ne 0 ] || fail "Windows SOPS_AGE_KEY_FILE passed on the Mac profile"
+  [[ "$rc" -ne 0 ]] || fail "Windows SOPS_AGE_KEY_FILE passed on the Mac profile"
   cmp "$TEST_BUNDLE" "$CASE_ROOT/bundle.before" >/dev/null || \
     fail "invalid age-key path changed the existing encrypted bundle"
-  [ ! -e "$TOOL_MARKER" ] || fail "mkdir/age-keygen/sops phase was reached for invalid age-key path"
-  [ ! -e "$CASE_ROOT/D:\Work-credentials\age\kherep.key" ] || \
+  [[ ! -e "$TOOL_MARKER" ]] || fail "mkdir/age-keygen/sops phase was reached for invalid age-key path"
+  [[ ! -e "$CASE_ROOT/D:\Work-credentials\age\kherep.key" ]] || \
     fail "invalid Windows age-key path was materialized"
   grep -Eq 'FATAL: SOPS_AGE_KEY_FILE (must be an absolute forward-slash path|contains Windows backslashes)' \
     "$CASE_ROOT/output.log" || \
