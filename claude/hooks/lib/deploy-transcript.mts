@@ -11,8 +11,7 @@ export function transcriptLines(transcriptPath: unknown, hooksDirectory: string)
     const projects = path.join(path.dirname(hooks), 'projects');
     if (fs.realpathSync.native(projects) !== projects || !fs.statSync(projects).isDirectory()) return [];
     const file = fs.realpathSync.native(transcriptPath);
-    const relative = path.relative(projects, file);
-    if (!relative || relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) return [];
+    if (!file.startsWith(`${projects}${path.sep}`)) return [];
     const before = fs.lstatSync(transcriptPath);
     if (!before.isFile()) return [];
     const fd = fs.openSync(file, 'r');
