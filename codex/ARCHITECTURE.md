@@ -60,7 +60,22 @@ Issue #761 adds the lead and session team-lead profiles. `codex/agents/kherep-le
 
 The managed `UserPromptSubmit` group runs `codex-research-first.mts` beside the Maestro context hook. It emits only a fixed evidence-first instruction, the configured workspace's quoted Codex broker path, and a validated space key or a fixed configuration pointer. It never echoes the prompt. The managed `Stop` group runs `codex-research-stop.mts` with the acceptance gate. On a substantial current turn, the research hook requires a structured Central Brain lookup attempt and, after a detected repository edit, a codebase-memory call. Its fixed feedback names only the missing Brain attempt, graph attempt or both, without asserting an outage. The parser, 400-character and three-read-only-call thresholds remain unchanged. A final `[research: none - <reason>]` with a nonempty reason is the explicit opt-out. `stop_hook_active` must be exactly false, so the continuation can occur only once.
 
-The prompt context also describes command-scoped approval for a read-only broker search blocked by sandbox networking. Headless callers opt into review with `codex exec --approve-for-me`; the agent can then request `sandbox_permissions="require_escalated"` for that command. The reminder grants no permission, changes no sandbox configuration, and does not infer a service outage from `status: unavailable`. See the [headless research invocation](../docs/CODEX.md#evidence-first-research-hook).
+Issue #812 adds `lib/knowledge-read-rules.mts`, following the Control Plane rule
+renderer and reusing its `starlarkString` control-character refusal. After the
+normal installer copies the Codex broker to its resolved workspace, it writes
+`rules/kherep-knowledge-read.rules` with one allow pattern:
+`["node", "<workspace>/tools/atl-confluence.mts", ["search", "get"]]`. The
+workspace path uses forward slashes, including Windows paths. The file is fully
+managed and rewritten on every install; the same install transaction restores
+prior bytes or removes a newly created file on failure. Other rule files are
+untouched. Only these two read-only knowledge lookup verbs run outside the
+sandbox without approval review. Broker `search` also executes `twg rovo search`
+as a child under the local Teamwork Graph sign-in. The rule excludes all other
+verbs and `atl-confluence-ccoder.mts`. A compound shell command such as
+`x && node ... search` does not match this rule; other installed rules are
+evaluated separately.
+
+The prompt context also describes command-scoped approval for a read-only broker search blocked by sandbox networking when this rule is absent. Headless callers opt into review with `codex exec --approve-for-me`; the agent can then request `sandbox_permissions="require_escalated"` for that command. The reminder grants no permission, changes no sandbox configuration, and does not infer a service outage from `status: unavailable`. See the [headless research invocation](../docs/CODEX.md#evidence-first-research-hook).
 
 The parser reads the local Codex rollout named by the Stop payload and emits no transcript content. It prefers a matching `turn_id` and `task_started` boundary, then reads `response_item` messages, `function_call` and `custom_tool_call` records. Direct codebase-memory names accept the hyphenated and underscored server forms. For `functions.exec`, a local lexer recognizes actual `tools.*(...)` call syntax while excluding strings, comments, template literals and regular-expression literals in its supported JavaScript contexts. Dynamically constructed JavaScript remains outside this classifier. This is syntactic evidence of an attempted nested call. It cannot prove that a conditional branch executed or that the lookup succeeded. Repository edits are recognized from `apply_patch`, the explicit file-write tools and common shell mutation commands. Arbitrary programs can mutate code without a locally recognizable command, so that path remains unenforced.
 

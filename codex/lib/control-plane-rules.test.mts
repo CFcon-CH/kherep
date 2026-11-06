@@ -9,6 +9,7 @@ import { launcherCommand } from "../../modules/control-plane/node/launcher.mts";
 import { install } from "../install.mts";
 import type { Capabilities } from "./contracts.mts";
 import { fixtureModelOptions } from "./model-policy.fixture.mts";
+import { KNOWLEDGE_READ_RULES_FILE } from "./knowledge-read-rules.mts";
 import {
   CONTROL_PLANE_RULES_FILE, MSG_SUBCOMMANDS, controlPlaneRulesPath, launcherRule, renderControlPlaneRules, starlarkString,
 } from "./control-plane-rules.mts";
@@ -128,7 +129,7 @@ test("install writes the managed rule file and leaves other rule files byte-iden
   install(options);
   assert.equal(fs.readFileSync(controlPlaneRulesPath(codexHome), "utf8"), expected);
   assert.deepEqual(fs.readFileSync(defaultRules), own);
-  assert.deepEqual(fs.readdirSync(path.join(codexHome, "rules")).sort(), ["default.rules", CONTROL_PLANE_RULES_FILE]);
+  assert.deepEqual(fs.readdirSync(path.join(codexHome, "rules")).sort((a, b) => a.localeCompare(b)), ["default.rules", CONTROL_PLANE_RULES_FILE, KNOWLEDGE_READ_RULES_FILE]);
   fs.rmSync(root, { recursive: true, force: true });
 });
 
@@ -137,6 +138,6 @@ test("install creates rules/ when it is absent", () => {
 
   install(options);
 
-  assert.deepEqual(fs.readdirSync(path.join(codexHome, "rules")), [CONTROL_PLANE_RULES_FILE]);
+  assert.deepEqual(fs.readdirSync(path.join(codexHome, "rules")).sort((a, b) => a.localeCompare(b)), [CONTROL_PLANE_RULES_FILE, KNOWLEDGE_READ_RULES_FILE]);
   fs.rmSync(root, { recursive: true, force: true });
 });

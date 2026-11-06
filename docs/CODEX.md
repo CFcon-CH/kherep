@@ -151,7 +151,23 @@ This scoped updater reads only installed Codex observation artifacts and model m
 
 ### Evidence-first research hook
 
-For headless broker research, opt into approval review for that invocation:
+The normal installer writes `rules/kherep-knowledge-read.rules` beside the
+Control Plane rule after installing the Codex broker into the resolved workspace
+(the configured workspace, or the installer's default). The managed file is
+rewritten on every install and restored with the install transaction on failure;
+other rule files are left alone. Its single `prefix_rule` allows exactly
+`["node", "<workspace>/tools/atl-confluence.mts", ["search", "get"]]`, with the
+workspace path in forward slashes. These two read-only knowledge lookup verbs run
+outside the sandbox without approval review. Broker `search` also runs
+`twg rovo search` as a child process under the local Teamwork Graph sign-in.
+The other broker verbs and the Claude broker `atl-confluence-ccoder.mts` do not
+match. A compound shell command such as `x && node ... search` does not match
+this rule; use the broker invocation on its own. The rule does not enable global
+networking or remove privacy guards. See the [official Codex rules
+documentation](https://developers.openai.com/codex/rules).
+
+For headless broker research without that installed rule, opt into approval
+review for that invocation:
 
 ```sh
 codex exec --approve-for-me "Research the configured knowledge space before answering; request command-scoped approval if sandbox networking blocks the read-only broker search."
