@@ -5,7 +5,8 @@ interface Header { start: number; path: string[]; array: boolean }
 function structuralLineStarts(config: string): Set<number> {
   const starts = new Set<number>([0]);
   let quote = "", multiline = false;
-  for (let at = 0; at < config.length; at++) {
+  let at = -1;
+  while (++at < config.length) {
     const char = config[at];
     if (char === "\n") { if (!quote) starts.add(at + 1); continue; }
     if (quote) {

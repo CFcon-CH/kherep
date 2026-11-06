@@ -89,7 +89,8 @@ export function scanDocument(text: string): ScannedDocument {
   const headers: { start: number; path: string[]; array: boolean }[] = [];
   const multiline: Span[] = [], open: { char: string; start: number }[] = [];
   let lineStart = true;
-  for (let at = 0; at < text.length; at++) {
+  let at = -1;
+  while (++at < text.length) {
     const char = text[at];
     if (lineStart && !open.length) {
       const line = text.slice(at, lineEnd(text, at));

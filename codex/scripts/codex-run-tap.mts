@@ -74,7 +74,8 @@ export function parseTap(text: string): ParsedTap {
   while (lines.length && lines[lines.length - 1] === "") lines.pop();
   const { summary, plan, body } = readSummary(lines);
   const records: TapRecord[] = [];
-  for (let index = 0; index < body.length; index++) {
+  let index = -1;
+  while (++index < body.length) {
     const match = RECORD.exec(body[index]);
     if (!match) continue;
     const [, indent, status, rest = ""] = match;
