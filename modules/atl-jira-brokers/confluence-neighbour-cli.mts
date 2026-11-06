@@ -23,6 +23,7 @@ export interface NeighbourCliContext extends ConfluenceContext {
   writeOut: (chunk: string) => void;
   // Creates a new file and fails on an existing one. Only stitch --out uses it.
   writeNew?: (path: string, text: string) => Promise<void>;
+  readBodyBytes?: (file: string) => Promise<Uint8Array>;
 }
 
 export type NeighbourArgs = Record<string, string | undefined>;

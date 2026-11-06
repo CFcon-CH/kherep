@@ -49,7 +49,7 @@ import {
 import { parseExpectedVersion } from './confluence-pagination.mts';
 import { cmdDrainage } from './confluence-drainage-cli.mts';
 import { cmdEvidence } from './confluence-evidence-cli.mts';
-import { cmdValidate, type ValidateContext } from './confluence-observation-validate.mts';
+import { cmdValidate } from './confluence-observation-validate.mts';
 
 const CRED_ENV = "KHEREP_ATL_CRED_FILE_CODEX";
 // An absent value is UNKNOWN and says so. A blank line here would read like an
@@ -62,7 +62,7 @@ export type CliContext = NeighbourCliContext;
 
 // credEnv is omitted on purpose: which credential variable this CLI reads is
 // not injectable, or a caller could point the Codex broker at the Claude file.
-export type Injected = Partial<Omit<CliContext, "credEnv"> & ValidateContext>;
+export type Injected = Partial<Omit<CliContext, "credEnv">>;
 
 export type Args = Record<string, string | undefined>;
 
@@ -223,7 +223,7 @@ async function cmdSelftest(ctx: CliContext): Promise<number> {
   return report.ok ? 0 : 1;
 }
 
-const COMMANDS: Record<Verb, (ctx: CliContext & ValidateContext, args: Args) => Promise<number>> = {
+const COMMANDS: Record<Verb, (ctx: CliContext, args: Args) => Promise<number>> = {
   create: cmdCreate,
   update: cmdUpdate,
   get: cmdGet,
@@ -246,8 +246,8 @@ const COMMANDS: Record<Verb, (ctx: CliContext & ValidateContext, args: Args) => 
 };
 
 export async function runCli(argv: string[], injected: Injected = {}): Promise<number> {
-  const ctx: CliContext & ValidateContext = {
-    readBodyBytes: injected.readBodyBytes ?? ((file) => nodeReadFile(file)),
+  const ctx: CliContext = {
+    readBodyBytes: injected.readBodyBytes,
     env: injected.env ?? process.env,
     credEnv: CRED_ENV,
     readFile: injected.readFile ?? nodeReadFile,
