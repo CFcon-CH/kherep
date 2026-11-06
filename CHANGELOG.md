@@ -28,6 +28,7 @@ increments the minor version; every other release increments the patch version.
 
 ### Fixed
 
+- Start wake-name bindings without a liveness source. A daemon has none in production, so `session-labels.json` was never created and a name without its id stayed refused (Refs #828).
 - List Claude background sessions, whose `claude agents` row carries `state` instead of `status`. Dropping them marked every listing incomplete, so wake-name bindings never started (Refs #828).
 - Control Plane Worker: preserve reply admission across validated guarded-parent
   ACK retirement and nonterminal availability changes of the same freshly

@@ -15,6 +15,7 @@ import test from "node:test";
 import { nodePaths } from "./config.mts";
 import { recordingSessions } from "./exchange-sessions.mts";
 import { attachLiveness } from "./liveness-pass.mts";
+import { markUnseen } from "./known-sessions.mts";
 import { loadPolicy } from "./policy.mts";
 import { readJson } from "./inbox.mts";
 import type { SessionInfo } from "../protocol.mts";
@@ -32,6 +33,7 @@ function fixture(t: import("node:test").TestContext) {
     }[], complete = true) => {
         now += 1000;
         const sessions: SessionInfo[] = rows.map(row => ({ ...row, runtime: "claude-code", state: "idle", canonicalIdentity: { version: 1, source: "claude-list", runtime: "claude-code", sessionId: row.sessionId, observedAt: now, lifecycleGeneration: 0 } }));
+        if (!complete) markUnseen(sessions, ["claude-code"]);
         attachLiveness(sessions, { status: "value", value: [], observedAt: now, complete, source: "native-app", reasonCode: complete ? "observed" : "incomplete" });
         await recordingSessions(paths, async () => sessions, () => { }, () => now)();
     };
@@ -348,6 +350,7 @@ for(const kind of ["duplicate","runtime","terminal"] as const) test(`review C3 R
  const f=fixture(t);f.policy(["review",S]);await f.list([{sessionId:S,name:"review"}]);const p=f.policy(["review"]);let at=f.now()+1000;
  if(kind==="terminal") publishSynthetic(f.paths,[{runtime:"claude-code",sessionId:S,lifecycle:{status:"value",value:{state:"archived",generation:1},observedAt:at,complete:true,source:"native-lifecycle",reasonCode:"observed"}}],at,[]);
  const rows:SessionInfo[]=kind==="duplicate"?[{sessionId:S,runtime:"claude-code",state:"unknown",name:"review"},{sessionId:S,runtime:"claude-code",state:"unknown",name:"review"}]:kind==="runtime"?[{sessionId:S,runtime:"codex",state:"unknown",name:"other"}]:[];
+ markUnseen(rows,["claude-code"]);
  at+=1000;attachLiveness(rows,{status:"value",value:[],observedAt:at,complete:false,source:"native-app",reasonCode:"incomplete"});await recordingSessions(f.paths,async()=>rows,()=>{},()=>at)();assert.equal(f.select(p,S,"review").allowed,false);assert.equal(readBindingView(f.paths).bindings.length,1);
 });
 for(const kind of ["stamp","parse"] as const) test(`review C3 R1: ${kind} race cannot discard accepted identity contradiction`,async t=>{

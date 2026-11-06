@@ -122,7 +122,8 @@ export function recordingSessions(paths: NodePaths, list: (signal?: AbortSignal)
     });
     // Keep the original completeness markers on the normalized population.
     markUnseen(sessions, snapshot.capped ? [...new Set([...unlistedRuntimes(listed), "*"])] : unlistedRuntimes(listed));
-      recordLocalLabels(paths, sessions, observedAt, !!observation && observationReason(observation,observedAt)===null && !snapshot.capped && !unseen.includes("*") && !unseen.includes("claude-code"), stamp, snapshot.generation, {snapshot,listed,evidence:safeEvidence});
+      const claudeListingComplete = !snapshot.capped && !unseen.includes("*") && !unseen.includes("claude-code");
+      recordLocalLabels(paths, sessions, observedAt, claudeListingComplete, stamp, snapshot.generation, {snapshot,listed,evidence:safeEvidence});
       writeLocalSessions(paths, sessions, observedAt, snapshot.generation);
       signal?.throwIfAborted();
       commitAuthority(authority, paths, observation, snapshot, observedAt);
