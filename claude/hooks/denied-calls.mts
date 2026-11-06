@@ -30,7 +30,7 @@ export function run(argv: string[], script: string): { text: string; exit: numbe
   const [command, value, extra] = args;
   if (command === "render" && args.length <= 2) return renderReport(readJournal(home, value ?? ""));
   if (command === "list") {
-    const minutes = value === "--minutes" ? Number(extra) : value === undefined ? 60 : NaN;
+    const minutes = value === "--minutes" ? Number(extra) : value === undefined ? 60 : Number.NaN;
     if (!Number.isFinite(minutes) || minutes <= 0) return { text: `${USAGE}\n`, exit: 2 };
     return { text: `${listRows(home, minutes * 60_000).join("\n")}\n`, exit: 0 };
   }

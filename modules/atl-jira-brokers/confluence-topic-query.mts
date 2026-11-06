@@ -22,7 +22,7 @@ export function plainText(value: string): string {
     .replace(/&(#x[0-9a-f]+|#\d+|[a-z][a-z0-9]*);/gi, (_match, name: string) => {
       const lower = name.toLowerCase();
       if (lower.startsWith("#")) {
-        const code = lower.startsWith("#x") ? parseInt(lower.slice(2), 16) : parseInt(lower.slice(1), 10);
+        const code = lower.startsWith("#x") ? Number.parseInt(lower.slice(2), 16) : Number.parseInt(lower.slice(1), 10);
         const printable = code > 31 && code <= 0x10ffff && (code < 0x7f || code > 0x9f) && (code < 0xd800 || code > 0xdfff);
         return printable ? String.fromCodePoint(code) : " ";
       }

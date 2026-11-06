@@ -74,7 +74,7 @@ function session(env: NodeJS.ProcessEnv, dir: string, toplevel: string, now: num
 function trim(file: string, now: number): void {
   const lines = fs.readFileSync(file, "utf8").split("\n").filter(Boolean);
   const kept = lines.filter((line) => {
-    let at = NaN;
+    let at = Number.NaN;
     try { at = Date.parse((JSON.parse(line) as { ts?: unknown } | null)?.ts as string); } catch { /* unreadable */ }
     return now - (Number.isNaN(at) ? -Infinity : at) < RETENTION_MS;
   });
