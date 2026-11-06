@@ -21,6 +21,8 @@ increments the minor version; every other release increments the patch version.
 
 ### Changed
 
+- Lead and team-lead profiles keep turns reachable and hand long work to background workers (#829).
+
 - `msg status` renders stored sender and received-message diagnostics in plain
   words with observation time and stage. Legacy waiting records explicitly say
   detailed cause is unavailable. Status remains local and does not query the

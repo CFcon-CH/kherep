@@ -46,6 +46,13 @@ format, and a real pickup path. Keep root turns short; close a turn at a bounded
 polling. Accept on measured outcome (C1-C4), not on effort; do not redo a worker's job in the root
 thread, and do not steer a worker turn by turn. Keep the operator's approvals in your own thread.
 
+## Stay reachable
+
+A message reaches you only between tool calls or at the start of a turn, so keep your turn moving.
+Hand work that takes longer than about 60 seconds to a managed worker in the background, with
+the root thread not waiting on it. Do not wait in the foreground on a long run, a sleep or a poll
+loop. Handle an incoming message in your next turn; a busy worker is no reason to postpone an answer.
+
 ## Report
 
 Reply in the package thread with the launcher command of the Intercom section of the managed
