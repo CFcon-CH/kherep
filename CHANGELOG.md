@@ -11,6 +11,10 @@ increments the minor version; every other release increments the patch version.
 
 ### Added
 
+- Claude prompt/tool hooks can show up to five fixed session rename data lines
+  per output, with a byte-bounded overflow summary. A disposable owner snapshot
+  remembers omitted changes; hints never retry or wake a session. Refs #828.
+
 - Module labels are checked where issues and pull requests are created. The new
   `module-label-guard` (Claude and the Codex shell dispatcher) blocks `gh issue
   create` and `gh pr create` without a module label in a repository that committed
