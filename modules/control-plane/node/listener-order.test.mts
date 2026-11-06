@@ -25,7 +25,7 @@ function arm(paths: NodePaths, lock: ReturnType<typeof at>): void {
 }
 
 test("a listener armed after a backward clock step still supersedes the older one", async (t) => {
-  const { paths } = setup(t);
+  const { paths } = setup(t, {wake:{enabled:true,sessions:[SELF]}});
   let polls = 0;
   const older = listen(paths, { token: "older", start: T0 });
   // The clock stepped back 5 s before the next arming.

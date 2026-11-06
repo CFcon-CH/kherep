@@ -12,7 +12,7 @@ import { DEFAULT_POLICY, isAllowed, loadPolicy, type NodePolicy } from "./policy
 const NODE_ID = "00000000-0000-4000-8000-0000000000aa";
 const FACTS = { hostname: "node-a.example.com", os: "linux", arch: "x64", cpus: 2, memoryBytes: 1024 };
 
-function setup(policy: NodePolicy = DEFAULT_POLICY) {
+function setup(policy: NodePolicy = DEFAULT_POLICY, storeDirectory?: (body: import("../protocol-messages.mts").DirectoryBody) => void) {
   const identity = generateIdentity();
   const calls: string[] = [];
   const taskControl: unknown[] = [];
@@ -22,7 +22,7 @@ function setup(policy: NodePolicy = DEFAULT_POLICY) {
     "session.list": async () => { calls.push("session.list"); return []; },
   };
   const client = new NodeClient({
-    nodeId: NODE_ID, identity, policy, handlers, facts: () => FACTS, runtimes: async () => [], sessions: async () => [],
+    nodeId: NODE_ID, identity, policy, handlers, storeDirectory, facts: () => FACTS, runtimes: async () => [], sessions: async () => [],
     storeMessage: () => { throw new Error("messaging is not enabled in these tests"); },
     taskControlExecute: async (body) => { taskControl.push(body); },
     taskControlRegistrationReceipt: (body) => { taskControl.push(body); },
@@ -262,4 +262,14 @@ test("I10: snapshot generation participates in frame deduplication", async () =>
   assert.equal(decode(client.sessionFrames(rows))[0].body && client.sessionFrames(rows).length, 0);
   attachIdentitySnapshot(rows, 2);
   assert.deepEqual(decode(client.sessionFrames(rows))[0].body, { sessions: rows, identitySnapshot: { version: 1, generation: 2 } });
+});
+
+test("828 Directory metadata is stored only on a current authenticated connection",async()=>{
+  let stores=0;const {client}=setup(DEFAULT_POLICY,()=>{stores++;});
+  const directory=JSON.stringify(makeEnvelope("directory",{nodes:[],sessions:[],fetchedAt:new Date().toISOString()},0,0));
+  await client.onFrame(directory);assert.equal(stores,0,"unauthenticated frames cannot become notice evidence");
+  await client.onFrame(JSON.stringify(makeEnvelope("event",{name:"auth.ok"},0,0)));
+  await client.onFrame(directory);assert.equal(stores,1);
+  await client.onFrame(directory,false);assert.equal(stores,1,"old connection cannot advance metadata");
+  client.connectionClosed();await client.onFrame(directory);assert.equal(stores,1);
 });

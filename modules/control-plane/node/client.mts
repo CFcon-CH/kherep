@@ -221,7 +221,7 @@ export class NodeClient {
         if (!live || !this.authenticated || !isMessageDeliverBody(envelope.body)) return [];
         return this.onDeliver(envelope.body);
       case "directory":
-        if (!isDirectoryBody(envelope.body)) return [];
+        if (!live || !this.authenticated || !isDirectoryBody(envelope.body)) return [];
         this.callback("directory", () => this.options.storeDirectory?.(envelope.body as DirectoryBody));
         // A frame without worker comes from an older Worker: no capability.
         if (live && this.authenticated) this.workerCapabilities = [...envelope.body.worker?.capabilities ?? []];

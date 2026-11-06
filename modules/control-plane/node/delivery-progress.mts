@@ -1,3 +1,4 @@
+import { readBindingView } from "./session-labels.mts";
 import { blockerDiagnostic, type MessageDiagnostic } from "../protocol-diagnostics.mts";
 import { boundRecordValid, messageOwnerMatches } from "./message-owner.mts";
 import fs from "node:fs";
@@ -8,7 +9,7 @@ import {
 import type { NodePaths } from "./config.mts";
 import { readLocalSessions, type LocalSession } from "./exchange.mts";
 import { listInbox, readJson, setMessageProgress, type InboxRecord } from "./inbox.mts";
-import { wakeAllowed } from "./policy.mts";
+import { resolveWakeSelection } from "./wake-bindings.mts";
 import type { RunnerDeps } from "./session-runner.mts";
 import { isActive, listTasks, taskForSession, taskGrants } from "./task-records.mts";
 import { killSwitch, WAKE_MAX_WAIT_MS } from "./wake-hook.mts";
@@ -36,11 +37,13 @@ function observeAccepted(deps: RunnerDeps, session: LocalSession, accepted: Inbo
     return;
   }
   const refs = refsOf(session);
+  const binding={target:{sessionId:session.sessionId,runtime:session.runtime??"unknown"},view:readBindingView(deps.paths,now),now};
+  const selection = resolveWakeSelection(deps.policy.wake?.sessions ?? [], binding);
   const task = deps.policy.sessions?.enabled === true ? taskForSession(deps.paths, session.sessionId) : null;
   const granted = task ? accepted.filter((record) => taskGrants(task, record)) : [];
   // Reply and task message grants (issues #253, #264): for an unlisted session
   // only, as in its listener, and covered by the same replies scope.
-  const replies = deps.policy.wake?.replies === true && !wakeAllowed(deps.policy, refs)
+  const replies = deps.policy.wake?.replies === true && !selection.allowed
     ? accepted.filter((record) => !granted.includes(record)
       && (replyGrants(deps.paths, refs, record, now) || taskMessageGrants(deps.paths, refs, record, now, requests))) : [];
   const ordinary = accepted.filter((record) => !granted.includes(record) && !replies.includes(record));
@@ -49,8 +52,8 @@ function observeAccepted(deps: RunnerDeps, session: LocalSession, accepted: Inbo
     return;
   }
   if (!deps.policy.wake) progressRecords(deps.paths, ordinary, "waiting", "wake-disabled", now);
-  else if (!wakeAllowed(deps.policy, refs)) progressRecords(deps.paths, ordinary, "waiting", "wake-not-authorized", now);
-  const authorized = [...granted, ...replies, ...(wakeAllowed(deps.policy, refs) ? ordinary : [])];
+  else if (!selection.allowed) progressRecords(deps.paths, ordinary, "waiting", "wake-not-authorized", now);
+  const authorized = [...granted, ...replies, ...(selection.allowed ? ordinary : [])];
   if (authorized.length === 0) return;
   const mode = task?.permissionMode ?? rememberedMode(deps.paths, session.sessionId);
   if (bypassesPermissions(mode)) {

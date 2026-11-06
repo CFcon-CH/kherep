@@ -1,3 +1,4 @@
+import { beginSessionDiscovery } from "./exchange-sessions.mts";
 import { createConnectionSupervisor } from "./connection-supervisor.mts";
 import { createConnectionWatchdog } from "./connection-watchdog.mts";
 import { nodeClock, type NodeClock } from "./node-clock.mts";
@@ -314,13 +315,14 @@ export function startDaemon(config: NodeConfig, paths: NodePaths, log: (line: st
         if (backgroundDiscovery) return;
         const controller = new AbortController();
         backgroundDiscovery = { controller, socket: ws };
+        const discovery=beginSessionDiscovery(paths);
         void source(controller.signal).catch((error: unknown) => {
           if (!controller.signal.aborted) log(`kherep-node: session listing failed, snapshot skipped: ${String(error)}`);
           return null;
         }).then((listed) => {
           chain = chain.then(enqueued(timed, "chain", "snapshot", async () => {
             if (!generation.current() || ws.readyState !== WebSocket.OPEN) return;
-            if (listed && !controller.signal.aborted) await recordAndPublishSessions(client, paths, listed, send, log, controller.signal, () => inbox.records(), livenessAuthority);
+            if (listed && !controller.signal.aborted) await recordAndPublishSessions(client, paths, listed, send, log, controller.signal, () => inbox.records(), livenessAuthority, discovery);
             if (!generation.current()) return;
             await watchTasks(runner, log);
             if (!generation.current()) return;
@@ -406,10 +408,11 @@ export function startDaemon(config: NodeConfig, paths: NodePaths, log: (line: st
           if (sent && !backgroundDiscovery) {
             const controller = new AbortController();
             backgroundDiscovery = { controller, socket: ws };
+            const discovery=beginSessionDiscovery(paths);
             void source(controller.signal).then((listed) => {
               chain = chain.then(enqueued(timed, "chain", "snapshot", async () => {
                 if (!generation.current() || ws.readyState !== WebSocket.OPEN || controller.signal.aborted) return;
-                await recordAndPublishSessions(client, paths, listed, send, log, controller.signal, () => inbox.records(), livenessAuthority);
+                await recordAndPublishSessions(client, paths, listed, send, log, controller.signal, () => inbox.records(), livenessAuthority, discovery);
               }));
               return chain;
             }).catch((error: unknown) => {

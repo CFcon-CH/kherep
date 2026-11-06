@@ -40,7 +40,7 @@ test("an exhausted listener retains its lock, spends nothing waiting and wakes a
 });
 
 test("the finite shipped lifetime spans a full daily exhaustion before a budgeted wake", async (t) => {
-  const { paths } = setup(t, { wake: { ...WAKE, budget: { perDay: 1 } } });
+  const { paths } = setup(t, { wake: { ...WAKE, sessions:[SELF], budget: { perDay: 1 } } });
   assert.equal(takeTurn(paths, SELF, T0), "ok");
   const ledger = lockFile(paths).replace(/\.json$/, ".turns.json"), before = fs.readFileSync(ledger, "utf8");
   assert.equal(WAKE_TIMEOUT_S, 90_000);
@@ -165,7 +165,7 @@ test("the listener wakes a 21st time in the hour with perHour 22, and honours pe
   assert.deepEqual(await listenFor(fallback, 1, T0), { code: 0 });
   assert.equal(auditLines(fallback).at(-1)?.action, "listener-timeout");
 
-  const raised = setup(t, { wake: { ...WAKE, budget: { perHour: 22, perDay: 100 } } }).paths;
+  const raised = setup(t, { wake: { ...WAKE, sessions:[SELF], budget: { perHour: 22, perDay: 100 } } }).paths;
   spend(raised, T0 - 50 * 60_000, 2 * TURN_SPACING_MS);
   assert.equal((await listenFor(raised, 1, T0)).code, 2, "the 21st wake");
   assert.equal((await listenFor(raised, 2, T0 + 60_000)).code, 2, "the 22nd wake");

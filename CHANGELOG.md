@@ -45,6 +45,11 @@ increments the minor version; every other release increments the patch version.
 
 ### Changed
 
+- Keep a wake name attached to its Claude session through a rename: a name in
+  `wake.sessions` binds to the session whose full id is listed with it, then
+  follows that id. Damaged binding history refuses the name instead of guessing.
+  The rename notice follows separately (Refs #828).
+
 - Lead and team-lead profiles keep turns reachable and hand long work to background workers (#829).
 
 - `msg status` renders stored sender and received-message diagnostics in plain
