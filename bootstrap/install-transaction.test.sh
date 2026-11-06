@@ -110,7 +110,7 @@ SH
   transaction_begin "$backup/identical" "$live"
   FAIL_LIVE_MOVE=1 LIVE_MOVE_MARKER="$TMP/lib/live-move-attempted" install_path identical "$src/identical" "$live/identical" "$backup/identical/original"
   [[ ! -e "$TMP/lib/live-move-attempted" ]] || fail "identical directory reached live rename"
-  [ "$TX_COUNT" -eq 0 ] && [[ ! -e "$backup/identical/original" ]] || fail "identical directory was journaled or backed up"
+  [[ "$TX_COUNT" -eq 0 ]] && [[ ! -e "$backup/identical/original" ]] || fail "identical directory was journaled or backed up"
   printf changed > "$src/identical/SKILL.md"
   set +e; install_path duplicate "$src/identical" "$live/identical" "$backup/identical/duplicate" >/dev/null 2>&1; rc=$?; set -e
   [[ "$rc" -ne 0 ]] && [[ "$(cat "$live/identical/SKILL.md")" = "same" ]] || fail "equal-first duplicate target was accepted"
@@ -183,7 +183,7 @@ test_retire() {
   transaction_begin "$backup/two" "$live"
   out="$(transaction_retire_path hooks/gone.js "$live/hooks/gone.js" "$backup/two/retired/hooks/gone.js")"
   case "$out" in *SKIP*) ;; *) fail "an absent retirement target did not report SKIP: $out" ;; esac
-  [ "$TX_COUNT" -eq 0 ] || fail "an absent retirement target was journalled"
+  [[ "$TX_COUNT" -eq 0 ]] || fail "an absent retirement target was journalled"
   [[ ! -e "$backup/two/retired/hooks/gone.js" ]] || fail "an absent retirement target produced a backup"
   transaction_rollback test
 
@@ -272,7 +272,7 @@ test_retire_declared() {
       fail "unknown workspace content was moved"
     [[ ! -e "$backup/one/retired/project/tools/edited" ]] || fail "unknown workspace content was backed up"
     ! grep -rqF "tools/edited" "$backup/one/journal" || fail "unknown workspace content was journalled"
-    [ "$TX_COUNT" -eq 2 ] || fail "expected two journalled retirements, got $TX_COUNT"
+    [[ "$TX_COUNT" -eq 2 ]] || fail "expected two journalled retirements, got $TX_COUNT"
     transaction_rollback test > /dev/null
     same "$ws/tools/mpac/mpac.ps1" "$root/known.before"
     [[ "$(cat "$home/hooks/em-dash-watch.js")" = "home-orphan" ]] || fail "rollback did not restore the retired Claude-home file"
@@ -283,7 +283,7 @@ test_retire_declared() {
     [[ "$rc" -ne 0 ]] || fail "a project/ entry without hashes was accepted"
     grep -qF "FATAL: retirement manifest entry project/tools/mpac/mpac.ps1 needs 'sha256:" "$root/unhashed.log" ||
       fail "a project/ entry without hashes was not refused clearly: $(cat "$root/unhashed.log")"
-    [ "$TX_COUNT" -eq 0 ] && [[ "$(cat "$home/hooks/em-dash-watch.js")" = "home-orphan" ]] ||
+    [[ "$TX_COUNT" -eq 0 ]] && [[ "$(cat "$home/hooks/em-dash-watch.js")" = "home-orphan" ]] ||
       fail "a manifest with an unhashed project/ entry moved a file before it was refused"
     transaction_rollback test > /dev/null
 
@@ -294,7 +294,7 @@ test_retire_declared() {
     [[ "$rc" -ne 0 ]] || fail "a traversing project/ entry was accepted"
     grep -qF "retirement manifest entry must be a strict traversal-free relative path" "$root/escape.log" ||
       fail "a traversing project/ entry passed the manifest path gate: $(cat "$root/escape.log")"
-    [[ "$(cat "$root/escape")" = "outside" ]] && [ "$TX_COUNT" -eq 0 ] || fail "a traversing project/ entry moved a file"
+    [[ "$(cat "$root/escape")" = "outside" ]] && [[ "$TX_COUNT" -eq 0 ]] || fail "a traversing project/ entry moved a file"
     transaction_rollback test > /dev/null
   )
 }
