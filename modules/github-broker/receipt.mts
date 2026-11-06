@@ -21,7 +21,7 @@ export class ReceiptStore {
     this.lock=`${this.file}.lock`;
   }
   digest(request:Request): string { return hash([request.operation,request.repository,request.issueNumber ?? null,payload(request)]); }
-  fieldHashes(request:Request): Record<string,string> { return Object.fromEntries(Object.entries(payload(request)).map(([k,v])=>[k,hash(k==='labels'?[...v as string[]].sort():v)])); }
+  fieldHashes(request:Request): Record<string,string> { return Object.fromEntries(Object.entries(payload(request)).map(([k,v])=>[k,hash(k==='labels'?[...v as string[]].sort(byCodeUnit):v)])); }
   acquire():()=>void {
     try {
       const fd=fs.openSync(this.lock,'wx',0o600);
@@ -54,7 +54,9 @@ export class ReceiptStore {
   }
 }
 // GitHub returns labels as objects, in its own order; the receipt keeps the sorted names.
-const labelNames=(labels:unknown):string[]=>Array.isArray(labels)?labels.map(l=>String(l?.name)).sort():[];
+// The order feeds a stored hash, so it must not depend on the host's locale.
+const byCodeUnit=(a:string,b:string):number=>a<b?-1:Number(a>b);
+const labelNames=(labels:unknown):string[]=>Array.isArray(labels)?labels.map(l=>String(l?.name)).sort(byCodeUnit):[];
 export function matchesFields(value:Record<string,unknown>, hashes:Record<string,string>):boolean {
   return Object.entries(hashes).every(([k,v])=>hash(k==='labels'?labelNames(value.labels):value[k])===v);
 }
