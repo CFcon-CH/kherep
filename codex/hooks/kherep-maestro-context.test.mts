@@ -7,6 +7,11 @@ import { turnContext } from "./kherep-maestro-context.mts";
 
 const hook = path.join(import.meta.dirname, "kherep-maestro-context.mts");
 
+test("trailing separator runs preserve context scope", () => {
+  assert.match(run({ hook_event_name: "SessionStart", cwd: "D:/Work/app///" }, { KHEREP_WORKSPACE: "D:/Work///" }).stdout, /KHEREP CODEX ORCHESTRA ACTIVE/);
+  assert.strictEqual(run({ hook_event_name: "SessionStart", cwd: "D:/Work-copy///" }, { KHEREP_WORKSPACE: "D:/Work///" }).stdout, "");
+});
+
 function run(input: unknown, env: NodeJS.ProcessEnv = {}, args: string[] = []) {
   const childEnv: NodeJS.ProcessEnv = { ...process.env, KHEREP_WORKSPACE: "", ...env };
   if (!Object.hasOwn(env, "KHEREP_WORKSPACE")) delete childEnv.KHEREP_WORKSPACE;

@@ -34,7 +34,7 @@ export interface HookData {
 export const ENTRY = "observation-stdio.mts";
 
 export function normalize(value: unknown): string {
-  return String(value || "").replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+  return String(value || "").replace(/\\/g, "/").replace(/(?<!\/)\/+$/, "").toLowerCase();
 }
 
 export function isKherepScope(

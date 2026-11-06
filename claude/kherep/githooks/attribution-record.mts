@@ -40,7 +40,7 @@ export function repoSlug(url: string): string | null {
 
 // Copy of markerKey in attribution.mts.
 export function markerKey(toplevel: string, platform: NodeJS.Platform = process.platform): string {
-  const normalized = toplevel.replace(/\\/g, "/").replace(/\/+$/, "");
+  const normalized = toplevel.replace(/\\/g, "/").replace(/(?<!\/)\/+$/, "");
   return crypto.createHash("sha256").update(platform === "win32" ? normalized.toLowerCase() : normalized).digest("hex");
 }
 

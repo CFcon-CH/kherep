@@ -22,6 +22,9 @@ import {
 // trotzdem nie Workspace ist. Unverändert aus der JavaScript-Fassung.
 test("normalisiert Windows-Trenner und Punkt-Segmente", () => {
   assert.equal(normalizePathLike("D:\\Work\\Kherep\\repo\\..\\analysis"), "D:/Work/Kherep/analysis");
+  assert.equal(normalizePathLike("D:\\Work\\\\"), "D:/Work");
+  assert.equal(normalizePathLike("D:\\"), "D:");
+  assert.equal(normalizePathLike("///"), "/");
 });
 
 test("vergleicht Nachfahren auf beiden Plattformen", () => {

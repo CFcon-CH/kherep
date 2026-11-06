@@ -10,6 +10,18 @@ import { evaluate } from "./privacy-boundary-guard.mts";
 const env = { USERPROFILE: "C:\\Users\\ExampleUser" };
 const privateFile = "D:\\Work-credentials\\secret.txt";
 
+test("wrapped punctuation cannot bypass a temporary protected root", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "guard-wrapper-edge-"));
+  try {
+    const configured = { ...env, KHEREP_CREDENTIALS_ROOT: root };
+    const wrapped = `(((${path.join(root, "plain.txt")}))),`;
+    assert.match(evaluate({ tool_name: "Bash", tool_input: { command: `cat ${wrapped}` } }, configured) ?? "", /Private material/);
+    assert.equal(evaluate({ tool_name: "Bash", tool_input: { command: `cat (((${root}-copy/plain.txt))),` } }, configured), null);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 function command(payload: HookPayload): unknown {
   return (payload.tool_input as { command?: unknown }).command;
 }

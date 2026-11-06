@@ -77,7 +77,7 @@ function canonicalHttpsUrl(value: unknown): string | null {
     return null;
   }
   let pathname = url.pathname;
-  if (pathname.length > 1) pathname = pathname.replace(/\/+$/, "");
+  if (pathname.length > 1) pathname = pathname.replace(/(?<!\/)\/+$/, "");
   return `https://${url.host.toLowerCase()}${pathname}`;
 }
 

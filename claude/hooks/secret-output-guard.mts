@@ -65,7 +65,7 @@ process.stdin.on("end", () => {
     body = body.replace(statusEcho, "").trim();
     if (!body || hasAmbiguousCompound(body)) return false;
 
-    const quietGrep = /^grep\s+-[a-zA-Z]*[qc][a-zA-Z]*\b[^|]*$/i;
+    const quietGrep = /^grep\s+-(?=[a-zA-Z]*[qc])[a-zA-Z]+\b[^|]*$/i;
     const wcConsumer =
       /^wc(?:\s+(?:-[clmwL]+|--(?:bytes|chars|lines|words|max-line-length)))*$/;
     const measureConsumer = /^Measure-Object\b[^|]*$/i;

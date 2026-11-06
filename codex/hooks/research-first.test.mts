@@ -32,6 +32,8 @@ test("omits graph outside a repository and emits nothing outside scope or when s
   assert.equal(promptContext({ cwd: "D:/Elsewhere" }, env, config, () => false), "");
   assert.equal(promptContext({ cwd: "D:/Work" }, { KHEREP_WORKSPACE: "" }, config, () => false), "");
   assert.equal(promptContext("bad", env, config, () => false), "");
+  assert.match(promptContext({ cwd: "D:/Work/repo///" }, { KHEREP_WORKSPACE: "D:/Work///" }, config, () => false), /^RESEARCH FIRST/);
+  assert.equal(promptContext({ cwd: "D:/Work-copy///" }, { KHEREP_WORKSPACE: "D:/Work///" }, config, () => false), "");
 });
 
 test("guides a blocked broker read through scoped approval without granting network access", () => {

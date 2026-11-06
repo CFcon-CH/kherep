@@ -3,6 +3,12 @@ import { test } from "node:test";
 
 import { decision } from "./acceptance-gate.mts";
 
+test("trailing separator runs preserve scope and sibling refusal", () => {
+  const env = { KHEREP_WORKSPACE: "D:/Work///" };
+  assert.ok(decision({ cwd: "D:/Work/app///", last_assistant_message: "Done." }, env));
+  assert.equal(decision({ cwd: "D:/Work-copy///", last_assistant_message: "Done." }, env), null);
+});
+
 test("blocks Kherep completion claims without an acceptance receipt", () => {
   const result = decision({ cwd: "D:\\Work\\app", last_assistant_message: "Fertig." }, { KHEREP_WORKSPACE: "D:\\Work" });
   assert.ok(result);

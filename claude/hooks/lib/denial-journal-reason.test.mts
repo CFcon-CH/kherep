@@ -30,6 +30,7 @@ test("U2: only the first violation is recorded, no count suffix, the advice para
 });
 
 test("U3: absolute paths in the chosen line are reduced to their basename", () => {
+  assert.equal(redactReason("cannot read /home/u/repo/file.mts.,;: now"), "cannot read file.mts.,;: now");
   assert.equal(redactReason("deploy-guard blocked this command:\n  - cannot write /home/u/repo/out.txt"), "cannot write out.txt");
   assert.equal(redactReason("deploy-guard blocked this command:\n  - cannot write C:\\Users\\u\\repo\\out.txt now"), "cannot write out.txt now");
   assert.equal(redactReason("g blocked in /home/u/repo:\n  - plain"), "plain");

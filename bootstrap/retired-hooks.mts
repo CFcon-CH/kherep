@@ -49,11 +49,11 @@ function comparable(value: string): string {
   return /^\/[A-Za-z](?:\/|$)/.test(bash) ? bash.toLowerCase() : bash;
 }
 
-const absoluteHome = (claudeHome: string): string => `${comparable(claudeHome).replace(/\/+$/, "")}/`;
+const absoluteHome = (claudeHome: string): string => `${comparable(claudeHome).replace(/(?<!\/)\/+$/, "")}/`;
 
 // The shell spellings of the default Claude home; none when CLAUDE_HOME is another directory.
 function homeTokenPrefixes(claudeHome: string, userHome: string): string[] {
-  return absoluteHome(claudeHome) === `${comparable(userHome).replace(/\/+$/, "")}/.claude/` ? HOME_TOKENS : [];
+  return absoluteHome(claudeHome) === `${comparable(userHome).replace(/(?<!\/)\/+$/, "")}/.claude/` ? HOME_TOKENS : [];
 }
 
 const homePrefixes = (claudeHome: string, userHome: string): string[] =>

@@ -103,7 +103,7 @@ const SCRIPT_EXTENSION = /\.(?:mjs|cjs|mts)(?=$|\s)/;
 
 export function normalizeHookCommand(command: string, home: string = os.homedir()): string {
   let result = command.replace(/\\/g, "/").replace(/\$\{HOME\}|\$HOME|%USERPROFILE%/g, "~");
-  const homeSlashes = home.replace(/\\/g, "/").replace(/\/+$/, "");
+  const homeSlashes = home.replace(/\\/g, "/").replace(/(?<!\/)\/+$/, "");
   if (homeSlashes) {
     const escaped = homeSlashes.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     result = result.replace(new RegExp(escaped, process.platform === "win32" ? "gi" : "g"), "~");

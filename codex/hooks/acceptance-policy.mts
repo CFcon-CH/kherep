@@ -17,7 +17,7 @@ export interface StopDecision {
 }
 
 function normalize(value: unknown): string {
-  return String(value || "").replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+  return String(value || "").replace(/\\/g, "/").replace(/(?<!\/)\/+$/, "").toLowerCase();
 }
 
 export function decision(input: StopInput, env: NodeJS.ProcessEnv = process.env): StopDecision | null {

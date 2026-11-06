@@ -19,7 +19,7 @@ export interface McpEntry {
 }
 
 function normalizedFsPath(value: unknown): string {
-  return path.resolve(String(value || "")).replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+  return path.resolve(String(value || "")).replace(/\\/g, "/").replace(/(?<!\/)\/+$/, "").toLowerCase();
 }
 
 export function serverEntries(value: unknown): [string, unknown][] {

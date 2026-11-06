@@ -37,7 +37,7 @@ function marketplaceEntries(raw: string): MarketplaceEntry[] {
 }
 
 function samePath(left: string, right: string): boolean {
-  const normalize = (value: string) => path.resolve(value.replace(/^\\\\\?\\/, "")).replace(/[\\/]+$/, "");
+  const normalize = (value: string) => path.resolve(value.replace(/^\\\\\?\\/, "")).replace(/(?<![\\/])[\\/]+$/, "");
   const [a, b] = [normalize(left), normalize(right)];
   return process.platform === "win32" ? a.toLowerCase() === b.toLowerCase() : a === b;
 }

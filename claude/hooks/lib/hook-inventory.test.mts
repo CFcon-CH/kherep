@@ -186,6 +186,7 @@ test("only a plain entry command is coordinated; a chained one is not", () => {
   }).uncoordinated;
   for (const command of [
     `${entry} reader "${home}/hooks/a.mts"`,
+    `node "'${home}/kherep/hook-runtime/entry.mts'" reader "'${home}/hooks/a.mts'"`,
     `& ${entry} reader "${home}/hooks/a.mts"`,
     `${entry} pretool "${home}/hooks/guard-dispatch.mts" "${home}/hooks/commit-guard.mts" '${home}/hooks/deploy-guard.mts'`,
     `node \${CLAUDE_HOME}/kherep/hook-runtime/entry.mts writer \${CLAUDE_HOME}/hooks/live-hook-integrity.mts --trigger x`,

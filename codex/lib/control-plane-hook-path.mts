@@ -108,5 +108,5 @@ function dropSurplusDeliverGroups(body: string): string {
     }
     index = next;
   }
-  return dropped ? kept.join("").replace(/\n{2,}$/, "\n") : body;
+  return dropped ? kept.join("").replace(/(?<!\n)\n{2,}$/, "\n") : body;
 }

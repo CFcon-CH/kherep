@@ -11,7 +11,7 @@ const SPACE_KEY = /^[A-Za-z0-9~_-]{1,64}$/;
 
 export function normalize(value: unknown): string {
   if (typeof value !== "string") return "";
-  return value.trim().replace(/\\/g, "/").replace(/\/+$/, "");
+  return value.trim().replace(/\\/g, "/").replace(/(?<!\/)\/+$/, "");
 }
 
 export function workspaceFor(value: unknown, env: EnvLike = process.env): string {

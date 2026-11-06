@@ -109,7 +109,7 @@ function shellSegments(command: string): string[] {
 
 function resolveShellPath(value: unknown, cwd: string): string {
   // Issue #358: a PowerShell parameter can carry its value after a colon.
-  let candidate = String(value || "").replace(/^[({]+|[)},]+$/g, "").replace(/^-[A-Za-z]+:/, "");
+  let candidate = String(value || "").replace(/^[({]+|(?<![)},])[)},]+$/g, "").replace(/^-[A-Za-z]+:/, "");
   if (candidate.includes("=") && !candidate.startsWith("=")) candidate = candidate.slice(candidate.indexOf("=") + 1);
   if (!candidate || /^-/.test(candidate) || /^[a-z]+:\/\//i.test(candidate)) return "";
   candidate = normalizePathLike(expandHome(candidate));

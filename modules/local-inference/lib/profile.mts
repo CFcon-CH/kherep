@@ -61,7 +61,7 @@ export function configuredRoots(profile: Profile, env: Env = process.env): strin
 }
 
 export function endpointUrl(endpoint: string, route: string): string {
-  return `${endpoint.replace(/\/+$/, "")}/${String(route).replace(/^\/+/, "")}`;
+  return `${endpoint.replace(/(?<!\/)\/+$/, "")}/${String(route).replace(/^\/+/, "")}`;
 }
 
 export function assertLoopback(endpoint: string): void {

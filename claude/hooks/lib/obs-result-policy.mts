@@ -28,7 +28,7 @@ function wroteProblem(rest: string): string | null {
 function reasonProblem(status: ObsStatus, rest: string): string | null {
   const first = rest.trim().split(/\s+/)[0];
   if (!first) return `${status} needs a reason`;
-  const word = first.replace(/^\W+|\W+$/g, "").toLowerCase();
+  const word = first.replace(/^\W+|(?<!\W)\W+$/g, "").toLowerCase();
   return STATUS_WORDS.has(word) ? `${status} reason starts with a status word` : null;
 }
 

@@ -15,7 +15,7 @@ export interface HookData {
 
 
 export function normalize(value: unknown): string {
-  return String(value || "").replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+  return String(value || "").replace(/\\/g, "/").replace(/(?<!\/)\/+$/, "").toLowerCase();
 }
 
 export function isKherepScope(

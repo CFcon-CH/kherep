@@ -36,7 +36,7 @@ export function normalizePathLike(value: unknown): string {
     }
   }
   const joined = `${prefix}${parts.join("/")}`;
-  return joined.length > 1 ? joined.replace(/\/+$/, "") : joined;
+  return joined.length > 1 ? joined.replace(/(?<!\/)\/+$/, "") : joined;
 }
 
 export function isWithinPath(candidate: unknown, root: unknown): boolean {
