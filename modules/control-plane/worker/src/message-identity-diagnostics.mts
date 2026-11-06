@@ -4,11 +4,12 @@ import type { LoopSnapshot } from "./message-loop-identity.mts";
 import type { PreparedLoop } from "./message-store.mts";
 import { bindingContext } from "./message-binding.mts";
 import { changedIdentityDimensions, changedNodeDimensions, changedReferenceDimensions, semanticReference } from "./message-semantic-identity.mts";
-export interface IdentityComparison { matches: boolean; current?: LoopSnapshot; context?: ReturnType<typeof bindingContext> }
+export interface IdentityComparison { matches: boolean; parentRetirementEquivalent?: boolean; current?: LoopSnapshot; context?: ReturnType<typeof bindingContext> }
 export function identityDiagnostic(prepared: PreparedLoop, comparison: IdentityComparison, stage: DiagnosticStage, now: number,
   extra: IdentityDimension[] = []): MessageDiagnostic | undefined {
   const dimensions = [...extra];
-  if (comparison.current) dimensions.push(...changedIdentityDimensions(prepared.snapshot, comparison.current));
+  if (comparison.current) dimensions.push(...changedIdentityDimensions(prepared.snapshot, comparison.current,
+    { parentRetirementEquivalent: comparison.parentRetirementEquivalent }));
   if (prepared.binding?.connectionChanged) dimensions.push("connection");
   const before = prepared.binding?.context, after = comparison.context;
   if (before && after) dimensions.push(...changedReferenceDimensions(before.refs.map(semanticReference), after.refs.map(semanticReference)),

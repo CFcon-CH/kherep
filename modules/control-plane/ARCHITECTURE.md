@@ -442,6 +442,19 @@ resolution and eligibility, proof source/version, relevant messaging and binding
 capabilities, connection/registration epochs and parent lineage. Every comparison
 resolves the current references again, validating proof age and runtime eligibility
 before ignoring proof observation time and node-wide population generation.
+Nonterminal known/unknown availability is also non-semantic only for eligible
+attested references with a currently valid proof. The classifier and admission
+eligibility remain unchanged. Positive-state compatibility still participates
+for guarded parents without an identity binding, where validation consumes it.
+An unchanged guarded live parent may retire to its ACK tombstone during an
+admission await only with an equal non-null identity binding and exact lineage
+after admitted-state normalization. Both contexts must validate at the same
+observation time, including the old live endpoint sessions; retirement cannot
+erase a corrupt old owner. Only this validated forward transition permits the
+two erased session columns to compare equally. Send, duplicate/MCP context
+comparison, diagnostic dimensions and the audit projection share that decision.
+Other owner, proof, transport, capability and lineage changes still refuse
+before scoring. Pair holds, accounting, thresholds and retention are unchanged.
 Stored owner bindings use the same explicit owner projection, excluding only the
 per-attempt lease. Refusals remain terminal; a fixed changed-dimension audit field
 adds diagnosis without changing the wire refusal vocabulary.

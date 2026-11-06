@@ -198,12 +198,16 @@ export class MessageStore {
     this.identity = new LoopIdentity(sql, capabilities);
   }
 
+  private compareSnapshots(prepared: PreparedLoop, current: LoopSnapshot, now: number) {
+    const parentRetirementEquivalent = this.identity.parentRetirementEquivalent(prepared.snapshot, current, prepared.key, now);
+    return { matches: sameLoopIdentity(prepared.snapshot, current, { parentRetirementEquivalent }), parentRetirementEquivalent };
+  }
   compareContext(message: NewMessage, prepared: PreparedLoop): IdentityComparison {
     if (prepared.error) return { matches: false };
     const context = prepared.binding ? bindingContext(this.sql, message) : undefined;
     if (prepared.binding && context?.stamp !== prepared.binding.stamp) return { matches: false, context };
-    const current = this.identity.snapshot(message.from, message.to, message.inReplyTo ?? message.proxyOf);
-    return { matches: sameLoopIdentity(prepared.snapshot, current), current, context };
+    const now = Date.now(), current = this.identity.snapshot(message.from, message.to, message.inReplyTo ?? message.proxyOf, now);
+    return { ...this.compareSnapshots(prepared, current, now), current, context };
   }
   async prepare(message: NewMessage, sign: LoopSigner): Promise<PreparedLoop> {
     const snapshot = this.identity.snapshot(message.from, message.to, message.inReplyTo ?? message.proxyOf);
@@ -275,14 +279,15 @@ export class MessageStore {
     else if (this.queuedCount(target) >= MAX_QUEUED_PER_NODE) reason = `more than ${MAX_QUEUED_PER_NODE} queued messages for the target node`;
     let loop: LoopAdmissionV1 | undefined;
     const current = this.identity.snapshot(message.from, message.to, message.inReplyTo ?? message.proxyOf, now);
-    const mode = this.identity.validate(current, prepared?.key ?? null, !!(message.inReplyTo ?? message.proxyOf));
+    const mode = this.identity.validate(current, prepared?.key ?? null, !!(message.inReplyTo ?? message.proxyOf), now);
+    const comparison = prepared ? this.compareSnapshots(prepared, current, now) : undefined;
     const denyKey = prepared?.binding?.binding ? prepared.binding.denyKey : prepared?.key;
     const bindingRequired = this.loops.hasHeldNodeScope(message.from.nodeId, target)
       || (mode === "guarded" && current.identityBinding !== null);
     let currentContext: ReturnType<typeof bindingContext> | undefined;
     let selectedMismatch = false;
     if (reason === null) {
-      if (prepared && !sameLoopIdentity(prepared.snapshot, current)) reason = LOOP_STALE;
+      if (comparison && !comparison.matches) reason = LOOP_STALE;
       else if (prepared?.error || prepared?.binding?.error) reason = prepared.error ?? prepared.binding!.error!;
       else if (prepared?.binding && prepared.binding.stamp !== (currentContext = bindingContext(this.sql, message)).stamp) reason = LOOP_STALE;
       else if (denyKey && this.loops.held(denyKey)) reason = this.loops.held(denyKey);
@@ -315,7 +320,7 @@ export class MessageStore {
         this.setState(toRecord(row), "refused", reason!, actor, now, effects);
       }
     }
-    const diagnostic = reason === LOOP_STALE && prepared ? identityDiagnostic(prepared, { matches: false, current, context: currentContext }, "send-admission", now,
+    const diagnostic = reason === LOOP_STALE && prepared ? identityDiagnostic(prepared, { ...comparison, matches: false, current, context: currentContext }, "send-admission", now,
       selectedMismatch ? selectedProofDimensions(prepared, current) : []) : reason === RESOLUTION_REQUIRED && prepared?.binding?.diagnosticCode
       ? blockerDiagnostic(prepared.binding.diagnosticCode, now, "send-admission") : undefined;
     const state: MessageState = reason === null ? "queued" : "refused";
@@ -338,7 +343,8 @@ export class MessageStore {
       JSON.stringify(binding), prepared!.binding!.denyKey, message.messageId);
     storeDiagnostic(this.sql, message.messageId, diagnostic);
     this.retention.finalized(message.messageId, message.from.nodeId, state, now);
-    this.audit(actor, "message.send", target, { messageId: message.messageId, toSession: message.to.session, state, reason, ...(reason === LOOP_STALE && prepared ? { ...(diagnostic ? { changedDimension: changedIdentityDimension(prepared.snapshot, current) } : { diagnosticGap: true }) } : {}) });
+    this.audit(actor, "message.send", target, { messageId: message.messageId, toSession: message.to.session, state, reason, ...(reason === LOOP_STALE && prepared ? { ...(diagnostic ? { changedDimension: changedIdentityDimension(prepared.snapshot, current,
+      { parentRetirementEquivalent: comparison?.parentRetirementEquivalent }) } : { diagnosticGap: true }) } : {}) });
     if (state === "queued") {
       effects.deliveries.push({ nodeId: target, body: {
         messageId: message.messageId, from: storedFrom, toSession: storedTo.session, text: message.text,

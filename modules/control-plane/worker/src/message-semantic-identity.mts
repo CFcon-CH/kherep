@@ -7,10 +7,11 @@ import type { LoopSnapshot, Parent } from "./message-loop-identity.mts";
 
 // Input references must be resolved at comparison time: their classifier has
 // already revalidated proof freshness, validity, runtime and eligibility. Only
-// observation time and the node's population generation are non-semantic.
+// observation time, population generation and attested availability are non-semantic.
 export function semanticReference(r: CanonicalReference) {
   if (!r.address) return { address: null, eligible: r.eligible, code: r.code };
-  return { address: r.address, match: r.match, runtime: r.runtime, unknown: r.unknown, eligible: r.eligible, code: r.code,
+  return { address: r.address, match: r.match, runtime: r.runtime,
+    unknown: r.code === "ATTESTED" && r.eligible && r.proof !== null ? false : r.unknown, eligible: r.eligible, code: r.code,
     proof: r.proof ? { version: r.proof.version, source: r.proof.source, runtime: r.proof.runtime,
       sessionId: r.proof.sessionId, lifecycleGeneration: r.proof.lifecycleGeneration } : null };
 }
@@ -34,16 +35,20 @@ function semanticBinding(binding: MessageBinding) {
 }
 export const sameBinding = (a: MessageBinding, b: MessageBinding): boolean => JSON.stringify(semanticBinding(a)) === JSON.stringify(semanticBinding(b));
 
-function semanticParent(parent: Parent) {
+interface ComparisonOptions { parentRetirementEquivalent?: boolean }
+function semanticParent(parent: Parent, options: ComparisonOptions) {
   if (parent.kind === "missing") return parent;
   // These are precisely the states validate() admits as a guarded parent.
   // A processing/status advance keeps the lineage eligible; refusal or expiry
   // never joins that class and is revalidated against the current parent.
   const state = ["accepted", "delivered", "replied"].includes(String(parent.row.state)) ? "accepted" : parent.row.state;
-  return { ...parent, row: { ...parent.row, state } };
+  return { ...parent, row: { ...parent.row, state,
+    ...(options.parentRetirementEquivalent ? { from_session: null, to_session: null } : {}) } };
 }
-const semanticLoop = (s: LoopSnapshot) => ({ ...s, parent: semanticParent(s.parent) });
-export const sameLoopIdentity = (a: LoopSnapshot, b: LoopSnapshot): boolean => JSON.stringify(semanticLoop(a)) === JSON.stringify(semanticLoop(b));
+// Only an unbound guarded parent consumes the positive-state compatibility bit.
+const semanticCompatibility = (s: LoopSnapshot) => s.parent.kind === "guarded" && s.parent.identityBinding === null ? s.compatibility : null;
+const semanticLoop = (s: LoopSnapshot, options: ComparisonOptions) => ({ ...s, compatibility: semanticCompatibility(s), parent: semanticParent(s.parent, options) });
+export const sameLoopIdentity = (a: LoopSnapshot, b: LoopSnapshot, options: ComparisonOptions = {}): boolean => JSON.stringify(semanticLoop(a, options)) === JSON.stringify(semanticLoop(b, options));
 
 // Compare the same semantic leaves used by equality, returning codes only.
 const differs = (a: unknown, b: unknown): boolean => JSON.stringify(a) !== JSON.stringify(b);
@@ -74,12 +79,12 @@ export function changedNodeDimensions(a: ReturnType<typeof semanticNodes>, b: Re
   if (differs(capabilities(a), capabilities(b))) dimensions.push("capability");
   return dimensions;
 }
-export function changedIdentityDimensions(a: LoopSnapshot, b: LoopSnapshot): IdentityDimension[] {
+export function changedIdentityDimensions(a: LoopSnapshot, b: LoopSnapshot, options: ComparisonOptions = {}): IdentityDimension[] {
   const dimensions = [...changedReferenceDimensions(a.proofs as Ref[], b.proofs as Ref[]), ...changedNodeDimensions(a.connections, b.connections)];
-  if (differs(a.compatibility, b.compatibility)) dimensions.push("eligibility");
+  if (differs(semanticCompatibility(a), semanticCompatibility(b))) dimensions.push("eligibility");
   if (a.both !== b.both) dimensions.push("capability");
-  if (differs(semanticParent(a.parent), semanticParent(b.parent))) dimensions.push("lineage");
+  if (differs(semanticParent(a.parent, options), semanticParent(b.parent, options))) dimensions.push("lineage");
   return sortedDimensions(dimensions);
 }
 // Retain the fixed audit field without the old unsupported selected-binding fallback.
-export const changedIdentityDimension = (a: LoopSnapshot, b: LoopSnapshot): IdentityDimension | undefined => changedIdentityDimensions(a, b)[0];
+export const changedIdentityDimension = (a: LoopSnapshot, b: LoopSnapshot, options: ComparisonOptions = {}): IdentityDimension | undefined => changedIdentityDimensions(a, b, options)[0];
