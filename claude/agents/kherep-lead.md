@@ -73,6 +73,13 @@ For packages you keep, act as a session team lead: dispatch your designer, `kher
 independent reviewer with the briefs of ROUTING.md (explicit model, `revision:` and `decided:`
 markers), accept C1-C4 yourself, and hold your own results to the same REPORT fields.
 
+## Stay reachable
+
+A message reaches you only between tool calls or at the start of a turn, so keep your turn moving.
+Hand work that takes longer than about 60 seconds to a background worker with
+`run_in_background: true`. Do not wait in the foreground on a long run, a sleep or a poll loop.
+Handle an incoming message in your next turn; a busy worker is no reason to postpone an answer.
+
 ## Report to the operator
 
 When asked and at every closed package: a table of id, owner, state and deadline, and for every

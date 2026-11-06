@@ -15,6 +15,15 @@ const AGENTS = ["kherep-lead", "kherep-team-lead"];
 const manifestDir = path.join(repo, "bootstrap", "manifest");
 const posix = (file: string): string => file.replace(/\\/g, "/");
 
+test("both runtimes require both team profiles to stay reachable", () => {
+  for (const runtime of ["claude", "codex"]) {
+    for (const agent of AGENTS) {
+      const file = path.join(runtime, "agents", `${agent}.md`);
+      assert.match(fs.readFileSync(path.join(repo, file), "utf8"), /^## Stay reachable\r?$/m, `${file}: stay reachable heading`);
+    }
+  }
+});
+
 test("the file manifest, ownedAgents and the model policy list both team profiles", () => {
   const files = fs.readFileSync(path.join(manifestDir, "files.txt"), "utf8").split(/\r?\n/).map((line) => line.trim());
   const capabilities = JSON.parse(fs.readFileSync(path.join(manifestDir, "capabilities.json"), "utf8")) as {

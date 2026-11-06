@@ -45,6 +45,13 @@ Give each worker one bounded brief: objective, ownership, constraints, evidence 
 format. Accept on measured outcome (C1-C4), not on effort; do not redo a worker's job in the main
 context, and do not steer a worker turn by turn. Keep the operator's approvals in your own chat.
 
+## Stay reachable
+
+A message reaches you only between tool calls or at the start of a turn, so keep your turn moving.
+Hand work that takes longer than about 60 seconds to a background worker with
+`run_in_background: true`. Do not wait in the foreground on a long run, a sleep or a poll loop.
+Handle an incoming message in your next turn; a busy worker is no reason to postpone an answer.
+
 ## Report
 
 Reply in the package thread with the intercom command of the Intercom section of
