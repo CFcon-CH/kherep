@@ -140,7 +140,7 @@ test("coverage assembly rejects malformed raw JSON and failed tests", () => {
   }
 });
 
-test("coverage rejects phantom EOF lines and same-file aliases", () => {
+test("coverage rejects phantom EOF lines and same-file aliases", (t) => {
   const root = fixture();
   try {
     const source = "modules/control-plane/worker/src/first/same.mts";
@@ -150,7 +150,11 @@ test("coverage rejects phantom EOF lines and same-file aliases", () => {
     }
     const first = `SF:${source}\nDA:1,1\nend_of_record\n`;
     assert.throws(() => validateLcov(first + `SF:./${source}\nDA:1,1\nend_of_record\n`, root), /LCOV/);
-    symlinkSync(join(root, source), join(root, "src/alias.mts"));
+    try { symlinkSync(join(root, source), join(root, "src/alias.mts")); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "EPERM") return t.skip("symlink creation unavailable");
+      throw error;
+    }
     assert.throws(() => validateLcov(first + "SF:src/alias.mts\nDA:1,1\nend_of_record\n", root), /LCOV/);
     console.log("negative same-file aliases: rejected dot-relative and internal symlink aliases");
   } finally { rmSync(root, { recursive: true, force: true }); }
