@@ -13,7 +13,7 @@ const HOOKS = import.meta.dirname;
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), "dispatch-policy-"));
 after(() => fs.rmSync(TMP, { recursive: true, force: true }));
 const SHA = "2733b35e2c102ac54295568509c68b18b6d92cab";
-const BRIEF = `revision: kherep@${SHA}\ndecided: none\nBuild it.`;
+const BRIEF = `revision: kherep@${SHA}\ndecided: none\ntest-route: Node fixture :: node fixture.test.mts :: report.txt\nroute-source: page KB-EXAMPLE\nBuild it.`;
 let homes = 0;
 
 // A throwaway <claude-home> laid out like an install: hooks/, hooks/lib/, kherep/.

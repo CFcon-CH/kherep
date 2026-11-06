@@ -58,7 +58,7 @@ function check(name: string, payload: Payload, expectedDenied: boolean, reasonNe
 }
 
 // Issue #701: a well-formed worker brief, so a code-bound role reaches its model checks.
-const WORKER_BRIEF = "revision: kherep@2733b35e2c102ac54295568509c68b18b6d92cab\ndecided: none\nBuild it.";
+const WORKER_BRIEF = "revision: kherep@2733b35e2c102ac54295568509c68b18b6d92cab\ndecided: none\ntest-route: Node fixture :: node fixture.test.mts :: report.txt\nroute-source: page KB-EXAMPLE\nBuild it.";
 const call = (agent: string, model?: string, toolName = "Agent", field = "subagent_type") => ({
   tool_name: toolName,
   tool_input: { [field]: agent, ...(model === undefined ? {} : { model }), prompt: WORKER_BRIEF },

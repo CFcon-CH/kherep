@@ -41,7 +41,8 @@ function expectDecision(name: string, payload: Payload, expected: Expected): voi
 
 const SHA = "2733b35e2c102ac54295568509c68b18b6d92cab";
 const HEAD = "f0893d7e62823a48d89ec57f1e33f5c8f57eebca";
-const WORKER = `revision: kherep@${SHA}\ndecided: none\n`;
+const ROUTES = "test-route: Node fixture :: node fixture.test.mts :: report.txt\nroute-source: page KB-EXAMPLE\n";
+const WORKER = `revision: kherep@${SHA}\ndecided: none\n${ROUTES}`;
 const agent = (subagent_type: string, model: string, prompt: string, description = "Build it") =>
   ({ tool_name: "Agent", tool_input: { subagent_type, model, description, prompt } });
 const deny = (needle: string) => ({ deny: needle });
@@ -56,12 +57,36 @@ expectDecision("revision without a token denied", agent("kherep-builder", "opus"
 expectDecision("empty decided denied", agent("kherep-builder", "opus", `revision: kherep@${SHA}\ndecided:`), deny("decided 1 is empty"));
 expectDecision("deny states the format", agent("kherep-builder", "opus", "Build it."), deny("or decided: none."));
 expectDecision("deny never quotes the brief", agent("kherep-builder", "opus", "revision: secret-name@nope\ndecided: none"), deny("malformed token. A code-bound"));
-expectDecision("builder with a full brief is silent", agent("kherep-builder", "fable", `Objective: x\n- revision: kherep@${SHA}-dirty\n- decided: keep the API`), "silent");
-expectDecision("builder with a review range is silent", agent("kherep-builder", "opus", `revision: kherep@${SHA}..${HEAD}\ndecided:\n- a\n- b`), "silent");
+expectDecision("builder with a full brief is silent", agent("kherep-builder", "fable", `Objective: x\n- revision: kherep@${SHA}-dirty\n- decided: keep the API\n${ROUTES}`), "silent");
+expectDecision("builder with a review range is silent", agent("kherep-builder", "opus", `revision: kherep@${SHA}..${HEAD}\ndecided:\n- a\n- b\n${ROUTES}`), "silent");
 expectDecision("the description never supplies a marker", agent("kherep-builder", "opus", "Build it.", WORKER), deny("WORKER_BRIEF_FORMAT"));
 expectDecision("an unknown model is checked before the brief", agent("kherep-builder", "operator-model", "Build it."), deny("DISPATCH_MODEL_UNKNOWN"));
 expectDecision("no default-model pin: builder on haiku reaches the brief check", agent("kherep-builder", "haiku", "Build it."), deny("WORKER_BRIEF_FORMAT"));
 expectDecision("a code-bound review brief gets no notice", agent("kherep-builder", "opus", `${WORKER}Review your own diff.`), "silent");
+
+// Issue #812: otherwise valid managed-role dispatches isolate the new fields.
+for (const [role, model] of [["kherep-builder", "opus"], ["dc-plugin-build-runner", "sonnet"]]) {
+  for (const tool_name of ["Agent", "Task"]) {
+    const call = (prompt: string, description = "Build it") => ({ ...agent(role, model, prompt, description), tool_name });
+    const old = `revision: kherep@${SHA}\ndecided: none\n`;
+    expectDecision(`${tool_name} ${role} missing test route`, call(old + "route-source: page KB-EXAMPLE"), deny("names no test-route:"));
+    expectDecision(`${tool_name} ${role} missing source`, call(old + "test-route: Node :: check :: report"), deny("names no route-source:"));
+    for (const [marker, values] of [["test-route", ["", "Node :: check", "Node :: TBD :: report", "\nNode :: check :: report"]],
+      ["route-source", ["", "query route", "query route :: refused", "page UNKNOWN"]]] as const) {
+      for (const value of values) expectDecision(`${tool_name} ${role} malformed ${marker}`, call(WORKER.replace(new RegExp(`^${marker}:.*$`, "m"), `${marker}: ${value}`)), deny(`${marker} 1 is malformed`));
+    }
+    expectDecision(`${tool_name} ${role} bulleted numbered routes`, call(old + ROUTES.replace(/^test-route:/m, "  - test-route:").replace(/^route-source:/m, "2) route-source:")), "silent");
+    expectDecision(`${tool_name} ${role} repeated invalid route`, call(WORKER + "test-route: TBD"), deny("test-route 2 is malformed"));
+    expectDecision(`${tool_name} ${role} repeated invalid source`, call(WORKER + "route-source: UNKNOWN"), deny("route-source 2 is malformed"));
+    for (const marker of ["test-route", "route-source"]) {
+      expectDecision(`${tool_name} ${role} route cannot fill decided`, call(`revision: kherep@${SHA}\ndecided:\n${marker}: actual`), deny("decided 1 is empty"));
+    }
+    expectDecision(`${tool_name} ${role} descriptions cannot supply routes`, call(old, ROUTES), deny("names no test-route:"));
+    for (const source of ["page KB-EXAMPLE", "query route :: hit documented Node tests", "query route :: no-match"]) {
+      expectDecision(`${tool_name} ${role} valid ${source}`, call(WORKER.replace("page KB-EXAMPLE", source)), "silent");
+    }
+  }
+}
 
 // Any other dispatch: checked only when it declares revision:.
 expectDecision("other agent without revision unchecked", agent("general-purpose", "sonnet", "decided:"), "silent");

@@ -41,6 +41,10 @@ increments the minor version; every other release increments the patch version.
 - Codex: the managed `atlassian-broker` role now defaults to medium reasoning
   instead of low. An existing install needs one explicit `--refresh-models`,
   because an ordinary install refuses the changed policy before writes (#786).
+- Dispatch guard: a brief for `kherep-builder` or `dc-plugin-build-runner` now
+  needs `test-route:` and `route-source:`, and the routing and builder contracts
+  require a completed Central Brain lookup before a build. The guard checks the
+  format only, not whether the lookup happened (#812).
 
 ### Fixed
 

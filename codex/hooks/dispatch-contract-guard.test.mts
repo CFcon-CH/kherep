@@ -27,7 +27,7 @@ const SHA = "2733b35e2c102ac54295568509c68b18b6d92cab";
 const BRIEF = `- measured: code kherep@${SHA} -- x.test.mts \`node x.test.mts\` -> 12 pass, 0 fail\n- relayed: the operator, in chat`;
 
 function spawnDispatch(input: Record<string, unknown>, tool = "spawn_agent") {
-  return { tool_name: tool, tool_input: { task_name: "t", message: `revision: kherep@${SHA}\ndecided: none`, ...input } };
+  return { tool_name: tool, tool_input: { task_name: "t", message: `revision: kherep@${SHA}\ndecided: none\ntest-route: Node fixture :: node fixture.test.mts :: report.txt\nroute-source: page KB-EXAMPLE`, ...input } };
 }
 
 function runGuard(stdin: string): string {
