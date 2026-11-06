@@ -11,7 +11,7 @@ function characterProblem(value: string): string | null {
   const active = value.replace(/<!--[^]*?-->|<!\[CDATA\[[^]*?\]\]>|<\?[^]*?\?>/g, "");
   let invalidReference = false;
   const withoutReferences = active.replace(/&#(x[0-9a-fA-F]+|[0-9]+);/g, (_, digits: string) => {
-    const n = digits[0] === "x" ? parseInt(digits.slice(1), 16) : Number(digits);
+    const n = digits[0] === "x" ? Number.parseInt(digits.slice(1), 16) : Number(digits);
     if (!xmlChar(n)) invalidReference = true;
     return "";
   });
@@ -30,16 +30,51 @@ function labelsProblem(labels: string[], evidence: string[]): string | null {
 }
 
 // Tokenize markup so comments, quoted attributes and pre/code content cannot supply metadata.
-const tokens = /<!--[^]*?-->|<!\[CDATA\[[^]*?\]\]>|<\?[^]*?\?>|<\/?([A-Za-z][\w:.-]*)(?:"[^"]*"|'[^']*'|[^'"<>])*>/g;
+interface MarkupToken { text: string; name?: string; index: number }
+
+function* markupTokens(value: string): Generator<MarkupToken> {
+  let cursor = 0;
+  while (cursor < value.length) {
+    const start = value.indexOf("<", cursor);
+    if (start < 0) return;
+    const delimiter = value.startsWith("<!--", start) ? [4, "-->"] as const
+      : value.startsWith("<![CDATA[", start) ? [9, "]]>"] as const
+      : value.startsWith("<?", start) ? [2, "?>"] as const : null;
+    let name: string | undefined;
+    if (delimiter) {
+      const end = value.indexOf(delimiter[1], start + delimiter[0]);
+      if (end < 0) return;
+      cursor = end + delimiter[1].length;
+    } else {
+      cursor = start + (value[start + 1] === "/" ? 2 : 1);
+      if (!/[A-Za-z]/.test(value[cursor] ?? "")) return;
+      const nameStart = cursor++;
+      while (cursor < value.length && /[\w:.-]/.test(value[cursor])) cursor++;
+      name = value.slice(nameStart, cursor);
+      while (cursor < value.length && value[cursor] !== ">") {
+        const character = value[cursor++];
+        if (character === "<") return;
+        if (character === '"' || character === "'") {
+          const end = value.indexOf(character, cursor);
+          if (end < 0) return;
+          cursor = end + 1;
+        }
+      }
+      if (cursor === value.length) return;
+      cursor++;
+    }
+    yield { text: value.slice(start, cursor), name, index: start };
+  }
+}
 interface Tag { name: string; start: number; metadata: boolean }
 
-function captureTag(match: RegExpExecArray, cursor: number, stack: Tag[], paragraphs: string[], value: string): boolean {
-  const name = match[1].toLowerCase(), closing = match[0].startsWith("</");
+function captureTag(match: MarkupToken, cursor: number, stack: Tag[], paragraphs: string[], value: string): boolean {
+  const name = match.name!.toLowerCase(), closing = match.text.startsWith("</");
   if (closing) {
     const open = stack.pop();
     if (!open || open.name !== name) return false;
     if (open.metadata) paragraphs.push(value.slice(open.start, match.index));
-  } else if (!match[0].endsWith("/>")) {
+  } else if (!match.text.endsWith("/>")) {
     if (name === "p" && stack.some(tag => tag.name === "p")) return false;
     const metadata = name === "p" && !stack.some(tag => /^(p|pre|code|script|style)$/.test(tag.name));
     stack.push({ name, start: cursor, metadata });
@@ -50,10 +85,10 @@ function captureTag(match: RegExpExecArray, cursor: number, stack: Tag[], paragr
 function storageParagraphs(value: string): string[] | null {
   const stack: Tag[] = [], paragraphs: string[] = [];
   let cursor = 0;
-  for (const match of value.matchAll(tokens)) {
+  for (const match of markupTokens(value)) {
     if (value.slice(cursor, match.index).includes("<")) return null;
-    cursor = match.index + match[0].length;
-    if (!match[1]) continue;
+    cursor = match.index + match.text.length;
+    if (!match.name) continue;
     if (!captureTag(match, cursor, stack, paragraphs, value)) return null;
   }
   if (stack.length || value.slice(cursor).includes("<")) return null;
@@ -63,15 +98,15 @@ function storageParagraphs(value: string): string[] | null {
 const entities: Record<string, string> = { nbsp: " ", amp: "&", lt: "<", gt: ">", quot: '"', apos: "'" };
 const decode = (text: string): string => text.replace(/&(?:#(x[0-9a-fA-F]+|[0-9]+)|(nbsp|amp|lt|gt|quot|apos));/g,
   (_, digits: string | undefined, name: string | undefined) => digits
-    ? String.fromCodePoint(digits[0] === "x" ? parseInt(digits.slice(1), 16) : Number(digits)) : entities[name!]);
+    ? String.fromCodePoint(digits[0] === "x" ? Number.parseInt(digits.slice(1), 16) : Number(digits)) : entities[name!]);
 
 function paragraphText(paragraph: string): string {
   let visible = "", at = 0;
-  for (const token of paragraph.matchAll(tokens)) {
+  for (const token of markupTokens(paragraph)) {
     visible += decode(paragraph.slice(at, token.index));
-    if (token[0].startsWith("<![CDATA[")) visible += token[0].slice(9, -3);
-    else if (/^<br\b/i.test(token[0])) visible += "\n";
-    at = token.index + token[0].length;
+    if (token.text.startsWith("<![CDATA[")) visible += token.text.slice(9, -3);
+    else if (/^<br\b/i.test(token.text)) visible += "\n";
+    at = token.index + token.text.length;
   }
   return (visible + decode(paragraph.slice(at))).trim();
 }
@@ -122,4 +157,20 @@ export async function validateObservation(
     problem = observationProblem(value, args.labels ?? "");
   } catch { problem = "Body is not valid UTF-8."; }
   return { problem, bytes, digest };
+}
+
+export interface ValidateContext { readBodyBytes: (file: string) => Promise<Uint8Array> }
+
+export async function cmdValidate(
+  ctx: ValidateContext & { log: (line: string) => void },
+  args: Record<string, string | undefined>,
+  fail: (message: string) => never,
+): Promise<number> {
+  const { problem, bytes, digest } = await validateObservation(args, ctx, fail);
+  ctx.log(`valid: ${problem === null}`);
+  ctx.log(`bytes: ${bytes.byteLength}`);
+  ctx.log(`sha256: ${digest}`);
+  ctx.log("target/authentication: not validated");
+  if (problem) fail(problem);
+  return 0;
 }
