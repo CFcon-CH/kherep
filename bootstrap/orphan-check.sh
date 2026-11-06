@@ -56,5 +56,7 @@ fi
 
 cat "$TMP"
 mv -f "$TMP" "$REPORT" 2>/dev/null || rm -f "$TMP"
-[[ "$count" -eq 0 ]] && exit 0
+# A string compare: -eq inside [[ ]] evaluates as arithmetic, so a non-numeric
+# count would read as 0 and report a clean space.
+[[ "$count" == "0" ]] && exit 0
 exit 1
