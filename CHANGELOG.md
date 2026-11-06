@@ -17,6 +17,8 @@ increments the minor version; every other release increments the patch version.
   diagnostics use the same validated comparison. Loop budgets, thresholds,
   retention and native MCP authority remain unchanged. Refs #765, Worker stage 1;
   CLI diagnostics and live reply acceptance remain separate work.
+- Control Plane Worker: extend that retirement equivalence to unbound guarded
+  parents with positive-state compatibility on both snapshots. Refs #765.
 
 ### Security
 

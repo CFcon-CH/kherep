@@ -82,12 +82,13 @@ export class LoopIdentity {
       { nodeId: String(row.to_node), session: String(row.to_session) }, undefined, now);
     return snapshot.both && !!snapshot.from && !!snapshot.to && snapshot.identityBinding === binding;
   }
-  // Returns legacy, guarded, or a fixed refusal. Pair HMAC was computed before this transaction.
+  // Only validated forward retirement may omit the old live parent sessions.
   parentRetirementEquivalent(before: LoopSnapshot, after: LoopSnapshot, key: string | null, now: number): boolean {
     const a = before.parent, b = after.parent;
-    if (a.kind !== "guarded" || b.kind !== "guarded" || a.identityBinding === null || a.identityBinding !== b.identityBinding
+    if (a.kind !== "guarded" || b.kind !== "guarded" || a.identityBinding !== b.identityBinding
       || typeof a.row.from_session !== "string" || typeof a.row.to_session !== "string"
-      || b.row.from_session !== null || b.row.to_session !== null) return false;
+      || b.row.from_session !== null || b.row.to_session !== null
+      || (a.identityBinding === null && (!before.compatibility || !after.compatibility))) return false;
     // Compare only parent lineage here; remaining context still compares normally.
     // Validate the old live endpoints too: retirement must not erase a bad owner.
     return sameLoopIdentity(before, { ...before, parent: b }, { parentRetirementEquivalent: true })
