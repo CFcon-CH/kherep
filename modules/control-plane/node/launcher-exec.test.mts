@@ -47,7 +47,7 @@ test("the launcher runs the receipt's pin with the argument vector verbatim and 
 
 test("every failed resolution exits 1 with the fixed message and starts no child", (t) => {
   const h = host(t);
-  const expect = (reason: keyof typeof LAUNCHER_REASONS) => {
+  const runLauncherCase = (reason: keyof typeof LAUNCHER_REASONS) => {
     const result = launch(h.root, ARGS, h.env);
     assert.equal(result.status, 1, reason);
     assert.equal(result.stdout, "");
@@ -57,18 +57,18 @@ test("every failed resolution exits 1 with the fixed message and starts no child
       assert.equal(resolved.ok ? "ok" : resolved.reason, reason, "resolveLauncher agrees");
     }
   };
-  expect("missing");
+  runLauncherCase("missing");
   writeReceipt(h.root, "{ corrupt");
-  expect("invalid");
+  runLauncherCase("invalid");
   const pin = makePin(h.root, COMMIT_A, "A");
   writeReceipt(h.root, receiptFor(pin, COMMIT_A, process.execPath, "checkout"));
-  expect("invalid");
+  runLauncherCase("invalid");
   writeReceipt(h.root, receiptFor(path.join(h.root, "gone"), COMMIT_A));
-  expect("missing-pin");
+  runLauncherCase("missing-pin");
   writeReceipt(h.root, receiptFor(makePin(h.root, COMMIT_B, "B", { cli: false }), COMMIT_B));
-  expect("missing-cli");
+  runLauncherCase("missing-cli");
   writeReceipt(h.root, receiptFor(pin, COMMIT_A, path.join(h.root, "no-such-node")));
-  expect("spawn");
+  runLauncherCase("spawn");
   assert.equal(h.ran(), "", "no stub ran");
 });
 
