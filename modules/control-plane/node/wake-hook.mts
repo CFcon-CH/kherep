@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { resolveWakeSelection } from "./wake-bindings.mts";
+import { readBindingView } from "./session-labels.mts";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -15,7 +17,7 @@ import { getMessage, readJson, writeJsonAtomic } from "./inbox.mts";
 import { launchMode, type LaunchVerdict } from "./launch-mode.mts";
 import { armedSince, armingMark, nextOrder, orderOf, reclaimLock } from "./listener-order.mts";
 import { releaseOwn } from "./listener-sweep.mts";
-import { explicitlyListed, loadPolicy, readPolicy, wakeAllowed, wakeBudget } from "./policy.mts";
+import { loadPolicy, readPolicy, wakeBudget } from "./policy.mts";
 import { mappingPending, taskForSession, type TaskRecord } from "./task-records.mts";
 import { transcriptMode } from "./transcript-mode.mts";
 import { atReplyLimit, markWoken, pending, rememberWoken } from "./wake-pending.mts";
@@ -139,8 +141,9 @@ export async function runWake(input: unknown, deps: WakeDeps): Promise<WakeResul
     return name === undefined ? [sessionId] : [sessionId, name];
   };
   let refs = refsOf();
+  const binding=()=>({target:{runtime:"claude-code",sessionId},view:readBindingView(paths,now()),now:now()});
   const replies = (): boolean => policy.wake?.replies === true;
-  let listed = wakeAllowed(policy, refs);
+  let listed = resolveWakeSelection(policy.wake?.sessions ?? [], binding()).allowed;
   let wasListed = listed || replies();
   // Audited once, when the listener gives up; without a wake section quietly,
   // as before, unless the section was withdrawn from a listed or reply-scoped session (issue #213).
@@ -163,8 +166,9 @@ export async function runWake(input: unknown, deps: WakeDeps): Promise<WakeResul
   const mark = armingMark(paths, sessionId);
   if (starting && given === undefined) {
     // No permission_mode in the input: every source must rule bypass out.
-    const launch = mode !== undefined && explicitlyListed(policy, refs) ? await (deps.launchMode ?? launchMode)(cwd) : "unknown";
-    if (launch !== "ok") {
+    const bindingVersion=readBindingView(paths,now()).version;
+    const launch = mode !== undefined && resolveWakeSelection(policy.wake?.sessions ?? [], binding()).explicit ? await (deps.launchMode ?? launchMode)(cwd) : "unknown";
+    if (bindingVersion!==readBindingView(paths,now()).version || launch !== "ok") {
       audit(paths, now(), sessionId, [], launch === "bypass" ? "permission-mode" : "permission-mode-unknown");
       return quiet;
     }
@@ -232,7 +236,8 @@ export async function runWake(input: unknown, deps: WakeDeps): Promise<WakeResul
     unreadable = current === null;
     policy = current ?? policy;
     if (policy.sessions?.enabled !== true) grant = undefined;
-    listed = wakeAllowed(policy, refs);
+    refs=refsOf();
+    listed = resolveWakeSelection(policy.wake?.sessions ?? [], binding()).allowed;
     wasListed ||= listed || replies();
     if (!listed && !grant) {
       grant = grantFor();
@@ -263,7 +268,9 @@ export async function runWake(input: unknown, deps: WakeDeps): Promise<WakeResul
     let stuck = found.stuck;
     if (fresh.length + backlog.length + stuck.length > 0) {
       // A delivery hook may be offering them right now; wake only for what still waits.
+      const version=readBindingView(paths,now()).version;
       await sleep(WAKE_SETTLE_MS);
+      if(version!==readBindingView(paths,now()).version || current && readPolicy(policyFile) && JSON.stringify(readPolicy(policyFile))!==JSON.stringify(policy)) continue;
       const still = (state: string) => (id: string): boolean => getMessage(paths.inbox, id)?.state === state;
       fresh = fresh.filter(still("accepted"));
       backlog = backlog.filter(still("accepted"));

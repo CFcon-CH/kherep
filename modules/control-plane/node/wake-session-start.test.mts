@@ -135,7 +135,7 @@ test("the other guards hold at SessionStart: kill switch, opt-in, allowlist, rep
   assert.deepEqual(await listen(deep, atStart("resume", { maxWaitMs: 20_000 })), { code: 2, text: REARM_TEXT });
   assert.deepEqual(auditLines(deep).map((l) => l.action), ["depth-limit", "rearm"]);
 
-  const paths = seen(t);
+  const paths = seen(t, "default", {enabled:true,sessions:[SELF]});
   for (let n = 1; n <= TURNS_PER_HOUR; n++) {
     assert.equal((await listenFor(paths, n, atStart("resume", { start: T0 + n * 60_000 }))).code, 2, `wake ${n}`);
   }

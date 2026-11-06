@@ -1,3 +1,4 @@
+import { recordLocalLabels, policyStamp } from "./session-labels.mts";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -15,14 +16,14 @@ import { listenerDir, runWake, wakeAudit, type WakeDeps } from "./wake-hook.mts"
 // wake-guards.test.mts): a throwaway node directory, a fake clock and sleep.
 
 export const PEER = "00000000-0000-4000-8000-0000000000cc";
-export const SELF = "s-self";
+export const SELF = "00000000-0000-4000-8000-0000000000ee";
 export const SECRET = "peer text that must never reach the audit";
 export const T0 = Date.UTC(2026, 8, 25, 12);
 export const id = (n: number): string => `00000000-0000-4000-8000-${n.toString(16).padStart(12, "0")}`;
 
 // An enrolled node whose policy wakes "review", or has the given wake section
 // (absent when options.wake is present but undefined).
-export function setup(t: test.TestContext, options: { wake?: unknown; enrolled?: boolean } = {}) {
+export function setup(t: test.TestContext, options: { wake?: unknown; enrolled?: boolean; observationAt?: number } = {}) {
   const wake = "wake" in options ? options.wake : { enabled: true, sessions: ["review"] };
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "kherep-wake-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
@@ -32,6 +33,8 @@ export function setup(t: test.TestContext, options: { wake?: unknown; enrolled?:
     writeConfig(paths.config, { version: 1, controlUrl: "https://control.example.invalid", nodeId: "00000000-0000-4000-8000-0000000000aa",
       name: "n", publicKey: "", privateKeyFile: "", policyFile: paths.policy, enrolledAt: new Date(T0).toISOString() });
     fs.writeFileSync(paths.policy, JSON.stringify({ version: 1, allowedCommands: [], ...(wake === undefined ? {} : { wake }) }));
+    const observedAt=options.observationAt??T0;
+    recordLocalLabels(paths,[{sessionId:SELF,runtime:"claude-code",state:"idle-loaded",name:"review",canonicalIdentity:{version:1,source:"claude-list",runtime:"claude-code",sessionId:SELF,observedAt,lifecycleGeneration:0}}],observedAt,true,policyStamp(paths));
   }
   return { root, paths };
 }

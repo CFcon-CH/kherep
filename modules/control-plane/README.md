@@ -1223,3 +1223,14 @@ still separate. Preexisting unbound local work needs a separately authorized
 quiescent disposition. A later hold does not recall already authorized bytes
 or accepted local work. See the
 [transport binding contract](ARCHITECTURE.md#selected-transport-binding-and-retained-holds-727).
+
+
+### Claude wake-name bindings (#828)
+
+Every first name pin requires a complete fresh unique Claude listing and the exact current holder's full ID co-listed in `wake.sessions`. This applies to all tokens. Policy bytes stay unchanged. A healthy unique fresh bare name remains allowed and explicitly listed as `unbound-name`, and can follow a future holder until pinned.
+
+A pinned name selects its stored runtime and full ID through rename. Reusing that name gives another ID no name grant. Removing only the bootstrap ID leaves the bound-name grant active; removing the name disables it. Readding the name restores the original reservation, even when another ID is co-listed. Missing labels or proof alone do not revoke a healthy binding. Actual accepted duplicate/runtime/lifecycle contradictions remain deny-only vetoes. Clearing needs advancing accepted identity or lifecycle evidence, not a label or UNKNOWN availability hint. Existing independent grants and permission, launch and budget gates remain.
+
+A received incomplete snapshot immediately disables unbound fallback; partial evidence can add or retain actual vetoes but cannot clear them or bind. A thrown listing failure changes no state or freshness. After partial invalidation, unreadable policy keeps fallback disabled until policy is readable. `session-labels.json` stores bounded bindings, local label revisions, known-token history and accepted generations. It is scoped to node identity and policy path, with a witness in `sessions.json` written before first authority exposure. Known missing/corrupt/mismatched history fails closed. Simultaneous whole-state loss across restart or rollback remains undetectable; no recovery/reset API is supplied.
+
+Automatic rename notifications, remote rename diffs and notice history follow in a separate change, and #828 stays open. Ordinary Directory/session listing retains its existing behavior and live authenticated admission. `doctor` readiness and Codex sessions still use the original policy check, so they can disagree with the wake hook for a renamed session whose name is the only listed token. Native acceptance on the supported platforms is outstanding.

@@ -1613,3 +1613,12 @@ stage, and retains an already-known progress retry time. Received messages read
 the same progress sidecar. Legacy ambiguous waiting records say exactly
 "Waiting; detailed cause unavailable." No current remote lookup, historical
 cause reconstruction, new identifiers or message content is added.
+
+
+## Claude wake-name bindings (#828)
+
+`exchange-sessions.mts` captures discovery identity before each source call, including background publication. Only the current non-aborted discovery commits after existing lifecycle validation. The bounded local state stores exact runtime/ID name reservations and local label revisions, with node/policy scope, versions, generations and witness-first initialization. Known history damage never becomes fresh-name fallback; whole-state rollback/loss remains a documented limit.
+
+`wake-bindings.mts` is the single pure selector. The Claude wake hook and delivery progress call it directly with the captured validated view; the shared policy parser and staged MCP graph retain their original interface and closure. Authorization target and refreshed delivery aliases stay separate. Actual accepted identity/lifecycle vetoes update independently of policy binding commits; partial data cannot clear vetoes or bind. UNKNOWN availability or missing labels/proof alone is not contradiction, and labels establish no liveness or permission. Async version checks and existing task/reply, launch, permission and budget gates remain.
+
+This stage contains no event feed, remote rename reducer, cursors or automatic notices. Those follow in a separate change and #828 stays open. `doctor` readiness and Codex sessions still use the original policy check. Native acceptance is outstanding.

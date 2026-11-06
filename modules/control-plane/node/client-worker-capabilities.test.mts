@@ -11,7 +11,7 @@ import { DEFAULT_POLICY } from "./policy.mts";
 // a node relays a proxy answer under is held in memory for the current
 // authenticated connection only. Set from a directory frame that arrived on
 // the live socket while authenticated; cleared at every close and every
-// auth.ok. directory.json is still written for its other readers.
+// auth.ok. Only live authenticated Directory frames reach the local readers.
 
 const directory = (worker?: string[]): string => JSON.stringify(makeEnvelope("directory", {
   nodes: [], sessions: [], fetchedAt: new Date(0).toISOString(), ...(worker ? { worker: { capabilities: worker } } : {}),
@@ -35,11 +35,13 @@ test("set only from a live directory frame of an authenticated connection; clear
   assert.equal(c.workerCapabilities, null);
   await c.onFrame(directory([MESSAGING_PROXY_CAPABILITY]));
   assert.equal(c.workerCapabilities, null, "not authenticated");
+  assert.equal(stored.length,0,"unauthenticated metadata is not stored");
   await c.onFrame(challenge);
   await c.onFrame(authOk);
   assert.equal(c.workerCapabilities, null, "auth.ok starts without proof");
   await c.onFrame(directory([MESSAGING_PROXY_CAPABILITY]), false);
   assert.equal(c.workerCapabilities, null, "a frame of a socket that is no longer the live one");
+  assert.equal(stored.length,0,"a stale connection supplies no metadata");
   await c.onFrame(directory([MESSAGING_PROXY_CAPABILITY]));
   assert.deepEqual(c.workerCapabilities, [MESSAGING_PROXY_CAPABILITY]);
   c.connectionClosed();
@@ -47,6 +49,7 @@ test("set only from a live directory frame of an authenticated connection; clear
   assert.equal(stored.at(-1)?.worker?.capabilities[0], MESSAGING_PROXY_CAPABILITY, "directory.json keeps its last frame");
   await c.onFrame(directory([MESSAGING_PROXY_CAPABILITY]));
   assert.equal(c.workerCapabilities, null, "closed and not authenticated again");
+  assert.equal(stored.length,1,"closed connections do not change the retained directory");
   await c.onFrame(challenge);
   await c.onFrame(authOk);
   await c.onFrame(directory([MESSAGING_PROXY_CAPABILITY]));
@@ -57,7 +60,7 @@ test("set only from a live directory frame of an authenticated connection; clear
   assert.deepEqual(c.workerCapabilities, [], "an old Worker: no field, no capability");
   await c.onFrame(directory(["other.v1"]));
   assert.deepEqual(c.workerCapabilities, ["other.v1"]);
-  assert.equal(stored.length, 7, "every valid directory frame is still stored");
+  assert.equal(stored.length, 4, "only the four current authenticated directory frames are stored");
 });
 
 test("diagnostics follow live Worker negotiation, and capability loss strips them for the archived validator", async () => {

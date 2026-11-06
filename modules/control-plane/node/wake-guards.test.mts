@@ -140,7 +140,7 @@ test("a run whose mode is undecided arms as before (fail open)", async (t) => {
 });
 
 test(`wakes at most ${TURNS_PER_HOUR} times per rolling hour and waits out the spacing`, async (t) => {
-  const { paths } = setup(t);
+  const { paths } = setup(t, {wake:{enabled:true,sessions:[SELF]}});
   for (let n = 1; n <= TURNS_PER_HOUR; n++) assert.equal((await listenFor(paths, n, { start: T0 + n * 60_000 })).code, 2, `wake ${n}`);
   const over = TURNS_PER_HOUR + 1;
   const late = T0 + over * 60_000;
@@ -153,7 +153,7 @@ test(`wakes at most ${TURNS_PER_HOUR} times per rolling hour and waits out the s
   assert.equal((await listenFor(paths, over + 1, { start: firstWake + 60 * 60_000 })).code, 2);
 
   // Spacing: a message 10 s after a wake wakes once 30 s have passed.
-  const spaced = setup(t).paths;
+  const spaced = setup(t, {wake:{enabled:true,sessions:[SELF]}}).paths;
   assert.equal((await listenFor(spaced, 1)).code, 2);
   const start = T0 + 10_000;
   assert.deepEqual(await listenFor(spaced, 2, { start }), { code: 2, text: wakeText(1) });
@@ -162,7 +162,7 @@ test(`wakes at most ${TURNS_PER_HOUR} times per rolling hour and waits out the s
 });
 
 test("armed at UserPromptSubmit it stays silent while the turn may run, and wakes once StopFailure ended it", async (t) => {
-  const { paths } = setup(t);
+  const { paths } = setup(t, {wake:{enabled:true,sessions:[SELF]}});
   let messageId = "";
   const result = await listen(paths, { event: "UserPromptSubmit", maxWaitMs: 60 * 60_000, tick: (clock) => {
     if (clock === LATER) messageId = arrive(paths, 1, clock);
@@ -174,7 +174,7 @@ test("armed at UserPromptSubmit it stays silent while the turn may run, and wake
   assert.deepEqual(auditLines(paths)[0].messageIds, [messageId]);
 
   // After a user interrupt nothing marks it: idle once the turn cannot still run.
-  const interrupted = setup(t).paths;
+  const interrupted = setup(t, {wake:{enabled:true,sessions:[SELF]}}).paths;
   assert.deepEqual(await listenFor(interrupted, 1, { event: "UserPromptSubmit", maxWaitMs: 60 * 60_000 }), { code: 2, text: wakeText(1) });
   assert.equal(Date.parse(auditLines(interrupted)[0].ts), T0 + REOFFER_AFTER_MS + 250);
 });
@@ -220,7 +220,7 @@ test("--timeout drives the re-arm deadline: 60 s before the timeout", async (t) 
   assert.equal(wakeMaxWaitMs([]), WAKE_MAX_WAIT_MS);
   assert.equal(wakeMaxWaitMs(["--timeout", "3600"]), 3_540_000);
   for (const bad of [["--timeout"], ["--timeout", "x"], ["--timeout", "120"], ["--timeout", "1.5"]]) assert.equal(wakeMaxWaitMs(bad), null);
-  const { paths } = setup(t);
+  const { paths } = setup(t, {wake:{enabled:true,sessions:[SELF]}});
   assert.deepEqual(await listen(paths, { maxWaitMs: wakeMaxWaitMs(["--timeout", "3600"]) as number }), { code: 2, text: REARM_TEXT });
   assert.equal(Date.parse(auditLines(paths)[0].ts), T0 + 3_540_000);
 });

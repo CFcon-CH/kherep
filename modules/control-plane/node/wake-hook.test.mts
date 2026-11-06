@@ -214,7 +214,7 @@ test("an unreadable policy file keeps the listener on its last good policy and i
 });
 
 test("runs as Claude Code starts it: exit 2 with the wake text on stderr, exit 0 without a node or with a bad --timeout", (t) => {
-  const { root, paths } = setup(t);
+  const { root, paths } = setup(t, {observationAt:Date.now()});
   // Arrived well after the grace period, so the first poll wakes.
   arrive(paths, 1, Date.now() + 60_000, SELF);
   const input = JSON.stringify({ session_id: SELF, hook_event_name: "Stop", stop_hook_active: false, permission_mode: "default" });
@@ -241,7 +241,7 @@ test("runs as Claude Code starts it: exit 2 with the wake text on stderr, exit 0
 test("a second hook of the same Claude Code process takes the kept run mode and lists no processes (issues #245, #248)", (t) => {
   // Kept under CLAUDE_PID (issue #248), else under the hook's parent pid, this test's process.
   for (const [claudePid, key] of [["4242", "4242"], [undefined, String(process.pid)]] as const) {
-    const { root, paths } = setup(t);
+    const { root, paths } = setup(t, {observationAt:Date.now()});
     arrive(paths, 1, Date.now() + 60_000, SELF);
     const input = JSON.stringify({ session_id: SELF, hook_event_name: "Stop", stop_hook_active: false, permission_mode: "default" });
     for (const listing of [PRINT_LISTING, NO_LISTING]) {
@@ -278,7 +278,7 @@ const bashRunsNode = bashProbe?.status === 0 && String(bashProbe.stdout).trim() 
 
 test("hooks behind a fresh bash each take the run mode kept under CLAUDE_PID (issue #248)",
   { skip: bashRunsNode ? false : "no bash that runs this node" }, (t) => {
-    const { root, paths } = setup(t);
+    const { root, paths } = setup(t, {observationAt:Date.now()});
     arrive(paths, 1, Date.now() + 60_000, SELF);
     const log = path.join(root, "parent-pids");
     const input = JSON.stringify({ session_id: SELF, hook_event_name: "Stop", stop_hook_active: false, permission_mode: "default" });

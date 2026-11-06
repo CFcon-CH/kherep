@@ -77,7 +77,7 @@ test("a bypass mode, or a missing, foreign or unparseable transcript refuses", a
 });
 
 test("messages waiting at SessionStart wake the session once, after the grace period", async (t) => {
-  const paths = seen(t);
+  const paths = seen(t, {enabled:true,sessions:[SELF]});
   arrive(paths, 1, T0 - 60_000);
   arrive(paths, 2, T0 + 1_000);
   // Addressed to another session: not this session's backlog.
@@ -137,7 +137,7 @@ test("the guards hold for waiting messages: kill switch, allowlist, reply depth 
   assert.deepEqual(await listen(deep, atStart({ maxWaitMs: 20_000 })), { code: 2, text: REARM_TEXT });
   assert.deepEqual(actions(deep), ["depth-limit", "rearm"]);
 
-  const paths = seen(t);
+  const paths = seen(t, {enabled:true,sessions:[SELF]});
   for (let n = 1; n <= TURNS_PER_HOUR; n++) {
     arrive(paths, n, T0 + n * 60_000 - 1_000);
     assert.deepEqual(await listen(paths, atStart({ start: T0 + n * 60_000 })), { code: 2, text: wakeText(1) }, `wake ${n}`);

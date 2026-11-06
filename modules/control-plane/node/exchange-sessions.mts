@@ -1,3 +1,4 @@
+import { policyStamp, recordLocalLabels } from "./session-labels.mts";
 import { attachIdentitySnapshot, uniqueSourceRows } from "./session-identity.mts";
 import { currentIdentity } from "../protocol-session-identity.mts";
 import { commitAuthority, faultAuthority, observationBelongs, revokeAuthority, type AdmissionAuthority } from "./session-authority.mts";
@@ -20,7 +21,10 @@ export function writeLocalSessions(paths: NodePaths, sessions: SessionInfo[], no
   ensureDir(paths.dir);
   const local: LocalSession[] = sessions.map((s) => ({ sessionId: s.sessionId, ...(s.name ? { name: s.name } : {}),
     runtime: s.runtime, state: s.state }));
-  writeJsonAtomic(paths.sessions, { generation, sessions: local, unseen: [...unlistedRuntimes(sessions)], updatedAt: new Date(now).toISOString() });
+  let witness:unknown;
+  try { witness=readJson<{labelBindingEpoch?:unknown}>(paths.sessions)?.labelBindingEpoch; }
+  catch { witness="history-unavailable"; }
+  writeJsonAtomic(paths.sessions, { ...(witness === undefined ? {} : {labelBindingEpoch:witness}), generation, sessions: local, unseen: [...unlistedRuntimes(sessions)], updatedAt: new Date(now).toISOString() });
 }
 
 export function readLocalSessions(paths: NodePaths, now: number = Date.now()): LocalSession[] {
@@ -54,13 +58,22 @@ export function localSessionName(paths: NodePaths, sessionId: string): string | 
 // whose session has ended (refuseUndeliverable); a failed one decides nothing.
 // records: the daemon's inbox index (issue #589), one stat per record instead of a
 // read; each refusal is still judged on the file it rewrites. Without it the files are read.
+const discoveries = new Map<string, number>();
+export interface SessionDiscovery { sequence:number; stamp:string|null }
+export function beginSessionDiscovery(paths:NodePaths):SessionDiscovery {
+  const sequence=(discoveries.get(paths.dir)??0)+1;
+  discoveries.set(paths.dir,sequence);
+  return {sequence,stamp:policyStamp(paths)};
+}
 export function recordingSessions(paths: NodePaths, list: (signal?: AbortSignal) => Promise<SessionInfo[]>, log: (line: string) => void,
   now: () => number = Date.now, undeliverableAfterMs: number = UNDELIVERABLE_AFTER_MS,
-  records?: () => InboxRecord[], authority?: AdmissionAuthority): (signal?: AbortSignal) => Promise<SessionInfo[]> {
+  records?: () => InboxRecord[], authority?: AdmissionAuthority, discovery?:SessionDiscovery): (signal?: AbortSignal) => Promise<SessionInfo[]> {
   return async (signal) => {
+    const {sequence,stamp}=discovery??beginSessionDiscovery(paths);
     revokeAuthority(authority);
     const listed = await list(signal);
     signal?.throwIfAborted();
+    if(discoveries.get(paths.dir)!==sequence) throw new Error("superseded session listing");
     const observedAt = now();
     const observation = listingObservation(listed);
     const prior = readLocalSessions(paths);
@@ -109,6 +122,7 @@ export function recordingSessions(paths: NodePaths, list: (signal?: AbortSignal)
     });
     // Keep the original completeness markers on the normalized population.
     markUnseen(sessions, snapshot.capped ? [...new Set([...unlistedRuntimes(listed), "*"])] : unlistedRuntimes(listed));
+      recordLocalLabels(paths, sessions, observedAt, !!observation && observationReason(observation,observedAt)===null && !snapshot.capped && !unseen.includes("*") && !unseen.includes("claude-code"), stamp, snapshot.generation, {snapshot,listed,evidence:safeEvidence});
       writeLocalSessions(paths, sessions, observedAt, snapshot.generation);
       signal?.throwIfAborted();
       commitAuthority(authority, paths, observation, snapshot, observedAt);
