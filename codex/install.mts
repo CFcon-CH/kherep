@@ -25,6 +25,7 @@ import { prepareManagedConfig } from "./lib/config-preservation.mts";
 import { atlassianDestructiveGuard, command } from "./lib/parity-config.mts";
 import type { Capabilities, McpCompatibilityOptions, PluginMcpServer, RunCodex } from "./lib/contracts.mts";
 import { controlPlaneRulesPath, launcherRule, renderControlPlaneRules } from "./lib/control-plane-rules.mts";
+import { knowledgeReadRulesPath, renderKnowledgeReadRules } from "./lib/knowledge-read-rules.mts";
 import { controlPlaneOutbox } from "./lib/outbox-writable-root.mts";
 import { pointerFile, renderControlPlanePointer } from "./lib/control-plane-pointer.mts";
 import { InstallTransaction } from "./lib/install-transaction.mts";
@@ -628,6 +629,9 @@ export function install(options: InstallOptions = {}) {
     // hook and the instructions name; the whole file is rewritten, so the
     // checkout CLI rule of an older install goes.
     transaction.writeFile(controlPlaneRulesPath(codexHome), renderControlPlaneRules([launcherRule(intercom.command)]));
+    // Issue #812. The resolved workspace's Codex broker was copied above.
+    // Like the messaging rule, this file is rewritten and rolled back together.
+    transaction.writeFile(knowledgeReadRulesPath(codexHome), renderKnowledgeReadRules(workspace));
     for (const relative of RETIRED_TARGETS) transaction.remove(path.join(codexHome, relative));
 
     const projection = parityProjection.project({
