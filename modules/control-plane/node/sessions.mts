@@ -115,8 +115,10 @@ export function mapClaudeAgents(value: unknown): SessionInfo[] | null {
     if (typeof row !== "object" || row === null) continue;
     const r = row as Record<string, unknown>;
     const started = typeof r.startedAt === "number" && Number.isFinite(r.startedAt) ? new Date(r.startedAt) : null;
+    // A background row names it state, an interactive row status.
+    const state = r.status ?? r.state;
     const session: SessionInfo = {
-      sessionId: r.sessionId as string, runtime: CLAUDE_RUNTIME, state: typeof r.status === "string" ? normalizedState(r.status) : r.status as string,
+      sessionId: r.sessionId as string, runtime: CLAUDE_RUNTIME, state: typeof state === "string" ? normalizedState(state) : state as string,
       startedAt: started && !Number.isNaN(started.getTime()) ? started.toISOString() : undefined,
       name: optional(r.name, 128), cwd: optional(r.cwd, 512), kind: optional(r.kind, 32),
     };
