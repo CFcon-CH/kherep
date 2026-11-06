@@ -79,6 +79,21 @@ test("coverage rejects traversal and retains same basename in different worker f
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("coverage normalizes Windows producer separators and rejects traversal", () => {
+  const root = fixture();
+  try {
+    for (const source of ["..\\..\\outside.mts", "src\\..\\..\\outside.mts"]) {
+      assert.throws(() => normalizeLcovPaths(`SF:${source}\nDA:1,1\nend_of_record\n`, root), /traversal|outside/);
+    }
+    const input = "SF:src\\typed.mts\nDA:1,1\nLF:1\nLH:1\nend_of_record\n";
+    if (process.platform === "win32") {
+      const normalized = normalizeLcovPaths(input, root);
+      assert.match(normalized, /^SF:src\/typed\.mts\n/);
+      assert.deepEqual(validateLcov(normalized, root), { files: 1, lines: 1, hit: 1 });
+    } else assert.throws(() => normalizeLcovPaths(input, root), /traversal/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("real type-stripped V8 union maps typed lines, unexecuted branch and spawned child", { skip: existsSync(resolve("node_modules/c8/bin/c8.js")) ? false : "c8 dependency unavailable in this dependency-free compatibility job" }, () => {
   const root = fixture();
   try {

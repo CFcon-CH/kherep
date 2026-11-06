@@ -44,6 +44,9 @@ increments the minor version; every other release increments the patch version.
 
 ### Fixed
 
+- Coverage assembly accepts `c8`'s Windows path separators; traversal stays
+  rejected (#813).
+
 - Control Plane Worker: explain identity refusals with changed semantic dimensions
   and record fixed upstream attempt blockers, including unconfirmed acceptance.
   Existing comparisons, claim consumption, retry and delivery decisions are
