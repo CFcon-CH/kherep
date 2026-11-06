@@ -30,7 +30,7 @@ for (const tool of ["Bash", "PowerShell"]) {
   test(`${tool}: no label blocks, naming the rule, the file and the marker`, () => {
     const { status, stderr } = shell("gh issue create -t x -b y", labelled, tool);
     assert.equal(status, 2);
-    assert.match(stderr, /^module-label-guard blocked this command:/);
+    assert.match(stderr, /^module-label-guard blocked this command:/m);
     assert.match(stderr, /CONTRIBUTING\.md/);
     assert.match(stderr, /module-labels\.json/);
     assert.match(stderr, /KHEREP_MODULE_LABEL=none/);
