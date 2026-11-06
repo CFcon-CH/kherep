@@ -44,8 +44,6 @@ const SHORT_VALUE = new Map([["a", "assignee"], ["b", "body"], ["B", "base"], ["
   ["m", "milestone"], ["p", "project"], ["r", "reviewer"], ["R", "repo"], ["T", "template"], ["t", "title"]]);
 const LONG_VALUE = new Set([...SHORT_VALUE.values(), "attach", "blocked-by", "blocking", "parent", "recover", "type"]);
 
-const CREATE_ACTIONS = new Set(["create", "new"]);
-
 type Flags = Pick<LabelIntent, "labels" | "repo" | "web" | "help"> & { positionals: string[] };
 
 // A segment after the wrappers this guard looks through.
@@ -112,7 +110,8 @@ function throughEnv(call: Call): Call {
 function throughCommand(call: Call): Call {
   const rest = [...call.args];
   while (rest[0]?.startsWith("-")) {
-    if (/^-[A-Za-z]*[vV]/.test(rest.shift()!)) return { ...call, name: "", args: [] };
+    const option = rest.shift()!;
+    if (/^-[A-Za-z]*[vV]/.test(option)) return { ...call, name: "", args: [] };
   }
   return { ...call, name: commandName(rest[0]), args: rest.slice(1) };
 }
@@ -124,8 +123,9 @@ function unwrapped(segment: Segment): Call {
 }
 
 // gh reads GH_REPO only when no -R is given. An empty value selects nothing.
-const visibleRepo = (assignments: string[]): string | undefined =>
-  assignments.findLast((assignment) => assignment.startsWith("GH_REPO="))?.slice("GH_REPO=".length) || undefined;
+function visibleRepo(assignments: string[]): string | undefined {
+  return assignments.findLast((assignment) => assignment.startsWith("GH_REPO="))?.slice("GH_REPO=".length) || undefined;
+}
 
 // Every invocation of the create form of <command>, in any spelling that reaches
 // it: `create` or its alias `new`, flags before the subcommand, through `env` or
@@ -139,7 +139,7 @@ export function labelIntents(command: string, cwd: string): LabelIntent[] {
     const call = unwrapped(segment);
     if (call.name !== "gh" || segment.escaped || call.assignments.includes(MARKER)) return [];
     const { positionals: [verb, action], ...flags } = readFlags(call.args);
-    if ((verb !== "issue" && verb !== "pr") || !CREATE_ACTIONS.has(action ?? "")) return [];
+    if ((verb !== "issue" && verb !== "pr") || (action !== "create" && action !== "new")) return [];
     return [{ dir: call.dir, verb, ...flags, repo: flags.repo ?? visibleRepo(call.assignments) }];
   });
 }
@@ -186,7 +186,9 @@ function readRule(file: string): Rule {
 }
 
 // --repo is [HOST/]OWNER/REPO; the file names OWNER/REPO.
-const slugOf = (repo: string): string => repo.split("/").slice(-2).join("/").toLowerCase();
+function slugOf(repo: string): string {
+  return repo.split("/").slice(-2).join("/").toLowerCase();
+}
 
 // The rule of the repository <dir> lies in. With <repo> it applies only when the
 // file names that repository; a file that cannot be read names none and stays a defect.
