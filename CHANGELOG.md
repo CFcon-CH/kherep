@@ -44,6 +44,9 @@ increments the minor version; every other release increments the patch version.
 
 ### Fixed
 
+- The commit policy and hook scope compare paths in one form on Windows, and
+  report a failed comparison instead of silently skipping the check (#816).
+
 - Control Plane Worker: explain identity refusals with changed semantic dimensions
   and record fixed upstream attempt blockers, including unconfirmed acceptance.
   Existing comparisons, claim consumption, retry and delivery decisions are

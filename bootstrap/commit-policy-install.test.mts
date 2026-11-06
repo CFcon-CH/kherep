@@ -62,7 +62,8 @@ test("install writes the policy, backs up a change, keeps values and joins drift
   fs.writeFileSync(message, "Allow attribution\n\nCo-authored-by: Example <dev@example.com>\n");
   const hookEnv = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("KHEREP_")));
   const checkHook = (required: string) => spawnSync("sh", [slash(hook), slash(message)], {
-    cwd: f.ws, env: { ...hookEnv, HOME: slash(f.home), KHEREP_WORKSPACE: slash(f.ws), KHEREP_WORK_ITEM_REQUIRED: required }, encoding: "utf8",
+    cwd: f.ws, env: { ...hookEnv, HOME: slash(f.home), KHEREP_WORKSPACE: spawnSync("git", ["rev-parse", "--show-toplevel"],
+      { cwd: f.ws, env: hookEnv, encoding: "utf8" }).stdout.trim(), KHEREP_WORK_ITEM_REQUIRED: required }, encoding: "utf8",
   });
   assert.equal(checkHook("0").status, 1, "exact predecessor denies attribution even without a required key");
   const first = run("install.sh", f, { KHEREP_WORK_ITEM_REQUIRED: "1", KHEREP_WORK_ITEM_PATTERN: "OP-[0-9]+" });
