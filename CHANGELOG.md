@@ -42,6 +42,7 @@ increments the minor version; every other release increments the patch version.
   working directory and its aliases, on Windows and POSIX. Shared installed
   hook libraries preserve lookup-failure behavior without discovery subprocesses.
   Bound denial-journal command scanning to a single forward pass (#779).
+- Check the deploy transcript by prefix against the projects root and rebuild the Codex adapter's agent id from a fixed character set; accepted and refused inputs stay the same (#779).
 
 ### Changed
 

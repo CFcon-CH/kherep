@@ -129,16 +129,30 @@ const installedHome = (): string | undefined => path.basename(INVOKED_DIR) === "
 // (hook-integrity-sources.mts).
 export async function journalCall(payload: HookPayload, verdicts: Verdicts, end = DEADLINE - 250): Promise<void> {
   const home = installedHome(), id = payload.agent_id;
-  if (!home || typeof id !== "string" || !/^[A-Za-z0-9_-]{1,64}$/.test(id) || payload.tool_name === "SubagentHandback") return;
+  if (!home || typeof id !== "string" || payload.tool_name === "SubagentHandback") return;
+  const leaf = leafOf(id);
+  if (!leaf) return;
   const cap = Math.max(0, Math.min(1_000, end - Date.now()) - 400);
   const fail = await within((import(pathToFileURL(path.join(INVOKED_DIR, "lib", "denial-journal.mts")).href) as Promise<JournalLib>)
     .then((lib) => lib.journalVerdict(home, payload, verdicts, Date.now() + cap - 50)), cap, () => "lib-timeout").catch(() => "lib-load");
-  if (fail) await within(markUnjournalled(home, id, fail), Math.max(0, end - Date.now()), () => {}).catch(() => {});
+  if (fail) await within(markUnjournalled(home, leaf, fail), Math.max(0, end - Date.now()), () => {}).catch(() => {});
+}
+
+// Accepts 1 to 64 characters of AGENT_LEAF and returns them rebuilt from that constant; anything else is "".
+const AGENT_LEAF = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-";
+function leafOf(value: string): string {
+  let leaf = "";
+  for (const ch of value) {
+    const at = AGENT_LEAF.indexOf(ch);
+    if (at < 0) return "";
+    leaf += AGENT_LEAF[at];
+  }
+  return leaf.length >= 1 && leaf.length <= 64 ? leaf : "";
 }
 
 // The marker without the lib: one line, else the journal renamed to it.
-function markUnjournalled(home: string, id: string, code: string): Promise<unknown> {
-  const dir = path.join(home, ".cache", "denied-calls"), base = path.join(dir, id);
+function markUnjournalled(home: string, leaf: string, code: string): Promise<unknown> {
+  const dir = path.join(home, ".cache", "denied-calls"), base = path.join(dir, leaf);
   return fs.promises.mkdir(dir, { recursive: true, mode: 0o700 }).then(() => fs.promises.appendFile(`${base}.failed`, `${code}\n`, { mode: 0o600 }))
     .catch(() => fs.promises.rename(`${base}.jsonl`, `${base}.failed`));
 }

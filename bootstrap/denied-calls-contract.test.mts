@@ -36,9 +36,10 @@ test("the four private marker pattern copies have one source and one flag set", 
 
 // Review P3-11: the worker key is copied where the static-import rules forbid importing the lib;
 // every copy, assigned or tested inline, keeps the lib's source and flags.
-test("the five agent key copies have one source and one flag set", () => {
+// codex/hooks/hook-adapter.mts holds no literal; codex/hooks/hook-adapter-agent-leaf.test.mts pins it to AGENT_KEY.
+test("the four agent key copies have one source and one flag set", () => {
   const copies = ["claude/hooks/lib/denial-journal.mts", "claude/hooks/guard-dispatch.mts", "claude/kherep/hook-runtime/entry.mts",
-    "codex/hooks/hook-adapter.mts", "codex/hooks/shell-checks.mts"];
+    "codex/hooks/shell-checks.mts"];
   for (const rel of copies) {
     const found = [...source(rel).matchAll(/(?:AGENT_KEY = |!)\/(\^\[[^\]\n]*\][^/\n]*\$)\/([a-z]*)/g)];
     assert.ok(found.length >= 1, `${rel} holds an agent key literal`);
