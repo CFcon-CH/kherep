@@ -226,6 +226,8 @@ test("the Linux MCP transport run has no retired PowerShell broker-shell skip", 
   const observed: [string, string | null][] = [
     ["codex execpolicy loads the Windows launcher rule and allows only msg subcommands", "codex is not on PATH"],
     ["codex execpolicy loads the macOS launcher rule and allows only msg subcommands", "codex is not on PATH"],
+    ["execpolicy checks the macOS rule without allowing other verbs or compound commands", "codex is not on PATH"],
+    ["execpolicy checks the Windows path on current host rule without allowing other verbs or compound commands", "codex is not on PATH"],
     ["recognizes complete preserved upgrade artifacts while rejecting modified guards", "External preserved upgrade fixture not supplied"],
     ["native selection rejects Windows-unrepresentable bindings without changing old three-field compatibility", null],
     ["native CA path survives the actual Windows command shell", null],
@@ -236,11 +238,11 @@ test("the Linux MCP transport run has no retired PowerShell broker-shell skip", 
   for (const [index, [name, reason]] of observed.entries())
     lines.push(`ok ${803 + index} - ${name} # SKIP${reason ? ` ${reason}` : ""}\n  ---\n  type: 'test'\n  ...`);
   const tap = path.join(tempRepo(t, "node --test"), "hosted-linux.tap");
-  fs.writeFileSync(tap, ["TAP version 13", ...lines, "1..809", "# tests 809", "# suites 0", "# pass 802",
-    "# fail 0", "# cancelled 0", "# skipped 7", "# todo 0", "# duration_ms 1", ""].join("\n"));
+  fs.writeFileSync(tap, ["TAP version 13", ...lines, "1..811", "# tests 811", "# suites 0", "# pass 802",
+    "# fail 0", "# cancelled 0", "# skipped 9", "# todo 0", "# duration_ms 1", ""].join("\n"));
   const result = cli(["check", tap, "--platform", "linux"]);
   assert.equal(result.status, 0, result.stdout + result.stderr);
-  assert.equal(result.stdout, "codex-run-guard: linux tests=809 skipped=7 todo=0 ok\n");
+  assert.equal(result.stdout, "codex-run-guard: linux tests=811 skipped=9 todo=0 ok\n");
 });
 
 test("a summary that contradicts its records is red at C8, with no observed block and no hint (issue #578)", () => {
