@@ -141,8 +141,16 @@ test("B2 NODE_OPTIONS reaches no child: a name pattern cannot hide a regression"
   assert.deepEqual(receipt.suites.fixture.new, ["regress"]);
 });
 
-// The real compiler through a stand-in, so that the fixture holds no link into this checkout.
-const REAL_TSC = path.join(import.meta.dirname, "..", "node_modules", "typescript", "bin", "tsc");
+// A stand-in for tsc that needs no dependency: the job that runs this file has no node_modules. It
+// honours the two options these fixtures vary, so a narrowed include and noCheck hide the type
+// error of src/lib.mts here as they do from tsc, and only the route's refusal stands in the way.
+const STAND_IN_TSC = `const fs = require("node:fs");
+const { include, compilerOptions } = JSON.parse(fs.readFileSync("tsconfig.json", "utf8"));
+const files = include.flatMap((entry) => entry.includes("*") ? fs.readdirSync("src").map((name) => "src/" + name) : [entry]);
+const wrong = compilerOptions.noCheck ? [] : files.filter((file) => /: number = "/.test(fs.readFileSync(file, "utf8")));
+for (const file of wrong) console.log(file + "(1,14): error TS2322: Type 'string' is not assignable to type 'number'.");
+process.exit(wrong.length ? 2 : 0);
+`;
 const conf = (include: string[], options: object = {}) => JSON.stringify({
   compilerOptions: { target: "es2022", module: "nodenext", moduleResolution: "nodenext", strict: true, noEmit: true, types: [], ...options }, include,
 });
@@ -155,7 +163,7 @@ function tsconfigRun(t: Parameters<typeof gitRepo>[0], base: string | null, cand
   const sources = { "src/ok.mts": "export const a: number = 1;\n", "src/lib.mts": "export const b: number = 2;\n" };
   const repo = gitRepo(t, { ...sources, "tsconfig.json": base }, { "tsconfig.json": candidate, "src/lib.mts": lib });
   fs.mkdirSync(path.join(repo, "node_modules", "typescript", "bin"), { recursive: true });
-  fs.writeFileSync(path.join(repo, "node_modules", "typescript", "bin", "tsc"), `require(${JSON.stringify(REAL_TSC)});\n`);
+  fs.writeFileSync(path.join(repo, "node_modules", "typescript", "bin", "tsc"), STAND_IN_TSC);
   prepare?.(repo);
   const out = path.join(tempDir(t), "out");
   return { run: route(["--candidate", repo, "--base", "HEAD~1", "--suites", "fixture", "--out", out, ...extra]), out, receipt: readReceipt(out) };
