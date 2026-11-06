@@ -31,10 +31,12 @@ COMMON_DIR=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) 
 TOPLEVEL=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
 canonical_dir() {
   KHEREP_PATH=$(printf '%s' "$1" | tr '\\' '/')
-  (CDPATH=; export CDPATH; cd -P "$KHEREP_PATH" && pwd -P) 2>/dev/null
+  (CDPATH=; export CDPATH; cd -P "$KHEREP_PATH" && { pwd -W 2>/dev/null || pwd -P; }) 2>/dev/null
 }
-TOP_REAL=$(canonical_dir "$TOPLEVEL") || exit 0
-WORK_REAL=$(canonical_dir "$WORKSPACE") || exit 0
+TOP_REAL=$(canonical_dir "$TOPLEVEL") && WORK_REAL=$(canonical_dir "$WORKSPACE") || {
+  printf 'Kherep post-checkout could not compare the repository with the workspace; its check did not run.\n' >&2
+  exit 0
+}
 TOP_LC=$(printf '%s' "$TOP_REAL" | tr 'A-Z' 'a-z')
 WORK_LC=$(printf '%s' "$WORK_REAL" | tr 'A-Z' 'a-z' | sed 's|/*$||')
 case "$TOP_LC" in "$WORK_LC"|"$WORK_LC"/*) ;; *) exit 0 ;; esac
