@@ -56,7 +56,10 @@ export function relocateV8Report(value: unknown, sourceRoot: string, repositoryR
 export function normalizeLcovPaths(lcov: string, repositoryRoot: string, sourceRoot = repositoryRoot): string {
   return lcov.split("\n").map(line => {
     if (!line.startsWith("SF:")) return line;
-    const original = line.slice(3); noTraversal(original);
+    const raw = line.slice(3);
+    // c8 writes platform separators on Windows.
+    const original = process.platform === "win32" ? raw.replaceAll("\\", "/") : raw;
+    noTraversal(original);
     const path = containedFile(repositoryRoot, resolve(sourceRoot, original));
     return `SF:${relative(realpathSync(repositoryRoot), path).split(sep).join("/")}`;
   }).join("\n");
