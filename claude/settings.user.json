@@ -50,7 +50,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"__KHEREP_CLAUDE_HOME__/kherep/hook-runtime/entry.mts\" pretool \"__KHEREP_CLAUDE_HOME__/hooks/guard-dispatch.mts\" \"__KHEREP_CLAUDE_HOME__/hooks/main-checkout-guard.mts\"",
+            "command": "node \"__KHEREP_CLAUDE_HOME__/kherep/hook-runtime/entry.mts\" pretool \"__KHEREP_CLAUDE_HOME__/hooks/guard-dispatch.mts\" \"__KHEREP_CLAUDE_HOME__/hooks/main-checkout-guard.mts\" \"__KHEREP_CLAUDE_HOME__/hooks/module-label-guard.mts\"",
             "timeout": 30
           }
         ]

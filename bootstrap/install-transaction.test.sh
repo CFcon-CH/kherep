@@ -849,7 +849,7 @@ test_upgrade_retires_guard_js_hooks() {
       (g.hooks || []).map((h) => ({ event, matcher: g.matcher ?? "", command: String(h.command) }))));
     const expected = { "commit-guard": "Bash", "deploy-guard": "Bash", "dispatch-contract-guard": "Agent|Task",
       "playwright-file-guard": "", "privacy-boundary-guard": "", "secret-output-guard": "",
-      "main-checkout-guard": "Bash|PowerShell" };
+      "main-checkout-guard": "Bash|PowerShell", "module-label-guard": "Bash|PowerShell" };
     for (const [name, matcher] of Object.entries(expected)) {
       if (wired.some((h) => h.command.includes(`hooks/${name}.js`))) fail(`${name}.js still wired`);
       const mts = wired.filter((h) => h.command.includes(`hooks/${name}.mts`));

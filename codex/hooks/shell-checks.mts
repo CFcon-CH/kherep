@@ -5,7 +5,7 @@ import { pathToFileURL } from "node:url";
 import type { HookPayload } from "./hook-adapter.mts";
 
 const GUARDS = [["commit-guard.mts", "pre"], ["deploy-guard.mts", "pre-no-transcript"],
-  ["main-checkout-guard.mts", "pre"]] as const;
+  ["main-checkout-guard.mts", "pre"], ["module-label-guard.mts", "pre"]] as const;
 const deny = (reason: string): string => JSON.stringify({ hookSpecificOutput: {
   hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: reason,
 } });
@@ -146,7 +146,7 @@ export async function shellChecks(payload: HookPayload, attributionHook?: string
         denials.push({ decision: "deny", reason: tagged(guard, why) });
       }
       else if (result.stdout.trim()) {
-        // These three guards allow silently; their only supported stdout is
+        // These guards allow silently; their only supported stdout is
         // the adapter's native deny. Unexpected output must not allow a call.
         const output = JSON.parse(result.stdout) as { hookSpecificOutput?: { hookEventName?: string; permissionDecision?: string;
           permissionDecisionReason?: string } };

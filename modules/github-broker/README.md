@@ -21,13 +21,14 @@ The binding does not authenticate arbitrary callers sharing the same OS account.
 
 | Operation | Accepted fields beyond operationId/repository/operation |
 | --- | --- |
-| `issue.create` | required title, optional body |
+| `issue.create` | required title, optional body and labels |
 | `issue.comment` | required issueNumber and body |
 | `issue.update` | required issueNumber and at least one title/body/state/stateReason |
 | `verify` | none; reads the recorded operation's exact target |
 
 State is `open` or `closed`; stateReason is `completed`, `not_planned`, or
 `reopened`. Requests are at most 64 KiB, titles 256 codepoints, and bodies 32 KiB.
+Labels are 1 to 20 unique, trimmed names of at most 50 characters without a comma.
 Unknown fields, private repositories, pull requests, unknown targets and identity
 or scope mismatches fail closed. The provider's original issue author is never
 reported as the updater. Update attribution means authenticated installation
@@ -42,8 +43,16 @@ can supply a synthetic root; no CLI, request or environment root override exists
 Policy schema version 1 contains `enabled`, `runtimes.claude` and/or
 `runtimes.codex`. Each runtime names appId, clientId, botId, botLogin,
 installationId, keyRef (a flat `.pem` reference), allowed operations and
-repositories (`slug`, numeric `id`). Configuration is maintained outside source
+repositories (`slug`, numeric `id`, optional `moduleLabels`). Configuration is maintained outside source
 control by an authorized operator. No request field grants publication authority.
+
+A repository entry with `moduleLabels` (1 to 100 names) refuses an `issue.create` with
+`label-required`, before any provider call, unless a request label is in that list; a
+repository without it keeps creating without labels. The broker cannot read a repository
+file, so the operator repeats the list of `.github/module-labels.json` there. Readback
+compares the sorted label names, so labels GitHub dropped fail with `verification-failed`.
+The comparison is case-sensitive, so a request label must match its stored case: `Bug` for
+a stored `bug` creates the issue and then fails with `verification-failed`.
 
 The selected key stays inside the broker. RS256 JWT claims use a 60-second clock
 allowance and five-minute future expiration. App slug/client/installation checks and a numeric public bot-ID lookup precede

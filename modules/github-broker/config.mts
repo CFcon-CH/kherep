@@ -3,10 +3,13 @@ import os from 'node:os';
 import { exact, fail, object, positive, slug } from './contract.mts';
 import type { Operation, Request, Runtime } from './contract.mts';
 import { readProtected } from './key-access.mts';
-export type Identity = { appId:number; clientId:string; botId:number; botLogin:string; installationId:number; keyRef:string; operations:Operation[]; repositories:{slug:string; id:number}[] };
+export type Identity = { appId:number; clientId:string; botId:number; botLogin:string; installationId:number; keyRef:string; operations:Operation[]; repositories:{slug:string; id:number; moduleLabels?:string[]}[] };
 export function canonicalRoot(): string {
   try { return path.join(os.userInfo().homedir, '.kherep', 'github-broker'); }
   catch { return fail('policy-disabled'); }
+}
+function validModuleLabels(value: unknown): boolean {
+  return Array.isArray(value) && value.length >= 1 && value.length <= 100 && value.every(l => typeof l === 'string' && l.length > 0);
 }
 export function validatePolicy(value: unknown, runtime: Runtime, request: Request): Identity {
   try {
@@ -19,7 +22,7 @@ export function validatePolicy(value: unknown, runtime: Runtime, request: Reques
       if (![i.appId,i.botId,i.installationId].every(positive) || typeof i.clientId !== 'string' || !/^[A-Za-z0-9_.-]{1,100}$/.test(i.clientId) || typeof i.botLogin !== 'string' || !/^[A-Za-z0-9_-]{1,100}\[bot\]$/.test(i.botLogin) || typeof i.keyRef !== 'string' || !/^[A-Za-z0-9_-]{1,80}\.pem$/.test(i.keyRef)) fail('policy-invalid');
       if (!Array.isArray(i.operations) || !i.operations.length || i.operations.some(o => !['issue.create','issue.comment','issue.update'].includes(o))) fail('policy-invalid');
       if (!Array.isArray(i.repositories) || !i.repositories.length || i.repositories.length > 100) fail('policy-invalid');
-      for (const r of i.repositories) { const repo = object(r); exact(repo,['slug','id']); if (!slug(repo.slug) || !positive(repo.id)) fail('policy-invalid'); }
+      for (const r of i.repositories) { const repo = object(r); exact(repo,['slug','id','moduleLabels']); if (!slug(repo.slug) || !positive(repo.id) || repo.moduleLabels !== undefined && !validModuleLabels(repo.moduleLabels)) fail('policy-invalid'); }
     }
     const values = Object.values(runtimes) as Identity[];
     if (values.length === 2 && ['appId','clientId','botId','installationId','keyRef'].some(k => values[0][k as keyof Identity] === values[1][k as keyof Identity])) fail('policy-invalid');

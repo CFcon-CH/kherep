@@ -16,14 +16,15 @@ test("actual hook/process counts retain guard decisions and real Intercom Receiv
     assert.deepEqual(row.children.filter(c => c.file === node), [{ file: node, script: `${row.target}-hook.mts` }]);
   }
   assert.equal(measured.totals.hookCommands, 41);
-  assert.equal(measured.totals.nodeProcesses, 79 + entryRuns.length);
+  // Issue #833. The eight shell-dispatcher replays each start one guard more; hookCommands stays.
+  assert.equal(measured.totals.nodeProcesses, 87 + entryRuns.length);
   // On Windows the two Stop replays (stop-empty, stop-confirm) each resolve the service
   // owner once, which starts one powershell.exe (service-owner-probe.mts currentOwner);
   // POSIX reads os.userInfo() and starts nothing (issue #534).
   const ownerProbes = measured.rows
     .flatMap(r => r.children.filter(c => /^powershell(?:\.exe)?$/i.test(c.file)).map(() => r.label)).sort();
   assert.deepEqual(ownerProbes, process.platform === "win32" ? ["stop-confirm", "stop-empty"] : []);
-  assert.equal(measured.totals.totalProcesses, 85 + entryRuns.length + ownerProbes.length);
+  assert.equal(measured.totals.totalProcesses, 93 + entryRuns.length + ownerProbes.length);
   for (const label of ["lookup", "intercom-empty", "intercom-message"]) {
     const rows = measured.rows.filter(r => r.label === label && r.event === "PostToolUse");
     assert.equal(rows.length, 3, "the native return-point consumer is retained");

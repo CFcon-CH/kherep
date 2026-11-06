@@ -8,7 +8,7 @@ import { nodePaths } from "../../modules/control-plane/node/config.mts";
 import { copyAdapter } from "./hook-adapter.fixture.mts";
 import { declareCopy } from "../../bootstrap/coverage-copy-fixture.mts";
 
-const GUARDS = ["commit-guard", "deploy-guard", "main-checkout-guard"];
+const GUARDS = ["commit-guard", "deploy-guard", "main-checkout-guard", "module-label-guard"];
 function fixture(t: import("node:test").TestContext) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "shell-dispatch-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
@@ -45,8 +45,8 @@ test("exec normalization, transcript-free deploy approval and raw attribution sh
   assert.equal(rows[0]?.payload.transcript_path, payload.transcript_path);
   assert.equal(rows[1]?.payload.transcript_path, null);
   assert.match(rows[1]!.payload.tool_input.command, /^KHEREP_DEPLOY_AUTH=approved /);
-  assert.equal(rows[3]?.payload.tool_name, "functions.exec");
-  assert.equal(rows[3]?.runtime, "codex");
+  assert.equal(rows[4]?.payload.tool_name, "functions.exec");
+  assert.equal(rows[4]?.runtime, "codex");
 });
 
 test("the real attribution module records a pending push for the original owner in-process", (t) => {

@@ -199,6 +199,7 @@ check_profile() {
     kherep/githooks/commit-msg kherep/githooks/post-checkout
     kherep/githooks/pre-push kherep/githooks/attribution-record.mts
     hooks/main-checkout-guard.mts hooks/lib/main-checkout.mts hooks/lib/command-walk.mts
+    hooks/module-label-guard.mts hooks/lib/module-label.mts
   )
   for file in "${must_exist[@]}"; do
     [[ -e "$CLAUDE_HOME/$file" ]] || { note_fail "MISSING [$profile] $file"; }
@@ -248,6 +249,9 @@ check_profile() {
   }
   printf '{}\n' | node "$CLAUDE_HOME/hooks/main-checkout-guard.mts" >/dev/null || {
     note_fail "INSTALLED main-checkout guard failed to execute [$profile]";
+  }
+  printf '{}\n' | node "$CLAUDE_HOME/hooks/module-label-guard.mts" >/dev/null || {
+    note_fail "INSTALLED module-label guard failed to execute [$profile]";
   }
   [[ -e "$workspace/.claude/settings.local.json" ]] || { note_fail "MISSING [$profile] project settings"; }
   [[ -e "$workspace/CLAUDE.md" ]] || { note_fail "MISSING [$profile] project CLAUDE.md"; }

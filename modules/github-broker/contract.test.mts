@@ -17,3 +17,17 @@ test('both constant-runtime CLI entrypoints are import safe and default disabled
     assert.deepEqual(result, {ok:false,error:'policy-disabled'});
   }
 });
+test('labels are optional on issue.create only, bounded and unambiguous', async () => {
+  const { parseRequest, payload } = await import('./contract.mts');
+  const input = { operationId: id, repository: 'example/project', operation: 'issue.create', title: 'Synthetic' };
+  const labels = ['cp:intercom', 'bug'];
+  assert.deepEqual(payload(parseRequest(JSON.stringify({ ...input, labels }))), { title: 'Synthetic', labels });
+  assert.deepEqual(payload(parseRequest(JSON.stringify(input))), { title: 'Synthetic' });
+  for (const bad of [[], 'x', ['a', 'a'], [''], [' a'], ['a,b'], [1], ['x'.repeat(51)], Array.from({ length: 21 }, (_, i) => `l${i}`)]) {
+    assert.throws(() => parseRequest(JSON.stringify({ ...input, labels: bad })), /invalid-request/, JSON.stringify(bad));
+  }
+  assert.equal(parseRequest(JSON.stringify({ ...input, labels: Array.from({ length: 20 }, (_, i) => `l${i}`) })).labels?.length, 20);
+  for (const other of [{ operation: 'issue.comment', issueNumber: 7, body: 'x' }, { operation: 'issue.update', issueNumber: 7, title: 'x' }, { operation: 'verify' }]) {
+    assert.throws(() => parseRequest(JSON.stringify({ operationId: id, repository: 'example/project', ...other, labels })), /invalid-request/, other.operation);
+  }
+});

@@ -21,7 +21,7 @@ export class ReceiptStore {
     this.lock=`${this.file}.lock`;
   }
   digest(request:Request): string { return hash([request.operation,request.repository,request.issueNumber ?? null,payload(request)]); }
-  fieldHashes(request:Request): Record<string,string> { return Object.fromEntries(Object.entries(payload(request)).map(([k,v])=>[k,hash(v)])); }
+  fieldHashes(request:Request): Record<string,string> { return Object.fromEntries(Object.entries(payload(request)).map(([k,v])=>[k,hash(k==='labels'?[...v as string[]].sort():v)])); }
   acquire():()=>void {
     try {
       const fd=fs.openSync(this.lock,'wx',0o600);
@@ -36,7 +36,7 @@ export class ReceiptStore {
       const r=object(JSON.parse(readProtectedSync(this.directory,path.basename(this.file),4096,this.root).toString('utf8')));
       exact(r,['version','digest','operation','status','fieldHashes','issueNumber','targetId']);
       if (r.version !== 1 || !/^[a-f0-9]{64}$/.test(String(r.digest)) || !['issue.create','issue.comment','issue.update'].includes(String(r.operation)) || !['pending','known','verified'].includes(String(r.status))) fail('receipt-invalid');
-      const fields=object(r.fieldHashes);exact(fields,['title','body','state','state_reason']);
+      const fields=object(r.fieldHashes);exact(fields,['title','body','labels','state','state_reason']);
       if (Object.values(fields).some(v=>typeof v !== 'string' || !/^[a-f0-9]{64}$/.test(v)) || r.issueNumber !== undefined && !positive(r.issueNumber) || r.targetId !== undefined && !positive(r.targetId) || r.status !== 'pending' && (!positive(r.issueNumber) || !positive(r.targetId))) fail('receipt-invalid');
       return r as Receipt;
     } catch { return fail('receipt-invalid'); }
@@ -53,6 +53,8 @@ export class ReceiptStore {
     } catch { if (fs.existsSync(temp)) fs.unlinkSync(temp);fail('receipt-invalid'); }
   }
 }
+// GitHub returns labels as objects, in its own order; the receipt keeps the sorted names.
+const labelNames=(labels:unknown):string[]=>Array.isArray(labels)?labels.map(l=>String(l?.name)).sort():[];
 export function matchesFields(value:Record<string,unknown>, hashes:Record<string,string>):boolean {
-  return Object.entries(hashes).every(([k,v])=>hash(value[k])===v);
+  return Object.entries(hashes).every(([k,v])=>hash(k==='labels'?labelNames(value.labels):value[k])===v);
 }

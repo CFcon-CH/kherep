@@ -17,7 +17,7 @@ import { copyAdapter } from "./hook-adapter.fixture.mts";
 const REPO = path.resolve(import.meta.dirname, "..", "..");
 const SOURCE = path.join(import.meta.dirname, "shell-checks.mts");
 const PAYLOAD = { hook_event_name: "PreToolUse", tool_name: "shell_command", tool_input: { command: "git status" } };
-const GUARDS = ["commit-guard", "deploy-guard", "main-checkout-guard"];
+const GUARDS = ["commit-guard", "deploy-guard", "main-checkout-guard", "module-label-guard"];
 const now = "performance.timeOrigin + performance.now()";
 
 // Installed (<root>/hooks/kherep-maestro) or flat; guards and the re-check fixture trace into trace.jsonl.
@@ -62,15 +62,15 @@ test("T8a HOOK_TIMEOUT_MS equals the rendered shell timeout with and without the
   }
 });
 
-test("T8b three slow guards and a re-check that never ends: one answer, the re-check reported, inside 40 s", (t) => {
-  const b = box(t, { installed: true, guard: "process.on('SIGTERM', () => {}); setTimeout(() => {}, 9_500);",
+test("T8b four slow guards and a re-check that never ends: one answer, the re-check reported, inside 40 s", (t) => {
+  const b = box(t, { installed: true, guard: "process.on('SIGTERM', () => {}); setTimeout(() => {}, 7_000);",
     integrity: "await new Promise((resolve) => setTimeout(resolve, 10_000));" });
   const run = b.run();
   assert.equal(run.status, 0, run.stderr);
   assert.ok(run.ms < 40_000, `took ${run.ms} ms`);
   const doc = JSON.parse(run.stdout) as { hookSpecificOutput: { permissionDecision?: string; additionalContext?: string } };
   assert.match(String(doc.hookSpecificOutput.additionalContext), /\n {2}- (?:skipped, \d+ ms left of the hook budget|timed out after \d+ ms)/);
-  assert.deepEqual(b.rows().map((row) => row.who).slice(0, 3), GUARDS);
+  assert.deepEqual(b.rows().map((row) => row.who).slice(0, 4), GUARDS);
 });
 
 test("T8c an exhausted deadline denies before any guard starts", async (t) => {
@@ -89,7 +89,7 @@ test("T8d order documented, no deadline asserted: a slow attribution after a fin
   assert.equal(run.status, 0, run.stderr);
   assert.equal(JSON.parse(run.stdout).hookSpecificOutput.permissionDecisionReason, "synthetic deny");
   const order = b.rows();
-  assert.deepEqual(order.map((row) => row.who), ["deploy-guard", "main-checkout-guard", "recheck-start", "recheck-end", "attribution-start", "attribution-end"]);
+  assert.deepEqual(order.map((row) => row.who), ["deploy-guard", "main-checkout-guard", "module-label-guard", "recheck-start", "recheck-end", "attribution-start", "attribution-end"]);
   for (let i = 1; i < order.length; i++) assert.ok(order[i]!.t >= order[i - 1]!.t);
   assert.ok(order.at(-1)!.t - order.at(-2)!.t >= 1700, "attribution took its 1.8 s after the re-check");
   assert.ok(run.ms >= 1800, `the answer came after attribution (${run.ms} ms)`);

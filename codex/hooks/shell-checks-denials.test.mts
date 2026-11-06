@@ -14,7 +14,7 @@ import { readJournal, renderReport } from "../../claude/hooks/lib/denial-report.
 import { assertSameAnswer, cleanupHomes, codexHome, exit2, run, shellPayload, type CodexHome } from "./denials-fixture.mts";
 
 after(cleanupHomes);
-const GUARDS = { "commit-guard.mts": exit2("commit-guard"), "deploy-guard.mts": "process.exit(0);\n", "main-checkout-guard.mts": exit2("main-checkout") };
+const GUARDS = { "commit-guard.mts": exit2("commit-guard"), "deploy-guard.mts": "process.exit(0);\n", "main-checkout-guard.mts": exit2("main-checkout"), "module-label-guard.mts": "process.exit(0);\n" };
 const shell = (home: CodexHome, input: string, env?: NodeJS.ProcessEnv) => run([path.join(home.hookDir, "codex-shell-checks.mts")], input, env);
 const first = (home: CodexHome): string => renderReport(readJournal(home.root, "agent-c1")).text.split("\n")[0]!;
 // Issue #652. The capture interval as the dispatcher saw it: first intercepted write to process exit,
