@@ -21,11 +21,11 @@ CLAUDE_SRC="$(cd "$HERE/.." && pwd)/claude"
 MANIFEST="$HERE/manifest/files.txt"
 RETIRED_MANIFEST="$HERE/manifest/retired.txt"
 DRIFT_SCOPE="${DRIFT_SCOPE:-all}"
-[ "$DRIFT_SCOPE" = "all" ] || [ "$DRIFT_SCOPE" = "project" ] || {
+[[ "$DRIFT_SCOPE" = "all" ]] || [[ "$DRIFT_SCOPE" = "project" ]] || {
   echo "FATAL: DRIFT_SCOPE must be all or project"; exit 2
 }
-if [ -x /usr/bin/find ]; then FIND_BIN=/usr/bin/find; else FIND_BIN="$(command -v find || true)"; fi
-[ -n "$FIND_BIN" ] || { echo "FATAL: POSIX find required"; exit 2; }
+if [[ -x /usr/bin/find ]]; then FIND_BIN=/usr/bin/find; else FIND_BIN="$(command -v find || true)"; fi
+[[ -n "$FIND_BIN" ]] || { echo "FATAL: POSIX find required"; exit 2; }
 command -v node >/dev/null || { echo "FATAL: node required"; exit 2; }
 
 # Leave the result behind for claude/hooks/drift-check-nudge.mts. The body writes
@@ -36,10 +36,10 @@ command -v node >/dev/null || { echo "FATAL: node required"; exit 2; }
 REPORT=""
 REPORT_TMP=""
 REPORT_DIR="$CLAUDE_HOME/.cache/drift-check"
-if [ -d "$REPORT_DIR" ] || mkdir -p "$REPORT_DIR" 2>/dev/null; then
+if [[ -d "$REPORT_DIR" ]] || mkdir -p "$REPORT_DIR" 2>/dev/null; then
   REPORT="$REPORT_DIR/last-report.txt"
   REPORT_TMP="$(mktemp "$REPORT_DIR/.last-report.XXXXXX" 2>/dev/null || true)"
-  if [ -n "$REPORT_TMP" ]; then
+  if [[ -n "$REPORT_TMP" ]]; then
     exec 3>&1
     exec 1>"$REPORT_TMP"
   fi
@@ -48,7 +48,7 @@ fi
 EXPECTED_DIR="$(mktemp -d)"
 cleanup() {
   rm -rf "$EXPECTED_DIR"
-  [ -z "$REPORT_TMP" ] || rm -f "$REPORT_TMP"
+  [[ -z "$REPORT_TMP" ]] || rm -f "$REPORT_TMP"
 }
 trap cleanup EXIT
 # The render reports the commands an install would unwire on stdout (#252);
@@ -88,8 +88,8 @@ normalize_file() {
 
 cmp_file() {
   local rel="$1" repo="$2" live="$3" normalized_dir repo_normalized live_normalized
-  if [ ! -f "$repo" ]; then printf 'MISSING-REPO  %s (%q)\n' "$rel" "$repo"; drift=1; return; fi
-  if [ ! -f "$live" ]; then printf 'MISSING-LIVE  %s (%q)\n' "$rel" "$live"; drift=1; return; fi
+  if [[ ! -f "$repo" ]]; then printf 'MISSING-REPO  %s (%q)\n' "$rel" "$repo"; drift=1; return; fi
+  if [[ ! -f "$live" ]]; then printf 'MISSING-LIVE  %s (%q)\n' "$rel" "$live"; drift=1; return; fi
   normalized_dir="$(mktemp -d "$EXPECTED_DIR/compare.XXXXXX")" || {
     echo "NORMALIZE-FAIL $rel"; drift=1; return
   }
@@ -113,8 +113,8 @@ cmp_file() {
 # block in it is compared against the source. Text outside the block is never drift.
 cmp_block() {
   local rel="$1" repo="$2" live="$3" block_dir rc
-  if [ ! -f "$repo" ]; then printf 'MISSING-REPO  %s (%q)\n' "$rel" "$repo"; drift=1; return; fi
-  if [ ! -f "$live" ]; then printf 'MISSING-LIVE  %s (%q)\n' "$rel" "$live"; drift=1; return; fi
+  if [[ ! -f "$repo" ]]; then printf 'MISSING-REPO  %s (%q)\n' "$rel" "$repo"; drift=1; return; fi
+  if [[ ! -f "$live" ]]; then printf 'MISSING-LIVE  %s (%q)\n' "$rel" "$live"; drift=1; return; fi
   block_dir="$(mktemp -d "$EXPECTED_DIR/block.XXXXXX")" || { echo "NORMALIZE-FAIL $rel"; drift=1; return; }
   node "$HERE/project-rules-block.mts" drift "$repo" "$live" "$block_dir/repo" "$block_dir/live"
   rc=$?
@@ -131,7 +131,7 @@ cmp_block() {
 # this config root first, as settings.json is, so only a real difference is drift.
 cmp_rendered() {
   local rel="$1" repo="$2" live="$3" rendered_dir
-  if [ ! -f "$repo" ]; then printf 'MISSING-REPO  %s (%q)\n' "$rel" "$repo"; drift=1; return; fi
+  if [[ ! -f "$repo" ]]; then printf 'MISSING-REPO  %s (%q)\n' "$rel" "$repo"; drift=1; return; fi
   rendered_dir="$(mktemp -d "$EXPECTED_DIR/rendered.XXXXXX")" || { echo "RENDER-FAIL   $rel"; drift=1; return; }
   if node "$HERE/render-profile.mts" intercom "$repo" "$rendered_dir/expected"; then
     cmp_file "$rel" "$rendered_dir/expected" "$live"
@@ -147,7 +147,7 @@ cmp_rendered() {
 # user override itself belongs to the operator and is never compared.
 cmp_agent() {
   local rel="$1" repo="$2" live="$3" rendered_dir
-  if [ ! -f "$repo" ]; then printf 'MISSING-REPO  %s (%q)\n' "$rel" "$repo"; drift=1; return; fi
+  if [[ ! -f "$repo" ]]; then printf 'MISSING-REPO  %s (%q)\n' "$rel" "$repo"; drift=1; return; fi
   rendered_dir="$(mktemp -d "$EXPECTED_DIR/agent.XXXXXX")" || { echo "RENDER-FAIL   $rel"; drift=1; return; }
   if node "$HERE/model-policy-render.mts" agent "$repo" "$rendered_dir/expected" \
     "$CLAUDE_SRC/kherep/model-policy.json" "$CLAUDE_HOME/kherep/model-policy.user.json" 2>"$rendered_dir/error"; then
@@ -160,8 +160,8 @@ cmp_agent() {
 
 cmp_tree() {
   local label="$1" repo_dir="$2" live_dir="$3" f sub
-  if [ ! -d "$repo_dir" ]; then echo "MISSING-REPO  $label"; drift=1; return; fi
-  if [ ! -d "$live_dir" ]; then echo "MISSING-LIVE  $label"; drift=1; return; fi
+  if [[ ! -d "$repo_dir" ]]; then echo "MISSING-REPO  $label"; drift=1; return; fi
+  if [[ ! -d "$live_dir" ]]; then echo "MISSING-LIVE  $label"; drift=1; return; fi
   while IFS= read -r f; do
     f="${f%$'\r'}"
     sub="${f#"$repo_dir/"}"
@@ -170,31 +170,31 @@ cmp_tree() {
   while IFS= read -r f; do
     f="${f%$'\r'}"
     sub="${f#"$live_dir/"}"
-    [ "$(basename "$sub")" = ".DS_Store" ] && continue
-    if [ ! -f "$repo_dir/$sub" ]; then echo "EXTRA-LIVE    $label/$sub"; drift=1; fi
+    [[ "$(basename "$sub")" = ".DS_Store" ]] && continue
+    if [[ ! -f "$repo_dir/$sub" ]]; then echo "EXTRA-LIVE    $label/$sub"; drift=1; fi
   done < <("$FIND_BIN" "$live_dir" -type f | sort)
 }
 
-if [ "$DRIFT_SCOPE" = "all" ]; then
+if [[ "$DRIFT_SCOPE" = "all" ]]; then
   while IFS= read -r rel; do
-    [ -z "$rel" ] && continue
+    [[ -z "$rel" ]] && continue
     # The live box builds settings.json from settings.user.json and CLAUDE.md from CLAUDE.user.md
     # (capture.sh / install.sh handle both specially - the manifest lists the live-side names).
-    if [ "$rel" = "settings.json" ]; then
+    if [[ "$rel" = "settings.json" ]]; then
       cmp_file "$rel" "$EXPECTED_DIR/settings.json" "$CLAUDE_HOME/settings.json"
       continue
     fi
-    if [ "$rel" = "CLAUDE.md" ]; then
+    if [[ "$rel" = "CLAUDE.md" ]]; then
       cmp_rendered "$rel" "$CLAUDE_SRC/CLAUDE.user.md" "$CLAUDE_HOME/CLAUDE.md"
       continue
     fi
-    if [ "$rel" = "teams/kherep/ROUTING.md" ]; then
+    if [[ "$rel" = "teams/kherep/ROUTING.md" ]]; then
       cmp_rendered "$rel" "$CLAUDE_SRC/teams/kherep/ROUTING.md" "$CLAUDE_HOME/teams/kherep/ROUTING.md"
       continue
     fi
     repo="$CLAUDE_SRC/$rel"; live="$CLAUDE_HOME/$rel"
     case "$rel" in agents/*.md) cmp_agent "$rel" "$repo" "$live"; continue ;; esac
-    if [ -d "$repo" ]; then
+    if [[ -d "$repo" ]]; then
       cmp_tree "$rel" "$repo" "$live"
     else
       cmp_file "$rel" "$repo" "$live"
@@ -295,9 +295,9 @@ cmp_file "project/tools/confluence-revision-staleness-git.mts" \
 JIRA_TOOLS="atl-jira.mts atl-jira-ccoder.mts jira-adf.mts jira-config.mts jira-transition-guard.mts jira-fields.mts jira-links.mts jira-search.mts jira-attach.mts jira-adf-text.mts jira-download.mts jira-discovery.mts"
 jira_present="$INSTALL_ATLASSIAN_TOOLS"
 for tool in $JIRA_TOOLS; do
-  if [ -e "$WS/tools/$tool" ] || [ -L "$WS/tools/$tool" ]; then jira_present=1; break; fi
+  if [[ -e "$WS/tools/$tool" ]] || [[ -L "$WS/tools/$tool" ]]; then jira_present=1; break; fi
 done
-if [ "$jira_present" = "1" ]; then
+if [[ "$jira_present" = "1" ]]; then
 cmp_file "project/tools/atl-jira.mts" \
   "$HERE/../modules/atl-jira-brokers/atl-jira.mts" "$WS/tools/atl-jira.mts"
 cmp_file "project/tools/atl-jira-ccoder.mts" \
@@ -335,9 +335,9 @@ fi
 OBSERVATION_TOOLS="observation-broker.mts observation-candidate.mts observation-linking.mts observation-lookup.mts observation-policy.mts observation-publisher.mts observation-receipt.mts observation-result.mts observation-stdio.mts"
 observation_present=0
 for tool in $OBSERVATION_TOOLS; do
-  if [ -e "$WS/tools/$tool" ] || [ -L "$WS/tools/$tool" ]; then observation_present=1; break; fi
+  if [[ -e "$WS/tools/$tool" ]] || [[ -L "$WS/tools/$tool" ]]; then observation_present=1; break; fi
 done
-if [ "$observation_present" = "1" ]; then
+if [[ "$observation_present" = "1" ]]; then
   drift_before_observation="$drift"
   drift=0
 cmp_file "project/tools/observation-broker.mts" \
@@ -358,7 +358,7 @@ cmp_file "project/tools/observation-result.mts" \
   "$HERE/../modules/atl-jira-brokers/observation-result.mts" "$WS/tools/observation-result.mts"
 cmp_file "project/tools/observation-stdio.mts" \
   "$HERE/../modules/atl-jira-brokers/observation-stdio.mts" "$WS/tools/observation-stdio.mts"
-  if [ "$drift" != "0" ]; then
+  if [[ "$drift" != "0" ]]; then
     echo "HINT          project/tools/observation-*.mts: codex/install.mts writes these, bootstrap/install.sh does not"
   else
     drift="$drift_before_observation"
@@ -404,15 +404,15 @@ esac
 # kept it because its content is not one the installer placed (#45). The line
 # is information, not drift: a kept file would otherwise stay red for good.
 # Claude-home entries follow DRIFT_SCOPE; project/ entries are always checked.
-[ -f "$RETIRED_MANIFEST" ] || { echo "FATAL: retirement manifest missing: $RETIRED_MANIFEST" >&2; exit 2; }
-while IFS= read -r line || [ -n "$line" ]; do
+[[ -f "$RETIRED_MANIFEST" ]] || { echo "FATAL: retirement manifest missing: $RETIRED_MANIFEST" >&2; exit 2; }
+while IFS= read -r line || [[ -n "$line" ]]; do
   parse_rc=0; bootstrap_retired_parse_line "$line" || parse_rc=$?
   [ "$parse_rc" -ne 1 ] || continue
   [ "$parse_rc" -eq 0 ] || exit 2
   rel="$RETIRED_REL"
-  case "$rel" in project/*) ;; *) [ "$DRIFT_SCOPE" = "all" ] || continue ;; esac
+  case "$rel" in project/*) ;; *) [[ "$DRIFT_SCOPE" = "all" ]] || continue ;; esac
   live="$(bootstrap_retired_live_path "$rel" "$CLAUDE_HOME" "$WS")"
-  if [ -e "$live" ] || [ -L "$live" ]; then
+  if [[ -e "$live" ]] || [[ -L "$live" ]]; then
     printf 'RETIRED-LIVE  %s (%q)\n' "$rel" "$live"
   fi
 done < "$RETIRED_MANIFEST"
@@ -420,7 +420,7 @@ done < "$RETIRED_MANIFEST"
 echo ""
 if [ "$drift" -eq 0 ]; then echo "DRIFT-CHECK PASS (repo == live)"; else echo "DRIFT-CHECK FOUND DRIFT (see above)"; fi
 
-if [ -n "$REPORT_TMP" ]; then
+if [[ -n "$REPORT_TMP" ]]; then
   exec 1>&3
   cat "$REPORT_TMP"
   if mv -f "$REPORT_TMP" "$REPORT" 2>/dev/null; then REPORT_TMP=""; fi

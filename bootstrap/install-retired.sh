@@ -35,7 +35,7 @@ bootstrap_retired_parse_line() {
   case "$line" in ''|'#'*) return 1 ;; esac
   RETIRED_REL="${line%% *}"
   kherep_validate_manifest_relative_path "retirement manifest entry" "$RETIRED_REL" || return 2
-  [ "$RETIRED_REL" = "$line" ] || hashes="${line#* }"
+  [[ "$RETIRED_REL" = "$line" ]] || hashes="${line#* }"
   case "$RETIRED_REL" in
     project/*)
       if ! [[ "$hashes" =~ ^sha256:[0-9a-f]{64}(,[0-9a-f]{64})*$ ]]; then
@@ -44,7 +44,7 @@ bootstrap_retired_parse_line() {
       fi
       RETIRED_HASHES="${hashes#sha256:}" ;;
     *)
-      [ -z "$hashes" ] || {
+      [[ -z "$hashes" ]] || {
         echo "FATAL: retirement manifest entry $RETIRED_REL is a Claude-home entry and takes no hashes" >&2; return 2;
       } ;;
   esac
@@ -53,7 +53,7 @@ bootstrap_retired_parse_line() {
 # True when live is a regular file whose LF-folded SHA-256 is in the list.
 bootstrap_retired_known_content() {
   local live="$1" hashes="$2" digest
-  [ -f "$live" ] && [ ! -L "$live" ] || return 1
+  [[ -f "$live" ]] && [[ ! -L "$live" ]] || return 1
   digest="$(node -e '
     const text = require("node:fs").readFileSync(process.argv[1]).toString("latin1").replace(/\r\n/g, "\n");
     process.stdout.write(require("node:crypto").createHash("sha256").update(text, "latin1").digest("hex"));
@@ -65,16 +65,16 @@ bootstrap_retired_known_content() {
 bootstrap_retire_declared() {
   local manifest="$1" home="$2" ws="$3" backup="$4" line rc i live
   local rels=() hashes=()
-  [ -f "$manifest" ] || { echo "FATAL: retirement manifest missing: $manifest" >&2; return 1; }
-  while IFS= read -r line || [ -n "$line" ]; do
+  [[ -f "$manifest" ]] || { echo "FATAL: retirement manifest missing: $manifest" >&2; return 1; }
+  while IFS= read -r line || [[ -n "$line" ]]; do
     rc=0; bootstrap_retired_parse_line "$line" || rc=$?
-    [ "$rc" -ne 1 ] || continue
-    [ "$rc" -eq 0 ] || return "$rc"
+    [[ "$rc" -ne 1 ]] || continue
+    [[ "$rc" -eq 0 ]] || return "$rc"
     rels[${#rels[@]}]="$RETIRED_REL"; hashes[${#hashes[@]}]="$RETIRED_HASHES"
   done < "$manifest"
   for ((i=0; i<${#rels[@]}; i++)); do
     live="$(bootstrap_retired_live_path "${rels[$i]}" "$home" "$ws")"
-    if [ -n "${hashes[$i]}" ] && { [ -e "$live" ] || [ -L "$live" ]; } &&
+    if [[ -n "${hashes[$i]}" ]] && { [[ -e "$live" ]] || [[ -L "$live" ]]; } &&
        ! bootstrap_retired_known_content "$live" "${hashes[$i]}"; then
       echo "retire: KEEP ${rels[$i]} (content not placed by the installer)"
       continue

@@ -26,7 +26,7 @@ transaction_cleanup_created_graveyards() {
   local i path
   for ((i=${#TX_CREATED_GRAVEYARDS[@]}-1; i>=0; i--)); do
     path="${TX_CREATED_GRAVEYARDS[$i]}"
-    if [ -d "$path" ] && [ ! -L "$path" ]; then rmdir "$path" 2>/dev/null || true; fi
+    if [[ -d "$path" ]] && [[ ! -L "$path" ]]; then rmdir "$path" 2>/dev/null || true; fi
   done
   TX_CREATED_GRAVEYARDS=()
 }
@@ -34,7 +34,7 @@ transaction_cleanup_created_graveyards() {
 transaction_retire_path() {
   local label="$1" live="$2" backup="$3"
   local parent base graveyard dest holder stamp attempt
-  [ "$TX_ACTIVE" = 1 ] || { echo "FATAL: retire_path requires an active transaction" >&2; return 1; }
+  [[ "$TX_ACTIVE" = "1" ]] || { echo "FATAL: retire_path requires an active transaction" >&2; return 1; }
   if ! transaction_path_exists "$live"; then
     echo "retire: SKIP $label (nothing at $live)"
     return 0
@@ -45,7 +45,7 @@ transaction_retire_path() {
   transaction_assert_allowed_path target "$label retire target" "$dest" || return $?
   transaction_assert_allowed_path backup "$label retire backup" "$backup" || return $?
   transaction_claim_target "$live" || return $?
-  if [ ! -d "$graveyard" ]; then
+  if [[ ! -d "$graveyard" ]]; then
     mkdir "$graveyard" || return $?
     TX_CREATED_GRAVEYARDS[${#TX_CREATED_GRAVEYARDS[@]}]="$graveyard"
     printf '%s\n' "$graveyard" >> "$TX_BACKUP_ROOT/journal/created-parents"

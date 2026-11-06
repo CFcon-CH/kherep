@@ -41,10 +41,10 @@ portable_intercom() {
 # Copy a manifest entry (file or dir) from $2 root to $3 root, preserving rel path $1.
 copy_entry() {
   local rel="$1" from="$2" to="$3"
-  if [ -d "$from/$rel" ]; then
+  if [[ -d "$from/$rel" ]]; then
     mkdir -p "$to/$rel"
     cp -a "$from/$rel/." "$to/$rel/"
-  elif [ -f "$from/$rel" ]; then
+  elif [[ -f "$from/$rel" ]]; then
     mkdir -p "$to/$(dirname "$rel")"
     cp -a "$from/$rel" "$to/$rel"
   else
@@ -75,7 +75,7 @@ install_entry() {
 # Idempotent: only rewrites a bare `| python -c` invocation.
 python_fallback() {
   local f="$1" tmp
-  [ -f "$f" ] || return 0
+  [[ -f "$f" ]] || return 0
   tmp="$(mktemp)"
   sed -e 's#| python -c#| "$(command -v python3 || command -v python)" -c#g' "$f" > "$tmp" && mv "$tmp" "$f"
 }

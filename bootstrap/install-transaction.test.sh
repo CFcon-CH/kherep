@@ -13,8 +13,8 @@ same() { cmp "$1" "$2" >/dev/null || fail "bytes differ: $1"; }
 # workspace, credential files, install switches). The host's real values, read
 # through the caller's own environment, must be byte-identical afterwards.
 HOST_GIT_ENV=(HOME="$HOME")
-[ -z "${GIT_CONFIG_SYSTEM+x}" ] || HOST_GIT_ENV+=("GIT_CONFIG_SYSTEM=$GIT_CONFIG_SYSTEM")
-[ -z "${GIT_CONFIG_GLOBAL+x}" ] || HOST_GIT_ENV+=("GIT_CONFIG_GLOBAL=$GIT_CONFIG_GLOBAL")
+[[ -z "${GIT_CONFIG_SYSTEM+x}" ]] || HOST_GIT_ENV+=("GIT_CONFIG_SYSTEM=$GIT_CONFIG_SYSTEM")
+[[ -z "${GIT_CONFIG_GLOBAL+x}" ]] || HOST_GIT_ENV+=("GIT_CONFIG_GLOBAL=$GIT_CONFIG_GLOBAL")
 host_hooks_paths() {
   local scope
   for scope in system global; do
@@ -32,14 +32,14 @@ unset $(compgen -e | grep '^KHEREP_' || true)
 latest() {
   local dirs=("$1"/.claude/backups/bootstrap/install-*) last
   last="${dirs[${#dirs[@]}-1]}"
-  [ -d "$last" ] || return 1
+  [[ -d "$last" ]] || return 1
   printf '%s\n' "$last"
 }
 
 make_dir_symlink() {
   local target="$1" link="$2" link_win target_win
   ln -s "$target" "$link" 2>/dev/null || true
-  [ -L "$link" ] && return 0
+  [[ -L "$link" ]] && return 0
   rm -rf -- "$link"
   if command -v node >/dev/null 2>&1 && command -v cygpath >/dev/null 2>&1; then
     link_win="$(cygpath -w "$link")"; target_win="$(cygpath -w "$target")"
@@ -47,7 +47,7 @@ make_dir_symlink() {
       'require("node:fs").symlinkSync(process.env.TARGET_PATH, process.env.LINK_PATH, "junction")' \
       >/dev/null 2>&1 || true
   fi
-  [ -L "$link" ] || fail "cannot create a real directory symlink/junction for path tests"
+  [[ -L "$link" ]] || fail "cannot create a real directory symlink/junction for path tests"
 }
 
 fixture() {
@@ -102,60 +102,60 @@ SH
   export HOME="$TMP/lib/home" CLAUDE_HOME="$TMP/lib/claude"; source "$HERE/lib.sh"
   transaction_begin "$backup/one" "$live"
   export EXPECT_HOLDER_BACKUP=1; install_path one "$src/file" "$live/file" "$backup/one/original"; unset EXPECT_HOLDER_BACKUP
-  [ "$(cat "$backup/one/original")" = old ] || fail "backup not complete before mutation"
-  transaction_rollback test; [ "$(cat "$live/file")" = old ] || fail "existing target not restored"
-  [ "$(cat "$backup/one/failed/000000")" = new ] || fail "failed target not parked"
+  [[ "$(cat "$backup/one/original")" = "old" ]] || fail "backup not complete before mutation"
+  transaction_rollback test; [[ "$(cat "$live/file")" = "old" ]] || fail "existing target not restored"
+  [[ "$(cat "$backup/one/failed/000000")" = "new" ]] || fail "failed target not parked"
 
   mkdir "$src/identical" "$live/identical"; printf same > "$src/identical/SKILL.md"; cp "$src/identical/SKILL.md" "$live/identical/SKILL.md"
   transaction_begin "$backup/identical" "$live"
   FAIL_LIVE_MOVE=1 LIVE_MOVE_MARKER="$TMP/lib/live-move-attempted" install_path identical "$src/identical" "$live/identical" "$backup/identical/original"
-  [ ! -e "$TMP/lib/live-move-attempted" ] || fail "identical directory reached live rename"
-  [ "$TX_COUNT" -eq 0 ] && [ ! -e "$backup/identical/original" ] || fail "identical directory was journaled or backed up"
+  [[ ! -e "$TMP/lib/live-move-attempted" ]] || fail "identical directory reached live rename"
+  [ "$TX_COUNT" -eq 0 ] && [[ ! -e "$backup/identical/original" ]] || fail "identical directory was journaled or backed up"
   printf changed > "$src/identical/SKILL.md"
   set +e; install_path duplicate "$src/identical" "$live/identical" "$backup/identical/duplicate" >/dev/null 2>&1; rc=$?; set -e
-  [ "$rc" -ne 0 ] && [ "$(cat "$live/identical/SKILL.md")" = same ] || fail "equal-first duplicate target was accepted"
+  [[ "$rc" -ne 0 ]] && [[ "$(cat "$live/identical/SKILL.md")" = "same" ]] || fail "equal-first duplicate target was accepted"
   transaction_rollback test
 
   mkdir "$src/different" "$live/different"; printf new > "$src/different/SKILL.md"; printf old > "$live/different/SKILL.md"; printf extra > "$live/different/extra"
   transaction_begin "$backup/different" "$live"
   install_path different "$src/different" "$live/different" "$backup/different/original"
-  [ "$(cat "$live/different/SKILL.md")" = new ] && [ ! -e "$live/different/extra" ] || fail "different directory did not use normal replacement"
-  [ "$(cat "$backup/different/original/SKILL.md")" = old ] && [ -e "$backup/different/original/extra" ] || fail "different directory backup incomplete"
+  [[ "$(cat "$live/different/SKILL.md")" = "new" ]] && [[ ! -e "$live/different/extra" ]] || fail "different directory did not use normal replacement"
+  [[ "$(cat "$backup/different/original/SKILL.md")" = "old" ]] && [[ -e "$backup/different/original/extra" ]] || fail "different directory backup incomplete"
   transaction_rollback test
   transaction_begin "$backup/two" "$live"; install_path two "$src/file" "$live/absent" "$backup/two/original"
-  transaction_rollback test; [ ! -e "$live/absent" ] || fail "absent target survived rollback"
+  transaction_rollback test; [[ ! -e "$live/absent" ]] || fail "absent target survived rollback"
 
   transaction_begin "$backup/parents" "$live"
   install_path parents "$src/file" "$live/new-parent/nested/file" "$backup/parents/original"
   transaction_rollback test
-  [ ! -e "$live/new-parent" ] || fail "transaction-created live parents survived rollback"
+  [[ ! -e "$live/new-parent" ]] || fail "transaction-created live parents survived rollback"
 
   # A failed in-flight swap retains the exact same-filesystem original and
   # restores it directly, without needing another possibly ENOSPC copy.
   printf old-inflight > "$live/inflight"
   transaction_begin "$backup/three" "$live"
   set +e; KHEREP_BOOTSTRAP_TEST_FAIL_SWAP_LABEL=inflight install_path inflight "$src/file" "$live/inflight" "$backup/three/original"; rc=$?; set -e
-  [ "$rc" -eq 96 ] || fail "in-flight swap injection did not fire"
+  [[ "$rc" -eq 96 ]] || fail "in-flight swap injection did not fire"
   FAIL_RESTORE_COPY=1 RESTORE_COPY_MARKER="$TMP/lib/restore-copy-attempted" transaction_rollback test
-  [ "$(cat "$live/inflight")" = old-inflight ] || fail "in-flight original was not restored directly"
-  [ ! -e "$TMP/lib/restore-copy-attempted" ] || fail "in-flight rollback unnecessarily copied backup"
+  [[ "$(cat "$live/inflight")" = "old-inflight" ]] || fail "in-flight original was not restored directly"
+  [[ ! -e "$TMP/lib/restore-copy-attempted" ]] || fail "in-flight rollback unnecessarily copied backup"
 
   # If a completed entry really needs a backup copy and that copy fails, live
   # remains present, the original backup survives, and recovery is explicit.
   printf old-diskfull > "$live/diskfull"
   transaction_begin "$backup/four" "$live"; install_path diskfull "$src/file" "$live/diskfull" "$backup/four/original"
   set +e; FAIL_RESTORE_COPY=1 RESTORE_COPY_MARKER="$TMP/lib/restore-copy-failed" transaction_rollback test; rc=$?; set -e
-  [ "$rc" -ne 0 ] && [ -e "$TMP/lib/restore-copy-failed" ] || fail "restore-copy failure was not exercised"
-  [ "$(cat "$live/diskfull")" = new ] || fail "restore-copy failure left live target missing"
-  [ "$(cat "$backup/four/original")" = old-diskfull ] || fail "restore-copy failure lost original backup"
-  [ -f "$backup/four/ROLLBACK-INCOMPLETE" ] || fail "restore-copy failure lacks incomplete marker"
+  [[ "$rc" -ne 0 ]] && [[ -e "$TMP/lib/restore-copy-failed" ]] || fail "restore-copy failure was not exercised"
+  [[ "$(cat "$live/diskfull")" = "new" ]] || fail "restore-copy failure left live target missing"
+  [[ "$(cat "$backup/four/original")" = "old-diskfull" ]] || fail "restore-copy failure lost original backup"
+  [[ -f "$backup/four/ROLLBACK-INCOMPLETE" ]] || fail "restore-copy failure lacks incomplete marker"
 
   printf old-remove > "$live/remove-fail"
   transaction_begin "$backup/remove-fail" "$live"; install_path remove-fail "$src/file" "$live/remove-fail" "$backup/remove-fail/original"
   set +e; FAIL_FAILED_HOLDER_REMOVE=1 FAILED_REMOVE_MARKER="$TMP/lib/remove-failed" transaction_rollback test; rc=$?; set -e
-  [ "$rc" -ne 0 ] && [ -e "$TMP/lib/remove-failed" ] || fail "failed-holder removal error was swallowed"
-  [ -f "$backup/remove-fail/ROLLBACK-INCOMPLETE" ] || fail "holder removal failure lacks incomplete marker"
-  [ "$(cat "$live/remove-fail")" = old-remove ] || fail "holder removal failure lost restored original"
+  [[ "$rc" -ne 0 ]] && [[ -e "$TMP/lib/remove-failed" ]] || fail "failed-holder removal error was swallowed"
+  [[ -f "$backup/remove-fail/ROLLBACK-INCOMPLETE" ]] || fail "holder removal failure lacks incomplete marker"
+  [[ "$(cat "$live/remove-fail")" = "old-remove" ]] || fail "holder removal failure lost restored original"
   PATH="$ORIGINAL_PATH"; unset REAL_MV REAL_CP REAL_RM LIVE_ROOT BACKUP_ROOT
 }
 
@@ -172,27 +172,27 @@ test_retire() {
 
   transaction_begin "$backup/one" "$live"
   transaction_retire_path hooks/em-dash-watch.js "$live/hooks/em-dash-watch.js"     "$backup/one/retired/hooks/em-dash-watch.js" > /dev/null
-  [ ! -e "$live/hooks/em-dash-watch.js" ] || fail "retired file stayed at its live path"
-  [ "$(cat "$live/hooks/_deprecated/em-dash-watch.js")" = orphan ] || fail "retired file was not parked in _deprecated"
-  [ "$(cat "$backup/one/retired/hooks/em-dash-watch.js")" = orphan ] || fail "retired file was not backed up"
+  [[ ! -e "$live/hooks/em-dash-watch.js" ]] || fail "retired file stayed at its live path"
+  [[ "$(cat "$live/hooks/_deprecated/em-dash-watch.js")" = "orphan" ]] || fail "retired file was not parked in _deprecated"
+  [[ "$(cat "$backup/one/retired/hooks/em-dash-watch.js")" = "orphan" ]] || fail "retired file was not backed up"
   transaction_rollback test
-  [ "$(cat "$live/hooks/em-dash-watch.js")" = orphan ] || fail "rollback did not restore the retired file"
-  [ -f "$backup/one/ROLLED-BACK" ] && [ "$(cat "$live/hooks/_deprecated/em-dash-watch.js")" = orphan ] ||
+  [[ "$(cat "$live/hooks/em-dash-watch.js")" = "orphan" ]] || fail "rollback did not restore the retired file"
+  [[ -f "$backup/one/ROLLED-BACK" ]] && [[ "$(cat "$live/hooks/_deprecated/em-dash-watch.js")" = "orphan" ]] ||
     fail "a created graveyard that holds the parked copy broke the rollback or lost the copy"
 
   transaction_begin "$backup/two" "$live"
   out="$(transaction_retire_path hooks/gone.js "$live/hooks/gone.js" "$backup/two/retired/hooks/gone.js")"
   case "$out" in *SKIP*) ;; *) fail "an absent retirement target did not report SKIP: $out" ;; esac
   [ "$TX_COUNT" -eq 0 ] || fail "an absent retirement target was journalled"
-  [ ! -e "$backup/two/retired/hooks/gone.js" ] || fail "an absent retirement target produced a backup"
+  [[ ! -e "$backup/two/retired/hooks/gone.js" ]] || fail "an absent retirement target produced a backup"
   transaction_rollback test
 
   printf second > "$live/hooks/em-dash-watch.js"
   transaction_begin "$backup/three" "$live"
   transaction_retire_path hooks/em-dash-watch.js "$live/hooks/em-dash-watch.js"     "$backup/three/retired/hooks/em-dash-watch.js" > /dev/null
-  [ "$(cat "$live/hooks/_deprecated/em-dash-watch.js")" = orphan ] || fail "an already parked file was overwritten"
+  [[ "$(cat "$live/hooks/_deprecated/em-dash-watch.js")" = "orphan" ]] || fail "an already parked file was overwritten"
   compgen -G "$live/hooks/_deprecated/em-dash-watch.js.*" > /dev/null || fail "the second retirement got no dated sibling"
-  [ "$(cat "$live/hooks/_deprecated/em-dash-watch.js".*)" = second ] || fail "the dated sibling holds the wrong bytes"
+  [[ "$(cat "$live/hooks/_deprecated/em-dash-watch.js".*)" = "second" ]] || fail "the dated sibling holds the wrong bytes"
   transaction_commit
 
   # A third retirement inside the same second: both the plain destination and the
@@ -206,9 +206,9 @@ test_retire() {
   transaction_begin "$backup/four" "$crowded"
   TX_RETIRE_STAMP="$stamp" transaction_retire_path hooks/em-dash-watch.js "$crowded/hooks/em-dash-watch.js"     "$backup/four/retired/hooks/em-dash-watch.js" > /dev/null
   unset TX_RETIRE_STAMP
-  [ "$(cat "$parked")" = first ] || fail "a same-second collision overwrote the parked file"
-  [ "$(cat "$parked.$stamp")" = dated ] || fail "a same-second collision overwrote the dated sibling"
-  [ -e "$parked.$stamp-1" ] || fail "a same-second collision got no counted sibling"
+  [[ "$(cat "$parked")" = "first" ]] || fail "a same-second collision overwrote the parked file"
+  [[ "$(cat "$parked.$stamp")" = "dated" ]] || fail "a same-second collision overwrote the dated sibling"
+  [[ -e "$parked.$stamp-1" ]] || fail "a same-second collision got no counted sibling"
   same "$parked.$stamp-1" "$TMP/retire/third.before"
   transaction_commit
 
@@ -226,12 +226,12 @@ test_retire() {
     transaction_retire_path tools/x/tool.ps1 "$TMP/retire/fresh/tools/x/tool.ps1" "$backup/five/retired/tools/x/tool.ps1"
   ) > "$TMP/retire/five.log" 2>&1; rc=$?
   set -e
-  [ "$rc" -ne 0 ] || fail "a retirement over an existing backup did not fail"
-  [ "$(cat "$TMP/retire/fresh/tools/x/tool.ps1")" = fresh ] || fail "rollback did not restore the half-retired file"
+  [[ "$rc" -ne 0 ]] || fail "a retirement over an existing backup did not fail"
+  [[ "$(cat "$TMP/retire/fresh/tools/x/tool.ps1")" = "fresh" ]] || fail "rollback did not restore the half-retired file"
   grep -qxF "$TMP/retire/fresh/tools/x/_deprecated" "$backup/five/journal/created-parents" ||
     fail "the created graveyard was not journalled"
-  [ -f "$backup/five/ROLLED-BACK" ] || fail "the rollback after a failed retirement was not clean"
-  [ ! -e "$TMP/retire/fresh/tools/x/_deprecated" ] || fail "rollback left the empty graveyard it created"
+  [[ -f "$backup/five/ROLLED-BACK" ]] || fail "the rollback after a failed retirement was not clean"
+  [[ ! -e "$TMP/retire/fresh/tools/x/_deprecated" ]] || fail "rollback left the empty graveyard it created"
 }
 
 # #33, #45. retired.txt also names workspace files with the project/ prefix. The
@@ -258,32 +258,32 @@ test_retire_declared() {
     transaction_begin "$backup/one" "$home" "$ws"
     bootstrap_retire_declared "$manifest" "$home" "$ws" "$backup/one" > "$root/out" ||
       fail "the declared retirement pass failed"
-    [ ! -e "$ws/tools/mpac/mpac.ps1" ] || fail "a retired workspace file stayed at its live path"
+    [[ ! -e "$ws/tools/mpac/mpac.ps1" ]] || fail "a retired workspace file stayed at its live path"
     same "$ws/tools/mpac/_deprecated/mpac.ps1" "$root/known.before"
     same "$backup/one/retired/project/tools/mpac/mpac.ps1" "$root/known.before"
-    [ ! -e "$home/project" ] || fail "a project/ entry was resolved against the Claude home"
-    [ "$(cat "$home/hooks/_deprecated/em-dash-watch.js")" = home-orphan ] || fail "the Claude-home entry was not parked"
+    [[ ! -e "$home/project" ]] || fail "a project/ entry was resolved against the Claude home"
+    [[ "$(cat "$home/hooks/_deprecated/em-dash-watch.js")" = "home-orphan" ]] || fail "the Claude-home entry was not parked"
     grep -qF "retire: SKIP project/tools/mpac/README.md" "$root/out" || fail "an absent workspace entry did not report SKIP"
-    [ ! -e "$ws/tools/mpac/_deprecated/README.md" ] && [ ! -e "$backup/one/retired/project/tools/mpac/README.md" ] ||
+    [[ ! -e "$ws/tools/mpac/_deprecated/README.md" ]] && [[ ! -e "$backup/one/retired/project/tools/mpac/README.md" ]] ||
       fail "an absent workspace entry was parked or backed up"
     [ "$(grep -c 'retire: KEEP' "$root/out")" -eq 1 ] && grep -qxF "$keep" "$root/out" ||
       fail "unknown workspace content did not produce exactly one KEEP line: $(cat "$root/out")"
-    [ "$(cat "$ws/tools/edited/tool.ps1")" = 'operator edit' ] && [ ! -e "$ws/tools/edited/_deprecated" ] ||
+    [[ "$(cat "$ws/tools/edited/tool.ps1")" = 'operator edit' ]] && [[ ! -e "$ws/tools/edited/_deprecated" ]] ||
       fail "unknown workspace content was moved"
-    [ ! -e "$backup/one/retired/project/tools/edited" ] || fail "unknown workspace content was backed up"
+    [[ ! -e "$backup/one/retired/project/tools/edited" ]] || fail "unknown workspace content was backed up"
     ! grep -rqF "tools/edited" "$backup/one/journal" || fail "unknown workspace content was journalled"
     [ "$TX_COUNT" -eq 2 ] || fail "expected two journalled retirements, got $TX_COUNT"
     transaction_rollback test > /dev/null
     same "$ws/tools/mpac/mpac.ps1" "$root/known.before"
-    [ "$(cat "$home/hooks/em-dash-watch.js")" = home-orphan ] || fail "rollback did not restore the retired Claude-home file"
+    [[ "$(cat "$home/hooks/em-dash-watch.js")" = "home-orphan" ]] || fail "rollback did not restore the retired Claude-home file"
 
     printf '%s\n' hooks/em-dash-watch.js project/tools/mpac/mpac.ps1 > "$manifest"
     transaction_begin "$backup/unhashed" "$home" "$ws"
     set +e; bootstrap_retire_declared "$manifest" "$home" "$ws" "$backup/unhashed" > "$root/unhashed.log" 2>&1; rc=$?; set -e
-    [ "$rc" -ne 0 ] || fail "a project/ entry without hashes was accepted"
+    [[ "$rc" -ne 0 ]] || fail "a project/ entry without hashes was accepted"
     grep -qF "FATAL: retirement manifest entry project/tools/mpac/mpac.ps1 needs 'sha256:" "$root/unhashed.log" ||
       fail "a project/ entry without hashes was not refused clearly: $(cat "$root/unhashed.log")"
-    [ "$TX_COUNT" -eq 0 ] && [ "$(cat "$home/hooks/em-dash-watch.js")" = home-orphan ] ||
+    [ "$TX_COUNT" -eq 0 ] && [[ "$(cat "$home/hooks/em-dash-watch.js")" = "home-orphan" ]] ||
       fail "a manifest with an unhashed project/ entry moved a file before it was refused"
     transaction_rollback test > /dev/null
 
@@ -291,10 +291,10 @@ test_retire_declared() {
     printf outside > "$root/escape"
     transaction_begin "$backup/two" "$home" "$ws"
     set +e; bootstrap_retire_declared "$manifest" "$home" "$ws" "$backup/two" > "$root/escape.log" 2>&1; rc=$?; set -e
-    [ "$rc" -ne 0 ] || fail "a traversing project/ entry was accepted"
+    [[ "$rc" -ne 0 ]] || fail "a traversing project/ entry was accepted"
     grep -qF "retirement manifest entry must be a strict traversal-free relative path" "$root/escape.log" ||
       fail "a traversing project/ entry passed the manifest path gate: $(cat "$root/escape.log")"
-    [ "$(cat "$root/escape")" = outside ] && [ "$TX_COUNT" -eq 0 ] || fail "a traversing project/ entry moved a file"
+    [[ "$(cat "$root/escape")" = "outside" ]] && [ "$TX_COUNT" -eq 0 ] || fail "a traversing project/ entry moved a file"
     transaction_rollback test > /dev/null
   )
 }
@@ -305,15 +305,15 @@ test_lock() {
   source "$HERE/install-lock.sh"
   bootstrap_lock_acquire "$lock"
   set +e; ( source "$HERE/install-lock.sh"; bootstrap_lock_acquire "$lock" ) >/dev/null 2>&1; rc=$?; set -e
-  [ "$rc" -eq 3 ] || fail "concurrent bootstrap lock did not report an active owner (rc=$rc)"
+  [[ "$rc" -eq 3 ]] || fail "concurrent bootstrap lock did not report an active owner (rc=$rc)"
   bootstrap_lock_release
-  [ ! -e "$lock" ] || fail "released bootstrap lock still blocks acquisition"
+  [[ ! -e "$lock" ]] || fail "released bootstrap lock still blocks acquisition"
   mkdir "$lock"; printf '%s\n' 'pid=999999' 'token=dead-owner' > "$lock/owner"
   bootstrap_lock_acquire "$lock"
   stale=("$lock".stale-999999-*)
-  [ -d "${stale[0]}" ] || fail "dead bootstrap lock was not quarantined"
+  [[ -d "${stale[0]}" ]] || fail "dead bootstrap lock was not quarantined"
   bootstrap_lock_release
-  [ ! -e "$lock" ] || fail "recovered bootstrap lock was not released"
+  [[ ! -e "$lock" ]] || fail "recovered bootstrap lock was not released"
 }
 
 test_preflights() {
@@ -323,10 +323,10 @@ test_preflights() {
   HOME="$H" CLAUDE_HOME="$C" KHEREP_PROFILE=mac KHEREP_WORKSPACE='D:\Work' KHEREP_CREDENTIALS_ROOT="$R" \
     SKIP_SECRETS=1 SKIP_DEPS=1 bash "$HERE/install.sh" >/dev/null 2>&1; rc=$?
   set -e
-  [ "$rc" -ne 0 ] && [ ! -d "$C/backups" ] || fail "invalid Mac path mutated bootstrap state"
+  [[ "$rc" -ne 0 ]] && [[ ! -d "$C/backups" ]] || fail "invalid Mac path mutated bootstrap state"
   printf '{bad-json\n' > "$C/settings.json"
   set +e; install_files >/dev/null 2>&1; rc=$?; set -e
-  [ "$rc" -ne 0 ] || fail "malformed settings passed preflight"
+  [[ "$rc" -ne 0 ]] || fail "malformed settings passed preflight"
   same "$C/statusline-command.sh" "$ROOT/status.before"
 }
 
@@ -348,20 +348,20 @@ test_path_guards() {
   printf managed > "$src/file"
   transaction_begin "$ROOT/backup-one" "$C"
   set +e; install_path escape "$src/file" "$outside/sentinel" "$ROOT/backup-one/original" >/dev/null 2>&1; rc=$?; set -e
-  [ "$rc" -ne 0 ] || fail "target outside allowed root was accepted"
+  [[ "$rc" -ne 0 ]] || fail "target outside allowed root was accepted"
   transaction_rollback containment >/dev/null 2>&1 || true
   same "$outside/sentinel" "$ROOT/outside.before"
   cp "$outside/sentinel" "$src/equal"
   transaction_begin "$ROOT/backup-equal-escape" "$C"
   set +e; install_path equal-escape "$src/equal" "$outside/sentinel" "$ROOT/backup-equal-escape/original" >/dev/null 2>&1; rc=$?; set -e
-  [ "$rc" -ne 0 ] || fail "byte-identical target outside allowed root was accepted"
+  [[ "$rc" -ne 0 ]] || fail "byte-identical target outside allowed root was accepted"
   transaction_rollback containment >/dev/null 2>&1 || true
   same "$outside/sentinel" "$ROOT/outside.before"
   transaction_begin "$ROOT/backup-two" "$C"
   set +e; install_path backup-escape "$src/file" "$C/contained" "$outside/backup" >/dev/null 2>&1; rc=$?; set -e
-  [ "$rc" -ne 0 ] || fail "backup outside allowed root was accepted"
+  [[ "$rc" -ne 0 ]] || fail "backup outside allowed root was accepted"
   transaction_rollback containment >/dev/null 2>&1 || true
-  same "$outside/sentinel" "$ROOT/outside.before"; [ ! -e "$outside/backup" ] || fail "outside backup was created"
+  same "$outside/sentinel" "$ROOT/outside.before"; [[ ! -e "$outside/backup" ]] || fail "outside backup was created"
 
   for target in hooks hooks-lib workspace-dot-claude local-inference; do
     fixture "symlink-$target"; outside="$ROOT/outside"; before="$ROOT/outside.before"
@@ -373,9 +373,9 @@ test_path_guards() {
       local-inference) mkdir -p "$C/kherep"; make_dir_symlink "$outside" "$C/kherep/local-inference" ;;
     esac
     set +e; install_files > "$ROOT/log" 2>&1; rc=$?; set -e
-    [ "$rc" -ne 0 ] || fail "symlink ancestor passed preflight: $target"
+    [[ "$rc" -ne 0 ]] || fail "symlink ancestor passed preflight: $target"
     same "$outside/sentinel" "$before"
-    [ ! -d "$C/backups" ] || fail "symlink preflight created bootstrap state: $target"
+    [[ ! -d "$C/backups" ]] || fail "symlink preflight created bootstrap state: $target"
   done
 }
 
@@ -383,10 +383,10 @@ test_partial() {
   local rc b
   fixture partial
   set +e; KHEREP_BOOTSTRAP_TEST_FAIL_AFTER_LABEL='hooks/deploy-guard.mts' install_files > "$ROOT/log" 2>&1; rc=$?; set -e
-  [ "$rc" -ne 0 ] || fail "partial failure returned success"
+  [[ "$rc" -ne 0 ]] || fail "partial failure returned success"
   same "$C/statusline-command.sh" "$ROOT/status.before"; same "$C/hooks/commit-guard.mts" "$ROOT/guard.before"
-  [ ! -e "$C/hooks/deploy-guard.mts" ] || fail "new target survived partial rollback"
-  b="$(latest "$H")"; [ -f "$b/ROLLED-BACK" ] || fail "partial rollback marker missing"
+  [[ ! -e "$C/hooks/deploy-guard.mts" ]] || fail "new target survived partial rollback"
+  b="$(latest "$H")"; [[ -f "$b/ROLLED-BACK" ]] || fail "partial rollback marker missing"
 }
 
 test_term() {
@@ -395,12 +395,12 @@ test_term() {
   HOME="$H" CLAUDE_HOME="$C" KHEREP_PROFILE=win KHEREP_WORKSPACE="$W" KHEREP_CREDENTIALS_ROOT="$R" \
     SKIP_SECRETS=1 SKIP_DEPS=1 KHEREP_BOOTSTRAP_TEST_PAUSE_AFTER_LABEL='hooks/commit-guard.mts' \
     KHEREP_BOOTSTRAP_TEST_MARKER="$marker" bash "$HERE/install.sh" > "$ROOT/log" 2>&1 & pid=$!
-  for ((i=0; i<200; i++)); do [ ! -e "$marker" ] || break; sleep 0.1; done
-  [ -e "$marker" ] || { kill -TERM "$pid" 2>/dev/null || true; fail "TERM checkpoint missing"; }
+  for ((i=0; i<200; i++)); do [[ ! -e "$marker" ]] || break; sleep 0.1; done
+  [[ -e "$marker" ]] || { kill -TERM "$pid" 2>/dev/null || true; fail "TERM checkpoint missing"; }
   kill -TERM "$pid"; set +e; wait "$pid"; rc=$?; set -e
-  [ "$rc" -ne 0 ] || fail "TERM returned success"
+  [[ "$rc" -ne 0 ]] || fail "TERM returned success"
   same "$C/statusline-command.sh" "$ROOT/status.before"; same "$C/hooks/commit-guard.mts" "$ROOT/guard.before"
-  b="$(latest "$H")"; [ -f "$b/ROLLED-BACK" ] && grep -q SIGTERM "$b/ROLLBACK-REASON" || fail "TERM not journaled"
+  b="$(latest "$H")"; [[ -f "$b/ROLLED-BACK" ]] && grep -q SIGTERM "$b/ROLLBACK-REASON" || fail "TERM not journaled"
 }
 
 test_commit_signal() {
@@ -409,12 +409,12 @@ test_commit_signal() {
   HOME="$H" CLAUDE_HOME="$C" KHEREP_PROFILE=win KHEREP_WORKSPACE="$W" KHEREP_CREDENTIALS_ROOT="$R" \
     SKIP_SECRETS=1 SKIP_DEPS=1 KHEREP_BOOTSTRAP_TEST_PAUSE_AFTER_COMMIT_MARKER="$marker" \
     bash "$HERE/install.sh" > "$ROOT/log" 2>&1 & pid=$!
-  for ((i=0; i<1200; i++)); do [ ! -e "$marker" ] || break; sleep 0.1; done
-  [ -e "$marker" ] || { kill -TERM "$pid" 2>/dev/null || true; fail "commit checkpoint missing"; }
+  for ((i=0; i<1200; i++)); do [[ ! -e "$marker" ]] || break; sleep 0.1; done
+  [[ -e "$marker" ]] || { kill -TERM "$pid" 2>/dev/null || true; fail "commit checkpoint missing"; }
   kill -TERM "$pid"; set +e; wait "$pid"; rc=$?; set -e
-  [ "$rc" -ne 0 ] || fail "commit-race TERM returned success"
+  [[ "$rc" -ne 0 ]] || fail "commit-race TERM returned success"
   b="$(latest "$H")"
-  [ -f "$b/COMMITTED" ] && [ ! -e "$b/ROLLED-BACK" ] && [ ! -e "$b/ACTIVE" ] || fail "durable commit was rolled back or contradictory"
+  [[ -f "$b/COMMITTED" ]] && [[ ! -e "$b/ROLLED-BACK" ]] && [[ ! -e "$b/ACTIVE" ]] || fail "durable commit was rolled back or contradictory"
   cmp "$C/statusline-command.sh" "$HERE/../claude/statusline-command.sh" >/dev/null || fail "durably committed live target was reverted"
 }
 
@@ -436,11 +436,11 @@ SH
     KHEREP_SECRETS_BUNDLE="$yaml" \
     KHEREP_BOOTSTRAP_TEST_FAIL_SWAP_LABEL='secrets/.mcp.json' SKIP_SECRETS=0 SKIP_DEPS=1 \
     bash "$HERE/install.sh" > "$ROOT/log" 2>&1; rc=$?
-  set -e; [ "$rc" -ne 0 ] || fail "secret swap failure returned success"
+  set -e; [[ "$rc" -ne 0 ]] || fail "secret swap failure returned success"
   for f in .mcp.json registry-http-bridge.sh; do same "$C/$f" "$ROOT/before/$f"; done
   same "$C/statusline-command.sh" "$ROOT/status.before"
   b="$(latest "$H")" || fail "secret fixture did not reach an installation transaction"
-  [ -f "$b/ROLLED-BACK" ] && [ -f "$b/secrets/.mcp.json" ] || fail "secret rollback/backup missing"
+  [[ -f "$b/ROLLED-BACK" ]] && [[ -f "$b/secrets/.mcp.json" ]] || fail "secret rollback/backup missing"
   ! compgen -G "$C/backups/bootstrap/preflight-*" >/dev/null || fail "secret preflight not cleaned"
 }
 
@@ -456,7 +456,7 @@ test_default_confluence_brokers() {
     KHEREP_INSTALL_SKIP_ATL_CREDENTIAL=1 SKIP_SECRETS=1 SKIP_DEPS=1 bash "$HERE/install.sh" > "$ROOT/log" 2>&1
   rc=$?
   set -e
-  [ "$rc" -eq 0 ] || { cat "$ROOT/log"; fail "default install failed (rc=$rc)"; }
+  [[ "$rc" -eq 0 ]] || { cat "$ROOT/log"; fail "default install failed (rc=$rc)"; }
   for tool in atlassian-credentials.mts atlassian-cli-args.mts confluence-contract.mts confluence-content.mts confluence-session.mts \
     confluence-related.mts confluence-text-search.mts confluence-semantic.mts confluence-neighbours.mts confluence-neighbour-cli.mts \
     confluence-topic-query.mts confluence-candidates.mts confluence-stitch.mts confluence-list-cli.mts \
@@ -464,7 +464,7 @@ test_default_confluence_brokers() {
     same "$HERE/../modules/atl-jira-brokers/$tool" "$W/tools/$tool"
   done
   for tool in atl-jira.mts atl-jira-ccoder.mts jira-adf.mts jira-config.mts; do
-    [ ! -e "$W/tools/$tool" ] || fail "default install projected the optional helper $tool"
+    [[ ! -e "$W/tools/$tool" ]] || fail "default install projected the optional helper $tool"
   done
   grep -qF "<confluence.json broker> create" "$C/agents/claude-obs.md" ||
     fail "installed claude-obs.md lacks the stored-broker invocation"
@@ -501,7 +501,7 @@ test_model_policy() {
   }
   set +e; KHEREP_ALLOWED_MODELS=haiku,sonnet,opus KHEREP_AGENT_MODEL_POLICY='{"kherep-builder":"opus"}' policy_install > "$ROOT/log" 2>&1
   rc=$?; set -e
-  [ "$rc" -eq 0 ] || { cat "$ROOT/log"; fail "model policy migration install failed (rc=$rc)"; }
+  [[ "$rc" -eq 0 ]] || { cat "$ROOT/log"; fail "model policy migration install failed (rc=$rc)"; }
   grep -q 'model policy: captured agents.claude-obs.effort = low from the edited agents/claude-obs.md' "$ROOT/log" ||
     fail "the edited frontmatter effort was not captured"
   grep -q 'model policy: captured agents.kherep-builder.model = opus from KHEREP_AGENT_MODEL_POLICY' "$ROOT/log" ||
@@ -520,7 +520,7 @@ test_model_policy() {
 
   printf '%s\n' '{ "agents": { "claude-obs": { "model": "sonnet" } } }' > "$user"; cp "$user" "$ROOT/user.before"
   set +e; policy_install > "$ROOT/log2" 2>&1; rc=$?; set -e
-  [ "$rc" -eq 0 ] || { cat "$ROOT/log2"; fail "reinstall with a user override failed (rc=$rc)"; }
+  [[ "$rc" -eq 0 ]] || { cat "$ROOT/log2"; fail "reinstall with a user override failed (rc=$rc)"; }
   same "$user" "$ROOT/user.before"
   ! grep -q 'model policy: captured' "$ROOT/log2" || fail "the migration ran a second time"
   grep -qx 'model: sonnet' "$C/agents/claude-obs.md" && grep -qx 'effort: medium' "$C/agents/claude-obs.md" ||
@@ -534,17 +534,17 @@ test_model_policy() {
   grep -q '^ok *agents/kherep-builder.md$' "$ROOT/drift.log" || fail "the deprecated environment reached the drift render"
 
   set +e; KHEREP_BOOTSTRAP_TEST_FAIL_AFTER_LABEL='hooks/deploy-guard.mts' policy_install > "$ROOT/log3" 2>&1; rc=$?; set -e
-  [ "$rc" -ne 0 ] && [ -f "$(latest "$H")/ROLLED-BACK" ] || fail "the injected failure was not rolled back"
+  [[ "$rc" -ne 0 ]] && [[ -f "$(latest "$H")/ROLLED-BACK" ]] || fail "the injected failure was not rolled back"
   same "$user" "$ROOT/user.before"
 
   printf '{ "agents": { "claude-obs": { "tools": "Bash" } } }\n' > "$user"; cp "$user" "$ROOT/user.before"
   backups="$(ls -d "$C"/backups/bootstrap/install-* | wc -l)"
   set +e; policy_install > "$ROOT/log4" 2>&1; rc=$?; set -e
-  [ "$rc" -ne 0 ] || fail "an install with an invalid user override succeeded"
+  [[ "$rc" -ne 0 ]] || fail "an install with an invalid user override succeeded"
   grep -q 'FATAL: model policy .*model-policy.user.json, key agents.claude-obs.tools:' "$ROOT/log4" ||
     { cat "$ROOT/log4"; fail "the refusal does not name the file and key"; }
   same "$user" "$ROOT/user.before"
-  [ "$(ls -d "$C"/backups/bootstrap/install-* | wc -l)" = "$backups" ] || fail "an invalid override reached the transaction"
+  [[ "$(ls -d "$C"/backups/bootstrap/install-* | wc -l)" = "$backups" ]] || fail "an invalid override reached the transaction"
 }
 
 # Kherep no longer ships the MPAC tools (#25). Hosts that installed them earlier
@@ -566,16 +566,16 @@ test_upgrade_retires_mpac() {
     KHEREP_INSTALL_SKIP_ATL_CREDENTIAL=1 SKIP_SECRETS=1 SKIP_DEPS=1 bash "$HERE/install.sh" > "$ROOT/log" 2>&1
   rc=$?
   set -e
-  [ "$rc" -eq 0 ] || { cat "$ROOT/log"; fail "upgrade install with the Atlassian switch failed (rc=$rc)"; }
+  [[ "$rc" -eq 0 ]] || { cat "$ROOT/log"; fail "upgrade install with the Atlassian switch failed (rc=$rc)"; }
   b="$(latest "$H")"
   [ "$(grep -c 'retire: KEEP' "$ROOT/log")" -eq 1 ] &&
     grep -qxF 'retire: KEEP project/tools/mpac/mpac.ps1 (content not placed by the installer)' "$ROOT/log" ||
     { cat "$ROOT/log"; fail "the upgrade did not keep the operator's mpac.ps1 with exactly one KEEP line"; }
   same "$W/tools/mpac/mpac.ps1" "$ROOT/mpac.before/mpac.ps1"
-  [ ! -e "$W/tools/mpac/_deprecated" ] && [ ! -e "$b/retired/project" ] ||
+  [[ ! -e "$W/tools/mpac/_deprecated" ]] && [[ ! -e "$b/retired/project" ]] ||
     fail "the upgrade parked or backed up workspace content it did not place"
-  [ "$(cat "$C/hooks/_deprecated/em-dash-watch.js")" = leftover ] && [ "$(cat "$b/retired/hooks/em-dash-watch.js")" = leftover ] &&
-    [ ! -e "$C/hooks/em-dash-watch.js" ] || fail "the upgrade did not park the retired Claude-home file"
+  [[ "$(cat "$C/hooks/_deprecated/em-dash-watch.js")" = "leftover" ]] && [[ "$(cat "$b/retired/hooks/em-dash-watch.js")" = "leftover" ]] &&
+    [[ ! -e "$C/hooks/em-dash-watch.js" ]] || fail "the upgrade did not park the retired Claude-home file"
   same "$HERE/../modules/atl-jira-brokers/atl-jira.mts" "$W/tools/atl-jira.mts"
   KHEREP_INSTALL_ATLASSIAN_TOOLS=1 HOME="$H" CLAUDE_HOME="$C" KHEREP_PROFILE=win KHEREP_WORKSPACE="$W" \
     KHEREP_CREDENTIALS_ROOT="$R" bash "$HERE/drift-check.sh" > "$ROOT/drift.log" 2>&1 ||
@@ -591,7 +591,7 @@ test_upgrade_retires_mpac() {
   KHEREP_INSTALL_ATLASSIAN_TOOLS=1 HOME="$H" CLAUDE_HOME="$C" KHEREP_PROFILE=win KHEREP_WORKSPACE="$W" \
     KHEREP_CREDENTIALS_ROOT="$R" bash "$HERE/drift-check.sh" > "$ROOT/drift.log" 2>&1; rc=$?
   set -e
-  [ "$rc" -eq 0 ] && grep -qxF 'DRIFT-CHECK PASS (repo == live)' "$ROOT/drift.log" ||
+  [[ "$rc" -eq 0 ]] && grep -qxF 'DRIFT-CHECK PASS (repo == live)' "$ROOT/drift.log" ||
     { cat "$ROOT/drift.log"; fail "drift-check treated live retired paths as drift (rc=$rc)"; }
   grep -q '^RETIRED-LIVE  project/tools/mpac/mpac\.ps1 ' "$ROOT/drift.log" &&
     grep -q '^RETIRED-LIVE  hooks/em-dash-watch\.js ' "$ROOT/drift.log" &&
@@ -601,7 +601,7 @@ test_upgrade_retires_mpac() {
   DRIFT_SCOPE=project KHEREP_INSTALL_ATLASSIAN_TOOLS=1 HOME="$H" CLAUDE_HOME="$C" KHEREP_PROFILE=win \
     KHEREP_WORKSPACE="$W" KHEREP_CREDENTIALS_ROOT="$R" bash "$HERE/drift-check.sh" > "$ROOT/drift.log" 2>&1; rc=$?
   set -e
-  [ "$rc" -eq 0 ] && grep -qxF 'DRIFT-CHECK PASS (repo == live)' "$ROOT/drift.log" &&
+  [[ "$rc" -eq 0 ]] && grep -qxF 'DRIFT-CHECK PASS (repo == live)' "$ROOT/drift.log" &&
     grep -q '^RETIRED-LIVE  project/tools/mpac/mpac\.ps1 ' "$ROOT/drift.log" &&
     ! grep -q 'RETIRED-LIVE  hooks/' "$ROOT/drift.log" ||
     { cat "$ROOT/drift.log"; fail "project-scope drift-check did not limit RETIRED-LIVE to workspace entries"; }
@@ -625,12 +625,12 @@ test_upgrade_retires_js_hooks() {
     KHEREP_INSTALL_SKIP_ATL_CREDENTIAL=1 SKIP_SECRETS=1 SKIP_DEPS=1 bash "$HERE/install.sh" > "$ROOT/log" 2>&1
   rc=$?
   set -e
-  [ "$rc" -eq 0 ] || { cat "$ROOT/log"; fail "upgrade install over .js hooks failed (rc=$rc)"; }
+  [[ "$rc" -eq 0 ]] || { cat "$ROOT/log"; fail "upgrade install over .js hooks failed (rc=$rc)"; }
   b="$(latest "$H")"
   for name in clq-accept-gate live-hook-integrity; do
-    [ ! -e "$C/hooks/$name.js" ] || fail "the retired $name.js stayed at its live path"
-    [ "$(cat "$C/hooks/_deprecated/$name.js")" = old-js-hook ] || fail "$name.js was not parked in hooks/_deprecated"
-    [ "$(cat "$b/retired/hooks/$name.js")" = old-js-hook ] || fail "$name.js was not backed up by the transaction"
+    [[ ! -e "$C/hooks/$name.js" ]] || fail "the retired $name.js stayed at its live path"
+    [[ "$(cat "$C/hooks/_deprecated/$name.js")" = "old-js-hook" ]] || fail "$name.js was not parked in hooks/_deprecated"
+    [[ "$(cat "$b/retired/hooks/$name.js")" = "old-js-hook" ]] || fail "$name.js was not backed up by the transaction"
     same "$HERE/../claude/hooks/$name.mts" "$C/hooks/$name.mts"
   done
   node -e '
@@ -685,10 +685,10 @@ JSON
       bash "$HERE/drift-check.sh" > "$ROOT/drift.log" 2>&1
   }
   set +e; legacy_install settings.json > "$ROOT/log" 2>&1; rc=$?; set -e
-  [ "$rc" -ne 0 ] || fail "an install failing after settings.json returned success"
+  [[ "$rc" -ne 0 ]] || fail "an install failing after settings.json returned success"
   same "$C/settings.json" "$ROOT/settings.before"
   set +e; legacy_install > "$ROOT/log" 2>&1; rc=$?; set -e
-  [ "$rc" -eq 0 ] || { cat "$ROOT/log"; fail "upgrade install over legacy hook groups failed (rc=$rc)"; }
+  [[ "$rc" -eq 0 ]] || { cat "$ROOT/log"; fail "upgrade install over legacy hook groups failed (rc=$rc)"; }
   [ "$(grep -c '^retire: unwire ' "$ROOT/log")" -eq 3 ] &&
     grep -qxF 'retire: unwire SessionStart node ~/.claude/hooks/live-hook-integrity.js' "$ROOT/log" &&
     grep -qxF 'retire: unwire SessionStart node "$HOME/.claude/hooks/orchestra-default.js"' "$ROOT/log" &&
@@ -719,7 +719,7 @@ JSON
     fs.writeFileSync(file, JSON.stringify(s, null, 2) + "\n");
   ' "$C/settings.json"
   set +e; legacy_drift; rc=$?; set -e
-  [ "$rc" -eq 1 ] && grep -qxF 'DANGLING-HOOK UserPromptSubmit node ~/.claude/hooks/no-such-hook.mts' "$ROOT/drift.log" &&
+  [[ "$rc" -eq 1 ]] && grep -qxF 'DANGLING-HOOK UserPromptSubmit node ~/.claude/hooks/no-such-hook.mts' "$ROOT/drift.log" &&
     grep -qxF 'DRIFT-CHECK FOUND DRIFT (see above)' "$ROOT/drift.log" && ! grep -q '^DRIFT  ' "$ROOT/drift.log" ||
     { cat "$ROOT/drift.log"; fail "drift-check did not fail on a wired hook whose script is missing (rc=$rc)"; }
   # Review of #254: the user settings are checked under every DRIFT_SCOPE.
@@ -727,11 +727,11 @@ JSON
   DRIFT_SCOPE=project HOME="$H" CLAUDE_HOME="$C" KHEREP_PROFILE=win KHEREP_WORKSPACE="$W" KHEREP_CREDENTIALS_ROOT="$R" \
     bash "$HERE/drift-check.sh" > "$ROOT/drift.log" 2>&1; rc=$?
   set -e
-  [ "$rc" -eq 1 ] && grep -qxF 'DANGLING-HOOK UserPromptSubmit node ~/.claude/hooks/no-such-hook.mts' "$ROOT/drift.log" ||
+  [[ "$rc" -eq 1 ]] && grep -qxF 'DANGLING-HOOK UserPromptSubmit node ~/.claude/hooks/no-such-hook.mts' "$ROOT/drift.log" ||
     { cat "$ROOT/drift.log"; fail "project-scope drift-check missed a dangling user-settings hook (rc=$rc)"; }
   cp "$ROOT/settings.before" "$C/settings.json"
   set +e; legacy_drift; rc=$?; set -e
-  [ "$rc" -eq 1 ] && grep -qxF 'DANGLING-HOOK Stop node ~/.claude/hooks/clq-accept-gate.js' "$ROOT/drift.log" &&
+  [[ "$rc" -eq 1 ]] && grep -qxF 'DANGLING-HOOK Stop node ~/.claude/hooks/clq-accept-gate.js' "$ROOT/drift.log" &&
     grep -qxF 'DANGLING-HOOK SessionStart node ~/.claude/hooks/live-hook-integrity.js' "$ROOT/drift.log" &&
     ! grep -q '^DANGLING-HOOK .*host-guard' "$ROOT/drift.log" &&
     ! grep -q '^DANGLING-HOOK .*own/check' "$ROOT/drift.log" ||
@@ -761,7 +761,7 @@ test_upgrade_moves_clq_to_stop() {
     KHEREP_INSTALL_SKIP_ATL_CREDENTIAL=1 SKIP_SECRETS=1 SKIP_DEPS=1 bash "$HERE/install.sh" > "$ROOT/log" 2>&1
   rc=$?
   set -e
-  [ "$rc" -eq 0 ] || { cat "$ROOT/log"; fail "upgrade install over a PreToolUse clq entry failed (rc=$rc)"; }
+  [[ "$rc" -eq 0 ]] || { cat "$ROOT/log"; fail "upgrade install over a PreToolUse clq entry failed (rc=$rc)"; }
   grep -q '^hooks: unwire PreToolUse node ".*hooks/clq-accept-gate\.mts" (managed under Stop)$' "$ROOT/log" ||
     { cat "$ROOT/log"; fail "the install did not report moving clq-accept-gate off PreToolUse"; }
   node -e '
@@ -827,7 +827,7 @@ test_upgrade_retires_guard_js_hooks() {
     KHEREP_INSTALL_SKIP_ATL_CREDENTIAL=1 SKIP_SECRETS=1 SKIP_DEPS=1 bash "$HERE/install.sh" > "$ROOT/log" 2>&1
   rc=$?
   set -e
-  [ "$rc" -eq 0 ] || { cat "$ROOT/log"; fail "upgrade install over the .js guards failed (rc=$rc)"; }
+  [[ "$rc" -eq 0 ]] || { cat "$ROOT/log"; fail "upgrade install over the .js guards failed (rc=$rc)"; }
   # Six managed and four legacy commands, one line each (two legacy groups ran privacy-boundary-guard.js).
   [ "$(grep -c '^retire: unwire PreToolUse ' "$ROOT/log")" -eq 10 ] &&
     [ "$(grep -c '^retire: unwire PreToolUse node ".*/hooks/[a-z-]*-guard\.js"$' "$ROOT/log")" -eq 6 ] &&
@@ -837,9 +837,9 @@ test_upgrade_retires_guard_js_hooks() {
     { cat "$ROOT/log"; fail "the install did not report exactly the ten unwired guard commands"; }
   b="$(latest "$H")"
   for name in $guards; do
-    [ ! -e "$C/hooks/$name.js" ] || fail "the retired $name.js stayed at its live path"
-    [ "$(cat "$C/hooks/_deprecated/$name.js")" = old-js-guard ] || fail "$name.js was not parked in hooks/_deprecated"
-    [ "$(cat "$b/retired/hooks/$name.js")" = old-js-guard ] || fail "$name.js was not backed up by the transaction"
+    [[ ! -e "$C/hooks/$name.js" ]] || fail "the retired $name.js stayed at its live path"
+    [[ "$(cat "$C/hooks/_deprecated/$name.js")" = "old-js-guard" ]] || fail "$name.js was not parked in hooks/_deprecated"
+    [[ "$(cat "$b/retired/hooks/$name.js")" = "old-js-guard" ]] || fail "$name.js was not backed up by the transaction"
     same "$HERE/../claude/hooks/$name.mts" "$C/hooks/$name.mts"
   done
   node -e '
@@ -907,11 +907,11 @@ JS
     KHEREP_CLAUDE_BIN="$ROOT/no-such-claude" bash "$HERE/install.sh" > "$ROOT/log" 2>&1
   rc=$?
   set -e
-  [ -f "$ROOT/kherep-config/term-sent" ] || { cat "$ROOT/log"; fail "the fake npm never saw the Claude probe lock"; }
-  [ "$rc" -eq 143 ] || { cat "$ROOT/log"; fail "a TERM during the deps phase did not exit 143 (rc=$rc)"; }
-  [ ! -e "$ROOT/kherep-config/control-plane/install.lock" ] || fail "the EXIT trap left the Claude probe lock behind"
+  [[ -f "$ROOT/kherep-config/term-sent" ]] || { cat "$ROOT/log"; fail "the fake npm never saw the Claude probe lock"; }
+  [[ "$rc" -eq 143 ]] || { cat "$ROOT/log"; fail "a TERM during the deps phase did not exit 143 (rc=$rc)"; }
+  [[ ! -e "$ROOT/kherep-config/control-plane/install.lock" ]] || fail "the EXIT trap left the Claude probe lock behind"
   ! grep -q 'install: claude ready\|install: claude probe' "$ROOT/log" || fail "a terminated install still ran the readiness check"
-  [ ! -e "$C/backups/bootstrap/.install.lock" ] || fail "the terminated install kept the bootstrap lock"
+  [[ ! -e "$C/backups/bootstrap/.install.lock" ]] || fail "the terminated install kept the bootstrap lock"
 }
 
 # OP-1085: the deps phase runs AFTER the commit and must not be able to undo an
@@ -974,22 +974,22 @@ JS
     KHEREP_CLAUDE_BIN="$ROOT/no-such-claude" bash "$HERE/install.sh" > "$ROOT/log" 2>&1
   rc=$?
   set -e
-  [ "$rc" -eq 1 ] || fail "failing deps phase did not exit 1 (rc=$rc)"
+  [[ "$rc" -eq 1 ]] || fail "failing deps phase did not exit 1 (rc=$rc)"
   grep -q 'npm-globals: supergateway install (pinned' "$ROOT/log" || fail "manifest pin was not enforced"
   grep -q 'npm-globals: supergateway FAILED' "$ROOT/log" || fail "fake npm EEXIST was not reported"
   grep -q 'install: DONE WITH ERRORS' "$ROOT/log" || fail "failing deps phase lacks the DONE WITH ERRORS verdict"
-  [ -f "$ROOT/kherep-config/pause-seen" ] || fail "the deps phase ran without the node's Claude probe lock"
-  [ ! -e "$ROOT/kherep-config/control-plane/install.lock" ] || fail "the install left the Claude probe lock behind"
+  [[ -f "$ROOT/kherep-config/pause-seen" ]] || fail "the deps phase ran without the node's Claude probe lock"
+  [[ ! -e "$ROOT/kherep-config/control-plane/install.lock" ]] || fail "the install left the Claude probe lock behind"
   grep -q 'install: claude sign-in status unreadable before the deps phase' "$ROOT/log" || fail "the sign-in pre-check did not run"
   grep -q 'install: claude probe inconclusive' "$ROOT/log" || fail "the end-of-install Claude readiness check did not run"
   grep -q "install: git core.hooksPath -> $C/kherep/githooks" "$ROOT/log" ||
     fail "gitconfig phase was skipped after the deps failure"
-  [ ! -e "$GIT_CONFIG_SYSTEM" ] || fail "an install without KHEREP_INSTALL_SYSTEM_HOOKSPATH=1 wrote the system scope"
+  [[ ! -e "$GIT_CONFIG_SYSTEM" ]] || fail "an install without KHEREP_INSTALL_SYSTEM_HOOKSPATH=1 wrote the system scope"
   b="$(latest "$H")"
-  [ -f "$b/COMMITTED" ] || fail "deps failure left the transaction uncommitted"
-  [ ! -e "$b/ROLLED-BACK" ] && [ ! -e "$b/ACTIVE" ] || fail "deps failure rolled the managed files back"
+  [[ -f "$b/COMMITTED" ]] || fail "deps failure left the transaction uncommitted"
+  [[ ! -e "$b/ROLLED-BACK" ]] && [[ ! -e "$b/ACTIVE" ]] || fail "deps failure rolled the managed files back"
   ! compgen -G "$C/backups/bootstrap/preflight-*" >/dev/null || fail "deps failure left the preflight behind"
-  [ ! -e "$C/backups/bootstrap/.install.lock" ] || fail "deps failure kept the install lock"
+  [[ ! -e "$C/backups/bootstrap/.install.lock" ]] || fail "deps failure kept the install lock"
   cmp "$C/statusline-command.sh" "$HERE/../claude/statusline-command.sh" >/dev/null ||
     fail "deps failure did not leave the managed file installed"
   # Issue #436: the install rendered the intercom command for this config root,
