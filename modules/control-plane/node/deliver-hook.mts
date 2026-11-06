@@ -11,9 +11,10 @@ import { CODEX_FORK_ENV, deliverForCodex } from "./deliver-codex.mts";
 import {
   contextOutput, deliveryContext, RECORD_LOCK_BUDGET_MS, retryOffered, sessionInbox, type HookDeps,
 } from "./deliver-core.mts";
-import { midTurnOutput } from "./deliver-midturn.mts";
+import { midTurnOutput, withMidTurnLock } from "./deliver-midturn.mts";
 import { localSessionName } from "./exchange.mts";
 import { withRecordLockBudget } from "./inbox-record-lock.mts";
+import { appendRenameHint, renameOwner } from "./rename-notices.mts";
 import { nodeWakeBudget } from "./policy.mts";
 import { claimWake } from "./wake-pending.mts";
 
@@ -77,7 +78,13 @@ export function deliverForHook(input: unknown, deps: HookDeps): string {
   } else if (claimWake(deps.paths, sessionId, now)) {
     gated = { ...deps, offeredBy: "wake" };
   }
-  return contextOutput(event, deliveryContext(event, refs, { ...gated, owner: { sessionId, runtime: "claude-code" } }));
+  let context = deliveryContext(event, refs, { ...gated, owner: { sessionId, runtime: "claude-code" } });
+  const owner = event === "UserPromptSubmit" ? renameOwner(fields) : undefined;
+  if (owner) {
+    try { context = withMidTurnLock(deps.paths, owner, () => appendRenameHint(deps.paths, owner, context, deps.maxBytes)) ?? context; }
+    catch { /* Optional display work cannot suppress ordinary prompt context. */ }
+  }
+  return contextOutput(event, context);
 }
 
 // The runtime a command line names: --runtime codex, otherwise Claude Code.

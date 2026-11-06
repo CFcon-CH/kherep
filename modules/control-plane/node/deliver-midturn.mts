@@ -5,6 +5,7 @@ import { bypassesPermissions, isPlainSessionId, listenerDir } from "./autonomy.m
 import { ensureDir, type NodePaths } from "./config.mts";
 import { contextOutput, deliveryContext, sessionInbox, type HookDeps } from "./deliver-core.mts";
 import { classifyExclusiveCreate, CONTENTION_ATTEMPTS, CONTENTION_PAUSE_MS, pauseSync } from "./lock-contention.mts";
+import { appendRenameHint, renameOwner } from "./rename-notices.mts";
 import { unnoticedNotices } from "./sent-notices.mts";
 
 // Claude Code PostToolUse delivery inside a running turn (issue #388). From
@@ -28,7 +29,7 @@ export const midTurnLock = (paths: NodePaths, sessionId: string): string =>
 // with EPERM, EACCES or EBUSY (Windows delete pending, issue #602) is retried
 // up to CONTENTION_ATTEMPTS times without using one of the two EEXIST attempts
 // and is never taken for a stale lock.
-function withMidTurnLock(paths: NodePaths, sessionId: string, body: () => string): string | undefined {
+export function withMidTurnLock(paths: NodePaths, sessionId: string, body: () => string): string | undefined {
   const lock = midTurnLock(paths, sessionId);
   ensureDir(listenerDir(paths));
   let transient = 0;
@@ -77,12 +78,15 @@ function withMidTurnLock(paths: NodePaths, sessionId: string, body: () => string
 
 export function midTurnOutput(input: Record<string, unknown>, sessionId: string, refs: string[], deps: HookDeps): string {
   if (Object.hasOwn(input, "agent_id") || !isPlainSessionId(sessionId) || bypassesPermissions(input.permission_mode)) return "";
-  // Every tool call runs this: leave without a lock or directory when nothing
-  // waits and no failure or receipt notice is due.
+  // Valid rename owners also compare their disposable display snapshot.
+  const owner = renameOwner(input);
   const waiting = sessionInbox(deps.paths, refs, { sessionId, runtime: "claude-code" }).some((record) => record.state === "accepted");
   // One read of sent/ per call: deliveryContext rechecks only these records.
   const notices = waiting ? undefined : unnoticedNotices(deps.paths, refs, deps.now?.() ?? Date.now());
-  if (notices && notices.failures.length === 0 && notices.receipts.length === 0) return "";
+  if (!owner && notices && notices.failures.length === 0 && notices.receipts.length === 0) return "";
   const call: HookDeps = { ...deps, ...(notices ? { notices } : {}), owner: { sessionId, runtime: "claude-code" } };
-  return withMidTurnLock(deps.paths, sessionId, () => contextOutput("PostToolUse", deliveryContext("PostToolUse", refs, call))) ?? "";
+  return withMidTurnLock(deps.paths, owner ?? sessionId, () => {
+    const context = deliveryContext("PostToolUse", refs, call);
+    return contextOutput("PostToolUse", owner ? appendRenameHint(deps.paths, owner, context, deps.maxBytes) : context);
+  }) ?? "";
 }

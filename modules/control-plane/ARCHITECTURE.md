@@ -950,8 +950,8 @@ flowchart LR
 
 A call carrying `agent_id` (subagent or in-process teammate, which share the
 session id) or permission mode `bypassPermissions` gets nothing; those records
-wait for the next prompt. A call with no accepted record and no unnoticed send
-failure or receipt leaves without a lock or a write. Otherwise an exclusive per-session
+wait for the next prompt. A call without a valid rename owner, accepted record or unnoticed send
+failure/receipt leaves without a lock or write. Otherwise an exclusive per-session
 lock (`listeners/<session_id>.deliver.lock`, stale after 5 seconds) serialises
 the concurrent `PostToolUse` calls of parallel tools. A create of that lock
 failing with EPERM, EACCES or EBUSY (Windows delete pending, issue #602) is
@@ -1621,4 +1621,20 @@ cause reconstruction, new identifiers or message content is added.
 
 `wake-bindings.mts` is the single pure selector. The Claude wake hook and delivery progress call it directly with the captured validated view; the shared policy parser and staged MCP graph retain their original interface and closure. Authorization target and refreshed delivery aliases stay separate. Actual accepted identity/lifecycle vetoes update independently of policy binding commits; partial data cannot clear vetoes or bind. UNKNOWN availability or missing labels/proof alone is not contradiction, and labels establish no liveness or permission. Async version checks and existing task/reply, launch, permission and budget gates remain.
 
-This stage contains no event feed, remote rename reducer, cursors or automatic notices. Those follow in a separate change and #828 stays open. `doctor` readiness and Codex sessions still use the original policy check. Native acceptance is outstanding.
+The binding stage contains no event feed, remote rename reducer or cursors. The display snapshots below are separate from binding authority, and #828 stays open. `doctor` readiness and Codex sessions still use the original policy check. Native acceptance is outstanding.
+
+### Claude rename display snapshots (#828)
+
+`rename-notices.mts` uses stored local sessions and authenticated Directory data
+inside existing prompt/tool hooks under the existing owner lock. A validated
+Claude owner keeps one bounded node/ID-to-name snapshot. New IDs seed silently;
+conflicting duplicates are dropped, local rows override same-node Directory echoes,
+and self is excluded. JSON-quoted names are bounded and reject Unicode controls.
+Up to five fixed rename data lines per output share the existing UTF-8 budget,
+after peer context; omitted valid changes get a fixed count summary if it fits.
+Atomic replacement remembers every current valid name before output and prunes
+absent IDs. Missing/corrupt display cache resets silently, never authority state.
+Limits, cache/output failures and unobserved changes can lose hints permanently.
+There is no counter, Stop operation, retry, backlog, new message or autonomous turn.
+`msg sessions` remains the current lookup. Source tests do not prove installed
+host delivery or consumer comprehension; broader #828 acceptance remains open.

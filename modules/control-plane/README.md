@@ -1233,4 +1233,20 @@ A pinned name selects its stored runtime and full ID through rename. Reusing tha
 
 A received incomplete snapshot immediately disables unbound fallback; partial evidence can add or retain actual vetoes but cannot clear them or bind. A thrown listing failure changes no state or freshness. After partial invalidation, unreadable policy keeps fallback disabled until policy is readable. `session-labels.json` stores bounded bindings, local label revisions, known-token history and accepted generations. It is scoped to node identity and policy path, with a witness in `sessions.json` written before first authority exposure. Known missing/corrupt/mismatched history fails closed. Simultaneous whole-state loss across restart or rollback remains undetectable; no recovery/reset API is supplied.
 
-Automatic rename notifications, remote rename diffs and notice history follow in a separate change, and #828 stays open. Ordinary Directory/session listing retains its existing behavior and live authenticated admission. `doctor` readiness and Codex sessions still use the original policy check, so they can disagree with the wake hook for a renamed session whose name is the only listed token. Native acceptance on the supported platforms is outstanding.
+Existing Claude `UserPromptSubmit` and `PostToolUse` hooks compare stored local
+sessions and the already authenticated cached Directory for rename display hints.
+First sight seeds silently; later changes use fixed node/full-ID/JSON-quoted
+old/new data lines. Self, subagents, bypass mode and non-Claude rows are excluded.
+Each hook output permits at most five rename lines, then
+`and N more, see msg sessions` for omitted valid changes when byte room permits. Peer context has
+priority within the existing UTF-8 budget. `msg sessions` remains the current lookup.
+
+One disposable `rename-notices/<owner-UUID>.json` snapshot remembers the entire
+bounded current projection before output, including omitted changes. Absent IDs
+are pruned; missing/corrupt cache restarts silently. Inactivity, incomplete
+metadata, A-B-A between snapshots, byte/line limits, cache failures and lost stdout
+can lose hints. There is no delivery, native-turn or comprehension guarantee,
+retry, pending history, confirmation, message or wake. Stop/StopFailure do no rename
+cache work. Binding authority and all wake gates remain unchanged; #828 stays open.
+
+Ordinary Directory/session listing retains its existing behavior and live authenticated admission. `doctor` readiness and Codex sessions still use the original policy check, so they can disagree with the wake hook for a renamed session whose name is the only listed token. Native acceptance on the supported platforms is outstanding.
