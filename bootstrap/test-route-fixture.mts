@@ -8,6 +8,7 @@ import os from "node:os";
 import path from "node:path";
 import { type TestContext } from "node:test";
 
+import { findTrustedExecutable } from "../claude/hooks/lib/trusted-executable.mts";
 import { SANDBOX_MARKERS } from "./test-route-compare.mts";
 
 const ROUTE = path.join(import.meta.dirname, "test-route.mts");
@@ -16,7 +17,8 @@ const LOCK = JSON.stringify({ name: "fx", lockfileVersion: 3, requires: true, pa
 
 export const HEADER = `import { test } from "node:test";\n`;
 export const KNOWN = `${HEADER}test("passes", () => {});\ntest("known symlink", () => { throw new Error("x"); });\n`;
-export const hasGit = spawnSync("git", ["--version"]).status === 0;
+export const GIT = findTrustedExecutable("git");
+export const hasGit = GIT !== null && spawnSync(GIT, ["--version"]).status === 0;
 
 export type Files = Record<string, string | null>;
 
@@ -36,8 +38,9 @@ function write(dir: string, files: Files): void {
 }
 
 export function git(dir: string, ...args: string[]): string {
+  if (!GIT) throw new Error("git not found on an absolute PATH entry");
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^GIT_/i.test(key)));
-  const done = spawnSync("git", ["-c", "user.name=fx", "-c", "user.email=fx@example.invalid", "-c", "commit.gpgsign=false", ...args], { cwd: dir, encoding: "utf8", env });
+  const done = spawnSync(GIT, ["-c", "user.name=fx", "-c", "user.email=fx@example.invalid", "-c", "commit.gpgsign=false", ...args], { cwd: dir, encoding: "utf8", env });
   assert.equal(done.status, 0, done.stderr);
   return done.stdout.trim();
 }
@@ -56,20 +59,33 @@ export function gitRepo(t: TestContext, base: Files = {}, candidate: Files = {})
   return dir;
 }
 
-export function route(args: string[], env: Record<string, string> = {}) {
+// All three spellings: Windows reads TEMP then TMP, POSIX reads TMPDIR.
+export const tempVars = (dir: string) => ({ TMP: dir, TEMP: dir, TMPDIR: dir });
+
+function route(args: string[], env: Record<string, string>, cwd: string) {
   const clean: NodeJS.ProcessEnv = { ...process.env };
   for (const marker of SANDBOX_MARKERS) delete clean[marker];
-  return spawnSync(process.execPath, [ROUTE, ...args], { encoding: "utf8", env: { ...clean, ...env } });
+  // Other spellings of these keys would compete with the ones set below.
+  for (const key of Object.keys(clean)) if (/^(?:TMP|TEMP|TMPDIR)$/i.test(key)) delete clean[key];
+  return spawnSync(process.execPath, [ROUTE, ...args], { cwd, encoding: "utf8", env: { ...clean, ...env } });
 }
 
-export function readReceipt(out: string) {
+function readReceipt(out: string) {
   const file = path.join(out, "receipt.json");
   return fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : null;
 }
 
+// The route in `cwd`, with a temp folder of its own. `out` and `receipt` come from the path it
+// printed, and are null when it refused before making a directory. `env` overrides.
+export function routeIn(t: TestContext, cwd: string, args: string[], env: Record<string, string> = {}) {
+  const tmp = tempDir(t);
+  const run = route(args, { ...tempVars(tmp), ...env }, cwd);
+  const printed = /^test-route: receipt (.+)$/m.exec(run.stdout)?.[1];
+  const out = printed ? path.dirname(printed) : null;
+  return { run, tmp, out, receipt: out && readReceipt(out) };
+}
+
 // The route on the fixture suite, `--base HEAD~1`, without the type check. `extra` overrides.
 export function onCommits(t: TestContext, repo: string, extra: string[] = [], env: Record<string, string> = {}) {
-  const out = path.join(tempDir(t), "out");
-  const run = route(["--candidate", repo, "--base", "HEAD~1", "--no-typecheck", "--suites", "fixture", "--out", out, ...extra], env);
-  return { run, out, receipt: readReceipt(out) };
+  return routeIn(t, repo, ["--base", "HEAD~1", "--no-typecheck", "--suites", "fixture", ...extra], env);
 }

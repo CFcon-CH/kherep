@@ -32,6 +32,19 @@ function suiteOf(name: string, script: string): Suite {
   return suite;
 }
 
+// A copy of `value` built only from characters of `charset`, or null when a character is not in it.
+export function fromCharset(value: string, charset: string): string | null {
+  let built = "";
+  for (const ch of value) {
+    const at = charset.indexOf(ch);
+    if (at < 0) return null;
+    built += charset[at];
+  }
+  return built;
+}
+export const REF_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._/~^@{}-";
+export const SUITE_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-";
+
 // A suite is a test:<name> script of the form `node --test [flags] "<dir>/*.test.mts"...`, byte-equal
 // in the base and the candidate. Any other form is refused, as in the run guard.
 export function suitesFromPackage(baseText: string, candidateText: string, names: string[]): Suite[] {

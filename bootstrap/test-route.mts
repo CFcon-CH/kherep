@@ -3,8 +3,10 @@
 // and on a temporary shared clone of a base ref, outside the Codex sandbox, with Git for Windows
 // first on the tests' PATH.
 //
-//   npm run test:route -- --base <ref> [--suites a,b] [--no-typecheck]
-//                         [--candidate <dir>] [--work-dir <dir>] [--out <dir>] [--suite-timeout <minutes>]
+//   npm run test:route -- --base <ref> [--suites a,b] [--no-typecheck] [--suite-timeout <minutes>]
+//
+// Run it inside the candidate checkout. Receipt: <tmp>/kherep-test-route/<stamp>-<head>-<random>/receipt.json,
+// printed as `test-route: receipt <path>`.
 //
 // Exit 0: every test that passed on the base passed on the candidate, no test failed only there, the
 // known failures stayed under the ceiling, and the candidate did not change. Exit 1: a test failed
@@ -21,17 +23,14 @@ import { errorMessage } from "./shape.mts";
 import { prepareBase, runLogged, say, type BaseTree } from "./test-route-base.mts";
 import { candidateIdentity, gitText, protectedRoots, refuseInside, sameBlob, sameIdentity, type Identity } from "./test-route-candidate.mts";
 import {
-  cpuBusyPct, gitBashDir, sandboxMarkers, scrubEnv, selectedFiles, suitesFromPackage, withPathFirst, type RunResult, type Suite,
+  cpuBusyPct, fromCharset, gitBashDir, REF_CHARS, sandboxMarkers, scrubEnv, selectedFiles, SUITE_CHARS, suitesFromPackage, withPathFirst, type RunResult, type Suite,
 } from "./test-route-compare.mts";
 import { nodeOutcome, overallVerdict, suiteVerdict, tscOutcome, unfinished, type Outcome } from "./test-route-proof.mts";
 
 const DEFAULT_SUITES = "control-plane,bootstrap";
 const MISSING_SHOWN = 20;
 
-interface Options {
-  candidate: string; base: string; suites: string[]; typecheck: boolean;
-  workDir: string | null; out: string | null; timeoutMs: number;
-}
+interface Options { candidate: string; base: string; suites: string[]; typecheck: boolean; timeoutMs: number }
 interface Measured extends Outcome { exit: number | null; killed: boolean; durationMs: number }
 interface Context { timeoutMs: number; env: NodeJS.ProcessEnv; out: string; base: BaseTree }
 
@@ -41,20 +40,27 @@ function suiteTimeoutMinutes(text: string): number {
   return value;
 }
 
+function suiteNames(list: string): string[] {
+  const names: string[] = [];
+  for (const entry of list.split(",")) {
+    const name = fromCharset(entry.trim(), SUITE_CHARS);
+    if (name === null) throw new Error(`--suites: name not understood: ${entry}`);
+    if (name && name !== "typecheck") names.push(name);
+  }
+  if (!names.length) throw new Error("--suites must name at least one node --test suite");
+  return names;
+}
+
 function readOptions(args: string[]): Options {
   const { values } = parseArgs({
     args, strict: true,
-    options: {
-      base: { type: "string" }, candidate: { type: "string" }, suites: { type: "string" }, "no-typecheck": { type: "boolean" },
-      "work-dir": { type: "string" }, out: { type: "string" }, "suite-timeout": { type: "string" },
-    },
+    options: { base: { type: "string" }, suites: { type: "string" }, "no-typecheck": { type: "boolean" }, "suite-timeout": { type: "string" } },
   });
   if (!values.base) throw new Error("name the base: --base <ref> is required");
-  const suites = (values.suites ?? DEFAULT_SUITES).split(",").map((name) => name.trim()).filter((name) => name && name !== "typecheck");
-  if (!suites.length) throw new Error("--suites must name at least one node --test suite");
+  const base = fromCharset(values.base, REF_CHARS);
+  if (!base || base.startsWith("-")) throw new Error(`--base must be a ref of letters, digits and ._/~^@{}- not starting with -: ${values.base}`);
   return {
-    candidate: path.resolve(values.candidate ?? process.cwd()), base: values.base, suites, typecheck: !values["no-typecheck"],
-    workDir: values["work-dir"] ? path.resolve(values["work-dir"]) : null, out: values.out ? path.resolve(values.out) : null,
+    candidate: process.cwd(), base, suites: suiteNames(values.suites ?? DEFAULT_SUITES), typecheck: !values["no-typecheck"],
     timeoutMs: suiteTimeoutMinutes(values["suite-timeout"] ?? "60") * 60_000,
   };
 }
@@ -156,7 +162,7 @@ function prove(options: Options, git: string, env: NodeJS.ProcessEnv, out: strin
   const load = sampleLoad();
   say(`host ${process.platform} node ${process.version} bash ${bash ?? "as on PATH"} load cpu ${load.cpuBusyPct}% mem ${load.memFreePct}% free`);
   const testEnv = bash ? withPathFirst(env, bash, process.platform) : env;
-  const base = prepareBase({ candidate: options.candidate, ref: options.base, sha: baseSha, workDir: options.workDir, git, env: testEnv, out, timeoutMs: options.timeoutMs });
+  const base = prepareBase({ candidate: options.candidate, ref: options.base, sha: baseSha, git, env: testEnv, out, timeoutMs: options.timeoutMs });
   const context: Context = { timeoutMs: options.timeoutMs, env: testEnv, out, base };
   const results: Record<string, ReturnType<typeof concludeSuite>> = {};
   try {
@@ -196,14 +202,17 @@ function main(args: string[]): number {
   const git = findTrustedExecutable("git", { cwd: options.candidate });
   if (!git) throw new Error("git not found on an absolute PATH entry");
   const roots = protectedRoots(git, options.candidate, env);
-  if (options.workDir) refuseInside("work dir", options.workDir, roots);
-  if (options.out) refuseInside("out dir", options.out, roots);
+  const temp = os.tmpdir();
+  refuseInside("temp dir", temp, roots);
   const startedAt = new Date().toISOString();
   const head = gitText(git, options.candidate, env, "rev-parse", "HEAD");
-  const out = options.out ?? path.join(os.tmpdir(), "kherep-test-route", `${startedAt.replace(/[-:]/g, "").replace("T", "-").slice(0, 15)}-${head?.slice(0, 7) ?? "none"}`);
-  fs.mkdirSync(out, { recursive: true });
+  const parent = path.join(temp, "kherep-test-route");
+  fs.mkdirSync(parent, { recursive: true });
+  const stamp = startedAt.replace(/[-:]/g, "").replace("T", "-").slice(0, 15);
+  const out = fs.mkdtempSync(path.join(parent, `${stamp}-${head?.slice(0, 7) ?? "none"}-`));
   const receipt = path.join(out, "receipt.json");
-  writeReceipt(receipt, { verdict: "no-verdict", exitCode: 2, state: "running" }); // an earlier receipt must not outlive this run
+  writeReceipt(receipt, { verdict: "no-verdict", exitCode: 2, state: "running" });
+  say(`receipt ${receipt}`); // a refusal's VERDICT line names no receipt
   try { return prove(options, git, env, out, startedAt, receipt); }
   catch (error) {
     writeReceipt(receipt, { verdict: "no-verdict", exitCode: 2, state: "refused", reason: errorMessage(error) });

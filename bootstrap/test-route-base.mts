@@ -55,7 +55,7 @@ export function removeTree(target: string, rm: typeof fs.rmSync = fs.rmSync, sta
 }
 
 interface BaseRequest {
-  candidate: string; ref: string; sha: string; workDir: string | null; git: string; env: NodeJS.ProcessEnv; out: string; timeoutMs: number;
+  candidate: string; ref: string; sha: string; git: string; env: NodeJS.ProcessEnv; out: string; timeoutMs: number;
   rm?: typeof fs.rmSync;
 }
 
@@ -63,14 +63,12 @@ interface BaseRequest {
 // objects through alternates, so a gc in the source during the run could break it; the clone lives
 // only as long as the route. No origin: a base test cannot push into the candidate through it.
 // core.longpaths: tracked paths reach 139 characters.
-export function prepareBase({ candidate, ref, sha, workDir, git, env, out, timeoutMs, rm }: BaseRequest): BaseTree {
-  const parent = workDir ?? fs.mkdtempSync(path.join(os.tmpdir(), "kt-"));
-  fs.mkdirSync(parent, { recursive: true });
+export function prepareBase({ candidate, ref, sha, git, env, out, timeoutMs, rm }: BaseRequest): BaseTree {
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), "kt-"));
   const dir = path.join(parent, "base");
-  fs.mkdirSync(dir); // an existing directory is refused here, and never removed below
   const tree: BaseTree = {
     ref, sha, path: dir, install: "pending", cleanup: "pending",
-    remove() { tree.cleanup = removeTree(workDir ? dir : parent, rm); },
+    remove() { tree.cleanup = removeTree(parent, rm); },
   };
   const gitStep = (...args: string[]) => {
     const child = spawnSync(git, args, { encoding: "utf8", env, timeout: timeoutMs, killSignal: "SIGKILL" });
