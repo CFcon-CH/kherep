@@ -13,19 +13,31 @@ import { senderSession, sessionIdentity } from "./msg-resolve.mts";
 // external trusted source. None of these flags classifies arbitrary content.
 export const EXACT_INBOX_FLAGS = ["message-id", "expect-node", "expect-session", "expect-target-session", "expect-reply-to", "expect-text-sha256"] as const;
 const OUTPUT_BYTES = 128 * 1024;
+const MESSAGE_ID_LEAF = "0123456789abcdef-", MESSAGE_ID_DASHES = [8, 13, 18, 23], MESSAGE_ID_LENGTH = 36;
 const object = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 const timestamp = (v: unknown): v is string => typeof v === "string" && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(v)
   && Number.isFinite(Date.parse(v));
 
+// Accepts what isMessageId accepts and returns it rebuilt from MESSAGE_ID_LEAF; anything else is "". The id names the record's lock file.
+export function messageIdLeaf(value: unknown): string {
+  if (typeof value !== "string") return "";
+  let leaf = "";
+  for (const ch of value) {
+    const at = MESSAGE_ID_LEAF.indexOf(ch);
+    if (at < 0 || (ch === "-") !== MESSAGE_ID_DASHES.includes(leaf.length)) return "";
+    leaf += MESSAGE_ID_LEAF[at];
+  }
+  return leaf.length === MESSAGE_ID_LENGTH ? leaf : "";
+}
 
 export function exactInbox(io: Io, positionals: string[], values: MsgArgs["values"]): number {
   const fail = (code: string): number => { io.err(`kherep-node msg: exact-inbox-${code}`); return 1; };
-  const owner = values.from, id = values["message-id"], node = values["expect-node"], session = values["expect-session"],
+  const owner = values.from, id = messageIdLeaf(values["message-id"]), node = values["expect-node"], session = values["expect-session"],
     target = values["expect-target-session"], root = values["expect-reply-to"], hash = values["expect-text-sha256"];
   const allowed = new Set<string>(["from", ...EXACT_INBOX_FLAGS]);
   if (positionals.length !== 1 || positionals[0] !== "inbox"
     || Object.keys(values).some(key => !allowed.has(key))
-    || !isMessageId(owner) || !isMessageId(id) || !isMessageId(node) || !isSessionRef(session) || !isSessionRef(target) || !isMessageId(root)
+    || !isMessageId(owner) || !id || !isMessageId(node) || !isSessionRef(session) || !isSessionRef(target) || !isMessageId(root)
     || typeof hash !== "string" || !/^[0-9a-f]{64}$/.test(hash)) return fail("invalid-selectors");
   try {
     const verified = senderSession(io.paths, io.env, owner, io.now(), io);
