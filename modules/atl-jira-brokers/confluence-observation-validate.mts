@@ -1,6 +1,8 @@
 // Local observation-shape preflight only. Generic create deliberately does not call it.
 import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import { DIRTY_LINE, NO_BINDING_LINE, scopedRevision } from './confluence-claim-text.mts';
+import type { NeighbourCliContext } from './confluence-neighbour-cli.mts';
 
 // XML 1.0 Char and CharRef; references in comments/CDATA/PIs are literal data.
 const xmlChar = (n: number): boolean => n === 9 || n === 10 || n === 13 || (n >= 0x20 && n <= 0xd7ff)
@@ -159,14 +161,14 @@ export async function validateObservation(
   return { problem, bytes, digest };
 }
 
-export interface ValidateContext { readBodyBytes: (file: string) => Promise<Uint8Array> }
-
 export async function cmdValidate(
-  ctx: ValidateContext & { log: (line: string) => void },
+  ctx: Pick<NeighbourCliContext, "readBodyBytes" | "log">,
   args: Record<string, string | undefined>,
   fail: (message: string) => never,
 ): Promise<number> {
-  const { problem, bytes, digest } = await validateObservation(args, ctx, fail);
+  const { problem, bytes, digest } = await validateObservation(args, {
+    readBodyBytes: ctx.readBodyBytes ?? readFile,
+  }, fail);
   ctx.log(`valid: ${problem === null}`);
   ctx.log(`bytes: ${bytes.byteLength}`);
   ctx.log(`sha256: ${digest}`);
