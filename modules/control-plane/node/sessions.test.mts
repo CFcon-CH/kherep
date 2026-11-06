@@ -8,6 +8,7 @@ import { makeEnvelope, parseEnvelope, type SessionInfo } from "../protocol.mts";
 import { NodeClient } from "./client.mts";
 import { generateIdentity } from "./identity.mts";
 import { DEFAULT_POLICY } from "./policy.mts";
+import { unlistedRuntimes } from "./known-sessions.mts";
 import { CLAUDE_RUNTIME, claudeInvocation, execFileText, LIST_TIMEOUT_MS, listSessions, mapClaudeAgents, nativeClaude } from "./sessions.mts";
 
 const STARTED = Date.UTC(2026, 0, 2, 3, 4, 5);
@@ -28,6 +29,17 @@ test("skips malformed rows and fails only on output that is not a list", () => {
   const rows = [null, 7, "x", {}, { sessionId: "", status: "running" }, { sessionId: "s1" }, { sessionId: "s1", status: 3 }, ROW];
   assert.deepEqual(mapClaudeAgents(rows)?.map((s) => s.sessionId), [ROW.sessionId]);
   assert.equal(mapClaudeAgents({ sessions: [] }), null);
+});
+
+test("a background row carries state instead of status and keeps the listing complete", () => {
+  const background = { id: "bg1", kind: "background", sessionId: "1f0e0d0c-1111-4222-8333-444455556666", name: "worker", state: "blocked" };
+  const mapped = mapClaudeAgents([ROW, background]);
+  assert.deepEqual(mapped?.map((s) => [s.sessionId, s.state, s.kind]),
+    [[ROW.sessionId, "running", "interactive"], [background.sessionId, "unknown", "background"]]);
+  assert.deepEqual(unlistedRuntimes(mapped ?? []), []);
+  // A row with neither field, or a status of the wrong type, still counts as unseen.
+  assert.deepEqual(unlistedRuntimes(mapClaudeAgents([ROW, { sessionId: "s1" }]) ?? []), [CLAUDE_RUNTIME]);
+  assert.deepEqual(unlistedRuntimes(mapClaudeAgents([ROW, { sessionId: "s1", status: 3, state: "busy" }]) ?? []), [CLAUDE_RUNTIME]);
 });
 
 async function invoked(resolved: string, platform: NodeJS.Platform): Promise<unknown[]> {

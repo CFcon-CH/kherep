@@ -28,6 +28,7 @@ increments the minor version; every other release increments the patch version.
 
 ### Fixed
 
+- List Claude background sessions, whose `claude agents` row carries `state` instead of `status`. Dropping them marked every listing incomplete, so wake-name bindings never started (Refs #828).
 - Control Plane Worker: preserve reply admission across validated guarded-parent
   ACK retirement and nonterminal availability changes of the same freshly
   attested owner. Real identity, connection and lineage changes still refuse;
