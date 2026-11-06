@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -6,11 +7,45 @@ import path from "node:path";
 import test from "node:test";
 import { runCli as claude, type Injected } from "./atl-confluence-ccoder.mts";
 import { runCli as codex } from "./atl-confluence.mts";
+import { observationProblem } from "./confluence-observation-validate.mts";
 
 const labels = "type-observation,evidence-assumed,status-author-model";
 const body = '<p>Finding: It\'s "short", ‘quoted’ and “exact”.</p>\n<p>Origin: synthetic turn.</p>\n<p>Source: fixture.</p>\n<p>Timestamp: now.</p>';
 const hash = (bytes: Uint8Array): string => createHash("sha256").update(bytes).digest("hex");
 const argv = (extra: string[] = []) => ["validate", "--format", "storage", "--body-file", "C:/assigned/body 'quoted'.xml", "--labels", labels, ...extra];
+
+test("validator preserves markup token boundaries and quoted attributes", () => {
+  for (const markup of ["<!-- <p>fake</p> -->", "<![CDATA[<p>fake</p>]]>", "<?note <p>fake</p>?>",
+    '<tag data="<p>fake</p>"/>', "<tag data='>\"' />", "<tag.name:a-0 odd=plain/>", "<tag''/>" ]) {
+    assert.equal(observationProblem(body + markup, labels), null, markup);
+  }
+  for (const markup of ["<!-- unfinished", "<![CDATA[unfinished", "<?unfinished", '<tag data="unfinished',
+    "<tag data='unfinished", "<tag <other/>", "<1tag/>", "</missing>", "<tag>"]) {
+    assert.equal(observationProblem(body + markup, labels), "Malformed storage markup.", markup);
+  }
+});
+
+test("validator scans adversarial 100 KB and 1 MB markup with linear scaling", (t) => {
+  const moduleUrl = new URL("./confluence-observation-validate.mts", import.meta.url).href;
+  for (const kind of ["name", "quotes"]) {
+    const timings: number[] = [];
+    for (const size of [100_000, 1_000_000]) {
+      const script = `import { observationProblem } from ${JSON.stringify(moduleUrl)};
+        const value = ${JSON.stringify(kind)} === "name" ? "<" + "a".repeat(${size} - 1) : "<p " + '"'.repeat(${size} - 3);
+        const started = performance.now();
+        const problem = observationProblem(value, ${JSON.stringify(labels)});
+        console.log(JSON.stringify({ problem, milliseconds: performance.now() - started }));`;
+      const result = spawnSync(process.execPath, ["--input-type=module", "-e", script], { encoding: "utf8", timeout: 5_000 });
+      assert.equal(result.error, undefined, `${kind} ${size} bytes must complete within 5 seconds`);
+      assert.equal(result.status, 0, result.stderr);
+      const measured = JSON.parse(result.stdout) as { problem: string; milliseconds: number };
+      assert.equal(measured.problem, "Malformed storage markup.");
+      timings.push(measured.milliseconds);
+      t.diagnostic(`${kind} ${size} bytes: ${measured.milliseconds.toFixed(3)} ms`);
+    }
+    assert.ok(timings[1] <= timings[0] * 20 + 100, `${kind}: tenfold input must stay within linear scaling plus scheduling allowance`);
+  }
+});
 
 for (const [name, run] of [["Claude", claude], ["Codex", codex]] as const) {
   function local(bytes: Uint8Array) {
