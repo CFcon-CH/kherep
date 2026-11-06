@@ -206,6 +206,17 @@ increments the minor version; every other release increments the patch version.
 
 ### Added
 
+- `npm run test:route -- --base <ref>`: one Windows test route with a base
+  comparison (#832). It refuses a Codex marker, a dirty candidate or a base that
+  equals the candidate or is not its ancestor, puts Git for Windows first on the
+  tests' PATH, runs identically defined suites on the candidate and on a temporary
+  shared clone of the base, and exits 0 only when every base pass is accounted for
+  on the candidate and nothing fails only there; exit 1 new failures, exit 2 no
+  verdict with the missing names in the receipt. While the type check runs, a
+  `tsconfig.json` that is not byte-identical in both commits is refused with exit 2.
+  It is no proof against a sandbox that sets no marker and fails under 1 % of the
+  tests; `CONTRIBUTING.md` lists its other limits.
+
 - SonarQube Cloud analysis from GitHub Actions (#772): `sonar-project.properties` (organization `cfcon-ch`, project `CFcon-CH_kherep`)
   and a reusable `Sonar` workflow called by CI on pushes to main and same-repository pull requests,
   reading `SONAR_TOKEN` from repository secrets; fork pull requests skip the job.
