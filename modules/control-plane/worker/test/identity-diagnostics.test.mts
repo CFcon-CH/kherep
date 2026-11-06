@@ -1,9 +1,45 @@
 import { expect, it } from "vitest";
 import { runInDurableObject } from "cloudflare:test";
-import { attestedPair, BRAKE_CAPS, ID_A, ID_B } from "./message-loop-fixture.mts";
+import { attestedPair, attestedRows, BRAKE_CAPS, ID_A, ID_B } from "./message-loop-fixture.mts";
 import { registry } from "./helpers.mts";
 import { MessageStore } from "../src/message-store.mts";
 import { MESSAGING_DIAGNOSTICS_CAPABILITY } from "../../protocol-diagnostics.mts";
+
+for (const registered of [true, false]) it(`D1 N3: validated retirement plus ${registered ? "connection epoch" : "registration"} change reports only connection`, async () => {
+  const f = await attestedPair([...BRAKE_CAPS, MESSAGING_DIAGNOSTICS_CAPABILITY]);
+  const parent = await f.send(ID_B, ID_A); if (!parent.ok) throw new Error(parent.error);
+  await registry().reportMessageStatus(f.nodeId, { messageId: parent.status.messageId, state: "delivered" });
+  const before = await runInDurableObject(registry(), (_i, s) => s.storage.sql.exec("SELECT * FROM message_loop_pairs WHERE from_node=?", f.nodeId).toArray());
+  const connection = await runInDurableObject(registry(), (_i, s) => s.storage.sql.exec("SELECT message_connection_token,registration_token FROM nodes WHERE id=?", f.nodeId).one());
+  f.beforeResponse(async () => {
+    await registry().ackMessageStatus(f.nodeId, { messageId: parent.status.messageId, name: "message.status.ack", state: "delivered" });
+    await runInDurableObject(registry(), (_i, s) => {
+      if (registered) s.storage.sql.exec("UPDATE nodes SET message_connection_token='synthetic-new-epoch' WHERE id=?", f.nodeId);
+      else s.storage.sql.exec("UPDATE nodes SET registration_token=NULL WHERE id=?", f.nodeId);
+    });
+  });
+  const result = await f.send(ID_A, ID_B, parent.status.messageId);
+  expect(result.ok && result.status.reason).toBe("loop-context-changed");
+  expect(result.ok && result.status.diagnostic).toMatchObject({ kind: "identity-change", stage: "send-admission", dimensions: ["connection"] });
+  expect(result.ok && result.effects.deliveries).toEqual([]);
+  expect(await runInDurableObject(registry(), (_i, s) => s.storage.sql.exec("SELECT * FROM message_loop_pairs WHERE from_node=?", f.nodeId).toArray())).toEqual(before);
+  // A deliberate fresh request after a stable registration follows normal admission.
+  await runInDurableObject(registry(), (_i, s) => s.storage.sql.exec("UPDATE nodes SET message_connection_token=?,registration_token=? WHERE id=?", connection.message_connection_token, connection.registration_token, f.nodeId));
+  const fresh = await f.send(ID_A, ID_B, parent.status.messageId);
+  expect(fresh.ok && fresh.status.state).toBe("queued");
+  expect(fresh.ok && fresh.effects.deliveries).toHaveLength(1);
+});
+
+it("D1: harmless availability plus lifecycle change reports lifecycle without eligibility", async () => {
+  const f = await attestedPair([...BRAKE_CAPS, MESSAGING_DIAGNOSTICS_CAPABILITY]);
+  expect(await registry().replaceSessions(f.nodeId, attestedRows().map(row => ({ ...row, state: "running" as const })), { version: 1, generation: 2 })).toEqual({ ok: true });
+  f.beforeResponse(async () => { expect(await registry().replaceSessions(f.nodeId, attestedRows(Date.now(), 1), { version: 1, generation: 3 })).toEqual({ ok: true }); });
+  const result = await f.send();
+  expect(result.ok && result.status.reason).toBe("loop-context-changed");
+  expect(result.ok && result.status.diagnostic).toMatchObject({ kind: "identity-change", dimensions: ["lifecycle"] });
+  expect(result.ok && result.effects.deliveries).toEqual([]);
+  expect(await runInDurableObject(registry(), (_i, s) => s.storage.sql.exec("SELECT COUNT(*) AS n FROM message_loop_pairs WHERE from_node=?", f.nodeId).one().n)).toBe(0);
+});
 it("a capability-only signer interleaving is refused with capability and never connection", async () => {
   const f = await attestedPair();
   await runInDurableObject(registry(), async (_i, s) => {

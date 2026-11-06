@@ -9,6 +9,15 @@ increments the minor version; every other release increments the patch version.
 
 ## [Unreleased]
 
+### Fixed
+
+- Control Plane Worker: preserve reply admission across validated guarded-parent
+  ACK retirement and nonterminal availability changes of the same freshly
+  attested owner. Real identity, connection and lineage changes still refuse;
+  diagnostics use the same validated comparison. Loop budgets, thresholds,
+  retention and native MCP authority remain unchanged. Refs #765, Worker stage 1;
+  CLI diagnostics and live reply acceptance remain separate work.
+
 ### Security
 
 - CI dependency installs disable lifecycle scripts, with optional platform

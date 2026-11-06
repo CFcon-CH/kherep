@@ -1,6 +1,6 @@
 import { parseIdentityBinding } from "../../protocol-session-identity.mts";
 import { RegistrySessionIdentity } from "./registry-session-identity.mts";
-import { semanticNodes, semanticReference } from "./message-semantic-identity.mts";
+import { sameLoopIdentity, semanticNodes, semanticReference } from "./message-semantic-identity.mts";
 import type { MessageAddress } from "../../protocol-messages.mts";
 import { isLoopAdmissionV1, safeLoopReason, MESSAGING_LOOP_BRAKE_CAPABILITY, LOOP_COMPATIBILITY, LOOP_LINEAGE, type LoopAdmissionV1 } from "../../protocol-loop-brake.mts";
 export const LOOP_COLUMNS = "loop_thread, loop_pair, loop_generation, loop_ordinal, loop_direction, loop_identity";
@@ -83,7 +83,17 @@ export class LoopIdentity {
     return snapshot.both && !!snapshot.from && !!snapshot.to && snapshot.identityBinding === binding;
   }
   // Returns legacy, guarded, or a fixed refusal. Pair HMAC was computed before this transaction.
-  validate(snapshot: LoopSnapshot, key: string | null, hasParent: boolean): "legacy" | "guarded" | { reason: string } {
+  parentRetirementEquivalent(before: LoopSnapshot, after: LoopSnapshot, key: string | null, now: number): boolean {
+    const a = before.parent, b = after.parent;
+    if (a.kind !== "guarded" || b.kind !== "guarded" || a.identityBinding === null || a.identityBinding !== b.identityBinding
+      || typeof a.row.from_session !== "string" || typeof a.row.to_session !== "string"
+      || b.row.from_session !== null || b.row.to_session !== null) return false;
+    // Compare only parent lineage here; remaining context still compares normally.
+    // Validate the old live endpoints too: retirement must not erase a bad owner.
+    return sameLoopIdentity(before, { ...before, parent: b }, { parentRetirementEquivalent: true })
+      && this.validate(before, key, true, now) === "guarded" && this.validate(after, key, true, now) === "guarded";
+  }
+  validate(snapshot: LoopSnapshot, key: string | null, hasParent: boolean, now = Date.now()): "legacy" | "guarded" | { reason: string } {
     const { parent: p, from, to } = snapshot;
     if (p.kind === "guarded-invalid") return { reason: LOOP_LINEAGE };
     if (p.kind === "guarded") {
@@ -92,8 +102,8 @@ export class LoopIdentity {
       if (p.pair !== key || snapshot.direction !== 1 - p.direction || p.row.from_node !== to.nodeId || p.row.to_node !== from.nodeId
         || !["accepted", "delivered", "replied"].includes(String(p.row.state))) return { reason: LOOP_LINEAGE };
       if (p.row.from_session !== null) {
-        const pf = this.resolve({ nodeId: String(p.row.from_node), session: String(p.row.from_session) });
-        const pt = this.resolve({ nodeId: String(p.row.to_node), session: String(p.row.to_session) });
+        const pf = this.resolve({ nodeId: String(p.row.from_node), session: String(p.row.from_session) }, now);
+        const pt = this.resolve({ nodeId: String(p.row.to_node), session: String(p.row.to_session) }, now);
         if (pf?.session !== to.session || pt?.session !== from.session) return { reason: LOOP_LINEAGE };
       }
       return "guarded";
