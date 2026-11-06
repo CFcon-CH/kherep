@@ -45,7 +45,7 @@ SUBTEST_TIMEOUT="${SMOKE_SUBTEST_TIMEOUT:-1800}"
 case "$SUBTEST_TIMEOUT" in
   ''|*[!0-9]*) SUBTEST_TIMEOUT=0 ;;
 esac
-[ "$((10#$SUBTEST_TIMEOUT))" -gt 0 ] || {
+[[ "$((10#$SUBTEST_TIMEOUT))" -gt 0 ]] || {
   echo "SMOKE FAIL: SMOKE_SUBTEST_TIMEOUT must be a positive number of seconds" >&2; exit 1;
 }
 

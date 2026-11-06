@@ -59,7 +59,7 @@ if [[ "${1:-}" = "--selftest" ]]; then
   check '/Users/example/.claude/kherep/githooks' '/Users/example/.claude/kherep/githooks'
   check '/Users/ExampleUser/Mixed/Case' '/Users/ExampleUser/Mixed/Case'
   echo "selftest: $fails Fehler"
-  [ "$fails" -eq 0 ] || exit 1
+  [[ "$fails" -eq 0 ]] || exit 1
   exit 0
 fi
 
@@ -108,5 +108,5 @@ while IFS= read -r gitdir; do
 done < <(find "$WS" -maxdepth 4 -name _deprecated -prune -o -name '.git' -type d -print 2>/dev/null | sort)
 
 echo "bind-repo-hookspath: $bound bound, $skipped skipped, $failed failed -> $GITHOOKS_DIR"
-[ "$failed" -eq 0 ] || exit 1
+[[ "$failed" -eq 0 ]] || exit 1
 exit 0
