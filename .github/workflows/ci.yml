@@ -9,8 +9,10 @@ on:
 permissions:
   contents: read
 
-# A newer push to the same pull request cancels the older run; pushes to main
-# are never cancelled, so every main commit keeps a complete result.
+# A newer push to the same pull request cancels the older run. A running main
+# run is not cancelled, but GitHub keeps one pending run per group, so in a burst
+# of merges a newer push replaces a pending one and that commit gets no result.
+# Pick an install or release target from a main commit whose run finished (#823).
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
