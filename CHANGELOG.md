@@ -74,6 +74,21 @@ increments the minor version; every other release increments the patch version.
 
 ### Fixed
 
+- Doctor preserves valid session observations beside incomplete or malformed
+  rows, counts canonical `idle-loaded`, and reports snapshot failure reasons
+  and coverage. A provisional resume row no longer makes the snapshot
+  unreadable; doctor samples its clock after reading the wake snapshot and each
+  budget ledger, so a listing or turn written meanwhile is not future-dated. The
+  listener lock count is the known exception: its clock is sampled before the
+  lock reads, so a lock created meanwhile counts as stale, which moves that count
+  and never `doctor.ok`. Other doctor checks keep their earlier clock (#769).
+- Doctor reports stored autonomous-turn budget usage, exhausted owners and
+  rolling-window release times without spending turns. Observed exhaustion
+  keeps doctor successful; failed budget inspection fails its check. Message
+  status displays existing budget progress on the sent route, on accepted
+  received messages and on offered ones whose progress is newer than the offer,
+  including observation and retry times (#769, related #827, stage 1).
+
 - Coverage assembly accepts `c8`'s Windows path separators; traversal stays
   rejected (#813).
 

@@ -55,7 +55,7 @@ test("fresh idle state, exact restart authority, safe mode and matching live lis
   const result = check(paths, policy([A]));
   assert.deepEqual(result, {
     ok: true,
-    snapshot: { status: "fresh", completeness: "complete", updatedAt: "2026-10-15T11:59:59.000Z", ageSeconds: 1 },
+    snapshot: { status: "fresh", reasonCode: "observed", rejectedRows: 0, incompleteRows: 0, unseenRuntimes: [], truncated: false, countScope: "observed-valid-rows", completeness: "complete", updatedAt: "2026-10-15T11:59:59.000Z", ageSeconds: 1 },
     wakeEnabled: true, observedIdle: 1, observedPolicyEligible: 1, observedExplicitRestartAuthorized: 1,
     observedMissingExplicitRestartAuthorization: 0,
     rememberedPermission: { allowed: 1, restricted: 0, unknown: 0 },
@@ -71,7 +71,7 @@ test("wildcard eligibility is not reported as explicit restart authority or list
   const result = check(paths, policy(["*"]));
   assert.deepEqual(result, {
     ok: true,
-    snapshot: { status: "fresh", completeness: "complete", updatedAt: "2026-10-15T11:59:59.000Z", ageSeconds: 1 },
+    snapshot: { status: "fresh", reasonCode: "observed", rejectedRows: 0, incompleteRows: 0, unseenRuntimes: [], truncated: false, countScope: "observed-valid-rows", completeness: "complete", updatedAt: "2026-10-15T11:59:59.000Z", ageSeconds: 1 },
     wakeEnabled: true, observedIdle: 1, observedPolicyEligible: 1, observedExplicitRestartAuthorized: 0,
     observedMissingExplicitRestartAuthorization: 1,
     rememberedPermission: { allowed: 1, restricted: 0, unknown: 0 },
@@ -133,7 +133,7 @@ test("a missing listener is distinct from an unreadable listener source", (t) =>
 test("missing, unreadable and stale snapshots report observed idle state as unknown", (t) => {
   const missing = fixture(t);
   assert.deepEqual(check(missing, policy([A])), {
-    ok: false, snapshot: { status: "missing" }, wakeEnabled: true, observedIdle: "unknown",
+    ok: false, snapshot: { status: "missing", reasonCode: "missing", completeness: "unknown", rejectedRows: "unknown", incompleteRows: "unknown", unseenRuntimes: "unknown", truncated: "unknown", countScope: "observed-valid-rows" }, wakeEnabled: true, observedIdle: "unknown",
     observedPolicyEligible: "unknown", observedExplicitRestartAuthorized: "unknown",
     detail: "no successful local session snapshot is available",
   });
@@ -147,7 +147,7 @@ test("missing, unreadable and stale snapshots report observed idle state as unkn
   const stale = fixture(t);
   snapshot(stale, [{ sessionId: A, state: "idle" }], NOW - 121_000);
   const result = check(stale, policy([A]));
-  assert.deepEqual(result.snapshot, { status: "stale", updatedAt: "2026-10-15T11:57:59.000Z", ageSeconds: 121 });
+  assert.deepEqual(result.snapshot, { status: "stale", reasonCode: "stale", completeness: "unknown", rejectedRows: "unknown", incompleteRows: "unknown", unseenRuntimes: "unknown", truncated: "unknown", countScope: "observed-valid-rows", updatedAt: "2026-10-15T11:57:59.000Z", ageSeconds: 121 });
   assert.equal(result.observedIdle, "unknown");
 });
 
@@ -157,7 +157,7 @@ test("intentional wake opt-out remains a known disabled state", (t) => {
   const result = check(paths, { version: 1, allowedCommands: [] });
   assert.deepEqual(result, {
     ok: true,
-    snapshot: { status: "fresh", completeness: "complete", updatedAt: "2026-10-15T11:59:59.000Z", ageSeconds: 1 },
+    snapshot: { status: "fresh", reasonCode: "observed", rejectedRows: 0, incompleteRows: 0, unseenRuntimes: [], truncated: false, countScope: "observed-valid-rows", completeness: "complete", updatedAt: "2026-10-15T11:59:59.000Z", ageSeconds: 1 },
     wakeEnabled: false, observedIdle: 1, observedPolicyEligible: 0, observedExplicitRestartAuthorized: 0,
     observedMissingExplicitRestartAuthorization: 0,
     rememberedPermission: { allowed: 0, restricted: 0, unknown: 0 },
@@ -166,7 +166,7 @@ test("intentional wake opt-out remains a known disabled state", (t) => {
 
   const missing = fixture(t);
   assert.deepEqual(check(missing, { version: 1, allowedCommands: [] }), {
-    ok: true, snapshot: { status: "missing" }, wakeEnabled: false, observedIdle: "unknown",
+    ok: true, snapshot: { status: "missing", reasonCode: "missing", completeness: "unknown", rejectedRows: "unknown", incompleteRows: "unknown", unseenRuntimes: "unknown", truncated: "unknown", countScope: "observed-valid-rows" }, wakeEnabled: false, observedIdle: "unknown",
     observedPolicyEligible: 0, observedExplicitRestartAuthorized: 0, observedMissingExplicitRestartAuthorization: 0,
     rememberedPermission: { allowed: 0, restricted: 0, unknown: 0 },
     liveListedListeners: { verified: 0, missing: 0, unreadable: 0, stale: 0, mismatched: 0 },

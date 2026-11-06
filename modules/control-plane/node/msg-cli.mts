@@ -1,19 +1,18 @@
-import { isMessageDiagnostic, renderMessageDiagnostic } from "../protocol-diagnostics.mts";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 
 import {
-  ACCEPTED_SILENCE_CAUSES, isMessageId, isMessageText, MAX_MESSAGE_TEXT, OPERATOR_NODE_ID, senderState, silentlyAccepted, type MessageAddress,
+  isMessageId, isMessageText, MAX_MESSAGE_TEXT, OPERATOR_NODE_ID, type MessageAddress,
 } from "../protocol-messages.mts";
 import type { NodePaths } from "./config.mts";
-import { getOutbox, getSent, writeOutbox, type OutboxRecord, type SentRecord } from "./exchange.mts";
-import { getMessage, getMessageDiagnostic, getMessageProgress, markAnswered } from "./inbox.mts";
+import { getOutbox, getSent, writeOutbox, type OutboxRecord } from "./exchange.mts";
+import { getMessage, markAnswered } from "./inbox.mts";
 import {
   CODEX_THREAD_ENV, KHEREP_SESSION_ENV, processTableOnce, resolveSendTarget, senderSession, senderSessionId, SESSION_ENV, sessionIdFromEnv, type IdentityDeps,
 } from "./msg-resolve.mts";
 import { exactInbox, EXACT_INBOX_FLAGS } from "./msg-inbox-exact.mts";
-import { inbox, offerLine, replyLines } from "./msg-inbox.mts";
-import { targetLine } from "./msg-intake.mts";
+import { inbox } from "./msg-inbox.mts";
+import { stateText, status } from "./msg-status.mts";
 import { sendNew } from "./msg-new.mts";
 import { directoryFor, sessions } from "./msg-sessions.mts";
 import { stopTask } from "./msg-stop.mts";
@@ -62,44 +61,6 @@ Without --from the session is named by ${SESSION_ENV} (Claude Code), ${CODEX_THR
 
 const FINAL_OK = ["accepted", "delivered", "replied"];
 const WAIT_POLL_MS = 250;
-
-const PROGRESS_TEXT: Record<string, string> = {
-  "awaiting-user-turn": "waiting for the target session's next turn; delivery is not confirmed",
-  "awaiting-turn-confirmation": "the target turn received it and has not confirmed completion",
-  "target-busy": "the target session is busy",
-  "wake-unconfirmed": "the automatic wake was not confirmed; start the target turn to retry delivery",
-  "retry-pending": "delivery is waiting to retry",
-  "wake-disabled": "automatic wake is disabled on the target node; start the target turn to retry delivery",
-  "wake-not-authorized": "the target node's policy did not authorize automatic delivery; start the target turn to retry delivery",
-  "permission-restricted": "the target permission mode blocks automatic wake; start the target turn to retry delivery",
-  "operator-stopped": "the target session was stopped by its operator and requires an explicit continue",
-  "reply-limit": "the automatic reply depth limit was reached",
-  "budget-exhausted": "the target's autonomous-turn budget is exhausted",
-  "ambiguous-target": "the target session name is ambiguous; send to its full session id",
-  "cwd-refused": "the last closed-session delivery attempt was refused: the closed session's working directory is not usable on the "
-    + "target node (not absolute, missing, or outside its workspace roots); the message stays queued and is tried again each round",
-  "wake-pending": "awaiting automatic wake confirmation",
-  "fallback-starting": "a local delivery session is starting",
-  "fallback-running": "a local delivery session is running",
-  "wake-failed": "the automatic wake failed; start the target turn to retry delivery",
-  "fallback-failed": "the local delivery session failed; delivery is not confirmed",
-};
-
-// The sender state (accepted, running, stopped, ...) with its reason (issue #197).
-function stateText(record: SentRecord, now: number): string {
-  const state = senderState(record.state, record.progress);
-  if (silentlyAccepted(record.state, record.progress, Date.parse(record.updatedAt), now)) {
-    return `${state}: no delivery progress from the target node since ${record.updatedAt}; ${ACCEPTED_SILENCE_CAUSES}; check \`kherep-node msg sessions\``;
-  }
-  return `${state}${progressText(record)}`;
-}
-
-function progressText(record: SentRecord): string {
-  if (!record.progress) return record.reason ? `: ${record.reason}` : "";
-  const retry = record.progress.retryAt ? `; retry after ${record.progress.retryAt}` : "";
-  const label = isMessageDiagnostic(record.diagnostic) ? "" : `: ${PROGRESS_TEXT[record.progress.code]}`;
-  return `${label} [${record.progress.phase}/${record.progress.code}; observed ${record.progress.observedAt}${retry}]`;
-}
 
 export interface MsgContext {
   paths: NodePaths;
@@ -247,36 +208,4 @@ async function waitForAnswer(io: Io, messageId: string, timeoutMs: number): Prom
     }
     await io.sleep(WAIT_POLL_MS);
   }
-}
-
-function status(io: Io, messageId: string): number {
-  if (!isMessageId(messageId)) return fail(io, `not a message id: "${messageId}"`);
-  const sent = getSent(io.paths, messageId);
-  if (sent) {
-    io.out(`${messageId} ${stateText(sent, io.now())} (updated ${sent.updatedAt})`);
-    if (isMessageDiagnostic(sent.diagnostic)) io.out(renderMessageDiagnostic(sent.diagnostic, sent.state));
-    // Issue #441: while queued, whether its target node takes its messages.
-    if (sent.state === "queued" && sent.to?.nodeId) io.out(targetLine(directoryFor(io), sent.to.nodeId, io.now()));
-    if (!isMessageDiagnostic(sent.diagnostic) && (sent.state === "queued"
-      || sent.state === "accepted" && (!sent.progress || ["retry-pending", "target-busy"].includes(sent.progress.code)))) io.out(renderMessageDiagnostic(null, sent.state));
-    for (const line of replyLines(io.paths, sent)) io.out(line);
-    return 0;
-  }
-  if (getOutbox(io.paths, messageId)) {
-    io.out(`${messageId} pending: no control-plane confirmation received`);
-    return 0;
-  }
-  // Issue #417: a message this node received.
-  const received = getMessage(io.paths.inbox, messageId);
-  if (received) {
-    io.out(`${messageId} ${received.state} (received ${received.receivedAt})`);
-    const diagnostic = getMessageDiagnostic(io.paths.inbox, messageId);
-    if (diagnostic) io.out(renderMessageDiagnostic(diagnostic, received.state));
-    for (const line of offerLine(received)) io.out(line);
-    const progress = getMessageProgress(io.paths.inbox, messageId);
-    if (!diagnostic && ["accepted", "offered"].includes(received.state)
-      && (!progress || ["retry-pending", "target-busy"].includes(progress.code))) io.out(renderMessageDiagnostic(null, received.state));
-    return 0;
-  }
-  return fail(io, `unknown message ${messageId}: not in the outbox, sent messages or inbox of this node`);
 }

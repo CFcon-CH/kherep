@@ -1241,6 +1241,65 @@ listener deadline. It does not prove current idle state, the kill switch decisio
 message receipt, so the check derives no ready verdict. Missing lock files and failed
 reads are different results. Output is aggregate and omits session ids, tokens and paths.
 
+`node/wake-snapshot.mts` validates rows individually. Canonical `idle-loaded`
+and legacy Claude `idle` count as observed idle; `unknown`, a live PID and a
+listener never establish idle. Invalid rows do not erase valid observations.
+Snapshot output adds `reasonCode`, `rejectedRows`, `incompleteRows`,
+`unseenRuntimes`, `truncated` and `countScope: "observed-valid-rows"`.
+`reasonCode` is `observed`, `missing`, `io-error`, `invalid-json`,
+`invalid-envelope`, `missing-timestamp` (rows without any listing time, as a
+resume into a home without a listing writes), `future-timestamp` or `stale`.
+Missing completeness metadata remains unknown and `*` marks capped coverage.
+Dotted display identities are accepted, but listener and ledger filenames
+still require the separate plain-token guard. Unsupported listener evidence
+is explicit. A provisional resume row carries no runtime and unknown state;
+the snapshot counts it as an incomplete row and reports partial completeness,
+and the next successful listing replaces it. `unseen` is written only by a
+listing. A listed row with a runtime and state `unknown` is different: it counts
+as a state fact, does not lower completeness and is never idle, so a complete
+listing can still hold rows whose idleness is unobserved.
+
+Doctor samples its clock after reading the wake snapshot and after reading each
+budget ledger, so a listing or turn written while it runs is not future-dated.
+The listener lock count is the known exception: `checkWakeReadiness` samples its
+clock before the lock reads, so a lock created meanwhile counts as stale, which
+moves that count and never `doctor.ok`. Other doctor checks keep their earlier
+clock.
+
+`node/doctor-wake-budget.mts` adds the read-only `checks.wakeBudget` diagnostic.
+It enumerates filename-safe stored owners independently of snapshot coverage,
+inspects at most 512 ledgers and reads at most 256 KiB from each ledger.
+Missing, unreadable, malformed, nonfinite, future and oversized evidence stays
+explicit. Coverage distinguishes `not-initialized`, `empty`, `unreadable` and
+`partial`, with `countScope: "stored-ledgers-only"`. `coverage.unsupported`
+counts ledgers whose filename the guard excludes; they are never opened and
+make coverage `partial`. An empty store establishes no usage for sessions
+without a ledger. Each inspected owner exposes its session ID, runtime when
+established, ledger status, hourly and daily usage, remaining capacity, state,
+blocking limits, `observedAt` and `nextAvailableAt`. `blocked` at the top level
+means an hour or day window is full for at least one stored owner; a spacing
+hold appears only on that owner's row. No names, paths, tokens or message text
+are exposed by this check.
+
+`node/autonomy-budget.mts` retains compatible locking and charging through
+`takeTurn`, re-exported by `autonomy.mts`. The pure `evaluateTurnBudget` and
+read-only `inspectTurnBudget` never charge, lock, trim or repair evidence.
+Release calculation uses rolling windows with strict boundary equality and
+the maximum hourly, daily and spacing release, including excess stamps after
+a limit reduction. `nextAvailableAt` assumes no additional turn consumes
+capacity; it does not guarantee a wake. Observed exhaustion reports `blocked`
+while keeping the check and overall doctor successful. Failed inspection
+fails the check; incomplete coverage cannot yield a clean available verdict.
+
+Stage 1 (#769, related #827) does not establish per-message budget holds.
+`node/msg-status.mts` renders existing progress, observation time and retry time
+on the sent route, for accepted received messages, and for offered received
+messages whose progress is newer than the offer. A budget progress line shows
+the observed time and the retry time; a retry time already past is marked
+elapsed and leaves the current hold unknown. The
+existing Worker fixture exercises the unchanged message contract. No producer
+observation file, daemon projector or new wire capability is introduced.
+
 The `codexSessions` doctor check (issue #408) reads `codex-sessions/` directly
 instead of through `listCodexSessions`, so it removes no expired record. It
 counts the records seen within `CODEX_ACTIVE_MS` per last hook event, with
