@@ -5,7 +5,7 @@ import path from "node:path";
 import { test } from "node:test";
 
 import { prepareBase, removeTree } from "./test-route-base.mts";
-import { git, gitRepo, hasGit, HEADER, KNOWN, onCommits, readReceipt, route, tempDir } from "./test-route-fixture.mts";
+import { GIT, git, gitRepo, hasGit, HEADER, KNOWN, onCommits, routeIn, tempDir, tempVars } from "./test-route-fixture.mts";
 
 const needsGit = { skip: !hasGit };
 const passes = (...names: string[]) => `${HEADER}${names.map((name) => `test(${JSON.stringify(name)}, () => {});`).join("\n")}\n`;
@@ -20,7 +20,7 @@ test("E1 a failure on both commits is known, and nothing is missing", needsGit, 
   assert.doesNotMatch(run.stdout, /missing=/);
   assert.deepEqual([receipt.suites.fixture.known, receipt.suites.fixture.new, receipt.suites.fixture.missing], [["known symlink"], [], []]);
   assert.equal(receipt.suites.fixture.proof.ceiling, 1);
-  for (const file of ["candidate-fixture.tap", "base-fixture.tap", "candidate-fixture.log"]) assert.ok(fs.existsSync(path.join(out, file)), file);
+  for (const file of ["candidate-fixture.tap", "base-fixture.tap", "candidate-fixture.log"]) assert.ok(fs.existsSync(path.join(out!, file)), file);
 });
 
 test("E2 a test that fails only on the candidate is new, with exit 1", needsGit, (t) => {
@@ -72,19 +72,16 @@ test("E3c tests skipped on the candidate are missing", needsGit, (t) => {
   assert.match(run.stdout, /missing=2/);
 });
 
-test("E4 a candidate run killed midway is no verdict, and a stale TAP file does not stand in for it", needsGit, (t) => {
-  const stale = "ok 1 - passes\n  ---\n  type: 'test'\n  ...\nok 2 - other\n  ---\n  type: 'test'\n  ...\n1..2\n# tests 2\n# suites 0\n# pass 2\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n# duration_ms 1\n";
-  const out = path.join(tempDir(t), "out");
-  fs.mkdirSync(out);
-  const tap = path.join(out, "candidate-fixture.tap");
-  fs.writeFileSync(tap, stale);
-  fs.chmodSync(tap, 0o444); // Node truncates a writable destination itself, so only this shows the route's removal
-  const repo = gitRepo(t, {}, { "t/a.test.mts": `process.kill(process.ppid, "SIGKILL");\n` });
-  const run = route(["--candidate", repo, "--base", "HEAD~1", "--no-typecheck", "--suites", "fixture", "--out", out]);
+test("E4 a candidate run killed midway is no verdict, in a directory no earlier run can have written", needsGit, (t) => {
+  const tmp = tempDir(t), parent = path.join(tmp, "kherep-test-route");
+  assert.equal(fs.existsSync(parent), false);
+  const { run, receipt } = onCommits(t, gitRepo(t, {}, { "t/a.test.mts": `process.kill(process.ppid, "SIGKILL");\n` }), [], tempVars(tmp));
   assert.equal(run.status, 2, run.stdout + run.stderr);
   assert.match(run.stdout, /candidate fixture did not finish/);
-  assert.equal(readReceipt(out).verdict, "no-verdict");
-  assert.notEqual(fs.existsSync(tap) ? fs.readFileSync(tap, "utf8") : null, stale);
+  assert.equal(receipt.verdict, "no-verdict");
+  const made = fs.readdirSync(parent);
+  assert.equal(made.length, 1);
+  assert.match(made[0], /^\d{8}-\d{6}-[0-9a-f]{7}-/);
 });
 
 test("E7 --base clones that commit, installs nothing in the candidate, and removes the clone", needsGit, (t) => {
@@ -96,7 +93,7 @@ test("E7 --base clones that commit, installs nothing in the candidate, and remov
   assert.deepEqual([receipt.candidate.sha, receipt.candidate.shaAfter, receipt.candidate.changedBefore, receipt.candidate.changedAfter], [head, head, 0, 0]);
   assert.match(run.stdout, new RegExp(`VERDICT no-new-failures candidate=${head.slice(0, 8)} base=${parent.slice(0, 8)} `));
   assert.equal(fs.existsSync(path.dirname(receipt.base.path)), false);
-  assert.ok(fs.existsSync(path.join(out, "base-npm-ci.log")));
+  assert.ok(fs.existsSync(path.join(out!, "base-npm-ci.log")));
   assert.equal(git(repo, "worktree", "list").split("\n").length, 1);
 });
 
@@ -125,7 +122,7 @@ test("E7b a failed base install is no verdict for every suite, bootstrap include
   assert.equal(run.status, 2, run.stdout + run.stderr);
   assert.match(run.stdout, /base install failed/);
   assert.deepEqual([receipt.base.install, receipt.base.cleanup, receipt.suites.bootstrap.status], ["failed", "removed", "no-verdict"]);
-  assert.equal(fs.existsSync(path.join(out, "base-bootstrap.tap")), false);
+  assert.equal(fs.existsSync(path.join(out!, "base-bootstrap.tap")), false);
   assert.equal(fs.existsSync(receipt.base.path), false);
 });
 
@@ -184,8 +181,7 @@ function typecheckRun(t: Parameters<typeof gitRepo>[0], baseErrors: string, cand
   const repo = gitRepo(t, { ...FAKE_TYPESCRIPT, "tsc-errors.txt": baseErrors }, { "tsc-errors.txt": candidateErrors });
   fs.mkdirSync(path.join(repo, "node_modules", "typescript", "bin"), { recursive: true });
   fs.writeFileSync(path.join(repo, "node_modules", "typescript", "bin", "tsc"), FAKE_TSC);
-  const out = path.join(tempDir(t), "out");
-  return { run: route(["--candidate", repo, "--base", "HEAD~1", "--suites", "fixture", "--out", out]), receipt: readReceipt(out) };
+  return routeIn(t, repo, ["--base", "HEAD~1", "--suites", "fixture"]);
 }
 
 test("E14 errors on a clean base are new, by error identity", needsGit, (t) => {
@@ -218,11 +214,13 @@ test("E17 a base tree that cannot be removed or read is a leftover, not an excep
 
 test("E17b a held base tree does not throw out of remove()", needsGit, (t) => {
   const repo = gitRepo(t);
-  const out = tempDir(t), parent = tempDir(t);
   const tree = prepareBase({
-    candidate: repo, ref: "HEAD~1", sha: git(repo, "rev-parse", "HEAD~1"), workDir: parent, git: "git",
-    env: process.env, out, timeoutMs: 60_000, rm: held,
+    candidate: repo, ref: "HEAD~1", sha: git(repo, "rev-parse", "HEAD~1"), git: GIT!,
+    env: process.env, out: tempDir(t), timeoutMs: 60_000, rm: held,
   });
+  t.after(() => fs.rmSync(path.dirname(tree.path), { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }));
   tree.remove();
   assert.equal(tree.cleanup, "leftover");
 });
+
+test("the fixtures run git by an absolute path", needsGit, () => assert.ok(path.isAbsolute(GIT!)));

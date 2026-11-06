@@ -5,7 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
 
-import { git, gitRepo, hasGit, HEADER, KNOWN, onCommits, readReceipt, route, tempDir } from "./test-route-fixture.mts";
+import { git, gitRepo, hasGit, HEADER, KNOWN, onCommits, routeIn, tempDir, tempVars } from "./test-route-fixture.mts";
 
 const needsGit = { skip: !hasGit };
 const script = (body: string) => JSON.stringify({ name: "fx", scripts: { "test:fixture": body } });
@@ -19,7 +19,7 @@ function refused(t: Parameters<typeof gitRepo>[0], repo: string, extra: string[]
 
 test("E5 a base equal to the candidate is refused before any run", needsGit, (t) => {
   const { out } = refused(t, gitRepo(t), ["--base", "HEAD"], /base equals the candidate/);
-  assert.equal(fs.readdirSync(out).some((name) => name.endsWith(".tap")), false);
+  assert.equal(fs.readdirSync(out!).some((name) => name.endsWith(".tap")), false);
 });
 
 test("Q2 a base that is not an ancestor of the candidate is refused", needsGit, (t) => {
@@ -34,48 +34,50 @@ test("Q2 a base that is not an ancestor of the candidate is refused", needsGit, 
 test("E6 every Codex marker refuses before anything runs", needsGit, (t) => {
   const repo = gitRepo(t);
   for (const marker of ["CODEX_SANDBOX", "CODEX_SANDBOX_NETWORK_DISABLED", "CODEX_THREAD_ID"]) {
-    const { run, out } = onCommits(t, repo, [], { [marker]: "1" });
+    const { run, tmp } = onCommits(t, repo, [], { [marker]: "1" });
     assert.equal(run.status, 2, marker);
     assert.match(run.stdout, /inside a Codex sandbox/);
     assert.ok(run.stdout.includes(marker), marker);
-    assert.equal(fs.existsSync(out), false, marker);
+    assert.equal(fs.existsSync(path.join(tmp, "kherep-test-route")), false, marker);
+    assert.doesNotMatch(run.stdout, /test-route: receipt /, marker);
   }
 });
 
-test("E8 a work dir inside the candidate is refused, by path and through a junction", needsGit, (t) => {
+test("E8 a temp dir inside the candidate is refused, by path and through a junction", needsGit, (t) => {
   const repo = gitRepo(t);
-  refused(t, repo, ["--work-dir", path.join(repo, "x")], /work dir inside/);
+  refused(t, repo, [], /temp dir inside/, tempVars(path.join(repo, "x")));
   assert.equal(fs.existsSync(path.join(repo, "x")), false);
   if (process.platform !== "win32") return;
   const link = path.join(tempDir(t), "link");
   fs.symlinkSync(repo, link, "junction");
-  refused(t, repo, ["--work-dir", path.join(link, "x")], /work dir inside/);
+  refused(t, repo, [], /temp dir inside/, tempVars(path.join(link, "x")));
   assert.equal(fs.existsSync(path.join(repo, "x")), false);
 });
 
-test("E8b a work dir inside a configured home is refused", needsGit, (t) => {
+test("E8b a temp dir inside a configured home is refused", needsGit, (t) => {
   const repo = gitRepo(t);
   for (const key of ["CODEX_HOME", "CLAUDE_CONFIG_DIR", "KHEREP_CONFIG_DIR"]) {
     const home = tempDir(t);
-    refused(t, repo, ["--work-dir", path.join(home, "x")], /work dir inside/, { [key]: home });
+    refused(t, repo, [], /temp dir inside/, { [key]: home, ...tempVars(path.join(home, "x")) });
     assert.equal(fs.existsSync(path.join(home, "x")), false, key);
   }
-});
-
-test("E8c an output dir inside the candidate is refused", needsGit, (t) => {
-  const repo = gitRepo(t);
-  refused(t, repo, ["--out", path.join(repo, "o")], /out dir inside/);
-  assert.equal(fs.existsSync(path.join(repo, "o")), false);
 });
 
 test("E9 usage errors: no node suite, a removed flag, an unknown suite, no base", needsGit, (t) => {
   const repo = gitRepo(t);
   for (const suites of ["typecheck", "", ","]) refused(t, repo, ["--suites", suites], /--suites must name/);
-  for (const flag of [["--min-ratio", "0.5"], ["--no-install"], ["--base-tree", "x"]]) refused(t, repo, flag, /Unknown option/);
+  for (const flag of [["--min-ratio", "0.5"], ["--no-install"], ["--base-tree", "x"], ["--candidate", "x"], ["--work-dir", "x"], ["--out", "x"]]) refused(t, repo, flag, /Unknown option/);
   refused(t, repo, ["--suites", "nope"], /test:nope/);
-  const run = route(["--candidate", repo, "--no-typecheck", "--suites", "fixture"]);
+  const { run } = routeIn(t, repo, ["--no-typecheck", "--suites", "fixture"]);
   assert.equal(run.status, 2);
   assert.match(run.stdout, /--base/);
+});
+
+test("E9b a --base or a --suites name outside its character set is refused before any directory", needsGit, (t) => {
+  const repo = gitRepo(t);
+  for (const base of ["-x", "main;x", "a b"]) assert.equal(refused(t, repo, [`--base=${base}`], /--base must be a ref/).out, null, base);
+  assert.equal(refused(t, repo, ["--base", "-x"], /--base/).out, null); // parseArgs takes this spelling for a missing value
+  assert.equal(refused(t, repo, ["--suites", "fix;ture"], /--suites: name not understood: fix;ture/).out, null);
 });
 
 test("E10 Git for Windows comes first on the test process's PATH", { skip: !hasGit || process.platform !== "win32" }, (t) => {
@@ -92,7 +94,7 @@ test("E11 a dirty candidate is refused, whatever status.showUntrackedFiles says"
   fs.writeFileSync(path.join(repo, "t", "extra.test.mts"), `${HEADER}test("only here", () => {});\n`);
   const pattern = /candidate has 1 changed or untracked file/;
   const { out } = refused(t, repo, [], pattern);
-  assert.equal(fs.existsSync(path.join(out, "candidate-fixture.tap")), false);
+  assert.equal(fs.existsSync(path.join(out!, "candidate-fixture.tap")), false);
   git(repo, "config", "status.showUntrackedFiles", "no");
   refused(t, repo, [], pattern);
 });
@@ -100,13 +102,13 @@ test("E11 a dirty candidate is refused, whatever status.showUntrackedFiles says"
 test("a candidate that is no git checkout, or has no node_modules, is refused", needsGit, (t) => {
   const plain = tempDir(t);
   fs.mkdirSync(path.join(plain, "node_modules"));
-  const run = route(["--candidate", plain, "--base", "HEAD~1", "--no-typecheck", "--suites", "fixture", "--out", path.join(tempDir(t), "out")]);
+  const { run } = onCommits(t, plain);
   assert.equal(run.status, 2);
   assert.match(run.stdout, /not a git checkout/);
   const repo = gitRepo(t);
   fs.rmSync(path.join(repo, "node_modules"), { recursive: true });
   const { out } = refused(t, repo, [], /no node_modules/);
-  assert.equal(fs.existsSync(path.join(out, "candidate-fixture.tap")), false);
+  assert.equal(fs.existsSync(path.join(out!, "candidate-fixture.tap")), false);
   assert.equal(fs.existsSync(path.join(repo, "node_modules")), false);
 });
 
@@ -165,8 +167,7 @@ function tsconfigRun(t: Parameters<typeof gitRepo>[0], base: string | null, cand
   fs.mkdirSync(path.join(repo, "node_modules", "typescript", "bin"), { recursive: true });
   fs.writeFileSync(path.join(repo, "node_modules", "typescript", "bin", "tsc"), STAND_IN_TSC);
   prepare?.(repo);
-  const out = path.join(tempDir(t), "out");
-  return { run: route(["--candidate", repo, "--base", "HEAD~1", "--suites", "fixture", "--out", out, ...extra]), out, receipt: readReceipt(out) };
+  return routeIn(t, repo, ["--base", "HEAD~1", "--suites", "fixture", ...extra]);
 }
 
 test("B3 a tsconfig.json that differs from the base's is refused when the type check runs", needsGit, (t) => {
@@ -181,7 +182,7 @@ test("B3 a tsconfig.json that differs from the base's is refused when the type c
     assert.equal(run.status, 2, `${label}: ${run.stdout}${run.stderr}`);
     assert.match(run.stdout, /VERDICT no-verdict: tsconfig\.json differs between the base and the candidate/, label);
     assert.equal(receipt.state, "refused", label);
-    assert.equal(fs.existsSync(path.join(out, "candidate-typecheck.log")), false, label);
+    assert.equal(fs.existsSync(path.join(out!, "candidate-typecheck.log")), false, label);
   }
 });
 
@@ -208,11 +209,7 @@ test("B3c the line endings of a checkout do not count, only the committed bytes"
   assert.equal(run.status, 0, run.stdout + run.stderr);
 });
 
-test("E18 a refused run does not leave an earlier receipt standing", needsGit, (t) => {
-  const out = path.join(tempDir(t), "out");
-  fs.mkdirSync(out);
-  fs.writeFileSync(path.join(out, "receipt.json"), JSON.stringify({ verdict: "no-new-failures", exitCode: 0 }));
-  const run = route(["--candidate", gitRepo(t), "--base", "nope", "--no-typecheck", "--suites", "fixture", "--out", out]);
-  assert.equal(run.status, 2, run.stdout + run.stderr);
-  assert.deepEqual([readReceipt(out).verdict, readReceipt(out).exitCode], ["no-verdict", 2]);
+test("E18 a refused run leaves its refusal at the path it printed", needsGit, (t) => {
+  const { receipt } = refused(t, gitRepo(t), ["--base", "nope"], /does not resolve/);
+  assert.deepEqual([receipt.verdict, receipt.exitCode, receipt.state], ["no-verdict", 2, "refused"]);
 });

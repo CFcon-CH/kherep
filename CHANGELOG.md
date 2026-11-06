@@ -212,6 +212,8 @@ increments the minor version; every other release increments the patch version.
   on the candidate and nothing fails only there; exit 1 new failures, exit 2 no
   verdict with the missing names in the receipt. While the type check runs, a
   `tsconfig.json` that is not byte-identical in both commits is refused with exit 2.
+  It runs in the candidate checkout and writes the receipt and logs into a new
+  directory under the temp folder, printed as `test-route: receipt <path>`.
   It is no proof against a sandbox that sets no marker and fails under 1 % of the
   tests; `CONTRIBUTING.md` lists its other limits.
 

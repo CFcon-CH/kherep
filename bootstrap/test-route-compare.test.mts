@@ -7,8 +7,8 @@ import { test, type TestContext } from "node:test";
 
 import { parseTap } from "../codex/scripts/codex-run-tap.mts";
 import {
-  cpuBusyPct, failingNames, gitBashDir, insideRoot, npmCliPath, passingNames, sandboxMarkers, scrubEnv, selectedFiles,
-  suitesFromPackage, tscNames, withPathFirst,
+  cpuBusyPct, failingNames, fromCharset, gitBashDir, insideRoot, npmCliPath, passingNames, sandboxMarkers, scrubEnv, selectedFiles,
+  REF_CHARS, suitesFromPackage, tscNames, withPathFirst,
 } from "./test-route-compare.mts";
 
 const FIXTURE = fs.readFileSync(path.join(import.meta.dirname, "fixtures", "test-route", "windows-locations.tap"), "utf8");
@@ -145,4 +145,10 @@ test("cpuBusyPct measures the interval", () => {
   const cpu = (busy: number, idle: number) => [{ times: { user: busy, nice: 0, sys: 0, irq: 0, idle } }];
   assert.equal(cpuBusyPct(cpu(0, 0), cpu(25, 75)), 25);
   assert.equal(cpuBusyPct(cpu(5, 5), cpu(5, 5)), 0);
+});
+
+test("C8 fromCharset copies a value of the set and refuses any other", () => {
+  assert.equal(fromCharset("origin/main~1", REF_CHARS), "origin/main~1");
+  assert.equal(fromCharset("", REF_CHARS), "");
+  assert.equal(fromCharset("main;x", REF_CHARS), null);
 });
