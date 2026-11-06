@@ -21,6 +21,19 @@ export const HOOKS = (repo: string) => path.join(repo, "modules", "control-plane
 
 interface Host { root: string; paths: NodePaths; repo: string; deps: DoctorDeps; pem: string }
 
+function gitExecutable(): string {
+  const key = Object.keys(process.env).find((name) => name.toLowerCase() === "path");
+  const names = process.platform === "win32" ? ["git.exe", "git"] : ["git"];
+  for (const dir of (key ? process.env[key] ?? "" : "").split(path.delimiter)) {
+    if (!path.isAbsolute(dir)) continue;
+    for (const name of names) {
+      const candidate = path.join(dir, name);
+      if (fs.existsSync(candidate)) return candidate;
+    }
+  }
+  throw new Error("git not found on PATH");
+}
+
 export function host(t: test.TestContext): Host {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "kherep-doctor-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
@@ -36,7 +49,8 @@ export function host(t: test.TestContext): Host {
   fs.mkdirSync(HOOKS(repo), { recursive: true });
   for (const hook of ["deliver-hook.mts", "wake-hook.mts"]) fs.writeFileSync(path.join(HOOKS(repo), hook), "");
   fs.writeFileSync(path.join(repo, "package.json"), JSON.stringify({ version: "9.8.7" }));
-  const git = (...args: string[]) => spawnSync("git", ["-C", repo, ...args], { encoding: "utf8", windowsHide: true });
+  const gitBin = gitExecutable();
+  const git = (...args: string[]) => spawnSync(gitBin, ["-C", repo, ...args], { encoding: "utf8", windowsHide: true });
   assert.equal(git("init", "-q").status, 0);
   assert.equal(git("add", ".").status, 0);
   const tree = git("write-tree").stdout.trim();
