@@ -78,11 +78,13 @@ function members(text: string): [string, string][] {
   let depth = 0;
   let key = "";
   let valueAt = -1;
-  for (let i = 0; i < text.length; i++) {
+  let i = -1;
+  while (++i < text.length) {
     const c = text[i];
     if (c === "\"") {
       const from = i;
-      for (i++; text[i] !== "\""; i++) if (text[i] === "\\") i++;
+      i++;
+      while (text[i] !== "\"") { if (text[i] === "\\") i++; i++; }
       if (depth === 1 && valueAt < 0) key = text.slice(from, i + 1);
     } else if (c === "{" || c === "[") depth++;
     else if (depth === 1 && valueAt < 0 && c === ":") valueAt = i + 1;

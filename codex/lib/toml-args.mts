@@ -60,7 +60,8 @@ function targetName(target: string): string {
 function arrayEnd(text: string, start: number): number | undefined {
   let depth = 0;
   let comment = false;
-  for (let index = start; index < text.length; index += 1) {
+  let index = start - 1;
+  while (++index < text.length) {
     const char = text[index];
     if (comment) {
       if (char === "\n" || char === "\r") comment = false;
@@ -82,7 +83,8 @@ function rewriteArray(value: string, oldArg: string, newArg: string): RewriteRes
   let depth = 0;
   let braces = 0;
   let comment = false;
-  for (let index = 0; index < value.length; index += 1) {
+  let index = -1;
+  while (++index < value.length) {
     const char = value[index];
     if (comment) {
       if (char === "\n" || char === "\r") comment = false;
@@ -116,7 +118,8 @@ function rewriteArray(value: string, oldArg: string, newArg: string): RewriteRes
 
 export function hasTomlStringReference(text: string, target: string): boolean {
   let comment = false;
-  for (let index = 0; index < text.length; index += 1) {
+  let index = -1;
+  while (++index < text.length) {
     const char = text[index];
     if (comment) {
       if (char === "\n" || char === "\r") comment = false;

@@ -66,7 +66,8 @@ function structuralTomlLines(lines: string[]): boolean[] {
       if (close >= 0) multiline = undefined;
       return false;
     }
-    for (let index = 0; index < line.length; index += 1) {
+    let index = -1;
+    while (++index < line.length) {
       const char = line[index];
       if (char === "#") break;
       if (line.startsWith("'''", index) || line.startsWith('\"\"\"', index)) {
@@ -78,7 +79,7 @@ function structuralTomlLines(lines: string[]): boolean[] {
       }
       if (char !== "'" && char !== '"') continue;
       let escaped = false;
-      for (index += 1; index < line.length; index += 1) {
+      while (++index < line.length) {
         if (char === '"' && escaped) escaped = false;
         else if (char === '"' && line[index] === "\\") escaped = true;
         else if (line[index] === char) break;
@@ -101,7 +102,8 @@ function ownedLocalSource(codexHome: string | undefined, marketplace: string, li
   const sections: Array<{ start: number; end: number }> = [];
   const lines = config.split(/\r?\n/);
   const structural = structuralTomlLines(lines);
-  for (let index = 0; index < lines.length; index += 1) {
+  let index = -1;
+  while (++index < lines.length) {
     if (!structural[index] || !header.test(lines[index])) continue;
     let end = index + 1;
     while (end < lines.length && !(structural[end] && /^\s*\[/.test(lines[end]))) end += 1;
