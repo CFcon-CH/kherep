@@ -20,7 +20,7 @@ function text(header: Buffer, start: number, length: number): string {
 function octal(header: Buffer, start: number, length: number): number {
   const value = text(header, start, length).trim();
   if (!/^[0-7]*$/.test(value)) throw new Error("Invalid tar header number");
-  return value ? parseInt(value, 8) : 0;
+  return value ? Number.parseInt(value, 8) : 0;
 }
 
 function paxRecords(data: Buffer): Map<string, string> {
