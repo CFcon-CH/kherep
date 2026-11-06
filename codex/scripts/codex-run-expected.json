@@ -13,6 +13,8 @@
       { "name": "C6 with the messaging client disabled the render is byte-identical to c44f3e4", "reason": "the c44f3e4 byte pin is a POSIX render" },
       { "name": "codex execpolicy loads the Windows launcher rule and allows only msg subcommands", "reason": "codex is not on PATH" },
       { "name": "codex execpolicy loads the macOS launcher rule and allows only msg subcommands", "reason": "codex is not on PATH" },
+      { "name": "execpolicy checks the macOS rule without allowing other verbs or compound commands", "reason": "codex is not on PATH" },
+      { "name": "execpolicy checks the Windows path on current host rule without allowing other verbs or compound commands", "reason": "codex is not on PATH" },
       { "name": "recognizes complete preserved upgrade artifacts while rejecting modified guards", "reason": "External preserved upgrade fixture not supplied" },
       { "name": "requires a private registry on POSIX", "reason": null },
       { "name": "POSIX native command shell passes every accepted argument literally", "reason": null },
@@ -23,6 +25,8 @@
     "linux": [
       { "name": "codex execpolicy loads the Windows launcher rule and allows only msg subcommands", "reason": "codex is not on PATH" },
       { "name": "codex execpolicy loads the macOS launcher rule and allows only msg subcommands", "reason": "codex is not on PATH" },
+      { "name": "execpolicy checks the macOS rule without allowing other verbs or compound commands", "reason": "codex is not on PATH" },
+      { "name": "execpolicy checks the Windows path on current host rule without allowing other verbs or compound commands", "reason": "codex is not on PATH" },
       { "name": "recognizes complete preserved upgrade artifacts while rejecting modified guards", "reason": "External preserved upgrade fixture not supplied" },
       { "name": "native selection rejects Windows-unrepresentable bindings without changing old three-field compatibility", "reason": null },
       { "name": "native CA path survives the actual Windows command shell", "reason": null },
