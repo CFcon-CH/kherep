@@ -19,7 +19,7 @@ fi
 TOPLEVEL=$(git rev-parse --show-toplevel 2>/dev/null) || drain
 canonical_dir() {
   KHEREP_PATH=$(printf '%s' "$1" | tr '\\' '/')
-  (CDPATH=; export CDPATH; cd -P "$KHEREP_PATH" && { pwd -W 2>/dev/null || pwd -P; }) 2>/dev/null
+  (CDPATH=; export CDPATH; cd -P "$KHEREP_PATH" && { pwd -W || pwd -P; }) 2>/dev/null
 }
 TOP_REAL=$(canonical_dir "$TOPLEVEL") && WORK_REAL=$(canonical_dir "$WORKSPACE") || {
   printf 'Kherep pre-push could not compare the repository with the workspace; its check did not run.\n' >&2
