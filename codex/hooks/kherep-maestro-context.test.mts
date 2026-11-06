@@ -22,7 +22,7 @@ function run(input: unknown, env: NodeJS.ProcessEnv = {}, args: string[] = []) {
   });
 }
 
-{
+test("session start announces the configured Windows workspace and managed roles", () => {
   const result = run({
     hook_event_name: "SessionStart",
     cwd: "D:\\Work\\ForgeApps\\Alchemist-for-Jira",
@@ -32,9 +32,9 @@ function run(input: unknown, env: NodeJS.ProcessEnv = {}, args: string[] = []) {
   assert.match(result.stdout, /\[Maestro on \| routing loaded \| evidence-first\]/);
   assert.match(result.stdout, /ROUTING\.md/);
   assert.match(result.stdout, /Astra for the main designer, SOL for builders and root/);
-}
+});
 
-{
+test("prompt submission supplies the acceptance and observation worker contract", () => {
   const result = run({
     hook_event_name: "UserPromptSubmit",
     cwd: "/Users/example/Kherep/ForgeApps/Aegis-Pro",
@@ -48,47 +48,47 @@ function run(input: unknown, env: NodeJS.ProcessEnv = {}, args: string[] = []) {
   assert.doesNotMatch(result.stdout, /reasoning_effort low/);
   assert.match(result.stdout, /Luna extracts and publishes only through mcp__kherep_observations__publish_observations/);
   assert.doesNotMatch(result.stdout, /Before the final response, dispatch the codex-obs agent/);
-}
+});
 
-{
+test("session start stays quiet outside the configured workspace", () => {
   const result = run({
     hook_event_name: "SessionStart",
     cwd: "C:\\unrelated\\project",
   });
   assert.strictEqual(result.status, 0);
   assert.strictEqual(result.stdout, "");
-}
+});
 
-{
+test("session start honors an explicitly configured Windows workspace", () => {
   const result = run(
     { hook_event_name: "SessionStart", cwd: "C:\\work\\private-repos\\app" },
     { KHEREP_WORKSPACE: "C:\\work\\private-repos" },
   );
   assert.strictEqual(result.status, 0);
   assert.match(result.stdout, /KHEREP CODEX ORCHESTRA ACTIVE/);
-}
+});
 
-{
+test("session start derives the default workspace from the home directory", () => {
   const result = run(
     { hook_event_name: "SessionStart", cwd: "/Users/example/Kherep/project" },
     { HOME: "/Users/example", USERPROFILE: "" },
   );
   assert.match(result.stdout, /KHEREP CODEX ORCHESTRA ACTIVE/);
-}
+});
 
-{
+test("session start stays quiet when the workspace belongs to another home", () => {
   const result = run(
     { hook_event_name: "SessionStart", cwd: "/work/worker/project" },
     { HOME: "/Users/example", KHEREP_WORKSPACE: "/Users/example/Kherep" },
   );
   assert.strictEqual(result.stdout, "");
-}
+});
 
-{
+test("malformed hook input exits successfully without output", () => {
   const result = run("not json");
   assert.strictEqual(result.status, 0);
   assert.strictEqual(result.stdout, "");
-}
+});
 
 const payload = { hook_event_name: "UserPromptSubmit", cwd: "/synthetic/work/project" };
 const workspaceEnv = { KHEREP_WORKSPACE: "/synthetic/work" };

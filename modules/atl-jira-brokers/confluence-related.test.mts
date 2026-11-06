@@ -288,7 +288,7 @@ test("requireResolvableAnchors names every bad id and what to do instead", async
 
 test("requireResolvableAnchors passes a body whose links all resolve here", async () => {
   const { session } = recorder([{ id: "1", spaceId: "42" }]);
-  await requireResolvableAnchors(session, '<a href="/wiki/spaces/KB/pages/1">ok</a>', "42");
+  await assert.doesNotReject(() => requireResolvableAnchors(session, '<a href="/wiki/spaces/KB/pages/1">ok</a>', "42"));
 });
 
 test('inventory malformed success must not become an empty space', async () => {
