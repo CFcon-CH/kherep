@@ -20,6 +20,8 @@ export interface TapRecord {
   directive: "SKIP" | "TODO" | null;
   reason: string | null;
   type: string;
+  location: string | null; // only a failing record has one (Node 26.10); path:line:column
+  failureType: string | null;
 }
 export interface TapSummary {
   tests: number; suites: number; pass: number; fail: number; cancelled: number; skipped: number; todo: number;
@@ -55,16 +57,22 @@ function readSummary(lines: string[]): { summary: TapSummary; plan: number; body
   return { summary, plan: Number(plan[1]), body: lines.slice(0, -SUMMARY_LINES) };
 }
 
-// The YAML block that must directly follow the record at `index`: its `type:`
-// and the index of its closing `...` line, or null when either is absent.
-function yamlBlock(lines: string[], index: number, indent: string): { type: string; end: number } | null {
+// The YAML block that must directly follow the record at `index`: its `type:`,
+// `location:` and `failureType:` and the index of its closing `...` line, or null
+// when the block or its type is absent.
+interface YamlBlock { type: string; location: string | null; failureType: string | null; end: number }
+
+function yamlBlock(lines: string[], index: number, indent: string): YamlBlock | null {
   if (lines[index + 1] !== `${indent}  ---`) return null;
   const typeLine = new RegExp(`^${indent}  type: '([a-z]+)'$`);
-  let type: string | null = null;
+  const locationLine = new RegExp(`^${indent}  location: '(.*)'$`);
+  const failureLine = new RegExp(`^${indent}  failureType: '(.*)'$`);
+  let type: string | null = null, location: string | null = null, failureType: string | null = null;
   for (let line = index + 2; line < lines.length; line++) {
-    if (lines[line] === `${indent}  ...`) return type === null ? null : { type, end: line };
-    const match = typeLine.exec(lines[line]);
-    if (match) type = match[1];
+    if (lines[line] === `${indent}  ...`) return type === null ? null : { type, location, failureType, end: line };
+    type = typeLine.exec(lines[line])?.[1] ?? type;
+    location = locationLine.exec(lines[line])?.[1].replaceAll("\\\\", "\\") ?? location;
+    failureType = failureLine.exec(lines[line])?.[1] ?? failureType;
   }
   return null;
 }
@@ -90,6 +98,8 @@ export function parseTap(text: string): ParsedTap {
       directive: directive ? (directive[2] as "SKIP" | "TODO") : null,
       reason: directive && directive[3] !== undefined ? unescapeTap(directive[3]) : null,
       type: yaml.type,
+      location: yaml.location,
+      failureType: yaml.failureType,
     });
     index = yaml.end; // a YAML block (an error message, a stack) never yields a record
   }
