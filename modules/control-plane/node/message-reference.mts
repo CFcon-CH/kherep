@@ -9,6 +9,8 @@ import { livenessFile, readLivenessSnapshot } from "./session-lifecycle.mts";
 
 interface LocalRow { sessionId: string; runtime?: string; name?: string; state?: string }
 type Selection = { results: SelectedResult[]; stamps: string[] };
+// The Worker's clock stamps expiresAt, so a node clock behind it sees more than the TTL left.
+const CLOCK_ALLOWANCE_MS = 30_000;
 function readPopulation(paths: NodePaths): { rows: LocalRow[]; generation: number | null } | "MISSING" | "INVALID" | "UNREADABLE" {
   try {
     const stat = fs.lstatSync(paths.sessions);
@@ -70,7 +72,7 @@ export class MessageReferenceResolver {
     for (const [id, lease] of this.leases) if (lease.expiresAt <= now) this.leases.delete(id);
     const fail = (): ResolveResponse => ({ version: 1, requestId: request.requestId, messageId: request.messageId,
       results: request.selections.map(s => ({ role: s.role, code: "STALE" })) });
-    if (!isResolveRequest(request) || request.expiresAt <= now || request.expiresAt > now + BINDING_TTL_MS
+    if (!isResolveRequest(request) || request.expiresAt <= now || request.expiresAt > now + BINDING_TTL_MS + CLOCK_ALLOWANCE_MS
       || this.leases.size + request.selections.length > BINDING_PENDING_LIMIT) return fail();
     const selected = readSelectedLocalReferences(this.paths, request.selections);
     selected.results.forEach((r, i) => {

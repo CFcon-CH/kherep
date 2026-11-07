@@ -38,6 +38,8 @@ export type CommandHandlers = Record<Phase1Command, () => Promise<unknown>>
 export type SentState = MessageState | "error";
 // Issue #441: the bytes a stamp can add (seq and ack each grow to at most 16 digits).
 export const STAMP_MARGIN = 32;
+// Issue #706: a BOUND answer with less margin than this is logged as late.
+const RESOLVE_LATE_MS = 1_000;
 
 export interface ClientOptions {
   selectedReferences?: MessageReferenceResolver;
@@ -214,9 +216,21 @@ export class NodeClient {
         ];
       case "command":
         return this.authenticated ? this.onCommand(envelope) : [];
-      case "message.resolve.request":
-        if (!live || !this.authenticated || !this.storageReady || !this.options.selectedReferences || !isResolveRequest(envelope.body)) return [];
-        return [this.frame("message.resolve.response", { ...this.options.selectedReferences.resolve(envelope.body, JSON.stringify(this.policy)) })];
+      case "message.resolve.request": {
+        const body = envelope.body, references = this.options.selectedReferences;
+        const skip = (reason: string): string[] => { this.logResolve(`skipped: ${reason}`, body); return []; };
+        if (!live) return skip("not live");
+        if (!this.authenticated) return skip("not authenticated");
+        if (!this.storageReady) return skip("storage not ready");
+        if (!references) return skip("no resolver");
+        if (!isResolveRequest(body)) return skip("malformed");
+        const response = references.resolve(body, JSON.stringify(this.policy));
+        const late = body.expiresAt - (this.options.now?.() ?? Date.now()) < RESOLVE_LATE_MS;
+        if (late || response.results.some(r => r.code !== "BOUND")) {
+          this.logResolve(`answered ${response.results.map(r => `${r.role}:${r.code}`).join(",")}`, body);
+        }
+        return [this.frame("message.resolve.response", { ...response })];
+      }
       case "message.deliver":
         if (!live || !this.authenticated || !isMessageDeliverBody(envelope.body)) return [];
         return this.onDeliver(envelope.body);
@@ -403,6 +417,13 @@ export class NodeClient {
     return this.authenticated
       ? [this.frame("task.request", { requestId, title, text, requirements: { ...requirements }, directive, requestedBy,
         ...(label ? { label } : {}) })] : [];
+  }
+
+  // Issue #706: metadata only. A skipped body is unchecked, so only a UUID requestId and an integer expiresAt are used.
+  private logResolve(outcome: string, body: unknown): void {
+    const { requestId, expiresAt } = body as { requestId?: unknown; expiresAt?: unknown };
+    const margin = Number.isSafeInteger(expiresAt) ? Number(expiresAt) - (this.options.now?.() ?? Date.now()) : "unknown";
+    this.options.log?.(`kherep-node: message.resolve ${outcome} requestId=${isMessageId(requestId) ? requestId : "invalid"} margin_ms=${margin}`);
   }
 
   // A failing local write is logged; the frame loop goes on.
