@@ -83,10 +83,12 @@ export function publishLiveness(paths: NodePaths, evidence: SessionEvidence[], n
       lifecycleGeneration: v.generation, reasonCode: "observed" });
   }
   const currentKeys = new Set(current.map(targetKey));
-  const retained = [...sessions.values()].filter(s => currentKeys.has(targetKey(s)) || !["archived", "deleted"].includes(s.state))
+  // A row neither listed nor named by evidence this round is one the node stopped carrying: the ledger forgets it.
+  const retained = [...sessions.values()].filter(s => currentKeys.has(targetKey(s)) || counts.has(targetKey(s)) && !["archived", "deleted"].includes(s.state))
     .sort((a, b) => Number(currentKeys.has(targetKey(b))) - Number(currentKeys.has(targetKey(a)))
       || b.observedAt - a.observedAt || targetKey(a).localeCompare(targetKey(b)));
-  if (retained.length > LIMIT) capped = true;
+  // Only a current row falling off the slice means coverage was lost; a carried row is silent.
+  if (retained.slice(LIMIT).some(s => currentKeys.has(targetKey(s)))) capped = true;
   const bounded = retained.slice(0, LIMIT).map(s => tombstones.size === LIMIT && !tombstones.has(targetKey(s))
     ? { ...s, state: "unknown" as const, reasonCode: "capped" as const } : s);
   const snapshot: LivenessSnapshot = { version: 1, generation: (previous?.generation ?? 0) + 1,

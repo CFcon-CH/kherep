@@ -1,4 +1,6 @@
-import { policyStamp, recordLocalLabels } from "./session-labels.mts";
+import fs from "node:fs";
+import { listenerDir } from "./autonomy.mts";
+import { labelsFile, policyStamp, readBindingView, recordLocalLabels } from "./session-labels.mts";
 import { attachIdentitySnapshot, uniqueSourceRows } from "./session-identity.mts";
 import { currentIdentity } from "../protocol-session-identity.mts";
 import { commitAuthority, faultAuthority, observationBelongs, revokeAuthority, type AdmissionAuthority } from "./session-authority.mts";
@@ -8,8 +10,8 @@ import { directoryVisibility, observationReason, targetKey } from "./session-liv
 import type { SessionEvidence } from "./session-liveness.mts";
 import type { SessionInfo } from "../protocol.mts";
 import { ensureDir, type NodePaths } from "./config.mts";
-import { readJson, refuseUndeliverable, UNDELIVERABLE_AFTER_MS, writeJsonAtomic, type InboxRecord } from "./inbox.mts";
-import { markUnseen, rememberSessions, unlistedRuntimes } from "./known-sessions.mts";
+import { listInbox, readJson, refuseUndeliverable, UNDELIVERABLE_AFTER_MS, writeJsonAtomic, type InboxRecord } from "./inbox.mts";
+import { knownSessionsFile, markUnseen, rememberSessions, unlistedRuntimes, type KnownSession } from "./known-sessions.mts";
 import { snapshotObject } from "./wake-snapshot.mts";
 
 // sessions.json, the node's sessions from the last successful listing, and the
@@ -52,6 +54,54 @@ export function localSessionName(paths: NodePaths, sessionId: string): string | 
   return readLocalSessions(paths).find((s) => s.sessionId === sessionId)?.name;
 }
 
+const CARRY_LIMIT = 128;
+const carryFaults = new Map<string, string>();
+
+// Sessions something on this node still points at: a listener file, an inbox record, a wake-name binding.
+// Local files only, and every failed read throws, so that the caller carries all rows instead of dropping one.
+function protectedRefs(paths: NodePaths, records?: () => InboxRecord[]): Set<string> {
+  const refs = new Set<string>();
+  try { for (const file of fs.readdirSync(listenerDir(paths))) refs.add(file.split(".")[0]); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+  for (const record of records?.() ?? listInbox(paths.inbox)) refs.add(record.toSession);
+  const view = readBindingView(paths);
+  for (const binding of view.bindings) refs.add(binding.sessionId);
+  // No file and no witness is a node without bindings; any other unavailable view is lost history.
+  if (view.status !== "healthy" && (fs.statSync(labelsFile(paths), { throwIfNoEntry: false }) || readJson<{ labelBindingEpoch?: unknown }>(paths.sessions)?.labelBindingEpoch !== undefined)) {
+    throw new Error("session-labels.json is unavailable");
+  }
+  return refs;
+}
+// lastSeen moves only when a session is listed. The ledger's observedAt cannot rank these rows: judgeSession
+// gives every unknown row the round's time, so all of them tie.
+function lastSeenTimes(paths: NodePaths): Map<string, number> {
+  const known = readJson<{ sessions?: unknown }>(knownSessionsFile(paths))?.sessions;
+  if (!Array.isArray(known)) throw new Error("known-sessions.json is unavailable");
+  return new Map((known as KnownSession[]).map(s => {
+    const at = Date.parse(s.lastSeen);
+    if (typeof s.sessionId !== "string" || typeof s.runtime !== "string" || Number.isNaN(at)) throw new Error("known-sessions.json has a malformed entry");
+    return [targetKey(s), at];
+  }));
+}
+// At most CARRY_LIMIT rows, or every protected row if those alone exceed it, in the order of the file.
+function boundedCarry(paths: NodePaths, lacking: SessionInfo[], records: (() => InboxRecord[]) | undefined, log: (line: string) => void): SessionInfo[] {
+  if (lacking.length <= CARRY_LIMIT) return lacking;
+  try {
+    const refs = protectedRefs(paths, records);
+    const seen = lastSeenTimes(paths);
+    const lastSeen = (s: SessionInfo): number => seen.get(targetKey(s)) ?? 0;
+    const kept = new Set(lacking.filter(s => refs.has(s.sessionId) || s.name !== undefined && refs.has(s.name)));
+    const newest = lacking.filter(s => !kept.has(s)).sort((a, b) => lastSeen(b) - lastSeen(a) || targetKey(a).localeCompare(targetKey(b)));
+    for (const s of newest.slice(0, Math.max(0, CARRY_LIMIT - kept.size))) kept.add(s);
+    carryFaults.delete(paths.dir);
+    return lacking.filter(s => kept.has(s));
+  } catch (error) {
+    const fault = String(error);
+    if (carryFaults.get(paths.dir) !== fault) log(`kherep-node: carry bound skipped, keeping all ${lacking.length} unlisted rows: ${fault}`);
+    carryFaults.set(paths.dir, fault);
+    return lacking;
+  }
+}
 // Wraps the session listing so that every successful one is written to
 // sessions.json; the delivery hook reads names from there instead of running
 // claude on every prompt. The same successful listing refuses inbox messages
@@ -84,9 +134,11 @@ export function recordingSessions(paths: NodePaths, list: (signal?: AbortSignal)
     const unseen = unlistedRuntimes(listed);
     // Carry prior identities into classification. Visibility is decided only
     // after the lifecycle ledger has accepted/rejected the supplied events.
+    const listedRows = rows.length;
     for (const s of prior) if (s.runtime && !rows.some(r => targetKey(r) === targetKey({ runtime: s.runtime!, sessionId: s.sessionId }))) {
       rows.push({ ...s, runtime: s.runtime, state: "unknown" });
     }
+    rows.push(...boundedCarry(paths, rows.splice(listedRows), records, log));
     const evidence: SessionEvidence[] = rows.flatMap(s => {
       const matches = supplied.filter(e => targetKey(e) === targetKey(s));
       return matches.length ? matches : [{ runtime: s.runtime, sessionId: s.sessionId,

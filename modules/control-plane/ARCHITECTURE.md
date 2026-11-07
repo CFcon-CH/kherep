@@ -67,13 +67,29 @@ An ordinary restart begins empty and needs new source evidence plus publication;
 no unwritten terminal fact is claimed durable. Stop revokes before drain.
 
 Display/nonterminal history and the authoritative lifecycle ledger are separate
-populations, each capped at 512. Current raw identities take priority; oldest
-uncertain history is evicted as unavailable/UNKNOWN, never deleted. Eviction
-surfaces the existing partial marker. Terminal/restored ledger entries are never
-evicted and need not occupy display slots. A full ledger itself fences every
+populations, each capped at 512. Current raw identities take priority. Only a
+current identity falling off that slice surfaces the partial marker (`capped`,
+which makes every resolve answer INVALID). A non-current row that falls off, or
+that neither the listing nor evidence names this round, leaves the ledger
+silently and reads as UNKNOWN/missing, as before (#706). Terminal/restored ledger
+entries are never evicted and need not occupy display slots. A full ledger itself fences every
 unrecorded identity as UNKNOWN/capped across restart, even with positive holder
 evidence; existing recorded restore generations retain replay protection. No
 separate permanent capacity latch or automatic reset is introduced.
+
+A listing keeps a prior row it lacks as a carried UNKNOWN row, up to 128 of them
+per round (`CARRY_LIMIT`, `exchange-sessions.mts`). Protected rows are always
+carried: a session with any file in `listeners/`, the target of an inbox record
+(by ID or name), and a session bound in `session-labels.json`. If protected rows
+alone exceed 128, all of them are carried and nothing else. The remaining places
+go to the newest rows by `known-sessions.json` `lastSeen`, which moves only when a
+session is listed; a row without an entry ranks oldest and ties break on
+runtime/ID. The ledger's `observedAt` cannot rank them, because an unknown verdict
+takes the round's time. The rows stay in file order, so repeated rounds write the
+same rows. The bound is not checked below the limit, and it reads only local files.
+A failed read of any of these sources carries every row and logs the fault once.
+Dropping a carried row marks nothing partial: the row now resolves MISSING, and it
+returns when the session is listed again. The value is a safety bound, not retention.
 
 No route, queue pointer, native argv, target resume or deadline wiring changes
 belong to Phase 1. Native acceptance and installed artifact identity are open.
