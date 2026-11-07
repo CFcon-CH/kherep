@@ -23,10 +23,11 @@ import {
 } from "../protocol-messages.mts";
 import { signChallenge, type NodeIdentity } from "./identity.mts";
 import { discoverMcpSessions } from "./mcp-session-discovery.mts";
+import { nativeMcpAssignment } from "./mcp-assignment.mts";
 import { acceptsMessage, advertisedCapabilities, isAllowed, mcpRuntimeEnabled, type NodePolicy } from "./policy.mts";
 import {
   isMcpCredentialBody, isMcpInboxRequestBody, isMcpIntentReceiptBody, isMcpIntentRegistration, MCP_INBOX_TOO_LARGE,
-  type McpCredentialBody, type McpInboxItem, type McpIntentReceiptBody, type McpIntentRegistration,
+  type McpCredentialBody, type McpInboxItem, type McpIntentReceiptBody, type McpIntentRegistration, type McpAssignmentNative,
 } from "../protocol-mcp.mts";
 
 // Session commands (item 5) take their validated args; a node without them
@@ -53,6 +54,7 @@ export interface ClientOptions {
   runtimes: () => Promise<RuntimeInfo[]>;
   // Rejects when the listing failed, which is not the same as no sessions.
   sessions: (signal?: AbortSignal) => Promise<SessionInfo[]>;
+  assignmentIdentity?: (sessionId: string) => Promise<McpAssignmentNative | null>;
   // The daemon publishes this after authentication so service-drained session
   // discovery cannot postpone connectedAt. Transport-free clients keep the
   // original synchronous auth snapshot by default.
@@ -408,8 +410,21 @@ export class NodeClient {
   }
 
   registerMcpIntent(body: McpIntentRegistration): string[] {
-    return this.authenticated && isMcpIntentRegistration(body) && mcpRuntimeEnabled(this.policy, body.runtime)
+    return body.tool !== "assign_self" && this.authenticated && isMcpIntentRegistration(body) && mcpRuntimeEnabled(this.policy, body.runtime)
       ? [this.frame("mcp.intent.register", { ...body })] : [];
+  }
+
+  async registerMcpAssignment(body: McpIntentRegistration, beforePublish?: () => Promise<boolean>): Promise<string[]> {
+    if (body.tool !== "assign_self" || body.runtime !== "codex" || !body.assignment) return [];
+    const local: McpIntentRegistration = { ...body, assignment: { slot: body.assignment.slot, turnId: body.assignment.turnId } };
+    if (!this.authenticated || !isMcpIntentRegistration(local) || !mcpRuntimeEnabled(this.policy, "codex")) return [];
+    let native: McpAssignmentNative | null;
+    try { native = await (this.options.assignmentIdentity ?? nativeMcpAssignment)(local.sessionId); } catch { return []; }
+    if (beforePublish && !await beforePublish()) return [];
+    if (!native || native.sessionId !== local.sessionId || !this.authenticated || !mcpRuntimeEnabled(this.policy, "codex")
+      || this.knownMcpIntents([local]).length !== 1) return [];
+    const enriched: McpIntentRegistration = { ...local, assignment: { ...local.assignment!, native } };
+    return isMcpIntentRegistration(enriched) ? [this.frame("mcp.intent.register", { ...enriched })] : [];
   }
 
   knownMcpIntents(intents: McpIntentRegistration[]): McpIntentRegistration[] {

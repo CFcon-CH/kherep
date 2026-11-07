@@ -41,12 +41,24 @@ async function client(token: string) {
 }
 
 describe("Claude native MCP HTTP join", () => {
+  it("rejects Claude self-assignment without changing any slot or revision", async () => {
+    const sourceNode = await source(), instance = await client(sourceNode.credential.token);
+    try {
+      const before = await registry().listIntercomSlots();
+      const result = await instance.callTool({ name: "assign_self", arguments: { requestId: crypto.randomUUID(), slot: "kherep-lead" },
+        _meta: { "claudecode/toolUseId": "synthetic-claude-call" } });
+      expect(result.isError).toBe(true);
+      expect(result.content).toEqual([{ type: "text", text: "self-assignment requires the original Codex Mac native thread" }]);
+      expect(await registry().listIntercomSlots()).toEqual(before);
+    } finally { await instance.close(); }
+  });
+
   it("tells callers that the native hook supplies every required requestId", async () => {
     const sourceNode = await source();
     const instance = await client(sourceNode.credential.token);
     try {
       const tools = await instance.listTools();
-      expect(tools.tools.map(({ name }) => name).sort()).toEqual(["inbox", "reply", "send", "sessions", "status"]);
+      expect(tools.tools.map(({ name }) => name).sort()).toEqual(["assign_self", "inbox", "reply", "send", "sessions", "status"]);
       for (const tool of tools.tools) {
         expect(tool.description).toContain("The native hook supplies requestId; omit it from tool arguments.");
       }

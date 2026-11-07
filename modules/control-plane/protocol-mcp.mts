@@ -7,9 +7,15 @@ export const MCP_INBOX_TOO_LARGE = "inbox response exceeds transport limit; retr
 export const MCP_INTENT_TTL_DEFAULT_MS = 120_000;
 export const MCP_INTENT_TTL_MAX_MS = 300_000;
 
-export const MCP_TOOLS = ["sessions", "send", "inbox", "reply", "status"] as const;
+export const MCP_TOOLS = ["sessions", "send", "inbox", "reply", "status", "assign_self"] as const;
 export type McpTool = (typeof MCP_TOOLS)[number];
 export type McpRuntime = "codex" | "claude-code";
+export const SELF_ASSIGNMENT_SLOTS = ["codex-mac", "kherep-lead"] as const;
+export type SelfAssignmentSlot = (typeof SELF_ASSIGNMENT_SLOTS)[number];
+export interface McpAssignmentNative { sessionId: string; chatName: string; platform: "darwin"; originalMain: true }
+export interface McpAssignment { slot: SelfAssignmentSlot; turnId: string; native?: McpAssignmentNative }
+export type McpAssignmentResult = { ok: true; slot: SelfAssignmentSlot; revision: number }
+  | { ok: false; error: string; conflict?: true };
 
 interface McpIntentCommon {
   requestId: string;
@@ -18,6 +24,7 @@ interface McpIntentCommon {
   tool: McpTool;
   argumentsDigest: string;
   ttlMs?: number;
+  assignment?: McpAssignment;
 }
 
 export type McpIntentRegistration = McpIntentCommon & (
@@ -68,6 +75,19 @@ function isObject(value: unknown): value is Record<string, unknown> {
 function isShortString(value: unknown, max: number): value is string {
   return typeof value === "string" && value.length > 0 && value.length <= max;
 }
+export function isSelfAssignmentSlot(value: unknown): value is SelfAssignmentSlot {
+  return typeof value === "string" && (SELF_ASSIGNMENT_SLOTS as readonly string[]).includes(value);
+}
+export function isMcpAssignment(value: unknown, sessionId: string): value is McpAssignment {
+  if (!isObject(value) || Object.keys(value).some(key => !["slot", "turnId", "native"].includes(key))
+    || !isSelfAssignmentSlot(value.slot) || !isShortString(value.turnId, 128)) return false;
+  if (value.native === undefined) return true;
+  const native = value.native;
+  return isObject(native) && Object.keys(native).sort().join(",") === "chatName,originalMain,platform,sessionId"
+    && native.originalMain === true && native.platform === "darwin" && native.sessionId === sessionId
+    && isShortString(native.chatName, 1024) && native.chatName.trim().length > 0
+    && !/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u.test(native.chatName);
+}
 
 export function isMcpTool(value: unknown): value is McpTool {
   return typeof value === "string" && (MCP_TOOLS as readonly string[]).includes(value);
@@ -77,6 +97,11 @@ export function isMcpIntentRegistration(value: unknown): value is McpIntentRegis
   if (!isObject(value)) return false;
   const ttl = value.ttlMs;
   const runtime = value.runtime;
+  if (value.tool === "assign_self") {
+    if (runtime !== "codex" || typeof value.sessionId !== "string" || !UUID.test(value.sessionId)
+      || value.threadId !== value.sessionId || !isMcpAssignment(value.assignment, value.sessionId)
+      || Object.keys(value).some(key => !["requestId", "runtime", "sessionId", "threadId", "callId", "tool", "argumentsDigest", "ttlMs", "assignment"].includes(key))) return false;
+  } else if (value.assignment !== undefined) return false;
   return typeof value.requestId === "string" && UUID.test(value.requestId)
     && (runtime === "codex" || runtime === "claude-code")
     && isShortString(value.sessionId, 128)

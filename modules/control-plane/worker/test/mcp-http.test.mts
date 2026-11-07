@@ -64,7 +64,7 @@ describe("stateless remote MCP HTTP", () => {
 
     const { credential } = await source();
     const first = await client(credential.token);
-    expect((await first.listTools()).tools.map((tool) => tool.name).sort()).toEqual(["inbox", "reply", "send", "sessions", "status"]);
+    expect((await first.listTools()).tools.map((tool) => tool.name).sort()).toEqual(["assign_self", "inbox", "reply", "send", "sessions", "status"]);
     await first.close();
 
     await registry().rotateMcpCredential((await registry().authenticateMcpCredential(credential.token))?.nodeId ?? "stale");

@@ -1,7 +1,9 @@
 import {
   CLAUDE_MCP_CAPABILITY, MCP_INTENT_TTL_DEFAULT_MS, REMOTE_MCP_CAPABILITY, isMcpIntentClaim, isMcpIntentRegistration,
   type McpIntentClaim, type McpIntentRegistration, type McpRuntime,
+  type McpAssignmentResult, type SelfAssignmentSlot,
 } from "../../protocol-mcp.mts";
+import { replaceIntercomSlot } from "./intercom-slots.mts";
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS mcp_credentials (
@@ -51,6 +53,11 @@ export class McpRegistry {
     this.capabilitiesOf = capabilitiesOf;
     this.sessionRuntime = sessionRuntime;
     this.sql.exec(SCHEMA);
+    const columns = new Set(this.sql.exec<{ name: string }>("PRAGMA table_info(mcp_intents)").toArray().map(row => row.name));
+    for (const [name, type] of [["assignment_slot", "TEXT"], ["assignment_title", "TEXT"], ["assignment_turn_id", "TEXT"],
+      ["assignment_revision", "INTEGER"], ["assignment_result", "TEXT"]]) {
+      if (!columns.has(name)) this.sql.exec(`ALTER TABLE mcp_intents ADD COLUMN ${name} ${type}`);
+    }
   }
 
   rotateHashed(nodeId: string, token: string, tokenHash: string, now: number): Credential {
@@ -71,9 +78,13 @@ export class McpRegistry {
     return this.enabled(nodeId) ? { nodeId, version: Number(row.version) } : null;
   }
 
-  register(nodeId: string, intent: McpIntentRegistration, now: number): Registration {
+  register(nodeId: string, intent: McpIntentRegistration, now: number, assignmentDigest?: string): Registration {
     if (!isMcpIntentRegistration(intent)) return { ok: false, error: "invalid intent metadata" };
+    if (intent.tool === "assign_self" && (!intent.assignment?.native || assignmentDigest !== intent.argumentsDigest)) {
+      return { ok: false, error: "native original assignment evidence is required" };
+    }
     if (!this.enabled(nodeId, intent.runtime)) return { ok: false, error: this.disabledError(nodeId, intent.runtime) };
+    if (intent.tool === "assign_self" && !this.assignmentNode(nodeId)) return { ok: false, error: "Codex Mac assignment requires an eligible enrolled Mac node" };
     if (this.sessionRuntime(nodeId, intent.sessionId) !== intent.runtime) {
       return { ok: false, error: "native session is not registered on this node" };
     }
@@ -96,10 +107,15 @@ export class McpRegistry {
     const retained = Number(this.sql.exec("SELECT COUNT(*) AS n FROM mcp_intents WHERE node_id = ?", nodeId).one().n);
     if (retained >= MAX_RETAINED_INTENTS_PER_NODE) return { ok: false, error: "too many retained MCP intents" };
     const expiresAt = now + (intent.ttlMs ?? MCP_INTENT_TTL_DEFAULT_MS);
+    const assignmentRevision = intent.assignment ? this.sql.exec<{ revision: number }>(
+      "SELECT revision FROM intercom_slots WHERE slot=?", intent.assignment.slot).toArray()[0]?.revision : null;
+    if (intent.assignment && assignmentRevision === undefined) return { ok: false, error: "Intercom roster unavailable" };
     this.sql.exec(`INSERT INTO mcp_intents (request_id, node_id, credential_version, runtime, session_id, thread_id, call_id,
-      tool_name, arguments_digest, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      tool_name, arguments_digest, created_at, expires_at, assignment_slot, assignment_title, assignment_turn_id, assignment_revision)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     intent.requestId, nodeId, Number(credential.version), intent.runtime, intent.sessionId, intent.threadId, intent.callId,
-    intent.tool, intent.argumentsDigest, now, expiresAt);
+    intent.tool, intent.argumentsDigest, now, expiresAt, intent.assignment?.slot ?? null, intent.assignment?.native?.chatName ?? null,
+    intent.assignment?.turnId ?? null, assignmentRevision);
     return { ok: true, requestId: intent.requestId, expiresAt, version: Number(credential.version) };
   }
 
@@ -147,9 +163,35 @@ export class McpRegistry {
     return { ok: true, disposition: "new", sessionId, effectId: input.requestId };
   }
 
+  assign(input: McpIntentClaim, slot: SelfAssignmentSlot, now: number): McpAssignmentResult {
+    const found = this.inspect(input, now);
+    if (!found.ok) return found;
+    const { row, sessionId } = found;
+    if (!this.assignmentNode(input.nodeId)) return { ok: false, error: "Codex Mac assignment requires an eligible enrolled Mac node" };
+    if (input.tool !== "assign_self" || input.runtime !== "codex" || input.threadId !== sessionId
+      || row.thread_id !== sessionId || row.assignment_slot !== slot || typeof row.assignment_title !== "string"
+      || !row.assignment_title || typeof row.assignment_turn_id !== "string" || !Number.isSafeInteger(row.assignment_revision)) {
+      return { ok: false, error: "native assignment identity does not match intent" };
+    }
+    if (row.assignment_result !== null) return JSON.parse(String(row.assignment_result)) as McpAssignmentResult;
+    const revision = replaceIntercomSlot(this.sql, slot, Number(row.assignment_revision), {
+      nodeId: input.nodeId, runtime: "codex", sessionId, chatName: row.assignment_title,
+    });
+    const result: McpAssignmentResult = revision === null
+      ? { ok: false, error: "Intercom slot revision conflict", conflict: true } : { ok: true, slot, revision };
+    this.sql.exec("UPDATE mcp_intents SET claimed_at=?, outcome=?, assignment_result=? WHERE request_id=?",
+      now, revision === null ? "failed" : "succeeded", JSON.stringify(result), input.requestId);
+    return result;
+  }
+
   removeNode(nodeId: string): void {
     this.sql.exec("DELETE FROM mcp_intents WHERE node_id = ?", nodeId);
     this.sql.exec("DELETE FROM mcp_credentials WHERE node_id = ?", nodeId);
+  }
+
+  private assignmentNode(nodeId: string): boolean {
+    return this.sql.exec("SELECT 1 FROM nodes WHERE id=? AND os='darwin' AND revoked_at IS NULL AND public_key IS NOT NULL", nodeId)
+      .toArray().length === 1;
   }
 
   removeRuntime(nodeId: string, runtime: McpRuntime): void {
@@ -178,7 +220,10 @@ export class McpRegistry {
       && String(row.runtime) === intent.runtime && String(row.session_id) === intent.sessionId
       && (row.thread_id === null ? intent.threadId === undefined : String(row.thread_id) === intent.threadId)
       && String(row.call_id) === intent.callId && String(row.tool_name) === intent.tool
-      && String(row.arguments_digest) === intent.argumentsDigest;
+      && String(row.arguments_digest) === intent.argumentsDigest
+      && (intent.assignment ? row.assignment_slot === intent.assignment.slot
+        && row.assignment_title === intent.assignment.native?.chatName && row.assignment_turn_id === intent.assignment.turnId
+        : row.assignment_slot === null);
   }
 
   private matchesClaim(row: Record<string, SqlStorageValue>, intent: McpIntentClaim): boolean {

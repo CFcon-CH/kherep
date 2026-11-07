@@ -26,7 +26,7 @@ test("every historical renderer stays free of the new busy consumer", () => {
     if (/^render(Before|Previous|Legacy)/.test(name)
         // Issue #538: so had the block right before the adapted messaging intent entry.
         && !["renderBeforeAtlassianDestructiveGuard", "renderBeforeShellDispatcher", "renderBeforeAdaptedDirectGuards",
-          "renderBeforeAdaptedIntentHook"].includes(name)
+          "renderBeforeAdaptedIntentHook", "renderBeforeSelfAssignment"].includes(name)
         && typeof value === "function") {
       assert.equal(busyGroups((value as typeof parity.render)(renderOptions)).length, 0, name);
     }

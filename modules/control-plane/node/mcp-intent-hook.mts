@@ -3,7 +3,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-import { MCP_TOOLS, digestMcpArguments, type McpRuntime, type McpTool } from "../protocol-mcp.mts";
+import { MCP_TOOLS, digestMcpArguments, isSelfAssignmentSlot, type McpRuntime, type McpTool } from "../protocol-mcp.mts";
+import { fullSessionId } from "../protocol-session-identity.mts";
 import { nodePaths, readConfig, type NodePaths } from "./config.mts";
 import { consumeMcpIntentReceipt, enqueueMcpIntent } from "./mcp-local.mts";
 import { rememberGuardedMcpReply } from "./guarded-replies.mts";
@@ -77,6 +78,11 @@ export async function processMcpIntentHook(input: Record<string, unknown>, root:
   if (input.hook_event_name !== "PreToolUse" || typeof input.session_id !== "string"
     || typeof input.tool_use_id !== "string" || !record(input.tool_input)) return deny("remote_mcp_missing_native_identity");
   if (Object.hasOwn(input.tool_input, "requestId")) return deny("remote_mcp_request_id_must_be_native");
+  if (tool === "assign_self" && (runtime !== "codex" || !fullSessionId(input.session_id)
+    || typeof input.turn_id !== "string" || !input.turn_id || input.turn_id.length > 128
+    || Object.keys(input.tool_input).join(",") !== "slot" || !isSelfAssignmentSlot(input.tool_input.slot))) {
+    return deny("remote_mcp_invalid_self_assignment");
+  }
   const requestId = crypto.randomUUID();
   const hookStart = performance.now();
   let enqueued: number | null = null;
@@ -88,8 +94,12 @@ export async function processMcpIntentHook(input: Record<string, unknown>, root:
   };
   try {
     if (tool === "reply") rememberGuardedMcpReply(paths, requestId, input.tool_input.inReplyTo);
-    enqueueMcpIntent(paths, { requestId, runtime, sessionId: input.session_id, callId: input.tool_use_id,
-      tool, argumentsDigest: await digestMcpArguments(input.tool_input) });
+    const common = { requestId, sessionId: input.session_id, callId: input.tool_use_id,
+      tool, argumentsDigest: await digestMcpArguments(input.tool_input) };
+    enqueueMcpIntent(paths, tool === "assign_self"
+      ? { ...common, runtime: "codex", threadId: input.session_id,
+        assignment: { slot: input.tool_input.slot as "codex-mac" | "kherep-lead", turnId: input.turn_id as string } }
+      : runtime === "codex" ? { ...common, runtime: "codex" } : { ...common, runtime: "claude-code" });
     enqueued = performance.now();
     const deadline = now + ACK_WAIT_MS;
     while (Date.now() < deadline) {

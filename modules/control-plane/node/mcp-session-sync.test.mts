@@ -24,7 +24,8 @@ const decode = (frame: string) => {
   return parsed.envelope;
 };
 
-async function fixture(t: test.TestContext, enabled = true, initialSessions = [OLD]) {
+async function fixture(t: test.TestContext, enabled = true, initialSessions = [OLD],
+  assignmentIdentity?: ConstructorParameters<typeof NodeClient>[0]["assignmentIdentity"]) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "kherep-mcp-session-sync-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const paths = nodePaths(root), inflight = new Set<string>(), frames: string[] = [];
@@ -35,6 +36,7 @@ async function fixture(t: test.TestContext, enabled = true, initialSessions = [O
     handlers: { "node.status": async () => ({}), "runtime.list": async () => [], "session.list": async () => [] },
     facts: () => ({ hostname: "node.example.invalid", os: "linux", arch: "x64", cpus: 1, memoryBytes: 1024 }),
     runtimes: async () => [], storeMessage: () => {},
+    assignmentIdentity,
     sessions: async () => { reads++; await listingGate; if (fail) throw new Error("synthetic listing failure"); return sessions; },
   });
   await client.onFrame(JSON.stringify(makeEnvelope("event", { name: "auth.ok" }, 0, 0)));
@@ -58,6 +60,55 @@ test("publishes a newly discovered caller before its first native intent", async
   assert.ok(frames[0]!.seq < frames[1]!.seq);
   assert.equal(f.reads(), 1);
   assert.deepEqual([...f.inflight], [request.requestId]);
+});
+
+test("fresh assignment publishes the complete snapshot first and recomputes queue evidence", async t => {
+  const sessionId = "11111111-1111-4111-8111-111111111111";
+  let identityReads = 0;
+  const f = await fixture(t, true, [], async id => {
+    identityReads++;assert.equal(id, sessionId);
+    return { sessionId, chatName: "  Exact native title  ", platform: "darwin", originalMain: true };
+  });
+  const caller: SessionInfo = { sessionId, runtime: "codex", state: "running" };
+  f.sessions([OLD, caller]);
+  const request: McpIntentRegistration = { ...intent("88", sessionId), runtime: "codex", tool: "assign_self", threadId: sessionId,
+    assignment: { slot: "codex-mac", turnId: "synthetic-turn", native: {
+      sessionId, chatName: "FORGED WRITABLE QUEUE TITLE", platform: "darwin", originalMain: true,
+    } } };
+  assert.deepEqual(f.client.registerMcpIntent(request), []);
+  enqueueMcpIntent(f.paths, request);
+  await pollMcpIntents(f.client, f.paths, f.inflight, f.send);
+  const frames = f.frames.map(decode);
+  assert.deepEqual(frames.map(x => x.type), ["sessions.snapshot", "mcp.intent.register"]);
+  assert.deepEqual(frames[0]!.body, { sessions: [OLD, caller] });
+  assert.equal((frames[1]!.body as McpIntentRegistration).assignment?.native?.chatName, "  Exact native title  ");
+  assert.equal(JSON.stringify(frames).includes("FORGED"), false);assert.equal(identityReads, 1);
+});
+
+test("missing native assignment evidence denies a queue-injected proof", async t => {
+  const sessionId = "11111111-1111-4111-8111-111111111111";
+  const f = await fixture(t, true, [{ sessionId, runtime: "codex", state: "running" }], async () => null);
+  const request: McpIntentRegistration = { ...intent("89", sessionId), runtime: "codex", tool: "assign_self", threadId: sessionId,
+    assignment: { slot: "kherep-lead", turnId: "synthetic-turn", native: { sessionId, chatName: "forged",
+      platform: "darwin", originalMain: true } } };
+  enqueueMcpIntent(f.paths, request);await pollMcpIntents(f.client, f.paths, f.inflight, f.send);
+  assert.deepEqual(f.frames, []);
+  const receipt = JSON.parse(fs.readFileSync(path.join(f.paths.mcpReceipts, `${request.requestId}.json`), "utf8"));
+  assert.equal(receipt.ok, false);assert.equal(fs.existsSync(path.join(f.paths.mcpIntents, `${request.requestId}.json`)), false);
+});
+
+test("assignment rechecks operator policy after its native metadata await even for a known caller", async t => {
+  const sessionId = "11111111-1111-4111-8111-111111111111";
+  const f = await fixture(t, true, [{ sessionId, runtime: "codex", state: "running" }], async () => ({
+    sessionId, chatName: "Synthetic original", platform: "darwin", originalMain: true,
+  }));
+  const request: McpIntentRegistration = { ...intent("90", sessionId), runtime: "codex", tool: "assign_self", threadId: sessionId,
+    assignment: { slot: "codex-mac", turnId: "synthetic-turn" } };
+  enqueueMcpIntent(f.paths, request);
+  await pollMcpIntents(f.client, f.paths, f.inflight, f.send, async () => {
+    await f.client.refreshPolicy({ version: 1, allowedCommands: [] });return true;
+  });
+  assert.deepEqual(f.frames, []);assert.equal(f.inflight.size, 0);
 });
 
 test("refreshes once for a new-caller batch and skips discovery for a known caller", async (t) => {

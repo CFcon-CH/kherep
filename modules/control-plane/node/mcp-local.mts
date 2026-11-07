@@ -114,15 +114,20 @@ export async function pollMcpIntents(client: NodeClient, paths: NodePaths, infli
     fs.rmSync(fileOf(paths.mcpIntents, body.requestId), { force: true });
     return true;
   };
-  const register = (body: McpIntentRegistration): boolean => {
+  const register = async (body: McpIntentRegistration): Promise<boolean> => {
     if (expired(body)) return true;
-    const [frame] = client.registerMcpIntent(body);
+    const [frame] = body.tool === "assign_self" ? await client.registerMcpAssignment(body, beforeSnapshot) : client.registerMcpIntent(body);
+    if (expired(body)) return true;
+    if (!frame && body.tool === "assign_self") {
+      recordMcpIntentReceipt(paths, inflight, { requestId: body.requestId, ok: false, error: "verified original Codex Mac identity and native title are required" });
+      return true;
+    }
     if (!frame || !send(frame)) return false;
     inflight.add(body.requestId);
     return true;
   };
   const known = new Set(client.knownMcpIntents(pending));
-  for (const body of known) if (!register(body)) return;
+  for (const body of known) if (!await register(body)) return;
   let unresolved = pending.filter(body => !known.has(body));
   if (unresolved.length === 0) return;
   const remainingMs = Math.min(...unresolved.map(body => deadlines.get(body.requestId)!)) - Date.now();
@@ -131,7 +136,7 @@ export async function pollMcpIntents(client: NodeClient, paths: NodePaths, infli
   unresolved = unresolved.filter(body => !expired(body));
   if (unresolved.length === 0) { client.invalidateSessionsSnapshot(); return; }
   if (!publishSessionFrames(client, snapshots, send)) return;
-  for (const body of unresolved) if (!register(body)) return;
+  for (const body of unresolved) if (!await register(body)) return;
 }
 
 export function recordMcpIntentReceipt(paths: NodePaths, inflight: Set<string>, body: McpIntentReceiptBody): void {
