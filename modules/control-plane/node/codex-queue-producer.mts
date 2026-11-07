@@ -3,7 +3,7 @@ import fs from "node:fs";
 import { livenessAdmission } from "./session-lifecycle.mts";
 import path from "node:path";
 
-import { bypassesPermissions, takeTurn, type WakeGrant } from "./autonomy.mts";
+import { audit, bypassesPermissions, takeTurn, type WakeGrant } from "./autonomy.mts";
 import { codexHome, currentCodexApp } from "./codex-app.mts";
 import { findCodex } from "./codex-binary.mts";
 import { busyPolicyFingerprint, busyWakeDisabled } from "./codex-busy-policy.mts";
@@ -14,7 +14,6 @@ import { MAX_NATIVE_ATTEMPTS, nativeAttemptsPath, nativeQueueInput } from "./cod
 import { reserveNativeOwner, releaseNativeOwner } from "./codex-native-pending.mts";
 import { reconcileNativeQueues } from "./codex-native-reconcile.mts";
 import { CODEX_ACTIVE_MS, listCodexSessions, readCodexSession } from "./codex-sessions.mts";
-import { note } from "./codex-wake.mts";
 import { ensureDir, readConfig } from "./config.mts";
 import { getMessage, writeJsonAtomic } from "./inbox.mts";
 import { explicitlyListed, readPolicy, wakeAllowed, wakeBudget } from "./policy.mts";
@@ -109,6 +108,19 @@ function absent(file: string): boolean {
   }
 }
 
+// The exhausted denial is audited once per message while it waits. Not note()
+// of codex-wake.mts: that keeps one action per message, and the hint lane's
+// "wake" on every republication would alternate with "budget" (issue #827).
+// Pruned to the messages still in the inbox at each denial.
+const budgetAudited = new Set<string>();
+function auditBudgetOnce(deps: RunnerDeps, owner: string, ids: string[], now: number): void {
+  for (const id of budgetAudited) if (getMessage(deps.paths.inbox, id) === null) budgetAudited.delete(id);
+  const fresh = ids.filter((id) => !budgetAudited.has(id));
+  if (fresh.length === 0) return;
+  for (const id of fresh) budgetAudited.add(id);
+  audit(deps.paths, now, owner, fresh, "budget");
+}
+
 async function produce(deps: RunnerDeps, owner: string, messageIds: string[], fingerprint: string, grant: WakeGrant | undefined,
   serviceAdmission: ServiceAdmission): Promise<void> {
   const file = (deps.codex?.findCodex ?? findCodex)();
@@ -130,8 +142,8 @@ async function produce(deps: RunnerDeps, owner: string, messageIds: string[], fi
   const budget = takeTurn(deps.paths, owner, now, admission.budget);
   if (budget !== "ok") {
     releaseNativeOwner(deps.paths, owner, ids);
-    // Progress of these messages belongs to the CP hint lane (codex-queue.mts); the denial is audited once per message.
-    if (budget === "exhausted") note(deps.paths, now, owner, ids, "budget");
+    // Progress of these messages belongs to the CP hint lane (codex-queue.mts).
+    if (budget === "exhausted") auditBudgetOnce(deps, owner, ids, now);
     return;
   }
   const claimed: string[] = [];

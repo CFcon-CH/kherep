@@ -3,64 +3,17 @@ import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
 
-import { listenerDir, listenerLock, listenerScope } from "./autonomy.mts";
+import { listenerLock, listenerScope } from "./autonomy.mts";
 import { evaluateTurnBudget } from "./autonomy-budget.mts";
-import { ensureDir } from "./config.mts";
-import { observeClaudeDeliveryProgress } from "./delivery-progress.mts";
 import { checkWakeBudget } from "./doctor-wake-budget.mts";
-import { getMessage, getMessageProgress, markDelivered, markOffered, storeMessage, unreportedStatuses, writeJsonAtomic } from "./inbox.mts";
-import { runMsg } from "./msg-cli.mts";
+import { getMessage, getMessageProgress, markDelivered, markOffered, unreportedStatuses, writeJsonAtomic } from "./inbox.mts";
 import { DEFAULT_TURN_BUDGET } from "./policy.mts";
-import { fixtureEvidence, publishSynthetic } from "./session-authority-fixture.mts";
-import { T0, TASK, taskNode } from "./task-fixture.mts";
+import { T0, TASK } from "./task-fixture.mts";
 import { writeTask } from "./task-records.mts";
+import { ARMED_BEFORE_T0, clock, code, fullHour, heldNode, iso, ledger, liveListener, message, observe, SESSION, status } from "./wake-hold-fixture.mts";
 
 // Issue #827: an accepted message a live listener would wake for reports the
-// exhausted ledger that denies the wake, instead of wake-pending. A synthetic
-// node directory, a fake clock and this process as the live listener.
-
-const SESSION = "8e1f0000-0000-4000-8000-000000000827";
-const PEER = { nodeId: "00000000-0000-4000-8000-0000000000bb", session: "peer" };
-const ROW = { sessionId: SESSION, runtime: "claude-code", state: "idle-loaded", name: "review" };
-const iso = (ms: number): string => new Date(ms).toISOString();
-let sequence = 0;
-
-type Node = ReturnType<typeof taskNode>;
-const clock = (node: Node): number => node.deps().now!();
-const ledger = (node: Node): string => path.join(listenerDir(node.paths), `${SESSION}.turns.json`);
-const code = (node: Node, id: string): string | undefined => getMessageProgress(node.paths.inbox, id)?.code;
-// Sixty seconds apart, so that no test depends on the spacing of turns.
-const fullHour = (now: number): number[] => Array.from({ length: DEFAULT_TURN_BUDGET.perHour }, (_, i) => now - (i + 1) * 60_000);
-
-function liveListener(node: Node): void {
-  ensureDir(listenerDir(node.paths));
-  publishSynthetic(node.paths, [fixtureEvidence(ROW, "idle-loaded", clock(node))], clock(node), [ROW]);
-  writeJsonAtomic(listenerLock(node.paths, SESSION), { token: "live", pid: process.pid, startedAt: clock(node), event: "Stop" });
-  writeJsonAtomic(listenerScope(node.paths, SESSION), { token: "live", listed: true });
-}
-
-function message(node: Node, taskId?: string): string {
-  const messageId = `d827${(++sequence).toString(16).padStart(4, "0")}-0000-4000-8000-000000000000`;
-  storeMessage(node.paths.inbox, { messageId, from: PEER, toSession: "review", text: "private",
-    createdAt: iso(T0), ...(taskId ? { taskId } : {}) }, T0);
-  return messageId;
-}
-
-function heldNode(t: test.TestContext, stamps: unknown = fullHour(T0)) {
-  const node = taskNode(t, {}, { wake: { enabled: true, sessions: [SESSION] } });
-  liveListener(node);
-  if (stamps !== null) writeJsonAtomic(ledger(node), { turns: stamps });
-  return node;
-}
-
-const observe = (node: Node): void => observeClaudeDeliveryProgress(node.deps());
-
-async function status(node: Node, id: string): Promise<string> {
-  const lines: string[] = [];
-  assert.equal(await runMsg(["status", id], { paths: node.paths, env: {}, now: () => clock(node), out: line => lines.push(line),
-    err: line => assert.fail(line) }), 0);
-  return lines.join("\n");
-}
+// exhausted ledger that denies the wake, instead of wake-pending.
 
 test("Claude budget denial reaches both status routes", async t => {
   const node = heldNode(t);
@@ -84,7 +37,7 @@ test("only a covered accepted message is held", t => {
   const node = heldNode(t);
   writeTask(node.paths, { taskId: TASK, runtime: "claude", name: "task-3f2a1b0c", cwd: node.workspace, permissionMode: "auto", state: "running",
     startedAt: iso(T0), deadline: iso(T0 + 60_000), updatedAt: iso(T0), sessionId: SESSION }, T0);
-  const covered = message(node, TASK);
+  const covered = message(node, { taskId: TASK });
   const outside = message(node);
   const offered = message(node);
   markOffered(node.paths.inbox, offered, T0);
@@ -118,7 +71,7 @@ test("hold recovery cannot regress message state or charge a turn", async t => {
   // No live listener: no wake is pending, budget or not.
   node.tick(2_000);
   liveListener(node);
-  writeJsonAtomic(listenerLock(node.paths, SESSION), { token: "stale", pid: 2147483647, startedAt: clock(node), event: "Stop" });
+  writeJsonAtomic(listenerLock(node.paths, SESSION), { token: "stale", pid: 2147483647, startedAt: ARMED_BEFORE_T0, event: "Stop" });
   observe(node);
   assert.equal(code(node, id), "awaiting-user-turn");
   assert.deepEqual(fs.readFileSync(ledger(node)), first);

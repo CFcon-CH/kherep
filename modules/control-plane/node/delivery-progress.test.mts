@@ -16,6 +16,7 @@ import { fixtureEvidence, publishSynthetic } from "./session-authority-fixture.m
 import type { SessionInfo } from "../protocol.mts";
 import type { NodePaths } from "./config.mts";
 import { writeRequest, writeTask } from "./task-records.mts";
+import { ARMED_BEFORE_T0 as ARMED } from "./wake-hold-fixture.mts";
 
 const SESSION = "8e1f0000-0000-4000-8000-000000000001";
 const SESSION_TWO = "8e1f0000-0000-4000-8000-000000000002";
@@ -92,7 +93,7 @@ test("only a live bounded Claude listener is reported as wake-pending", (t) => {
   writeJsonAtomic(listenerLock(node.paths, SESSION), { token: "stale", pid: 2147483647, startedAt: T0, event: "Stop" });
   observeClaudeDeliveryProgress(node.deps());
   assert.equal(code(node, messageId), "awaiting-user-turn", "a stale lock is not a live wake");
-  writeJsonAtomic(listenerLock(node.paths, SESSION), { token: "live", pid: process.pid, startedAt: T0, event: "Stop" });
+  writeJsonAtomic(listenerLock(node.paths, SESSION), { token: "live", pid: process.pid, startedAt: ARMED, event: "Stop" });
   writeJsonAtomic(listenerScope(node.paths, SESSION), { token: "live", listed: true });
   observeClaudeDeliveryProgress(node.deps());
   assert.equal(code(node, messageId), "wake-pending");
@@ -108,7 +109,7 @@ test("a live listener on its task grant alone is not reported as waking for a me
   const other = deliver(node);
   const granted = deliver(node, "idle", TASK);
   ensureDir(listenerDir(node.paths));
-  writeJsonAtomic(listenerLock(node.paths, SESSION), { token: "live", pid: process.pid, startedAt: T0, event: "Stop" });
+  writeJsonAtomic(listenerLock(node.paths, SESSION), { token: "live", pid: process.pid, startedAt: ARMED, event: "Stop" });
   const observe = (scope: unknown): string[] => {
     writeJsonAtomic(listenerScope(node.paths, SESSION), scope);
     observeClaudeDeliveryProgress(node.deps());
@@ -143,7 +144,7 @@ test("a reply-granted message reports wake-pending with a reply-scoped listener,
   const observe = (scope?: unknown): string[] => {
     if (scope !== undefined) {
       ensureDir(listenerDir(node.paths));
-      writeJsonAtomic(listenerLock(node.paths, SESSION), { token: "live", pid: process.pid, startedAt: T0, event: "Stop" });
+      writeJsonAtomic(listenerLock(node.paths, SESSION), { token: "live", pid: process.pid, startedAt: ARMED, event: "Stop" });
       writeJsonAtomic(listenerScope(node.paths, SESSION), scope);
     }
     observeClaudeDeliveryProgress(node.deps());
@@ -170,7 +171,7 @@ test("a task-message-granted message reports wake-pending with a replies-scoped 
   const observe = (scope?: unknown): string[] => {
     if (scope !== undefined) {
       ensureDir(listenerDir(node.paths));
-      writeJsonAtomic(listenerLock(node.paths, SESSION), { token: "live", pid: process.pid, startedAt: T0, event: "Stop" });
+      writeJsonAtomic(listenerLock(node.paths, SESSION), { token: "live", pid: process.pid, startedAt: ARMED, event: "Stop" });
       writeJsonAtomic(listenerScope(node.paths, SESSION), scope);
     }
     observeClaudeDeliveryProgress(node.deps());

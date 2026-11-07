@@ -33,8 +33,11 @@ increments the minor version; every other release increments the patch version.
   `waiting/budget-exhausted` with the ledger's release time instead of
   `wake-pending`, on the received and the sent route. Closed-session fallback and
   Codex task wakes add the release time, and the native Queue producer audits its
-  refusal once per message. An unreadable ledger leaves `wake-pending` and the hold
-  unknown. The budget itself, the protocol and the Worker are unchanged. Closes #827.
+  refusal once per message while it waits. A covered message the listener would not
+  select waits `awaiting-user-turn`, or `reply-limit` at the depth limit, instead of
+  `wake-pending` or a hold with a release time that would not free it. An unreadable
+  ledger leaves `wake-pending` and the hold unknown. The budget itself, the protocol
+  and the Worker are unchanged. Refs #827.
 - Closed-session fallback no longer overwrites the code of a message refused for its
   own reason with `budget-exhausted` when the rest of its burst is held by the budget
   (#827).

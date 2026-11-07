@@ -24,11 +24,18 @@ export function nativeQueueNode(t: test.TestContext, owner = NATIVE_OWNER) {
   fs.writeFileSync(node.paths.policy, JSON.stringify(policy));
   recordCodexSession(node.paths, owner, node.workspace, T0, "default");
   // Synthetic exact-holder observation, independent of the historical hook.
-  const livenessAuthority = publishSynthetic(node.paths, [{ runtime: "codex", sessionId: owner,
-    holder: { status: "value", value: { present: true, creationIdentity: "synthetic-created-1" }, source: "native-holder", observedAt: T0, complete: true, reasonCode: "observed" },
-    turn: { status: "value", value: "running", source: "native-turn", observedAt: T0, complete: true, reasonCode: "observed" },
-  }], T0, [{ runtime: "codex", sessionId: owner, state: "running" }]);
-  writeLocalSessions(node.paths, [{ runtime: "codex", sessionId: owner, state: "running" }], T0);
+  const rows = [{ runtime: "codex", sessionId: owner, state: "running" }];
+  const evidence = (observedAt: number) => [{ runtime: "codex", sessionId: owner,
+    holder: { status: "value" as const, value: { present: true, creationIdentity: "synthetic-created-1" }, source: "native-holder" as const, observedAt, complete: true, reasonCode: "observed" as const },
+    turn: { status: "value" as const, value: "running" as const, source: "native-turn" as const, observedAt, complete: true, reasonCode: "observed" as const },
+  }];
+  const livenessAuthority = publishSynthetic(node.paths, evidence(T0), T0, rows);
+  writeLocalSessions(node.paths, rows, T0);
+  // The daemon's next listing: the observation above expires with the fake clock.
+  const relist = () => {
+    const now = node.deps().now!();
+    publishSynthetic(node.paths, evidence(now), now, rows, livenessAuthority);
+  };
   // A bound for a hung fake, not a timing assumption: under the parallel suite a
   // freshly written fake boots in up to ~1.1 s (issue #452), the production
   // default stays QUEUE_TIMEOUT_MS.
@@ -39,5 +46,5 @@ export function nativeQueueNode(t: test.TestContext, owner = NATIVE_OWNER) {
     return id;
   };
   const poll = async () => { pollCodexQueue(deps()); await codexQueueIdle(); };
-  return { ...node, owner, fake, deps, add, poll, home };
+  return { ...node, owner, fake, deps, add, poll, home, relist };
 }

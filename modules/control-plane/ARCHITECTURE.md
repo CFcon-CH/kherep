@@ -991,7 +991,7 @@ Delivery hooks own unbound legacy `inbox/<messageId>.json` and exact-bound `inbo
 
 Senders read `running` and `stopped` as refinements of `accepted`, derived from those progress codes by one shared function (`senderState`). No new wire state exists, because an older Worker rejects an unknown state in `isNodeMessageStatusBody` and would leave a newer node retrying forever. An accepted message without progress for 5 minutes is shown with a fixed actionable reason instead of a bare `accepted`; the bound is evaluated on the sender, so it also covers an offline or older target node. The MCP `status` tool applies the same two functions to the Worker's stored state, progress and `updated_at` against the Worker's clock and adds `senderState` and a fixed `hint` beside the unchanged canonical `state`. `running` is not a liveness signal: progress is written on change only, so it reports the last observation and its `observedAt`.
 
-Claude progress comes from the current successful session snapshot and freshly loaded node policy. Each accepted message resolves once: an exact session id precedes names, a unique name resolves to one session, and a shared name produces one stable `ambiguous-target` observation. An already offered message remains `awaiting-turn-confirmation`. An idle authorized Claude session reports `waking`/`wake-pending` only for messages the live listener covers: its scope file (`listeners/<session_id>.scope.json`, valid while its token matches the lock) says whether it is listed, which task grant it uses, and whether it wakes for replies; a listener without one, from an older node version, covers only task-granted messages. With `wake.replies` a reply to an unlisted session's own recent message, or a message of a task it requested from the node that runs it, counts as authorized (the reply and task message grants, `node/wake-reply.mts`, issues #253 and #264) and reports `waking`/`wake-pending` only under a scope with `replies`. While the session's turn ledger is exhausted, those messages report `waiting`/`budget-exhausted` with `retryAt` instead (issue #827). Every other authorized message reports `waiting`/`awaiting-user-turn` (issue #213). That existing code is reused on purpose: a new code would make an older Worker reject the whole `message.status` in `isNodeMessageStatusBody`. Codex interactive progress annotates CP admission and original-owner intake. For Codex task sessions, the message resume records the code of the guard that holds it, `wake-failed` for a failed start and `awaiting-turn-confirmation` for the messages a run carries, while a separate observer marks messages for active tasks `target-busy` and for operator-stopped tasks `operator-stopped`. Closed-session fallback annotates its existing start or resume path; each of its refusals names the existing code of its guard at the call site, and `fallback-failed` is reserved for a start or resume that failed (issue #230), so a policy refusal is never reported as a failed launch. These observations add no wake attempt, permission, transcript read, or message-body persistence.
+Claude progress comes from the current successful session snapshot and freshly loaded node policy. Each accepted message resolves once: an exact session id precedes names, a unique name resolves to one session, and a shared name produces one stable `ambiguous-target` observation. An already offered message remains `awaiting-turn-confirmation`. An idle authorized Claude session reports `waking`/`wake-pending` only for messages the live listener covers and would select (`listenerSelects`, `node/wake-pending.mts`: received or handed over after the listener armed plus its grace, or a SessionStart backlog not yet woken for, and below the reply limit): its scope file (`listeners/<session_id>.scope.json`, valid while its token matches the lock) says whether it is listed, which task grant it uses, and whether it wakes for replies; a listener without one, from an older node version, covers only task-granted messages. With `wake.replies` a reply to an unlisted session's own recent message, or a message of a task it requested from the node that runs it, counts as authorized (the reply and task message grants, `node/wake-reply.mts`, issues #253 and #264) and reports `waking`/`wake-pending` only under a scope with `replies`. While the session's turn ledger is exhausted, those messages report `waiting`/`budget-exhausted` with `retryAt` instead (issue #827). A covered message it would not select waits `awaiting-user-turn`, or `reply-limit` at the depth limit, whatever the ledger says: the next user turn delivers it, the budget's release does not. Every other authorized message reports `waiting`/`awaiting-user-turn` (issue #213). That existing code is reused on purpose: a new code would make an older Worker reject the whole `message.status` in `isNodeMessageStatusBody`. Codex interactive progress annotates CP admission and original-owner intake. For Codex task sessions, the message resume records the code of the guard that holds it, `wake-failed` for a failed start and `awaiting-turn-confirmation` for the messages a run carries, while a separate observer marks messages for active tasks `target-busy` and for operator-stopped tasks `operator-stopped`. Closed-session fallback annotates its existing start or resume path; each of its refusals names the existing code of its guard at the call site, and `fallback-failed` is reserved for a start or resume that failed (issue #230), so a policy refusal is never reported as a failed launch. These observations add no wake attempt, permission, transcript read, or message-body persistence.
 
 ## Node intake visibility
 
@@ -1305,16 +1305,21 @@ limits of the round's policy, and writes `waiting/budget-exhausted` with `retryA
 when an hour or day window is full. `retryAt` is the `nextAvailableAt` that
 `checks.wakeBudget` shows for the same clock. A missing ledger is no hold; any other
 unreadable status leaves `wake-pending` and the hold unknown. Spacing is no hold.
-Nothing is cached: the next round recomputes the code, so recovery needs no
-invalidation.
+The observer asks `listenerSelects` (`node/wake-pending.mts`), which shares `late`
+with the listener's `pending`; a test pins that both pick the same records. Nothing
+is cached: the next round recomputes the code, so recovery needs no invalidation.
 
 The data flow: a listener or a Stop continuation charges
 `listeners/<session_id>.turns.json`; the daemon round's observer reads that ledger
 and writes `inbox/progress/<message_id>.json`; the received route of `msg status`
 reads that sidecar; the same round's exchange reports accepted progress to the
 Worker, whose `message.status` frame reaches the sender's `recordSent` and its sent
-route. Offered progress never reaches the sender, so a stuck offer stays
-`awaiting-turn-confirmation` and shows no hold.
+route. Offered progress reaches the sender like any accepted progress (`reportState`
+in `node/inbox.mts` reports `offered` as `accepted`); that is how
+`awaiting-turn-confirmation` becomes the sender's `running`. The Claude observer labels
+every offered message `awaiting-turn-confirmation` and shows no hold on a stuck offer, a
+scope choice of #827, not a protocol limit. The Codex task wake includes stuck offers
+in its denial, so there a stuck offer does show `budget-exhausted`.
 
 Daemon-owned producers that take a turn themselves publish a denial through
 `publishBudgetDenial` (`node/budget-denial.mts`): spacing and lock contention stay
@@ -1322,7 +1327,9 @@ Daemon-owned producers that take a turn themselves publish a denial through
 ledger's release time. Closed-session fallback and the Codex task wake use it. The
 native Queue producer publishes no progress, because the CP hint lane
 (`node/codex-queue.mts`) rewrites the same messages every round and two writers
-would alternate; it audits `budget` once per message. The fork proxy keeps its
+would alternate; it audits `budget` once per message while it waits, in its own set
+beside `noted`, so the hint lane's `wake` audit of each republication does not re-trigger
+it. The fork proxy keeps its
 audit only. The listener hook writes no progress. No observation file, new code or
 wire capability is introduced.
 

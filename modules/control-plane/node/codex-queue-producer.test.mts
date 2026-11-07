@@ -5,7 +5,7 @@ import path from "node:path";
 import test from "node:test";
 
 import { takeTurn, TURN_SPACING_MS, wakeAudit } from "./autonomy.mts";
-import { codexQueueIdle, pollCodexQueue } from "./codex-queue.mts";
+import { BUSY_HINT_RECOVERY_MS, codexQueueIdle, pollCodexQueue } from "./codex-queue.mts";
 import { nativeQueueNode as fixture, NATIVE_OWNER as OWNER } from "./codex-queue-producer-fixture.mts";
 import { getMessage, getMessageProgress, markOffered, storeMessage, writeJsonAtomic } from "./inbox.mts";
 import { DEFAULT_TURN_BUDGET } from "./policy.mts";
@@ -87,25 +87,29 @@ test("an exhausted native budget leaves CP hints working and permits a later fir
 });
 
 // Issue #827: the CP hint lane owns the progress of these messages, so a native
-// budget refusal is audited once per message and publishes nothing.
-test("native queue budget refusal is audited and leaks nothing", async (t) => {
+// budget refusal publishes nothing and is audited once while the message waits,
+// also across a hint republication, which audits its own "wake" once as well.
+test("native queue budget refusal is audited once across a hint republication", async (t) => {
   const node = fixture(t);
   const id = node.add();
   const listeners = path.join(node.paths.dir, "listeners");
   fs.mkdirSync(listeners, { recursive: true });
   const turns = Array.from({ length: DEFAULT_TURN_BUDGET.perDay }, (_, i) => T0 - 2 * 3_600_000 - i * 5 * 60_000);
   writeJsonAtomic(path.join(listeners, `${OWNER}.turns.json`), { turns });
-  const budgetLines = () => fs.readFileSync(wakeAudit(node.paths), "utf8").trim().split("\n")
+  const lines = (action: string) => fs.readFileSync(wakeAudit(node.paths), "utf8").trim().split("\n")
     .map((line) => JSON.parse(line) as { sessionId: string; messageIds: string[]; action: string })
-    .filter((line) => line.action === "budget");
+    .filter((line) => line.action === action);
   await node.poll();
   assert.equal(node.fake.runs().length, 0);
   assert.ok(fs.existsSync(path.join(listeners, `${OWNER}.busy-hint.json`)));
-  assert.deepEqual(budgetLines().map((line) => [line.sessionId, line.messageIds]), [[OWNER, [id]]]);
+  assert.deepEqual(lines("budget").map((line) => [line.sessionId, line.messageIds]), [[OWNER, [id]]]);
   assert.equal(getMessageProgress(node.paths.inbox, id)?.code, "awaiting-user-turn", "progress stays with the CP hint lane");
-  node.tick(TURN_SPACING_MS + 1);
+  assert.equal(lines("wake").length, 1);
+  node.tick(BUSY_HINT_RECOVERY_MS + 1);
+  node.relist();
   await node.poll();
-  assert.equal(budgetLines().length, 1, "audited once per message, not at every round");
+  assert.deepEqual([lines("budget").length, lines("wake").length], [1, 1], "a republication audits neither again");
+  assert.equal(getMessageProgress(node.paths.inbox, id)?.code, "awaiting-user-turn");
 });
 
 test("aliases and already offered messages stay on original CP intake without a native attempt", async (t) => {

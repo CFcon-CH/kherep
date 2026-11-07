@@ -1069,10 +1069,15 @@ no turn is charged by it. `retryAt` equals doctor's `nextAvailableAt` for the sa
 clock. A missing ledger is no hold. An unreadable ledger leaves `wake-pending` and
 the hold unknown, visible in `checks.wakeBudget`. A turn-spacing denial of a
 Claude listener keeps `wake-pending`, since the listener retries at its next poll.
-Offered messages and messages without a covering listener keep their codes.
+A message that listener would not select (received before it armed, or at the reply
+depth limit) is `awaiting-user-turn` or `reply-limit` and shows no release time: the
+next user turn delivers it, the budget's release does not. Messages without a
+covering listener keep their codes. Offered messages of a Claude session keep
+`awaiting-turn-confirmation` and show no hold; a Codex task wake includes stuck offers
+in its denial, so there a stuck offer does show `budget-exhausted`.
 Closed-session fallback and Codex task wakes add `retryAt` to their
 `budget-exhausted` progress. The native Queue producer audits `budget` once per
-message and publishes no progress, which stays with the CP hint lane, so Codex
+message while it waits and publishes no progress, which stays with the CP hint lane, so Codex
 interactive sessions show no hold. No Worker update is required for these existing
 fields.
 
