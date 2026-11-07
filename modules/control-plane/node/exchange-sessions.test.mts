@@ -209,6 +209,47 @@ test("a wake-list bound session idle for days keeps its row and its binding", as
   assert.equal(resolved(paths, "planner"), "BOUND");
   assert.equal(readBindingView(paths).bindings[0]?.sessionId, BOUND_ID);
 });
+// The Director's rule: wake.sessions is the explicit statement that a session must stay reachable. The extra row has the
+// oldest lastSeen, so only the list can keep it among 300 competing rows.
+const writePolicy = (file: string, wake: unknown): void => fs.writeFileSync(file, JSON.stringify({ version: 1, allowedCommands: [], wake }));
+test("a session named in wake.sessions by id alone survives 300 competing rows", async t => {
+  const { paths, ids } = seedNode(t, 300, { extras: [{ sessionId: "wake-by-id" }] });
+  writePolicy(paths.policy, { enabled: true, sessions: ["*", "wake-by-id"] });
+  await round(paths);
+  assert.deepEqual(writtenIds(paths).slice(3), ["wake-by-id", ...ids.slice(-(CARRY_LIMIT - 1))]);
+  assert.equal(resolved(paths, "wake-by-id"), "BOUND");
+});
+test("a session named in wake.sessions by name survives 300 competing rows", async t => {
+  const { paths } = seedNode(t, 300, { extras: [{ sessionId: "some-id", name: "planner" }] });
+  writePolicy(paths.policy, { enabled: true, sessions: ["planner"] });
+  await round(paths);
+  assert.ok(writtenIds(paths).includes("some-id"));
+  assert.equal(resolved(paths, "planner"), "BOUND");
+});
+test("wake.sessions of the file the node config names is the one that counts", async t => {
+  const { paths } = seedNode(t, 300, { extras: [{ sessionId: "wake-by-id" }] });
+  const policyFile = path.join(paths.dir, "elsewhere.json");
+  writePolicy(policyFile, { enabled: true, sessions: ["wake-by-id"] });
+  fs.writeFileSync(paths.config, JSON.stringify({ version: 1, nodeId: PEER, policyFile }));
+  await round(paths);
+  assert.ok(writtenIds(paths).includes("wake-by-id"));
+});
+test("a wake list that protects no row leaves the bound in force", async t => {
+  const lists: Record<string, (paths: NodePaths) => void> = {
+    "* alone": paths => writePolicy(paths.policy, { enabled: true, sessions: ["*"] }),
+    "a row named *": paths => writePolicy(paths.policy, { enabled: true, sessions: ["*"] }),
+    "a disabled list": paths => writePolicy(paths.policy, { enabled: false, sessions: ["old-row"] }),
+    "no policy file": () => {},
+  };
+  for (const [name, write] of Object.entries(lists)) await t.test(name, async sub => {
+    const { paths, ids } = seedNode(sub, 300, { extras: [name === "a row named *" ? { sessionId: "old-row", name: "*" } : { sessionId: "old-row" }] });
+    write(paths);
+    const logs: string[] = [];
+    await round(paths, NOW, undefined, line => logs.push(line));
+    assert.deepEqual(writtenIds(paths).slice(3), ids.slice(-CARRY_LIMIT));
+    assert.deepEqual(logs.filter(line => line.includes("carry bound")), []);
+  });
+});
 test("a node under CARRY_LIMIT writes the same sessions.json as before", async t => {
   for (const count of [0, 5, CARRY_LIMIT]) {
     const { paths, ids } = seedNode(t, count);
@@ -236,6 +277,11 @@ test("a failed read of a protected set or of lastSeen carries every row", async 
     "corrupt known": paths => fs.writeFileSync(knownSessionsFile(paths), "{"),
     "malformed known": paths => fs.writeFileSync(knownSessionsFile(paths), JSON.stringify({ sessions: "x" })),
     "absent known": paths => fs.rmSync(knownSessionsFile(paths)),
+    "malformed policy": paths => fs.writeFileSync(paths.policy, "{"),
+    "unreadable policy": paths => fs.mkdirSync(paths.policy),
+    "policy of another version": paths => fs.writeFileSync(paths.policy, JSON.stringify({ version: 2, allowedCommands: [] })),
+    "malformed wake": paths => writePolicy(paths.policy, { enabled: true, sessions: ["planner", 5] }),
+    "null wake": paths => writePolicy(paths.policy, null),
     "garbage lastSeen": paths => fs.writeFileSync(knownSessionsFile(paths), JSON.stringify({ sessions: [{ sessionId: "old-0000", runtime: "codex", lastSeen: "garbage" }] })),
   };
   const check = async (sub: test.TestContext, fault: (paths: NodePaths) => void, records?: () => InboxRecord[]) => {
