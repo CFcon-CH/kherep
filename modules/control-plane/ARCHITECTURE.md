@@ -9,9 +9,16 @@ The Worker-internal `replaceIntercomSlot` helper uses one bound synchronous SQL
 update with an expected revision. A successful replacement or clear advances
 the revision; a conflict returns no revision, and storage errors propagate.
 Fixed runtime slots constrain the occupant runtime; the lead slot permits either.
-Occupancy records an address, not native caller ownership or authority.
+Non-empty assignment also requires an existing, non-revoked, key-bound node in
+the same SQL update. Its enrolled OS must be `darwin` for a Mac slot, `win32`
+for a Windows slot, or either for the lead. Ineligible assignments fail a generic
+precondition; eligible stale revisions still conflict. Clear checks only the
+revision. Revocation leaves stored occupancy unchanged, and an eligible successor
+can replace it. Enrolled node facts and occupancy establish neither native
+caller ownership nor authority; no session, directory or online state is required.
 
-No Registry RPC method, HTTP, WebSocket or CLI entry point exposes this storage.
+The authenticated `GET /api/intercom/slots` reads exactly these five stored rows.
+No public write, CLI, WebSocket or Registry RPC mutator exposes assignment.
 There is no participant registration, directory backfill or discovery change.
 A future deployment of this schema would create five empty revision-zero rows
 on the next Registry initialization, preserving existing slot rows and revisions

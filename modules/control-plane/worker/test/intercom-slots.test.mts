@@ -11,6 +11,12 @@ const a: SlotOccupant = { nodeId: "11111111-1111-4111-8111-111111111111", runtim
 const b: SlotOccupant = { nodeId: "33333333-3333-4333-8333-333333333333", runtime: "claude-code",
   sessionId: "44444444-4444-4444-8444-444444444444", chatName: "Synthetic B" };
 const rows = (sql: SqlStorage) => sql.exec("SELECT * FROM intercom_slots ORDER BY slot").toArray();
+const seedNodes = (sql: SqlStorage) => {
+  for (const [occupant, os] of [[a, "darwin"], [b, "win32"]] as const) {
+    sql.exec("INSERT OR REPLACE INTO nodes (id, name, public_key, os, enrolled_at) VALUES (?, ?, ?, ?, 1)",
+      occupant.nodeId, "Synthetic enrolled node", "synthetic-bound-key", os);
+  }
+};
 
 describe("internal Intercom slot storage", () => {
   // The fixture addresses one Registry for the whole file, so reset only this slice.
@@ -18,6 +24,7 @@ describe("internal Intercom slot storage", () => {
     await runInDurableObject(registry(), (_instance, state) => {
       state.storage.sql.exec("DROP TABLE IF EXISTS intercom_slots");
       initializeRegistrySchema(state.storage);
+      seedNodes(state.storage.sql);
     });
   });
   it("initializes exactly five empty slots at revision zero", async () => {
@@ -71,20 +78,74 @@ describe("internal Intercom slot storage", () => {
   it.each([[a, b], [b, a]])("allows exactly one contender at a shared revision, in either ordering", async (first, second) => {
     await runInDurableObject(registry(), (_instance, state) => {
       const sql = state.storage.sql;
+      const others = rows(sql).filter(row => row.slot !== "kherep-lead");
       expect([replaceIntercomSlot(sql, "kherep-lead", 0, first), replaceIntercomSlot(sql, "kherep-lead", 0, second)])
         .toEqual([1, null]);
       const winner = rows(sql);
       expect(replaceIntercomSlot(sql, "kherep-lead", 0, second)).toBeNull();
       expect(rows(sql)).toEqual(winner);
       expect(sql.exec("SELECT chat_name FROM intercom_slots WHERE slot='kherep-lead'").one().chat_name).toBe(first.chatName);
+      expect(rows(sql).filter(row => row.slot !== "kherep-lead")).toEqual(others);
     });
   });
 
   it.each(["codex-windows", "codex-mac", "claude-windows", "claude-mac"] as const)("supports the fixed runtime of %s", async slot => {
     await runInDurableObject(registry(), (_instance, state) => {
       const occupant = slot.startsWith("codex") ? a : b;
+      state.storage.sql.exec("UPDATE nodes SET os=? WHERE id=?", slot.endsWith("-mac") ? "darwin" : "win32", occupant.nodeId);
       expect(replaceIntercomSlot(state.storage.sql, slot, 0, occupant)).toBe(1);
       expect(state.storage.sql.exec("SELECT chat_name FROM intercom_slots WHERE slot=?", slot).one().chat_name).toBe(occupant.chatName);
+    });
+  });
+
+  it.each(["darwin", "win32"])("accepts either supported runtime as lead on enrolled %s without sessions", async os => {
+    await runInDurableObject(registry(), (_instance, state) => {
+      const sql = state.storage.sql;
+      sql.exec("UPDATE nodes SET os=? WHERE id=?", os, a.nodeId);
+      for (const [revision, runtime] of [[0, "codex"], [1, "claude-code"]] as const) {
+        expect(replaceIntercomSlot(sql, "kherep-lead", revision, { ...a, runtime })).toBe(revision + 1);
+      }
+      expect(sql.exec("SELECT 1 FROM sessions WHERE node_id=?", a.nodeId).toArray()).toEqual([]);
+    });
+  });
+
+  it.each(INTERCOM_SLOTS)("rejects ineligible enrollments for %s without changing any slot", async slot => {
+    await runInDurableObject(registry(), (_instance, state) => {
+      const sql = state.storage.sql, before = rows(sql);
+      const occupant = { ...a, runtime: slot.startsWith("claude-") ? "claude-code" as const : "codex" as const,
+        chatName: "Windows macOS darwin win32 fake display name" };
+      const compatible = slot.endsWith("-windows") ? "win32" : "darwin";
+      const incompatible = slot === "kherep-lead" ? "linux" : compatible === "darwin" ? "win32" : "darwin";
+      for (const os of [incompatible, "unknown", null]) {
+        sql.exec("UPDATE nodes SET os=? WHERE id=?", os, occupant.nodeId);
+        expect(() => replaceIntercomSlot(sql, slot, 0, occupant)).toThrow("Intercom assignment precondition failed");
+        expect(rows(sql)).toEqual(before);
+      }
+      sql.exec("UPDATE nodes SET os=?, revoked_at=1 WHERE id=?", compatible, occupant.nodeId);
+      expect(() => replaceIntercomSlot(sql, slot, 0, occupant)).toThrow("Intercom assignment precondition failed");
+      expect(rows(sql)).toEqual(before);
+      sql.exec("UPDATE nodes SET revoked_at=NULL, public_key=NULL WHERE id=?", occupant.nodeId);
+      expect(() => replaceIntercomSlot(sql, slot, 0, occupant)).toThrow("Intercom assignment precondition failed");
+      expect(rows(sql)).toEqual(before);
+      expect(() => replaceIntercomSlot(sql, slot, 0, { ...occupant, nodeId: "55555555-5555-4555-8555-555555555555" }))
+        .toThrow("Intercom assignment precondition failed");
+      expect(rows(sql)).toEqual(before);
+    });
+  });
+
+  it("preserves revoked occupancy while allowing an eligible successor or revision-only clear", async () => {
+    await runInDurableObject(registry(), (instance, state) => {
+      const sql = state.storage.sql;
+      expect(replaceIntercomSlot(sql, "kherep-lead", 0, a)).toBe(1);
+      const occupied = instance.listIntercomSlots();
+      sql.exec("UPDATE nodes SET revoked_at=1, public_key=NULL WHERE id=?", a.nodeId);
+      expect(instance.listIntercomSlots()).toEqual(occupied);
+      expect(() => replaceIntercomSlot(sql, "kherep-lead", 0, a)).toThrow("Intercom assignment precondition failed");
+      expect(replaceIntercomSlot(sql, "kherep-lead", 0, b)).toBeNull();
+      expect(rows(sql).find(row => row.slot === "kherep-lead")?.revision).toBe(1);
+      expect(replaceIntercomSlot(sql, "kherep-lead", 1, b)).toBe(2);
+      sql.exec("UPDATE nodes SET revoked_at=1 WHERE id=?", b.nodeId);
+      expect(replaceIntercomSlot(sql, "kherep-lead", 2, null)).toBe(3);
     });
   });
 
@@ -167,6 +228,7 @@ describe("authoritative Intercom slot read", () => {
     await runInDurableObject(registry(), (_instance, state) => {
       state.storage.sql.exec("DROP TABLE IF EXISTS intercom_slots");
       initializeRegistrySchema(state.storage);
+      seedNodes(state.storage.sql);
     });
   });
 
@@ -216,6 +278,7 @@ describe("authoritative Intercom slot read", () => {
     const nodeId = await enroll(await newKey(), "synthetic-roster-node");
     await registry().replaceSessions(nodeId, [{ sessionId: a.sessionId, runtime: "codex", state: "idle" }]);
     await runInDurableObject(registry(), (_instance, state) => {
+      state.storage.sql.exec("UPDATE nodes SET os='darwin' WHERE id=?", nodeId);
       replaceIntercomSlot(state.storage.sql, "kherep-lead", 0, { ...a, nodeId });
     });
     const before = await registry().listIntercomSlots();

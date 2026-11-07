@@ -237,6 +237,8 @@ describe("operator Intercom roster", () => {
     expect(await (await api(path, {}, jwt)).json()).toEqual({ slots: empty });
     await runInDurableObject(registry(), (_instance, state) => {
       const sql = state.storage.sql;
+      sql.exec("INSERT INTO nodes (id, name, public_key, os, enrolled_at) VALUES (?, ?, ?, ?, 1)",
+        occupant.nodeId, "Synthetic roster enrollment", "synthetic-bound-key", "darwin");
       replaceIntercomSlot(sql, "kherep-lead", 0, occupant);
       sql.exec(`WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<600)
         INSERT INTO sessions (node_id, session_id, runtime, state, updated_at, name, cwd, kind, title)
@@ -258,6 +260,7 @@ describe("operator Intercom roster", () => {
       await runInDurableObject(registry(), (_instance, state) => {
         state.storage.sql.exec("UPDATE intercom_slots SET node_id=NULL,runtime=NULL,session_id=NULL,chat_name=NULL,revision=0");
         state.storage.sql.exec("DELETE FROM sessions WHERE node_id='synthetic-api-history'");
+        state.storage.sql.exec("DELETE FROM nodes WHERE id=?", occupant.nodeId);
       });
     }
   });
@@ -294,6 +297,8 @@ describe("Intercom roster across real Registry eviction", () => {
     const stub = registry(), jwt = await token(), instances = new WeakSet<object>();
     await runInDurableObject(stub, (instance, state) => {
       instances.add(instance);
+      state.storage.sql.exec("INSERT INTO nodes (id, name, public_key, os, enrolled_at) VALUES (?, ?, ?, ?, 1)",
+        occupant.nodeId, "Synthetic persisted enrollment", "synthetic-bound-key", "darwin");
       replaceIntercomSlot(state.storage.sql, "kherep-lead", 0, occupant);
       replaceIntercomSlot(state.storage.sql, "codex-mac", 0, sentinel);
       state.storage.sql.exec(`INSERT INTO sessions (node_id, session_id, runtime, state, updated_at, name)
@@ -341,6 +346,7 @@ describe("Intercom roster across real Registry eviction", () => {
         state.storage.sql.exec("DROP TABLE intercom_slots");
         initializeRegistrySchema(state.storage);
         state.storage.sql.exec("DELETE FROM sessions WHERE node_id='synthetic-restart'");
+        state.storage.sql.exec("DELETE FROM nodes WHERE id=?", occupant.nodeId);
       });
     }
   });
