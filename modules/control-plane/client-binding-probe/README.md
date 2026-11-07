@@ -6,7 +6,9 @@ This probe targets the Codex hook and MCP metadata contract. Do not install this
 
 ## What it proves
 
-The hook accepts only `mcp__kherep_binding_probe__binding_probe` with one bounded synthetic nonce. It stores a 30-second intent in an operator-selected directory outside the checkout, then adds a random request ID to the tool arguments. The official MCP SDK stdio server checks native `sessionId`, `threadId`, and `callId` metadata against the intent. Results contain fixed codes and keyed SHA-256 hashes. Raw hook input, working directories, transcripts, session IDs and call IDs are not returned or logged.
+The hook accepts only `mcp__kherep_binding_probe__binding_probe` with one bounded synthetic nonce. It stores a 30-second intent in an operator-selected directory outside the checkout, then adds a random request ID to the tool arguments. The official MCP SDK stdio server checks native `sessionId`, `threadId`, and `callId` metadata against the intent. Results contain fixed codes, keyed SHA-256 hashes and, on success, the boolean `threadMatchesHookSession`. Raw hook input, working directories, transcripts, session IDs and call IDs are not returned or logged.
+
+After binding verification succeeds, `threadMatchesHookSession` reports whether the native thread ID equals the verified native session ID from the hook. `false` is a valid equality observation with `binding_confirmed`. This response-only field leaves stored receipts unchanged and does not establish main-chat classification, registration authority or compatibility on unmeasured hosts.
 
 A passing automated test proves the SDK transport preserves supplied request metadata. It does not prove that an installed Desktop build supplies those fields. Direct, Code Mode, resumed and parallel calls still require an operator-authorized actual-client canary. Until that canary passes, remote messaging remains unsupported through this route.
 
@@ -17,7 +19,7 @@ npm test
 npm run typecheck
 ```
 
-The tests use temporary synthetic state. `transport.test.mts` starts real SDK stdio client and server processes, verifies missing and foreign identity rejection, and races two server processes against one idempotent intent.
+The tests use temporary synthetic state. `transport.test.mts` starts real SDK stdio client and server processes, verifies both equality outcomes, missing and foreign identity rejection, thread-change replay rejection, identical repeated public results, text/structured parity and raw-identity privacy, and races two server processes against one idempotent intent.
 
 ## Lock files, recovery and manual cleanup
 
