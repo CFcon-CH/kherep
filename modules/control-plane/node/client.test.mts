@@ -4,13 +4,14 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { makeEnvelope, parseEnvelope, PONG_FRAME, type Envelope } from "../protocol.mts";
-import { NodeClient, type CommandHandlers } from "./client.mts";
+import { makeEnvelope, MAX_FRAME_BYTES, parseEnvelope, PONG_FRAME, type Envelope, type SessionInfo } from "../protocol.mts";
+import { NodeClient, STAMP_MARGIN, type CommandHandlers } from "./client.mts";
 import { nodePaths } from "./config.mts";
 import { writeLocalSessions } from "./exchange-sessions.mts";
 import { generateIdentity, verifyChallenge } from "./identity.mts";
 import { MessageReferenceResolver } from "./message-reference.mts";
 import { DEFAULT_POLICY, isAllowed, loadPolicy, type NodePolicy } from "./policy.mts";
+import { attachIdentitySnapshot } from "./session-identity.mts";
 
 const NODE_ID = "00000000-0000-4000-8000-0000000000aa";
 const FACTS = { hostname: "node-a.example.com", os: "linux", arch: "x64", cpus: 2, memoryBytes: 1024 };
@@ -265,6 +266,121 @@ test("I10: snapshot generation participates in frame deduplication", async () =>
   assert.equal(decode(client.sessionFrames(rows))[0].body && client.sessionFrames(rows).length, 0);
   attachIdentitySnapshot(rows, 2);
   assert.deepEqual(decode(client.sessionFrames(rows))[0].body, { sessions: rows, identitySnapshot: { version: 1, generation: 2 } });
+});
+
+// Issue #706: a sessions.snapshot must fit one frame, or the Worker rejects all of it.
+async function snapshotClient() {
+  const logs: string[] = [];
+  const { client } = heldClient(logs);
+  await client.onFrame(JSON.stringify(makeEnvelope("event", { name: "auth.ok" }, 0, 0)));
+  return { client, logs };
+}
+const carried = (count: number, cwd = "/".padEnd(400, "x")): SessionInfo[] =>
+  Array.from({ length: count }, (_, i) => ({ sessionId: `carried-${i}`, runtime: "codex", state: "unknown", cwd }));
+const proof = (sessionId: string) => ({ version: 1, source: "codex-hook", runtime: "codex", sessionId, observedAt: 1, lifecycleGeneration: 0 }) as SessionInfo["canonicalIdentity"];
+const snapshotBody = (frame: string) => JSON.parse(frame).body as { sessions: SessionInfo[]; identitySnapshot?: unknown };
+
+test("sessionFrames keeps a snapshot within MAX_FRAME_BYTES by dropping unknown unproven rows from the end", async () => {
+  const { client, logs } = await snapshotClient();
+  const rows = carried(600);
+  attachIdentitySnapshot(rows, 7);
+  const frames = client.sessionFrames(rows);
+  assert.equal(frames.length, 1);
+  assert.ok(Buffer.byteLength(frames[0], "utf8") + STAMP_MARGIN <= MAX_FRAME_BYTES);
+  const body = snapshotBody(frames[0]);
+  const kept = body.sessions.length;
+  assert.ok(kept > 0 && kept < rows.length);
+  assert.deepEqual(body.sessions, rows.slice(0, kept), "the kept rows are a prefix");
+  assert.deepEqual(body.identitySnapshot, { version: 1, generation: 7 }, "trimming keeps the generation");
+  assert.deepEqual(logs, [`kherep-node: sessions.snapshot trimmed ${rows.length - kept} of ${rows.length} rows (frame too large)`]);
+  // As much as fits: one more carried row would not have.
+  assert.ok(Buffer.byteLength(frames[0], "utf8") + STAMP_MARGIN + Buffer.byteLength(JSON.stringify(rows[kept]), "utf8") + 1 > MAX_FRAME_BYTES);
+});
+
+test("sessionFrames: a trimmed frame passes parseEnvelope with both stamps at their largest", async () => {
+  const { client } = await snapshotClient();
+  const [frame] = client.sessionFrames(carried(600));
+  Object.assign(client, { sent: Number.MAX_SAFE_INTEGER - 1, processedSeq: Number.MAX_SAFE_INTEGER });
+  const stamped = client.stamp(frame);
+  assert.equal(JSON.parse(stamped).seq, Number.MAX_SAFE_INTEGER);
+  assert.equal(JSON.parse(stamped).ack, Number.MAX_SAFE_INTEGER);
+  assert.ok(Buffer.byteLength(stamped, "utf8") <= MAX_FRAME_BYTES);
+  assert.equal(parseEnvelope(stamped).ok, true);
+});
+
+test("sessionFrames measures the envelope and its stamp margin, in bytes", async () => {
+  const padded = (extra: number, fill = "x"): SessionInfo[] => [carried(1, "/")[0], { ...carried(2, "/")[1], cwd: "/" + fill.repeat(extra) }];
+  const size = async (rows: SessionInfo[]) => Buffer.byteLength((await snapshotClient()).client.sessionFrames(rows)[0], "utf8");
+  const atLimit = MAX_FRAME_BYTES - STAMP_MARGIN - await size(padded(0));
+  const fits = await snapshotClient();
+  assert.equal(snapshotBody(fits.client.sessionFrames(padded(atLimit))[0]).sessions.length, 2, "exactly at the limit nothing is dropped");
+  assert.deepEqual(fits.logs, []);
+  const over = await snapshotClient();
+  assert.equal(snapshotBody(over.client.sessionFrames(padded(atLimit + 1))[0]).sessions.length, 1, "one byte over the row goes");
+  assert.equal(over.logs.length, 1);
+  // Fewer characters than the limit, more bytes: bytes decide.
+  const wide = await snapshotClient();
+  assert.equal(snapshotBody(wide.client.sessionFrames(padded(atLimit - 1, "\u00fc"))[0]).sessions.length, 1);
+});
+
+test("sessionFrames never drops a live or attested row", async () => {
+  const { client, logs } = await snapshotClient();
+  const running = ["live-1", "live-2", "live-3"].map((sessionId) => ({ sessionId, runtime: "codex", state: "running", canonicalIdentity: proof(sessionId) }));
+  const provenUnknown = { sessionId: "proven", runtime: "codex", state: "unknown", canonicalIdentity: proof("proven") };
+  const liveUnproven = { sessionId: "unproven", runtime: "codex", state: "idle" };
+  const rows = [...carried(300), provenUnknown, ...carried(300).map((row) => ({ ...row, sessionId: `${row.sessionId}-b` })), liveUnproven, ...running];
+  const { sessions } = snapshotBody(client.sessionFrames(rows)[0]);
+  const ids = sessions.map((row) => row.sessionId);
+  for (const id of ["proven", "unproven", "live-1", "live-2", "live-3"]) assert.ok(ids.includes(id), `${id} stays`);
+  assert.deepEqual(ids, rows.map((row) => row.sessionId).filter((id) => ids.includes(id)), "the order is unchanged");
+  assert.equal(logs.length, 1);
+});
+
+test("sessionFrames sends nothing and logs when live rows alone exceed one frame", async () => {
+  const { client, logs } = await snapshotClient();
+  const small = carried(1, "/");
+  assert.equal(client.sessionFrames(small).length, 1);
+  const live = carried(600).map((row) => ({ ...row, state: "running" }));
+  assert.deepEqual(client.sessionFrames(live), []);
+  assert.deepEqual(logs, ["kherep-node: sessions.snapshot withheld: 600 live rows exceed one frame"]);
+  assert.equal(client.sessionFrames(small).length, 1, "the cached snapshot is cleared, so the next call rebuilds");
+});
+
+test("sessionFrames logs one line per distinct count, and counts only", async () => {
+  const { client, logs } = await snapshotClient();
+  const rows = carried(600);
+  attachIdentitySnapshot(rows, 1);
+  assert.equal(client.sessionFrames(rows).length, 1);
+  assert.deepEqual(client.sessionFrames(rows), [], "an unchanged trimmed snapshot is deduplicated");
+  attachIdentitySnapshot(rows, 2);
+  assert.equal(client.sessionFrames(rows).length, 1, "a new generation sends again");
+  assert.equal(logs.length, 1);
+  assert.equal(client.sessionFrames(carried(601)).length, 1);
+  assert.equal(logs.length, 2);
+  assert.ok(logs.every((line) => !line.includes("carried-")));
+});
+
+test("a snapshot under the limit is byte-identical to the untrimmed frame", async () => {
+  const { client, logs } = await snapshotClient();
+  const rows: SessionInfo[] = [{ sessionId: "synthetic", runtime: "codex", state: "unknown" }];
+  attachIdentitySnapshot(rows, 1);
+  const [frame] = client.sessionFrames(rows);
+  const { id, seq, ack, ts } = JSON.parse(frame);
+  const body = { sessions: rows, identitySnapshot: { version: 1, generation: 1 } };
+  assert.equal(frame, JSON.stringify({ ...makeEnvelope("sessions.snapshot", body, seq, ack, id), ts }));
+  assert.deepEqual(logs, []);
+});
+
+test("an error frame \"frame too large\" clears the cached snapshot", async () => {
+  const { client, logs } = await snapshotClient();
+  const rows = carried(1, "/");
+  assert.equal(client.sessionFrames(rows).length, 1);
+  assert.deepEqual(client.sessionFrames(rows), []);
+  await client.onFrame(JSON.stringify(makeEnvelope("error", { error: "synthetic rejection" }, 0, 0)));
+  assert.deepEqual(client.sessionFrames(rows), [], "another rejection keeps the cache");
+  await client.onFrame(JSON.stringify(makeEnvelope("error", { error: "frame too large" }, 0, 0)));
+  assert.equal(client.sessionFrames(rows).length, 1);
+  assert.equal(logs.at(-1), "kherep-node: control plane rejected a frame: frame too large");
 });
 
 test("828 Directory metadata is stored only on a current authenticated connection",async()=>{

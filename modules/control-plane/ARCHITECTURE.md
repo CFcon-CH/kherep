@@ -591,6 +591,11 @@ sequenceDiagram
 The Registry reconciles each changed session snapshot inside one atomic transaction:
 new rows are inserted, absent rows are deleted, and existing rows are updated only
 when stored metadata differs. Duplicate ids keep the final snapshot entry.
+A node that cannot fit its snapshot into one frame leaves out `unknown` rows without
+proof, last rows first, and the Registry deletes those like any other absent row; it
+never leaves out a row with proof or another state, and it sends nothing when those
+alone do not fit (issue #706, see the [README](README.md)). A native intent for a
+left-out row meets the Registry's session/runtime requirement and is refused.
 Session `updated_at` is the last metadata change, while directory `fetchedAt`
 records response freshness. A duplicate sequenced node frame may advance its
 cumulative acknowledgement, but it does not refresh liveness or dispatch again.
