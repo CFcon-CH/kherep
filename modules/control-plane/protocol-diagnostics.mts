@@ -1,10 +1,14 @@
 // Fixed metadata only. Never place operands, identifiers or proof values here.
 export const MESSAGING_DIAGNOSTICS_CAPABILITY = "messaging.diagnostics.v1";
+// Issue #706: a node that validates RESOLUTION_DETAIL_CODES advertises this next to v1. A v1 node drops a whole
+// message.status frame with an unknown code, so the Worker hands it resolution-unavailable. The row keeps the code.
+export const MESSAGING_DIAGNOSTICS_V2_CAPABILITY = "messaging.diagnostics.v2";
 export const DIAGNOSTIC_STAGES = ["target-progress", "upstream-egress", "send-admission", "duplicate", "mcp-claim"] as const;
+const RESOLUTION_DETAIL_CODES = ["resolution-missing", "resolution-ambiguous", "resolution-stale", "resolution-invalid", "resolution-unreadable", "resolution-clock"] as const;
 export const BLOCKER_CODES = ["task-concurrency", "task-starts-daily", "runtime-pending", "turn-spacing", "budget-lock-unavailable",
   "hint-capture-failed", "hint-invalidated", "hint-lock-busy", "hint-storage-failed", "target-not-idle", "task-active", "process-still-running",
   "node-offline", "registration-pending", "binding-capability-missing", "stored-binding-missing", "resolution-unavailable", "resolution-timeout",
-  "resolution-capacity", "identity-changed", "acceptance-unconfirmed"] as const;
+  "resolution-capacity", "identity-changed", "acceptance-unconfirmed", ...RESOLUTION_DETAIL_CODES] as const;
 export const IDENTITY_DIMENSIONS = ["owner", "reference-match", "runtime", "lifecycle", "proof-kind", "eligibility", "capability", "connection", "lineage", "selected-proof"] as const;
 export type BlockerCode = typeof BLOCKER_CODES[number];
 export type IdentityDimension = typeof IDENTITY_DIMENSIONS[number];
@@ -29,9 +33,14 @@ export const blockerDiagnostic = (code: BlockerCode, now: number, stage: Diagnos
   observedState?: Common["observedState"]): MessageDiagnostic => ({ version: 1, kind: "blocker", stage, code, observedAt: new Date(now).toISOString(),
     ...(observedState === undefined ? {} : { observedState }) });
 export function compatibleDiagnostic<T extends { diagnostic?: MessageDiagnostic }>(body: T, capabilities: readonly string[] | null): T {
-  if (!body.diagnostic || capabilities?.includes(MESSAGING_DIAGNOSTICS_CAPABILITY)) return body;
-  const { diagnostic: _diagnostic, ...legacy } = body;
-  return legacy as T;
+  const diagnostic = body.diagnostic;
+  if (!diagnostic) return body;
+  if (!capabilities?.includes(MESSAGING_DIAGNOSTICS_CAPABILITY)) {
+    const { diagnostic: _diagnostic, ...legacy } = body;
+    return legacy as T;
+  }
+  return diagnostic.kind === "blocker" && (RESOLUTION_DETAIL_CODES as readonly BlockerCode[]).includes(diagnostic.code) && !capabilities.includes(MESSAGING_DIAGNOSTICS_V2_CAPABILITY)
+    ? { ...body, diagnostic: { ...diagnostic, code: "resolution-unavailable" } } : body;
 }
 const WORDS: Record<BlockerCode, string> = {
   "task-concurrency": "target task limit reached", "task-starts-daily": "target daily task-start limit reached",
@@ -43,6 +52,9 @@ const WORDS: Record<BlockerCode, string> = {
   "stored-binding-missing": "stored owner binding is unavailable", "resolution-unavailable": "target owner resolution is unavailable",
   "resolution-timeout": "target owner resolution timed out", "resolution-capacity": "target owner resolution capacity reached",
   "identity-changed": "identity changed", "acceptance-unconfirmed": "target acceptance is not confirmed",
+  "resolution-missing": "target node does not list the session", "resolution-ambiguous": "target session reference matches several sessions",
+  "resolution-stale": "target node answered that the resolution window has passed", "resolution-invalid": "target node session list failed validation",
+  "resolution-unreadable": "target node session list is unreadable", "resolution-clock": "control-plane clocks disagree beyond the resolution window",
 };
 export function renderMessageDiagnostic(diagnostic: MessageDiagnostic | null | undefined, state: string): string {
   if (!isMessageDiagnostic(diagnostic)) return "Waiting; detailed cause unavailable.";

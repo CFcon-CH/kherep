@@ -28,7 +28,7 @@ it("real NodeSession distinguishes offline, unregistered and incapable connectio
 it("real NodeSession RPC distinguishes invalid/expired resolution, timeout and bounded capacity", async () => {
   const f = await connected(["messaging.v1", "messaging.selected-binding.v1"]);
   const expired = request(); expired.expiresAt = Date.now() - 1;
-  expect((await session(f.nodeId).resolveMessageReferencesDetailed(expired)).code).toBe("resolution-unavailable");
+  expect((await session(f.nodeId).resolveMessageReferencesDetailed(expired)).code).toBe("resolution-clock");
   const short = request(); short.expiresAt = Date.now() + 20;
   expect((await session(f.nodeId).resolveMessageReferencesDetailed(short)).code).toBe("resolution-timeout");
   const pending = Array.from({ length: 32 }, () => session(f.nodeId).resolveMessageReferencesDetailed(request()));
@@ -54,10 +54,10 @@ it("real selected owner drift records identity-changed during queued egress with
   const f = await attestedPair([...BRAKE_CAPS, MESSAGING_DIAGNOSTICS_CAPABILITY]), sent = await f.send();
   if (!sent.ok) throw new Error(sent.error);
   f.setLocalRows([{ sessionId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc", name: "alias-1", runtime: "codex" }]);
-  // The retained canonical target cannot be selected anymore, so selection is unavailable.
+  // The retained canonical target cannot be selected anymore: the node answers MISSING.
   expect(await registry().prepareMessageDelivery(sent.status.messageId)).toBeNull();
   const detail = (await registry().mcpMessageStatus(f.nodeId, sent.status.messageId))?.diagnostic;
-  expect(detail).toMatchObject({ code: "resolution-unavailable" });
+  expect(detail).toMatchObject({ code: "resolution-missing" });
   // A real selection keeps the owner but conflicts with its stored lifecycle.
   f.setLocalRows([ID_A, ID_B].map((sessionId, i) => ({ sessionId, name: `alias-${i}`, runtime: "codex", lifecycleGeneration: 1 })));
   expect(await registry().prepareMessageDelivery(sent.status.messageId)).toBeNull();

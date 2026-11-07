@@ -1,4 +1,4 @@
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { NodeReferenceRpc } from "../src/node-reference-rpc.mts";
 import type { ResolveRequest, ResolveResponse } from "../../protocol-message-binding.mts";
 const request = (): ResolveRequest => ({ version: 1, requestId: crypto.randomUUID(), messageId: crypto.randomUUID(), purpose: "admit",
@@ -67,4 +67,50 @@ it("real RPC capacity, timeout and failed send report distinct observational cod
   expect(codes.pop()).toBe("resolution-timeout");
   expect(await rpc.request(socket, "one", request(), () => { throw new Error("synthetic failure"); }, () => true, code => codes.push(code))).toBeNull();
   expect(codes.pop()).toBe("resolution-unavailable");
+});
+
+const refusedCode = async (rpc: NodeReferenceRpc, r: ResolveRequest, current = true): Promise<string[]> => {
+  const codes: string[] = [];
+  expect(await rpc.request({} as WebSocket, "one", r, () => { throw new Error("must not send"); }, () => current, code => codes.push(code))).toBeNull();
+  return codes;
+};
+it("a Registry clock slightly ahead is tolerated: expiresAt just past the TTL is accepted and answered", async () => {
+  const rpc = new NodeReferenceRpc(), socket = {} as WebSocket, r = request(), codes: string[] = []; let sent = 0;
+  r.expiresAt = Date.now() + 5000 + 50;
+  const pending = rpc.request(socket, "one", r, () => { sent++; }, () => true, code => codes.push(code));
+  expect([sent, codes]).toEqual([1, []]);
+  expect(rpc.receive(socket, "one", response(r))).toBe(true);
+  expect(await pending).toEqual(response(r));
+});
+it("an expiresAt outside the window reports resolution-clock", async () => {
+  const far = request(); far.expiresAt = Date.now() + 5000 + 30_000 + 1000;
+  expect(await refusedCode(new NodeReferenceRpc(), far)).toEqual(["resolution-clock"]);
+  const past = request(); past.expiresAt = Date.now() - 1;
+  expect(await refusedCode(new NodeReferenceRpc(), past)).toEqual(["resolution-clock"]);
+});
+it("the allowance widens only the admission bound: the wait never exceeds the TTL and a short expiry still fires on time", async () => {
+  const spy = vi.spyOn(globalThis, "setTimeout"), rpc = new NodeReferenceRpc(), socket = {} as WebSocket;
+  try {
+    const long = request(); long.expiresAt = Date.now() + 5000 + 20_000;
+    const pending = rpc.request(socket, "one", long, () => {}, () => true);
+    expect(spy.mock.calls.at(-1)?.[1]).toBe(5000);
+    rpc.clear(socket); await pending;
+    const short = request(); short.expiresAt = Date.now() + 40;
+    const codes: string[] = [];
+    const started = Date.now();
+    expect(await rpc.request(socket, "one", short, () => {}, () => true, code => codes.push(code))).toBeNull();
+    expect(codes).toEqual(["resolution-timeout"]);
+    expect(Date.now() - started).toBeLessThan(5000);
+  } finally { spy.mockRestore(); }
+});
+it("capacity, not-current, duplicate and malformed requests keep their codes even with a bad expiry", async () => {
+  const far = (): ResolveRequest => ({ ...request(), expiresAt: Date.now() + 120_000 });
+  expect(await refusedCode(new NodeReferenceRpc(), far(), false)).toEqual(["resolution-unavailable"]);
+  expect(await refusedCode(new NodeReferenceRpc(), { ...request(), version: 2 } as unknown as ResolveRequest)).toEqual(["resolution-unavailable"]);
+  const rpc = new NodeReferenceRpc(), socket = {} as WebSocket, r = request();
+  const first = rpc.request(socket, "one", r, () => {}, () => true);
+  expect(await refusedCode(rpc, r)).toEqual(["resolution-unavailable"]);
+  const full = Array.from({ length: 31 }, () => rpc.request(socket, "one", request(), () => {}, () => true));
+  expect(await refusedCode(rpc, far())).toEqual(["resolution-capacity"]);
+  rpc.clear(socket); await Promise.all([first, ...full]);
 });

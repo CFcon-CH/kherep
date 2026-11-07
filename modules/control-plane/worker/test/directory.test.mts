@@ -176,4 +176,42 @@ describe("directory frames", () => {
     expect(JSON.stringify(makeEnvelope("directory", body, 0, 0)).length).toBeLessThanOrEqual(MAX_FRAME_BYTES);
     expect(isDirectoryBody(body)).toBe(true);
   });
+
+  const rowsOf = (nodeId: string, count: number) => Array.from({ length: count }, (_, i) => ({ nodeId, sessionId: `s-${String(i).padStart(4, "0")}`, runtime: "codex", state: "unknown" }));
+  const nodeRow = (id: string) => ({ id, name: id.slice(-2), status: "online" });
+  const countOf = (body: DirectoryBody, nodeId: string) => body.sessions.filter((s) => s.nodeId === nodeId).length;
+  const [first, second, third] = [idOf(1), idOf(2), idOf(3)];
+
+  it("a cut removes rows from every node alike and keeps each node's own order", () => {
+    const sessions = [...rowsOf(first, 400), ...rowsOf(second, 400)];
+    const body = directoryBody([nodeRow(first), nodeRow(second)], sessions, 0, undefined, 20_000);
+    expect(body.truncated).toBe(true);
+    expect(new TextEncoder().encode(JSON.stringify(body)).length).toBeLessThanOrEqual(20_000);
+    const [a, b] = [countOf(body, first), countOf(body, second)];
+    expect(a).toBeGreaterThan(0);
+    expect(b).toBeGreaterThan(0);
+    expect(Math.abs(a - b)).toBeLessThanOrEqual(1);
+    for (const [nodeId, count] of [[first, a], [second, b]] as const) {
+      expect(body.sessions.filter((s) => s.nodeId === nodeId).map((s) => s.sessionId)).toEqual(rowsOf(nodeId, count).map((s) => s.sessionId));
+    }
+    expect(directoryBody([nodeRow(first), nodeRow(second)], sessions, 0, undefined, 20_000)).toEqual(body);
+  });
+
+  it("the 1024 row limit shares between nodes too, and a small node keeps all its rows", () => {
+    const body = directoryBody([nodeRow(first), nodeRow(second), nodeRow(third)], [...rowsOf(first, 900), ...rowsOf(second, 10), ...rowsOf(third, 900)], 0, undefined, 1_000_000);
+    expect(body.truncated).toBe(true);
+    expect(body.sessions.length).toBe(1024);
+    expect(countOf(body, second)).toBe(10);
+    expect(countOf(body, first)).toBe(507);
+    expect(countOf(body, third)).toBe(507);
+  });
+
+  it("a body that fits keeps every row, is not truncated and keeps each node's order", () => {
+    const sessions = [...rowsOf(first, 3), ...rowsOf(second, 2)];
+    const body = directoryBody([nodeRow(first), nodeRow(second)], sessions, 0);
+    expect(body.truncated).toBeUndefined();
+    expect(body.sessions.length).toBe(5);
+    expect(new Set(body.sessions.map((s) => `${s.nodeId}/${s.sessionId}`))).toEqual(new Set(sessions.map((s) => `${s.nodeId}/${s.sessionId}`)));
+    expect(body.sessions.filter((s) => s.nodeId === first).map((s) => s.sessionId)).toEqual(["s-0000", "s-0001", "s-0002"]);
+  });
 });

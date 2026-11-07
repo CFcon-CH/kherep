@@ -1,3 +1,4 @@
+import type { BlockerCode } from "../../protocol-diagnostics.mts";
 import { BINDING_TTL_MS, type BoundOwner, type MessageBinding,
   type ResolveRequest, type ResolveResponse, type SelectedResult } from "../../protocol-message-binding.mts";
 import { OPERATOR_NODE_ID, type MessageAddress } from "../../protocol-messages.mts";
@@ -18,6 +19,9 @@ export function bindingContext(sql: SqlStorage, message: AddressPair): { stamp: 
   const nodes = semanticNodes(sql, [message.from.nodeId, message.to.nodeId]);
   return { refs, nodes, stamp: JSON.stringify([refs.map(semanticReference), nodes]) };
 }
+// BOUND arrives here only with an owner other than the expected one.
+const ANSWER_BLOCKER: Record<SelectedResult["code"], BlockerCode> = { MISSING: "resolution-missing", AMBIGUOUS: "resolution-ambiguous", STALE: "resolution-stale",
+  INVALID: "resolution-invalid", UNREADABLE: "resolution-unreadable", CONFLICT: "identity-changed", BOUND: "identity-changed" };
 const boundOwner = (r: Extract<SelectedResult, { code: "BOUND" }>): BoundOwner => ({ sessionId: r.owner.sessionId, runtime: r.owner.runtime,
   lifecycleGeneration: r.lifecycleGeneration });
 export function selectedAgreesWithProof(binding: MessageBinding, proof: string, direction: 0 | 1 | null): boolean {
@@ -65,7 +69,7 @@ export async function prepareMessageBinding(sql: SqlStorage, message: AddressPai
     for (const r of answer.results) {
       const s = request.selections.find(s => s.role === r.role);
       if (!s || r.code !== "BOUND" || s.expected && (s.expected.sessionId !== r.owner.sessionId || s.expected.runtime !== r.owner.runtime)) {
-        if (s?.role === "to") result.diagnosticCode ??= r.code === "CONFLICT" ? "identity-changed" : "resolution-unavailable";
+        if (s?.role === "to") result.diagnosticCode ??= ANSWER_BLOCKER[r.code];
         continue;
       }
       selected.set(r.role, r);

@@ -4,6 +4,7 @@ import { authenticate, FACTS, registry, session, until } from "./helpers.mts";
 import { makeEnvelope } from "../../protocol.mts";
 import { bindingNode } from "./binding-node-fixture.mts";
 import { MessageStore } from "../src/message-store.mts";
+import { prepareMessageBinding } from "../src/message-binding.mts";
 import { attestedPair, attestedRows, BRAKE_CAPS, ID_A, ID_B } from "./message-loop-fixture.mts";
 
 it("S03: one missing Registry owner and a surviving alias retain the same hold in both orientations", async () => {
@@ -320,4 +321,30 @@ it("S17 S29: known selected lifecycle conflict never borrows an older positive p
   expect(r.ok && r.status).toMatchObject({ state: "refused", reason: "loop-context-changed" });
   expect(r.ok && r.effects.deliveries).toEqual([]);
   expect(await runInDurableObject(registry(), (_i, state) => state.storage.sql.exec("SELECT COUNT(*) AS n FROM message_loop_pairs WHERE from_node=?", n.nodeId).one().n)).toBe(0);
+});
+
+const bound = (role: "from" | "to", sessionId: string) => ({ role, code: "BOUND" as const, match: "exact" as const, owner: { sessionId, runtime: "codex" },
+  localGeneration: null, lifecycleGeneration: null, selectionStamp: crypto.randomUUID(), leaseId: crypto.randomUUID() });
+for (const [answer, code] of [["MISSING", "resolution-missing"], ["AMBIGUOUS", "resolution-ambiguous"], ["STALE", "resolution-stale"], ["INVALID", "resolution-invalid"],
+  ["UNREADABLE", "resolution-unreadable"], ["CONFLICT", "identity-changed"]] as const) it(`a node answering ${answer} for the target is reported as ${code}`, async () => {
+  const f = await attestedPair();
+  await runInDurableObject(registry(), async (_i, state) => {
+    const prepared = await prepareMessageBinding(state.storage.sql, { messageId: crypto.randomUUID(), from: { nodeId: f.nodeId, session: ID_A }, to: { nodeId: f.nodeId, session: ID_B } }, async () => "0".repeat(64),
+      async (_nodeId, request) => ({ version: 1, requestId: request.requestId, messageId: request.messageId,
+        results: request.selections.map(s => s.role === "to" ? { role: s.role, code: answer } : bound(s.role, s.ref)) }));
+    expect(prepared.binding).toBeNull();
+    expect(prepared.diagnosticCode).toBe(code);
+  });
+});
+it("a BOUND target whose owner differs from the expected one is an identity change, not an unavailable resolution", async () => {
+  const f = await attestedPair();
+  await runInDurableObject(registry(), async (_i, state) => {
+    const prepared = await prepareMessageBinding(state.storage.sql, { messageId: crypto.randomUUID(), from: { nodeId: f.nodeId, session: ID_A }, to: { nodeId: f.nodeId, session: ID_B } }, async () => "0".repeat(64),
+      async (_nodeId, request) => {
+        expect(request.selections.find(s => s.role === "to")?.expected?.sessionId).toBe(ID_B);
+        return { version: 1, requestId: request.requestId, messageId: request.messageId, results: request.selections.map(s => bound(s.role, s.role === "to" ? ID_A : s.ref)) };
+      });
+    expect(prepared.binding).toBeNull();
+    expect(prepared.diagnosticCode).toBe("identity-changed");
+  });
 });
