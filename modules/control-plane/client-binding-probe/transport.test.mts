@@ -37,24 +37,36 @@ function call(client: Client, requestId: string, meta?: Record<string, unknown>)
   return client.callTool({ name: "binding_probe", arguments: { requestId, syntheticNonce: NONCE }, _meta: meta });
 }
 
-test("official SDK stdio preserves native metadata and returns no raw identity", async (t) => {
-  const dir = state(t);
-  const rewritten = processHook({ hook_event_name: "PreToolUse", tool_name: PROBE_TOOL,
-    session_id: SESSION, tool_use_id: CALL, tool_input: { syntheticNonce: NONCE } }, dir);
-  assert.ok(rewritten?.hookSpecificOutput.updatedInput);
-  const connection = await connect(dir);
-  t.after(() => connection.client.close());
-  const tools = await connection.client.listTools();
-  const schema = tools.tools.find((tool) => tool.name === "binding_probe")?.inputSchema;
-  assert.deepEqual(schema?.required, ["syntheticNonce"]);
-  const result = await call(connection.client, rewritten.hookSpecificOutput.updatedInput.requestId,
-    { sessionId: SESSION, threadId: THREAD, callId: CALL });
-  assert.equal(result.isError, undefined);
-  assert.equal((result.structuredContent as { code?: string }).code, "binding_confirmed");
-  const serialized = JSON.stringify(result);
-  for (const raw of [SESSION, CALL, THREAD, NONCE]) assert.equal(serialized.includes(raw), false);
-  assert.deepEqual(connection.stderr, []);
-});
+for (const [label, threadId, expected] of [
+  ["matching", SESSION, true], ["different", THREAD, false],
+] as const) {
+  test(`official SDK stdio reports ${label} thread and hook session without raw identity`, async (t) => {
+    const dir = state(t);
+    const rewritten = processHook({ hook_event_name: "PreToolUse", tool_name: PROBE_TOOL,
+      session_id: SESSION, tool_use_id: CALL, tool_input: { syntheticNonce: NONCE } }, dir);
+    assert.ok(rewritten?.hookSpecificOutput.updatedInput);
+    const connection = await connect(dir);
+    t.after(() => connection.client.close());
+    const tools = await connection.client.listTools();
+    const schema = tools.tools.find((tool) => tool.name === "binding_probe")?.inputSchema;
+    assert.deepEqual(schema?.required, ["syntheticNonce"]);
+    const requestId = rewritten.hookSpecificOutput.updatedInput.requestId;
+    const meta = { sessionId: SESSION, threadId, callId: CALL };
+    const result = await call(connection.client, requestId, meta);
+    assert.equal(result.isError, undefined);
+    const structured = result.structuredContent as Record<string, unknown>;
+    assert.equal(structured.code, "binding_confirmed");
+    assert.equal(structured.threadMatchesHookSession, expected);
+    assert.deepEqual(result.content, [{ type: "text", text: JSON.stringify(result.structuredContent) }]);
+    assert.deepEqual(await call(connection.client, requestId, meta), result);
+    const stored = JSON.parse(fs.readFileSync(path.join(dir, "intents", `${requestId}.json`), "utf8"));
+    const { threadMatchesHookSession: _comparison, ...receipt } = structured;
+    assert.deepEqual(stored.receipt, receipt);
+    const serialized = JSON.stringify(result);
+    for (const raw of [SESSION, CALL, THREAD, NONCE]) assert.equal(serialized.includes(raw), false);
+    assert.deepEqual(connection.stderr, []);
+  });
+}
 
 test("missing native metadata fails closed with a fixed code", async (t) => {
   const dir = state(t);
@@ -64,6 +76,7 @@ test("missing native metadata fails closed with a fixed code", async (t) => {
   const result = await call(connection.client, intent.requestId);
   assert.equal(result.isError, true);
   assert.deepEqual(result.structuredContent, { code: "missing_native_meta" });
+  assert.deepEqual(result.content, [{ type: "text", text: '{"code":"missing_native_meta"}' }]);
   const missingRequest = await connection.client.callTool({ name: "binding_probe",
     arguments: { syntheticNonce: NONCE }, _meta: { sessionId: SESSION, threadId: THREAD, callId: CALL } });
   assert.equal(missingRequest.isError, true);
@@ -86,10 +99,22 @@ test("two server processes race to the same idempotent receipt and reject anothe
   const [first, duplicate] = await Promise.all([
     call(left.client, intent.requestId, meta), call(right.client, intent.requestId, meta),
   ]);
-  assert.deepEqual(duplicate.structuredContent, first.structuredContent);
+  assert.equal((first.structuredContent as { code?: string }).code, "binding_confirmed");
+  assert.deepEqual(duplicate, first);
   const foreign = await call(right.client, intent.requestId,
     { sessionId: "foreign-chat", threadId: "foreign-thread", callId: CALL });
   assert.equal(foreign.isError, true);
   assert.deepEqual(foreign.structuredContent, { code: "identity_mismatch" });
+  const changedThread = await call(right.client, intent.requestId,
+    { ...meta, threadId: "changed-thread" });
+  assert.equal(changedThread.isError, true);
+  assert.deepEqual(changedThread.structuredContent, { code: "identity_mismatch" });
+  for (const result of [first, duplicate, foreign, changedThread]) {
+    assert.deepEqual(result.content, [{ type: "text", text: JSON.stringify(result.structuredContent) }]);
+    const serialized = JSON.stringify(result);
+    for (const raw of [SESSION, CALL, THREAD, NONCE, "foreign-chat", "foreign-thread", "changed-thread"]) {
+      assert.equal(serialized.includes(raw), false);
+    }
+  }
   assert.deepEqual([...left.stderr, ...right.stderr], []);
 });

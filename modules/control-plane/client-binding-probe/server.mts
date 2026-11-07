@@ -18,8 +18,11 @@ function nativeMeta(value: unknown): NativeMeta {
   };
 }
 
-function toolResult(result: ProbeResult) {
-  const value = result.ok ? result.receipt : { code: result.code };
+function toolResult(result: ProbeResult, meta: NativeMeta = {}) {
+  const value = result.ok ? {
+    ...result.receipt,
+    threadMatchesHookSession: typeof meta.threadId === "string" && meta.threadId === meta.sessionId,
+  } : { code: result.code };
   const structuredContent: Record<string, unknown> = { ...value };
   return {
     ...(result.ok ? {} : { isError: true }),
@@ -40,8 +43,9 @@ export function createProbeServer(stateDir: string | undefined): McpServer {
   }, async (args, extra) => {
     if (!stateDir) return toolResult({ ok: false, code: "storage_error" });
     if (!args.requestId) return toolResult({ ok: false, code: "invalid_input" });
+    const meta = nativeMeta(extra._meta);
     return toolResult(verifyIntent(stateDir, { requestId: args.requestId, syntheticNonce: args.syntheticNonce },
-      nativeMeta(extra._meta)));
+      meta), meta);
   });
   return server;
 }
