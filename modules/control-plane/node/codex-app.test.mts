@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { codexAppRollout, currentCodexApp, ROLLOUT_DAY_DIRS } from "./codex-app.mts";
+import { codexAppRollout, codexAssignmentRollout, currentCodexApp, ROLLOUT_DAY_DIRS } from "./codex-app.mts";
 import { codexNode } from "./codex-fixture.mts";
 import { codexQueueIdle, pollCodexQueue } from "./codex-queue.mts";
 import { recordCodexSession } from "./codex-sessions.mts";
@@ -91,6 +91,9 @@ test("the rollout check accepts only a Codex Desktop session_meta with source vs
   const home = codexHome(t);
   rollout(home, APP, APP_META);
   assert.equal(codexAppRollout(home, APP), "ok");
+  rollout(home, APP, { ...APP_META, session_id: APP, parent_thread_id: null, forked_from_id: null,
+    attached_thread: false, forked_from_ordinal_exclusive: null, agent_role: null });
+  assert.equal(codexAppRollout(home, APP), "ok", "supported explicit original defaults");
   assert.equal(codexAppRollout(home, "01a0db01-0000-7000-8000-00000000ffff"), "no-rollout");
   const cases: [string, string | Record<string, unknown>][] = [
     ["exec", EXEC_META],
@@ -226,4 +229,35 @@ test("without codexApp a Desktop has no grant; full-id authorization permits eit
     await poll();
     assert.deepEqual(decisions(node), [[APP, "wake", undefined]]);
   }
+});
+
+test("assignment original-thread checks preserve legacy app eligibility", (t) => {
+  const home = codexHome(t);
+  rollout(home, APP, { ...APP_META, forked_from_id: APP_OLD });
+  assert.equal(codexAppRollout(home, APP), "ok", "legacy Desktop fork eligibility remains unchanged");
+  const cases: [string, Record<string, unknown>][] = [
+    ["native fork", { ...APP_META, forked_from_id: APP_OLD }],
+    ["malformed fork", { ...APP_META, forked_from_id: false }],
+    ["attached fork", { ...APP_META, attached_thread: true }],
+    ["unsupported attached marker", { ...APP_META, attached_thread: "false" }],
+    ["fork boundary", { ...APP_META, forked_from_ordinal_exclusive: 0 }],
+    ["different root session", { ...APP_META, session_id: APP_OLD }],
+    ["agent nickname", { ...APP_META, agent_nickname: "synthetic-child" }],
+    ["agent role", { ...APP_META, agent_role: "worker" }],
+    ["legacy agent role", { ...APP_META, agent_type: "worker" }],
+    ["agent path", { ...APP_META, agent_path: "/synthetic/child" }],
+    ["subagent history", { ...APP_META, subagent_history_start_ordinal: 0 }],
+  ];
+  for (const [label, metadata] of cases) {
+    rollout(home, APP, metadata);
+    assert.equal(codexAssignmentRollout(home, APP), "not-app", label);
+    assert.equal(codexAppRollout(home, APP), "ok", `legacy ${label}`);
+  }
+  rollout(home, APP, { ...APP_META, session_id: APP, forked_from_id: null, parent_thread_id: null, attached_thread: false });
+  assert.equal(codexAssignmentRollout(home, APP), "ok", "supported original");
+  rollout(home, APP, EXEC_META);
+  assert.equal(codexAssignmentRollout(home, APP), "not-app", "exec remains denied");
+  rollout(home, APP, { ...APP_META, id: APP_OLD });
+  assert.equal(codexAssignmentRollout(home, APP), "not-app", "exact id remains required");
+  assert.equal(codexAssignmentRollout(home, APP_OLD), "no-rollout");
 });
