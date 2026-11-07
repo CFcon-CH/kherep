@@ -29,6 +29,11 @@ increments the minor version; every other release increments the patch version.
 ### Fixed
 
 - Control Plane node: stop a growing session history from making every resolve answer INVALID. The liveness ledger sets `capped` only when a currently listed session falls off its 512 rows, and it forgets rows the node no longer carries. A listing carries at most 128 unlisted rows, newest by `lastSeen`, and always keeps sessions with a listener file, an inbox record, a wake-name binding or a literal entry in `wake.sessions`; a failed read of any of these carries every row. An idle session outside the bound is no longer addressable until it is listed again. Refs #706.
+- Control Plane node: keep `sessions.snapshot` within the 64 KiB frame limit. A
+  node over it drops `unknown` rows without proof from the end and logs the count;
+  with only other rows left it sends nothing and logs that. A Worker `frame too
+  large` error no longer leaves the rejected snapshot cached. Under the limit the
+  frame is unchanged. Refs #706.
 - Control Plane Worker: name the target node's answer when owner resolution fails (`resolution-missing`, `-ambiguous`, `-stale`, `-invalid`, `-unreadable`) and a request outside its time window (`resolution-clock`), instead of one `resolution-unavailable`. Nodes advertise `messaging.diagnostics.v2`; a node without it keeps getting `resolution-unavailable`, because it would drop the frame otherwise. Allow 30 s of clock difference between Durable Objects on the request's upper bound. Cut the directory fairly across nodes, so one node no longer fills the frame while another has no rows. Refs #706.
 - Start wake-name bindings without a liveness source. A daemon has none in production, so `session-labels.json` was never created and a name without its id stayed refused (Refs #828).
 - List Claude background sessions, whose `claude agents` row carries `state` instead of `status`. Dropping them marked every listing incomplete, so wake-name bindings never started (Refs #828).

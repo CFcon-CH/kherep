@@ -111,6 +111,8 @@ export class NodeClient {
   private processedSeq = 0;
   // The session list last sent in sessions.snapshot, as JSON.
   private lastSnapshot: string | null = null;
+  // Issue #706: the last trimmed or withheld line, so an unchanged count logs once.
+  private snapshotLimitLog: string | null = null;
   authenticated = false;
   // Issue #408, PR 4 (design r3 section 3.3): what the Worker of the current
   // authenticated connection named in a directory frame received on it; null
@@ -295,8 +297,12 @@ export class NodeClient {
         // that names the message.
         const { messageId, error, diagnostic } = envelope.body as { messageId?: unknown; error?: unknown; diagnostic?: unknown };
         if (isMessageId(messageId)) this.callback(messageId, () => this.options.sentUpdate?.(messageId, "error", String(error).slice(0, 256), undefined, isMessageDiagnostic(diagnostic) ? diagnostic : undefined));
-        // Issue #441: otherwise the one signal that a frame bypassed the stamp or was malformed.
-        else this.options.log?.(`kherep-node: control plane rejected a frame: ${String(error).slice(0, 256)}`);
+        else {
+          // Issue #706: a rejected snapshot is not a sent one; retry it instead of caching it.
+          if (error === "frame too large") this.lastSnapshot = null;
+          // Issue #441: otherwise the one signal that a frame bypassed the stamp or was malformed.
+          this.options.log?.(`kherep-node: control plane rejected a frame: ${String(error).slice(0, 256)}`);
+        }
         return [];
       }
       default:
@@ -322,11 +328,41 @@ export class NodeClient {
   sessionFrames(sessions: SessionInfo[]): string[] {
     if (!this.authenticated) return [];
     const identitySnapshot = identitySnapshotOf(sessions);
-    const body = { sessions, ...(identitySnapshot ? { identitySnapshot } : {}) };
+    const extras = identitySnapshot ? { identitySnapshot } : {};
+    const rows = this.rowsWithinFrame(sessions, extras);
+    if (!rows) {
+      this.lastSnapshot = null;
+      return [];
+    }
+    const body = { sessions: rows, ...extras };
     const json = JSON.stringify(body);
     if (json === this.lastSnapshot) return [];
     this.lastSnapshot = json;
     return [this.frame("sessions.snapshot", body)];
+  }
+
+  // Issue #706: the Worker rejects a whole frame over the limit. An unknown row
+  // without proof means the same to admission as no row, so those rows go first,
+  // from the end, where the longest-carried ones are. Null: the rest alone is too large.
+  private rowsWithinFrame(sessions: SessionInfo[], extras: object): SessionInfo[] | null {
+    const envelope = makeEnvelope("sessions.snapshot", { sessions, ...extras }, this.built + 1, this.processedSeq);
+    let excess = Buffer.byteLength(JSON.stringify(envelope), "utf8") + STAMP_MARGIN - MAX_FRAME_BYTES;
+    if (excess <= 0) {
+      this.snapshotLimitLog = null;
+      return sessions;
+    }
+    const rows = [...sessions];
+    for (let i = rows.length - 1; i >= 0 && excess > 0; i--) {
+      if (rows[i].state !== "unknown" || rows[i].canonicalIdentity) continue;
+      excess -= Buffer.byteLength(JSON.stringify(rows[i]), "utf8") + 1; // its comma
+      rows.splice(i, 1);
+    }
+    const line = excess > 0
+      ? `kherep-node: sessions.snapshot withheld: ${rows.length} live rows exceed one frame`
+      : `kherep-node: sessions.snapshot trimmed ${sessions.length - rows.length} of ${sessions.length} rows (frame too large)`;
+    if (line !== this.snapshotLimitLog) this.options.log?.(line);
+    this.snapshotLimitLog = line;
+    return excess > 0 ? null : rows;
   }
 
   async refreshPolicy(policy: NodePolicy): Promise<string[]> {
