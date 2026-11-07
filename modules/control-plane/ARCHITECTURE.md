@@ -1,5 +1,22 @@
 # Control Plane architecture
 
+## Internal Intercom slots (#706)
+
+The Registry schema contains five fixed `intercom_slots` rows: `kherep-lead`,
+`codex-windows`, `claude-windows`, `codex-mac` and `claude-mac`. Each holds either
+an empty occupant or one node/runtime/full-session address and display name.
+The Worker-internal `replaceIntercomSlot` helper uses one bound synchronous SQL
+update with an expected revision. A successful replacement or clear advances
+the revision; a conflict returns no revision, and storage errors propagate.
+Fixed runtime slots constrain the occupant runtime; the lead slot permits either.
+Occupancy records an address, not native caller ownership or authority.
+
+No Registry RPC method, HTTP, WebSocket or CLI entry point exposes this storage.
+There is no participant registration, directory backfill or discovery change.
+A future deployment of this schema would create five empty revision-zero rows
+on the next Registry initialization, preserving existing slot rows and revisions
+on subsequent initialization. This source change does not deploy the Worker.
+
 ## Session liveness metadata (Phase 1, #706)
 
 `session-liveness.mts` judges exact runtime/full-ID metadata as `running`,
