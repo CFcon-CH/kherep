@@ -256,6 +256,8 @@ function intentCommands(codexHome: string, outbox: string): { adapted: string; d
 
 function beforeAdaptedIntentHook(config: string, codexHome: string, outbox: string): string {
   config = withoutContextWorkspace(config);
+  // The pre-adapter installer also predates the self-assignment matcher.
+  config = config.replace("sessions|send|inbox|reply|status|assign_self)", "sessions|send|inbox|reply|status)");
   const { adapted, direct } = intentCommands(codexHome, outbox);
   const entry = (value: string, timeout: number): string =>
     `command = ${JSON.stringify(value)}\ncommandWindows = ${JSON.stringify(`& ${value}`)}\ntimeout = ${timeout}\n`;
@@ -1944,7 +1946,7 @@ test("installs the disabled-by-default messaging client with its public dependen
   const enabled = install({ ...installOptions, messagingClient: true });
   const config = fs.readFileSync(enabled.targets.config, "utf8");
   const clientRoot = path.join(codexHome, "orchestra", "control-plane");
-  const matcher = "^mcp__kherep_messaging__(sessions|send|inbox|reply|status)$";
+  const matcher = "^mcp__kherep_messaging__(sessions|send|inbox|reply|status|assign_self)$";
   assert.match(config, new RegExp(`matcher = ${JSON.stringify(matcher).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
   assert.match(config, /\[mcp_servers\.kherep_messaging\]/);
   assert.match(config, new RegExp(JSON.stringify(path.join(clientRoot, "node", "mcp-stdio-bridge.mts"))

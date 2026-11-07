@@ -69,6 +69,7 @@ export interface RenderOptions extends McpRenderOptions {
   // Issue #538. Renders from before it, which ran the messaging intent hook directly, for managed
   // upgrade recognition only; omitAdaptedDirectGuards implies it.
   omitAdaptedIntentHook?: boolean;
+  omitSelfAssignmentHook?: boolean;
   // Legacy renders only: true was the combined macOS Stop hook, false was the
   // separate Windows observation Stop hook. Omitted means quiet observations.
   observationStopHook?: boolean;
@@ -222,7 +223,9 @@ export function renderHooks(options: RenderOptions, previousNative = false): str
       }]),
     group("PreToolUse", "Agent|spawn_agent", [direct ? hook("codex-dispatch-contract-guard.mts") : adapted("codex-dispatch-contract-guard.mts", "pre")]),
     group("PreToolUse", "mcp__playwright__browser_navigate", [direct ? hook("playwright-file-guard.mts") : adapted("playwright-file-guard.mts", "pre")]),
-    ...(messaging?.enabled ? [group("PreToolUse", "^mcp__kherep_messaging__(sessions|send|inbox|reply|status)$", [intent(messaging)])] : []),
+    ...(messaging?.enabled ? [group("PreToolUse", options.omitSelfAssignmentHook
+      ? "^mcp__kherep_messaging__(sessions|send|inbox|reply|status)$"
+      : "^mcp__kherep_messaging__(sessions|send|inbox|reply|status|assign_self)$", [intent(messaging)])] : []),
     group("UserPromptSubmit", "", [
       {
         command: contextCommand(node, contextHook, options.contextWorkspace),
@@ -394,26 +397,30 @@ export function render(options: RenderOptions): string {
 
 // Exact predecessor of the Atlassian destructive guard (issue #376).
 export function renderBeforeAtlassianDestructiveGuard(options: RenderOptions): string {
-  return render({ ...options, omitAtlassianDestructiveGuard: true, omitShellDispatcher: true, omitAdaptedDirectGuards: true });
+  return render({ ...options, omitSelfAssignmentHook: true, omitAtlassianDestructiveGuard: true, omitShellDispatcher: true, omitAdaptedDirectGuards: true });
 }
 
 export function renderBeforeShellDispatcher(options: RenderOptions): string {
-  return render({ ...options, omitShellDispatcher: true, omitAdaptedDirectGuards: true });
+  return render({ ...options, omitSelfAssignmentHook: true, omitShellDispatcher: true, omitAdaptedDirectGuards: true });
 }
 
 // Issue #507, part 4. Exact predecessor of the three adapted guards: the 3054123 render.
 export function renderBeforeAdaptedDirectGuards(options: RenderOptions): string {
-  return render({ ...options, omitAdaptedDirectGuards: true });
+  return render({ ...options, omitSelfAssignmentHook: true, omitAdaptedDirectGuards: true });
 }
 
 // Issue #538. Exact predecessor of the adapted messaging intent entry: the c44f3e4 render.
 export function renderBeforeAdaptedIntentHook(options: RenderOptions): string {
-  return render({ ...options, omitAdaptedIntentHook: true });
+  return render({ ...options, omitSelfAssignmentHook: true, omitAdaptedIntentHook: true });
+}
+
+export function renderBeforeSelfAssignment(options: RenderOptions): string {
+  return render({ ...options, omitSelfAssignmentHook: true });
 }
 
 // Exact predecessor of the busy-hint projection, which also predates the guard.
 export function renderBeforeBusyHint(options: RenderOptions): string {
-  return render({ ...options, omitBusyHint: true, omitAtlassianDestructiveGuard: true, omitShellDispatcher: true, omitAdaptedDirectGuards: true });
+  return render({ ...options, omitSelfAssignmentHook: true, omitBusyHint: true, omitAtlassianDestructiveGuard: true, omitShellDispatcher: true, omitAdaptedDirectGuards: true });
 }
 
 // Exact predecessor of the dispatcher projection. Historical renderers below
@@ -425,12 +432,12 @@ export function renderBeforePostEditDispatcher(options: RenderOptions): string {
 // The previous-native, previous-nudges and JavaScript-era renders reproduce
 // blocks written before issue #68, so none of them carries a commandWindows form.
 function beforeWindowsCommands(options: RenderOptions): RenderOptions {
-  return { ...options, windowsHookCommands: false, omitBusyHint: true, omitAtlassianDestructiveGuard: true, omitShellDispatcher: true,
+  return { ...options, omitSelfAssignmentHook: true, windowsHookCommands: false, omitBusyHint: true, omitAtlassianDestructiveGuard: true, omitShellDispatcher: true,
     omitAdaptedDirectGuards: true };
 }
 
 export function renderWithoutNativeHooks(options: RenderOptions): string {
-  return render({ ...options, nativeHooks: undefined });
+  return render({ ...options, omitSelfAssignmentHook: true, nativeHooks: undefined });
 }
 export function renderPreviousNativeHooks(current: RenderOptions): string {
   const options = beforeWindowsCommands(current);

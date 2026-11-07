@@ -20,6 +20,29 @@ const MESSAGE = "40000000-0000-4000-8000-000000000001";
 // The Windows helper has its own tests; these start no powershell.exe (issue #219).
 const CREDENTIAL = { spawn: fakePowerShell().spawn };
 
+test("assignment hook binds only slot plus native session/turn/call and rejects supplied identity", async t => {
+  const { root, paths } = temporary(t);
+  fs.mkdirSync(paths.dir, { recursive: true });
+  fs.writeFileSync(paths.policy, JSON.stringify({ version: 1, allowedCommands: [], remoteMcp: { enabled: true } }));
+  const sessionId = "11111111-1111-4111-8111-111111111111", turnId = "22222222-2222-4222-8222-222222222222";
+  const input = { hook_event_name: "PreToolUse", tool_name: "mcp__kherep_messaging__assign_self",
+    session_id: sessionId, tool_use_id: "native-call", turn_id: turnId, prompt: "SYNTHETIC PROMPT MUST NOT PERSIST",
+    tool_input: { slot: "codex-mac" } };
+  for (const denied of [{ ...input, turn_id: undefined }, { ...input, session_id: "short" },
+    { ...input, tool_input: { slot: "codex-windows" } }, { ...input, tool_input: { slot: "codex-mac", chatName: "forged" } }]) {
+    const output = await processMcpIntentHook(denied, root);
+    assert.equal(output?.hookSpecificOutput.permissionDecision, "deny");
+  }
+  assert.equal((await processMcpIntentHook(input, root, Date.now(), "claude-code"))?.hookSpecificOutput.permissionDecision, "deny");
+  const pending = processMcpIntentHook(input, root);
+  const requestId = await queuedRequestId(paths);
+  const text = fs.readFileSync(path.join(paths.mcpIntents, `${requestId}.json`), "utf8"), queued = JSON.parse(text);
+  assert.equal(queued.sessionId, sessionId);assert.equal(queued.threadId, sessionId);assert.equal(queued.callId, "native-call");
+  assert.deepEqual(queued.assignment, { slot: "codex-mac", turnId });assert.equal(text.includes(input.prompt), false);
+  recordMcpIntentReceipt(paths, new Set(), { requestId, ok: true, expiresAt: Date.now() + 30_000, version: 1 });
+  assert.deepEqual((await pending)?.hookSpecificOutput.updatedInput, { slot: "codex-mac", requestId });
+});
+
 function temporary(t: test.TestContext) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "kherep-mcp-local-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));

@@ -26,7 +26,7 @@ const VARIANTS = [OPTIONS, { ...OPTIONS, windowsHookCommands: false }, { ...OPTI
 const toml = (...parts: string[]): string => JSON.stringify(parity.command(OPTIONS.node, ...parts));
 const DIRECT = toml(INTENT, "--config-root", ROOT);
 const ADAPTED = toml(path.join(OPTIONS.hookDir, "codex-hook-adapter.mts"), INTENT, "pre-intent", "--config-root", ROOT);
-const MATCHER = 'matcher = "^mcp__kherep_messaging__(sessions|send|inbox|reply|status)$"';
+const MATCHER = 'matcher = "^mcp__kherep_messaging__(sessions|send|inbox|reply|status|assign_self)$"';
 const sha256 = (text: string): string => createHash("sha256").update(text).digest("hex");
 const preEntries = (config: string): string[] => config.split(/^\[\[hooks\.PreToolUse\.hooks\]\]$/m).slice(1)
   .map((entry) => entry.split(/^\[\[?(?!hooks\.PreToolUse\.hooks)/m)[0]!.trim());
@@ -66,13 +66,14 @@ test("C3 exactly the intent entry differs; group headers and matchers stay", () 
     assert.ok(changed[0]![1].includes(`command = ${DIRECT}`), changed[0]![1]);
     assert.ok(changed[0]![0].includes(`command = ${ADAPTED}`), changed[0]![0]);
     const headers = (config: string): string[] => config.match(/^\[\[hooks\.[A-Za-z]+\]\]\n(?:matcher = .*)?/gm) ?? [];
-    assert.deepEqual(headers(parity.render(o)), headers(renderBeforeIntent(o)));
+    assert.deepEqual(headers(parity.render(o)), headers(renderBeforeIntent(o)).map(header =>
+      header.replace("sessions|send|inbox|reply|status)", "sessions|send|inbox|reply|status|assign_self)")));
   }
 });
 
 test("C4 every other historical renderer renders the direct intent entry, never the adapter form", () => {
   for (const [name, value] of Object.entries(parity)) {
-    if (name === "renderBeforeAdaptedIntentHook" || !/^render(Before|Previous|Legacy)/.test(name) || typeof value !== "function") continue;
+    if (["renderBeforeAdaptedIntentHook", "renderBeforeSelfAssignment"].includes(name) || !/^render(Before|Previous|Legacy)/.test(name) || typeof value !== "function") continue;
     const config = (value as typeof parity.render)(OPTIONS);
     assert.ok(!config.includes(ADAPTED.slice(1, -1)), name);
     if (config.includes(MATCHER)) assert.ok(config.includes(DIRECT.slice(1, -1)), name);

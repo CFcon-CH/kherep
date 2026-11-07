@@ -28,7 +28,8 @@ import { McpRegistry, type McpOutcome } from "./mcp-registry.mts";
 import { intakeRows, recordTaken } from "./node-intake.mts";
 import { SqlMeter, type SqlRows } from "./sql-meter.mts";
 import {
-  CLAUDE_MCP_CAPABILITY, REMOTE_MCP_CAPABILITY, type McpInboxItem, type McpIntentClaim, type McpIntentRegistration,
+  CLAUDE_MCP_CAPABILITY, REMOTE_MCP_CAPABILITY, digestMcpArguments, isSelfAssignmentSlot,
+  type McpInboxItem, type McpIntentClaim, type McpIntentRegistration, type SelfAssignmentSlot,
 } from "../../protocol-mcp.mts";
 import type { TaskReportBody } from "../../protocol-tasks.mts";
 import {
@@ -342,8 +343,16 @@ export class Registry extends DurableObject<Env> {
     return this.metered("authenticateMcpCredential", () => this.mcp.authenticateHashed(hash));
   }
 
-  registerMcpIntent(nodeId: string, intent: McpIntentRegistration, now = Date.now()) {
-    return this.tx("registerMcpIntent", () => this.mcp.register(nodeId, intent, now));
+  async registerMcpIntent(nodeId: string, intent: McpIntentRegistration, now = Date.now()) {
+    const assignmentDigest = intent?.tool === "assign_self" && intent.assignment
+      ? await digestMcpArguments({ slot: intent.assignment.slot }) : undefined;
+    return this.tx("registerMcpIntent", () => this.mcp.register(nodeId, intent, now, assignmentDigest));
+  }
+
+  async assignMcpSlot(intent: McpIntentClaim, slot: SelfAssignmentSlot) {
+    if (!isSelfAssignmentSlot(slot) || intent?.tool !== "assign_self"
+      || await digestMcpArguments({ slot }) !== intent.argumentsDigest) return { ok: false as const, error: "invalid self-assignment arguments" };
+    return this.tx("assignMcpSlot", () => this.mcp.assign(intent, slot, Date.now()));
   }
 
   claimMcpIntent(intent: McpIntentClaim, now = Date.now()) {

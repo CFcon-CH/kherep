@@ -385,6 +385,11 @@ export class NodeSession extends DurableObject<Env> {
       }
       case "mcp.intent.register": {
         if (!isMcpIntentRegistration(body)) return this.sendControl(ws, "error", { error: "invalid MCP intent metadata" });
+        if (body.tool === "assign_self" && (this.authedSocket() !== ws
+          || !(ws.deserializeAttachment() as Attachment).registrationAccepted)) {
+          return this.sendControl(ws, "mcp.intent.receipt", { requestId: body.requestId, ok: false,
+            error: "current enrolled-node registration is required for self-assignment" });
+        }
         const registered = await registry.registerMcpIntent(nodeId, body);
         return this.sendControl(ws, "mcp.intent.receipt", registered.ok
           ? { requestId: body.requestId, ok: true, expiresAt: registered.expiresAt, version: registered.version }

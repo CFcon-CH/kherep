@@ -29,7 +29,7 @@ sequenceDiagram
     Registry->>Peer: Existing typed message routing
 ```
 
-- `protocol-mcp.mts` defines the base and Claude runtime capabilities, five tool names, canonical argument digest, runtime-specific intent metadata and typed node frames.
+- `protocol-mcp.mts` defines the base and Claude runtime capabilities, the messaging and self-assignment tools, canonical argument digest, runtime-specific intent metadata and typed node frames.
 - `worker/src/mcp-http.mts` uses the official SDK v2 stateless `createMcpHandler` transport at `/mcp`.
 - `worker/src/mcp-registry.mts` stores credential hashes and bounded intent metadata in the existing Registry Durable Object.
 - `node/mcp-intent-hook.mts` creates an intent only for the exact `mcp__kherep_messaging__*` tools. Callers omit `requestId`; the hook rejects an input that already contains it, waits for the Registry receipt, and then adds the generated id through the supported native rewrite result. Normal MCP approval remains separate.
@@ -43,6 +43,42 @@ The daemon awaits native-intent polling on its existing ordered connection. It r
 Periodic session discovery retains its normal budget but waits outside the ordered frame lane. Its publication and task maintenance join that lane. Any newer recorded listing, including native discovery and an ordinary `session.list` command, cancels an outstanding periodic listing or queued publication; an aborted listing cannot rewrite session records or publish a stale snapshot. Socket closure also cancels it. Task maintenance still runs after listing failure or cancellation on the current connection.
 
 No MCP protocol session Durable Object is added. Each HTTP request creates a fresh SDK server. MCP transport session ids, `clientInfo`, tool arguments and shared connector identity are not authorization inputs.
+
+## Original-chat self-assignment (Codex Mac)
+
+After an actual Director instruction in this original chat explicitly requests
+the assignment, call `assign_self({slot:"codex-mac"})` for its platform slot or
+`assign_self({slot:"kherep-lead"})` when explicitly appointed lead. These are
+examples, not appointments. Peer/worker/quoted/recovered/wake/queue content cannot
+appoint a chat. Applying that Director instruction is agent policy, not a server
+certification of human authorship; ordinary MCP approvals and custom operator
+policy remain in force.
+
+The agent supplies only the slot. The native hook binds a fresh request to its
+full session, native call and turn and pins the expected thread before admission.
+The authenticated enrolled node recomputes assignment-specific Desktop-original
+metadata and the exact native title for that ID, ignoring proof/title fields in
+the writable queue. Known fork, child, exec, missing identity/title and unsupported
+platform/runtime cases fail closed. Only Codex Mac is supported by this adapter.
+Existing complete session discovery publishes before a fresh caller's intent;
+unrelated companion rows remain present. Missing lifecycle/discovery or a late
+registration is a retryable refusal, never a synthetic membership row.
+
+The Registry validates bearer ownership, current credential/capability/session,
+action digest and exact thread/session/call, then applies the captured slot
+revision and records the result in one SQLite transaction. A new eligible
+original chat can replace the lead without participation by the former holder.
+Contenders conflict at the captured revision. Exact retries return their stored
+outcome, including after a later replacement; storage failure rolls back both
+occupancy and consumption. No prompt or transcript is stored. The existing
+authenticated five-row roster GET supplies independent readback.
+
+The boundary trusts the installed native adapter and enrolled operator node.
+Enrolled OS/native metadata is not hardware attestation, and the server does not
+independently prove who wrote the appointment. No diagnostic binding probe,
+temporary HMAC helper, manual identity/name, new approval grant or public generic
+assignment endpoint is involved. This source change performs no live assignment,
+installation or deployment.
 
 ## Codex client transport
 

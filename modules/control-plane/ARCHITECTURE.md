@@ -18,7 +18,12 @@ can replace it. Enrolled node facts and occupancy establish neither native
 caller ownership nor authority; no session, directory or online state is required.
 
 The authenticated `GET /api/intercom/slots` reads exactly these five stored rows.
-No public write, CLI, WebSocket or Registry RPC mutator exposes assignment.
+The scoped MCP `assign_self({slot})` path supports Codex Mac originals and
+captures revision, exact native identity/title and replay outcome in the existing
+intent transaction. The enrolled node recomputes original metadata; the Worker
+binds bearer/session/thread/call and checks enrollment. Explicit appointment is
+agent instruction policy, not independent server proof of human authorship.
+There is no generic slot setter or caller-supplied identity/name.
 There is no participant registration, directory backfill or discovery change.
 A future deployment of this schema would create five empty revision-zero rows
 on the next Registry initialization, preserving existing slot rows and revisions

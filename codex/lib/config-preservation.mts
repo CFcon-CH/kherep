@@ -344,7 +344,7 @@ function prepareAnchoredConfig(config: string, options: ManagedConfigOptions) {
       ...currentVariants.map(value => parityConfig.render({ ...value, contextWorkspace: options.contextWorkspace })),
       ...[...currentVariants, ...beforeControlPlaneWindowsVariants].flatMap((value) =>
         [parityConfig.renderBeforeShellDispatcher(value), parityConfig.renderBeforeAdaptedDirectGuards(value),
-          parityConfig.renderBeforeAdaptedIntentHook(value)]),
+          parityConfig.renderBeforeAdaptedIntentHook(value), parityConfig.renderBeforeSelfAssignment(value)]),
       ...[...currentVariants, ...beforeControlPlaneWindowsVariants,
         beforeWindowsCommands, beforeControlPlane].flatMap((current) => {
         const previousStop = { ...current, observationStopHook: false };

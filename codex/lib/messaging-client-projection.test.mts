@@ -5,7 +5,7 @@ import path from "node:path";
 
 import { command, render, type RenderOptions } from "./parity-config.mts";
 
-const MATCHER = "^mcp__kherep_messaging__(sessions|send|inbox|reply|status)$";
+const MATCHER = "^mcp__kherep_messaging__(sessions|send|inbox|reply|status|assign_self)$";
 
 function options(enabled: boolean): RenderOptions {
   return {
