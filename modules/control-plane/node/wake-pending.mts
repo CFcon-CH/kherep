@@ -22,7 +22,7 @@ export const atReplyLimit = (record: InboxRecord): boolean => !automaticReplyDec
 // Records a stuck offer or the backlog was woken for, each once at most, kept
 // while the record exists.
 const wokenFile = (paths: NodePaths, sessionId: string): string => path.join(listenerDir(paths), `${sessionId}.stuck.json`);
-const wokenFor = (paths: NodePaths, sessionId: string): string[] =>
+export const wokenFor = (paths: NodePaths, sessionId: string): string[] =>
   readJson<{ messageIds?: string[] }>(wokenFile(paths, sessionId))?.messageIds ?? [];
 export function rememberWoken(paths: NodePaths, sessionId: string, ids: string[]): void {
   const kept = wokenFor(paths, sessionId).filter((id) => getMessage(paths.inbox, id) !== null);
@@ -55,6 +55,19 @@ export function claimWake(paths: NodePaths, sessionId: string, now: number): boo
   return typeof marker?.wokenAt === "number" && now - marker.wokenAt <= WAKE_CLAIM_MS;
 }
 
+// Received, or handed over, after the grace period of a listener armed by this lock (#113).
+const late = (r: InboxRecord, lock: Pick<ListenerLock, "startedAt">): boolean =>
+  Date.parse((r.closedTo && r.closedAttempt) || r.receivedAt) > lock.startedAt + WAKE_GRACE_MS;
+
+// Whether a listener armed by this lock wakes for an accepted record at some
+// poll: a late arrival, or at SessionStart the backlog it has not woken for.
+// Time-free on purpose, so a status derived from it cannot flap: the 8 s backlog
+// window only delays the wake. Reply-limited records are never woken (the
+// listener audits them depth-limit and drops them, wake-hook.mts).
+export function listenerSelects(r: InboxRecord, lock: Pick<ListenerLock, "startedAt" | "event">, woken: readonly string[]): boolean {
+  return !atReplyLimit(r) && (late(r, lock) || (lock.event === "SessionStart" && !woken.includes(r.messageId)));
+}
+
 // fresh: accepted records received after the grace period. backlog: at
 // SessionStart, accepted records received before it ended; no delivery hook
 // runs at a Claude Code SessionStart, so nothing else offers them before the
@@ -66,12 +79,10 @@ export function pending(paths: NodePaths, refs: string[], sessionId: string, loc
   now: number, grants?: (record: InboxRecord) => boolean) {
   const mine = sessionInbox(paths, refs, { sessionId, runtime: "claude-code" }).filter((r) => (r.state === "accepted" || r.state === "offered") && (grants?.(r) ?? true));
   const woken = wokenFor(paths, sessionId);
-  // A readdressed record reached this session at its handover, not at its arrival (#113).
-  const late = (r: InboxRecord): boolean => Date.parse((r.closedTo && r.closedAttempt) || r.receivedAt) > lock.startedAt + WAKE_GRACE_MS;
   const accepted = mine.filter((r) => r.state === "accepted");
   const backlog = lock.event === "SessionStart" && now >= lock.startedAt + WAKE_BACKLOG_AFTER_MS
-    ? accepted.filter((r) => !late(r) && !woken.includes(r.messageId)) : [];
+    ? accepted.filter((r) => !late(r, lock) && !woken.includes(r.messageId)) : [];
   const stuck = now < lock.startedAt + WAKE_GRACE_MS ? [] : mine.filter((r) => r.state === "offered" && offerEnded(r, now)
     && (r.offers ?? 0) < MAX_OFFERS && !atReplyLimit(r) && !woken.includes(r.messageId));
-  return { fresh: accepted.filter(late), backlog, stuck: stuck.map((r) => r.messageId) };
+  return { fresh: accepted.filter((r) => late(r, lock)), backlog, stuck: stuck.map((r) => r.messageId) };
 }

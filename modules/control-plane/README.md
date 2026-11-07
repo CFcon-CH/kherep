@@ -1058,11 +1058,28 @@ checks succeed. Failed budget
 inspection fails its check. Missing ledgers do not establish zero usage for
 unobserved sessions. No ledger is charged or repaired.
 
-Stage 1 (#769, related #827) renders existing `budget-exhausted` progress on the
-sent route of `msg status`, on accepted received messages and on offered received
-messages whose progress is newer than the offer, with observation and retry times.
-An expired retry time does not prove a current hold. Exact per-message hold production remains a
-separate stage; no Worker update is required for these existing fields.
+`msg status` renders `budget-exhausted` progress on the sent route, on accepted
+received messages and on offered received messages whose progress is newer than
+the offer, with observation and retry times (#769, #827). An expired retry time
+does not prove a current hold. The daemon reports `waiting/budget-exhausted` with
+`retryAt` instead of `waking/wake-pending` for accepted messages a live listed
+listener would wake for while the target's ledger is exhausted. This is a projection
+from the ledger the listener itself charges, not a per-message denial receipt, and
+no turn is charged by it. `retryAt` equals doctor's `nextAvailableAt` for the same
+clock. A missing ledger is no hold. An unreadable ledger leaves `wake-pending` and
+the hold unknown, visible in `checks.wakeBudget`. A turn-spacing denial of a
+Claude listener keeps `wake-pending`, since the listener retries at its next poll.
+A message that listener would not select (received before it armed, or at the reply
+depth limit) is `awaiting-user-turn` or `reply-limit` and shows no release time: the
+next user turn delivers it, the budget's release does not. Messages without a
+covering listener keep their codes. Offered messages of a Claude session keep
+`awaiting-turn-confirmation` and show no hold; a Codex task wake includes stuck offers
+in its denial, so there a stuck offer does show `budget-exhausted`.
+Closed-session fallback and Codex task wakes add `retryAt` to their
+`budget-exhausted` progress. The native Queue producer audits `budget` once per
+message while it waits and publishes no progress, which stays with the CP hint lane, so Codex
+interactive sessions show no hold. No Worker update is required for these existing
+fields.
 
 ### Node messaging
 

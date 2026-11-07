@@ -4,11 +4,13 @@ import path from "node:path";
 import test from "node:test";
 
 import type { MessageProgressCode } from "../protocol-messages.mts";
-import { rememberMode, takeTurn, TURN_SPACING_MS, TURNS_PER_HOUR } from "./autonomy.mts";
+import { listenerDir, rememberMode, takeTurn, TURN_SPACING_MS, TURNS_PER_HOUR } from "./autonomy.mts";
+import { evaluateTurnBudget, inspectBudgetHold } from "./autonomy-budget.mts";
 import { deliverToClosed } from "./closed-delivery.mts";
-import { audits, closedNode, closedSince, deliver, missListings, SESSION, type Node } from "./closed-fixture.mts";
+import { audits, closedNode, closedSince, deliver, endedIntercom, missListings, SESSION, type Node } from "./closed-fixture.mts";
 import { writeLocalSessions } from "./exchange.mts";
-import { getMessage, getMessageProgress } from "./inbox.mts";
+import { getMessage, getMessageDiagnostic, getMessageProgress } from "./inbox.mts";
+import { DEFAULT_TURN_BUDGET, wakeBudget, type TurnBudget } from "./policy.mts";
 import type { ExecOptions } from "./sessions.mts";
 import { T0, taskId } from "./task-fixture.mts";
 import { listTasks, writeTask, type TaskRecord } from "./task-records.mts";
@@ -28,6 +30,11 @@ const task = (node: Node, n: number, extra: Partial<TaskRecord>): TaskRecord => 
   deadline: new Date(T0 + 3_600_000).toISOString(), updatedAt: new Date(T0).toISOString(), ...extra });
 // Issue #389: listed with that cwd, then closed by its miss streak.
 const knownCwd = (node: Node, cwd: string) => closedSince(node, { sessionId: SESSION, runtime: "claude-code", state: "idle", cwd });
+const fillBudget = (node: Node, sessionId: string = SESSION, count: number = TURNS_PER_HOUR): void => {
+  for (let i = 0; i < count; i++) takeTurn(node.paths, sessionId, T0 - 50 * 60_000 + i * TURN_SPACING_MS * 2);
+};
+const ledgerRelease = (node: Node, sessionId: string = SESSION, limits: TurnBudget = DEFAULT_TURN_BUDGET): string | null => evaluateTurnBudget(
+  JSON.parse(fs.readFileSync(path.join(listenerDir(node.paths), `${sessionId}.turns.json`), "utf8")).turns, limits, node.deps().now!()).nextAvailableAt;
 
 type Case = [what: string, code: MessageProgressCode, reason: RegExp, arrange?: (node: Node) => void, sessions?: Record<string, unknown>,
   messaging?: Record<string, unknown>, message?: Parameters<typeof deliver>[1]];
@@ -48,9 +55,7 @@ const policyRefusals: Case[] = [
     (node) => writeTask(node.paths, task(node, 9, { state: "running" })), { maxConcurrent: 1 }],
   ["maxStartsPerDay", "retry-pending", /at most 1 task sessions per day/, (node) => writeTask(node.paths, task(node, 9, {})),
     { maxStartsPerDay: 1 }],
-  ["the turn budget", "budget-exhausted", /budget/, (node) => {
-    for (let i = 0; i < TURNS_PER_HOUR; i++) takeTurn(node.paths, SESSION, T0 - 50 * 60_000 + i * TURN_SPACING_MS * 2);
-  }],
+  ["the turn budget", "budget-exhausted", /budget/, fillBudget],
   // Issue #396: an unusable recorded cwd is no policy decision; it waits with cwd-refused.
   ["a cwd outside the workspace roots", "cwd-refused", /cwd is outside the workspace roots of this node/,
     (node) => knownCwd(node, node.root)],
@@ -73,8 +78,67 @@ for (const [what, code, reason, arrange, sessions = {}, messaging = {}, message 
     assert.equal(getMessage(node.paths.inbox, id)?.state, "accepted");
     assert.equal(getMessage(node.paths.inbox, id)?.closedAttempt, undefined, "tried again next round");
     if (code !== "budget-exhausted") assert.equal(takeTurn(node.paths, SESSION, T0), "ok", "the turn budget is untouched");
+    else assert.equal(getMessageProgress(node.paths.inbox, id)?.retryAt, ledgerRelease(node), "the release time of the ledger");
   });
 }
+
+// Issue #827: only exhaustion waits for a release time; spacing retries next round.
+test("a turn-spacing denial keeps retry-pending with its diagnostic and no retry time", async (t) => {
+  const node = closedNode(t);
+  rememberMode(node.paths, SESSION, "auto");
+  assert.equal(takeTurn(node.paths, SESSION, T0 - 1), "ok");
+  const id = deliver(node);
+  await deliverToClosed(node.deps());
+  assert.deepEqual(progress(node, id), ["waiting", "retry-pending"]);
+  assert.equal(getMessageProgress(node.paths.inbox, id)?.retryAt, undefined);
+  assert.equal((getMessageDiagnostic(node.paths.inbox, id) as { code?: string })?.code, "turn-spacing");
+});
+
+// Issue #827: the release time comes from the policy's limits, not the defaults.
+// A disabled wake section is rejected whole, so its budget would not apply.
+test("a custom turn budget's release time", async (t) => {
+  const node = closedNode(t);
+  const policy = JSON.parse(fs.readFileSync(node.paths.policy, "utf8"));
+  fs.writeFileSync(node.paths.policy, JSON.stringify({ ...policy, wake: { enabled: true, sessions: ["another-session"], budget: { perHour: 2 } } }));
+  rememberMode(node.paths, SESSION, "auto");
+  fillBudget(node, SESSION, 2);
+  const id = deliver(node);
+  await deliverToClosed(node.deps());
+  assert.deepEqual(progress(node, id), ["waiting", "budget-exhausted"]);
+  const release = ledgerRelease(node, SESSION, wakeBudget(node.deps().policy));
+  assert.ok(release);
+  assert.equal(getMessageProgress(node.paths.inbox, id)?.retryAt, release);
+});
+
+// Issue #827: a reused intercom session charges its own ledger, so that ledger
+// sets the release time, not the one of the closed session it stands in for.
+test("a reused intercom session's own ledger sets the release time", async (t) => {
+  const node = closedNode(t);
+  rememberMode(node.paths, SESSION, "auto");
+  const { task, id } = await endedIntercom(node);
+  const reused = task.sessionId!;
+  fillBudget(node, reused);
+  await deliverToClosed(node.deps());
+  assert.deepEqual(progress(node, id), ["waiting", "budget-exhausted"]);
+  const release = ledgerRelease(node, reused);
+  assert.ok(release);
+  assert.equal(getMessageProgress(node.paths.inbox, id)?.retryAt, release);
+  assert.equal(inspectBudgetHold(node.paths, SESSION, node.deps().now!()).kind, "available", "the closed session's own ledger holds nothing");
+  assert.equal(node.calls.filter((c) => c.args[0] === "--resume").length, 0, "no run was started");
+});
+
+// A message past the reply depth is refused for that reason, whatever the budget:
+// no release time would bring it through.
+test("an exhausted budget holds only the messages it blocks, not one refused for its own reason", async (t) => {
+  const node = closedNode(t);
+  rememberMode(node.paths, SESSION, "auto");
+  fillBudget(node);
+  const held = deliver(node);
+  const deep = deliver(node, { depth: 6 });
+  await deliverToClosed(node.deps());
+  assert.deepEqual(progress(node, held), ["waiting", "budget-exhausted"]);
+  assert.deepEqual(progress(node, deep), ["waiting", "reply-limit"]);
+});
 
 // A limit before the attempt clears: the next round starts the intercom session.
 const limits: [string, Record<string, unknown>, TaskRecord["state"], (node: Node) => void][] = [

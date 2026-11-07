@@ -72,3 +72,33 @@ test("read-only inspection never debits, locks or creates evidence", async t => 
   assert.equal(inspectTurnBudget(paths, "owner", NOW).ledgerStatus, "unreadable");
   assert.equal(inspectTurnBudget(paths, "unsafe.id", NOW).ledgerStatus, "unsupported-identity");
 });
+
+// Issue #827: the hold a status shows must be the denial the listener gets.
+const MINUTE = 60_000;
+const lastHour = (count: number): number[] => Array.from({ length: count }, (_, i) => NOW - (i + 1) * MINUTE);
+const olderThanHour = (count: number): number[] => Array.from({ length: count }, (_, i) => NOW - 2 * HOUR - i * 5 * MINUTE);
+for (const [label, turns, enforced] of [
+  ["19 hourly", lastHour(19), "ok"],
+  ["20 hourly", lastHour(20), "exhausted"],
+  ["99 daily", olderThanHour(99), "ok"],
+  ["100 daily", olderThanHour(100), "exhausted"],
+  ["20 hourly and 100 daily", [...lastHour(20), ...olderThanHour(100)], "exhausted"],
+  ["one turn 10 seconds ago", [NOW - 10_000], "spacing"],
+  ["no ledger", null, "ok"],
+] as const) test(`the hold agrees with enforcement: ${label}`, async t => {
+  const { evaluateTurnBudget, inspectBudgetHold, takeTurn } = await import(api);
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "turn budget synthetic "));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const paths = nodePaths(root);
+  const dir = path.join(paths.dir, "listeners");
+  fs.mkdirSync(dir, { recursive: true });
+  const text = JSON.stringify({ turns });
+  if (turns) for (const name of ["owner", "copy"]) fs.writeFileSync(path.join(dir, `${name}.turns.json`), text);
+  const hold = inspectBudgetHold(paths, "owner", NOW);
+  assert.equal(takeTurn(paths, "copy", NOW), enforced);
+  assert.deepEqual(hold, enforced === "exhausted"
+    ? { kind: "exhausted", retryAt: Date.parse(evaluateTurnBudget(turns, DEFAULT_TURN_BUDGET, NOW).nextAvailableAt) }
+    : { kind: "available" });
+  if (turns) assert.equal(fs.readFileSync(path.join(dir, "owner.turns.json"), "utf8"), text);
+  else assert.equal(fs.existsSync(path.join(dir, "owner.turns.json")), false);
+});

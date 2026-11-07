@@ -5,11 +5,13 @@ import path from "node:path";
 import test from "node:test";
 
 import { senderState } from "../protocol-messages.mts";
-import { takeTurn, TURN_SPACING_MS, TURNS_PER_HOUR } from "./autonomy.mts";
+import { listenerDir, takeTurn, TURN_SPACING_MS, TURNS_PER_HOUR } from "./autonomy.mts";
+import { evaluateTurnBudget } from "./autonomy-budget.mts";
 import { codexNode, THREAD, waitFor } from "./codex-fixture.mts";
 import { pollCodexInbound } from "./codex-wake.mts";
 import { observeCodexTaskProgress } from "./delivery-progress.mts";
 import { getMessage, getMessageDiagnostic, getMessageProgress, markClosedAttempt, setMessageProgress, storeMessage } from "./inbox.mts";
+import { DEFAULT_TURN_BUDGET } from "./policy.mts";
 import { taskId, taskNode, T0 } from "./task-fixture.mts";
 import { writeTask, type TaskRecord } from "./task-records.mts";
 import { fixtureEvidence, publishSynthetic } from "./session-authority-fixture.mts";
@@ -98,6 +100,9 @@ test("each wake guard of an ended Codex task leaves a reason on its waiting mess
   for (let n = 0; n < TURNS_PER_HOUR; n++) assert.equal(takeTurn(node.paths, ended.sessionId!, T0 - 50 * 60_000 + n * TURN_SPACING_MS * 2), "ok");
   await pollCodexInbound(deps());
   assert.equal(code(node, granted), "budget-exhausted");
+  const { turns } = JSON.parse(fs.readFileSync(path.join(listenerDir(node.paths), `${ended.sessionId}.turns.json`), "utf8"));
+  assert.equal(getMessageProgress(node.paths.inbox, granted)?.retryAt, evaluateTurnBudget(turns, DEFAULT_TURN_BUDGET, T0).nextAvailableAt,
+    "the release time of the ledger");
   node.tick(2 * 60 * 60_000);
   refresh();
 

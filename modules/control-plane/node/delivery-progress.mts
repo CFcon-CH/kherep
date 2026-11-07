@@ -6,13 +6,16 @@ import fs from "node:fs";
 import {
   bypassesPermissions, isPlainSessionId, listenerLock, listenerScope, rememberedMode, type ListenerLock, type ListenerScope,
 } from "./autonomy.mts";
+import { inspectBudgetHold } from "./autonomy-budget.mts";
 import type { NodePaths } from "./config.mts";
 import { readLocalSessions, type LocalSession } from "./exchange.mts";
 import { listInbox, readJson, setMessageProgress, type InboxRecord } from "./inbox.mts";
+import { wakeBudget } from "./policy.mts";
 import { resolveWakeSelection } from "./wake-bindings.mts";
 import type { RunnerDeps } from "./session-runner.mts";
 import { isActive, listTasks, taskForSession, taskGrants } from "./task-records.mts";
 import { killSwitch, WAKE_MAX_WAIT_MS } from "./wake-hook.mts";
+import { atReplyLimit, listenerSelects, wokenFor } from "./wake-pending.mts";
 import { lazyRequests, replyGrants, taskMessageGrants, type RequestIndex } from "./wake-reply.mts";
 
 // Issue #487: the daemon passes its inbox index or the round snapshot.
@@ -75,8 +78,19 @@ function observeAccepted(deps: RunnerDeps, session: LocalSession, accepted: Inbo
   const covered = (record: InboxRecord): boolean => listener
     && (own?.listed === true || (granted.includes(record) && (own === null || own.taskId === task?.taskId))
       || (replies.includes(record) && own?.replies === true));
-  progressRecords(deps.paths, authorized.filter(covered), "waking", "wake-pending", now);
-  progressRecords(deps.paths, authorized.filter((record) => !covered(record)), "waiting", "awaiting-user-turn", now);
+  const woken = listener ? wokenFor(deps.paths, session.sessionId) : [];
+  const selects = (record: InboxRecord): boolean => lock !== null && listenerSelects(record, lock, woken);
+  const covering = authorized.filter(covered);
+  const waking = covering.filter(selects);
+  // The listener takes its turn from this ledger with these limits (wake-hook.mts); an exhausted
+  // ledger denies every wake until retryAt. An unreadable ledger claims nothing (hold unknown).
+  const hold = waking.length > 0 ? inspectBudgetHold(deps.paths, session.sessionId, now, wakeBudget(deps.policy)) : null;
+  if (hold?.kind === "exhausted") progressRecords(deps.paths, waking, "waiting", "budget-exhausted", now, hold.retryAt);
+  else progressRecords(deps.paths, waking, "waking", "wake-pending", now);
+  // Covered but never woken for: at the reply limit (as the listener audits depth-limit), or
+  // received before the listener armed; the next user turn delivers it, budget or not.
+  progressRecords(deps.paths, covering.filter(atReplyLimit), "waiting", "reply-limit", now);
+  progressRecords(deps.paths, authorized.filter((r) => !covered(r) || (!selects(r) && !atReplyLimit(r))), "waiting", "awaiting-user-turn", now);
 }
 
 // A successful session snapshot is the node's current evidence for Claude.
