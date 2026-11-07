@@ -52,3 +52,40 @@ test("the turn-budget lock has a precise code and wording without a storage alia
   assert.equal(isMessageDiagnostic({ ...lock, code: "budget-storage-unavailable" }), false);
   assert.match(renderMessageDiagnostic(lock as never, "queued"), /Waiting: target turn-budget lock is unavailable/);
 });
+
+const GATED_CODES = ["resolution-missing", "resolution-ambiguous", "resolution-stale", "resolution-invalid", "resolution-unreadable", "resolution-clock"];
+test("the six resolution codes render their own fixed words", async () => {
+  const { blockerDiagnostic, renderMessageDiagnostic } = await import("./protocol-diagnostics.mts");
+  const generic = renderMessageDiagnostic(blockerDiagnostic("resolution-unavailable", 0), "refused");
+  const rendered = GATED_CODES.map(code => renderMessageDiagnostic(blockerDiagnostic(code as never, 0), "refused"));
+  assert.equal(new Set([generic, ...rendered]).size, GATED_CODES.length + 1, rendered.join("\n"));
+  for (const line of rendered) assert.match(line, /^Refused: \S.*\. Observed 1970-01-01T00:00:00.000Z; stage target-progress\.$/);
+  assert.doesNotMatch(rendered.join("\n"), /undefined/);
+});
+
+test("a v1 peer gets the six resolution codes as resolution-unavailable, a v2 peer keeps them, a peer with neither loses the detail", async () => {
+  const { BLOCKER_CODES, blockerDiagnostic, compatibleDiagnostic, MESSAGING_DIAGNOSTICS_CAPABILITY: V1, MESSAGING_DIAGNOSTICS_V2_CAPABILITY: V2 } = await import("./protocol-diagnostics.mts");
+  const archived = await import("./test/fixtures/diagnostics-pre-v2.mts");
+  assert.equal(typeof V2, "string");
+  assert.notEqual(V1, V2);
+  for (const code of BLOCKER_CODES) {
+    const detail = blockerDiagnostic(code, 0, "send-admission"), body = { messageId, state: "refused", diagnostic: detail };
+    const gated = GATED_CODES.includes(code);
+    const old = compatibleDiagnostic(body, [V1]);
+    assert.equal(archived.isMessageDiagnostic(old.diagnostic), true, code);
+    assert.deepEqual(old.diagnostic, gated ? { ...detail, code: "resolution-unavailable" } : detail);
+    assert.equal(archived.isMessageDiagnostic(detail), !gated, `${code}: only gated codes are invalid at a previous node`);
+    assert.deepEqual(compatibleDiagnostic(body, [V1, V2]), body);
+    assert.deepEqual(compatibleDiagnostic(old, [V1]), old, "a second pass changes nothing");
+    assert.deepEqual(compatibleDiagnostic(body, null), { messageId, state: "refused" });
+    assert.deepEqual(compatibleDiagnostic(body, []), { messageId, state: "refused" });
+  }
+  const identity = { version: 1, kind: "identity-change", stage: "send-admission", observedAt, dimensions: ["owner"] } as never;
+  assert.deepEqual(compatibleDiagnostic({ diagnostic: identity }, [V1]), { diagnostic: identity });
+});
+
+test("every blocker code added after the archived list is gated, so no new code can reach a previous node", async () => {
+  const { BLOCKER_CODES } = await import("./protocol-diagnostics.mts");
+  const archived = await import("./test/fixtures/diagnostics-pre-v2.mts");
+  assert.deepEqual(BLOCKER_CODES.filter(code => !(archived.BLOCKER_CODES as readonly string[]).includes(code)), GATED_CODES);
+});

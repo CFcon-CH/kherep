@@ -21,7 +21,7 @@ test("sessions are off without a section, and the session commands are refused",
   const policy = policyWith(t, undefined);
   assert.equal(policy.sessions, undefined);
   assert.equal(isAllowed(policy, "session.start"), false);
-  assert.deepEqual(advertisedCapabilities(policy), ["session.list", "messaging.ack.v1", "messaging.progress.v2", "messaging.loop-brake.v1", "messaging.diagnostics.v1"]);
+  assert.deepEqual(advertisedCapabilities(policy), ["session.list", "messaging.ack.v1", "messaging.progress.v2", "messaging.loop-brake.v1", "messaging.diagnostics.v1", "messaging.diagnostics.v2"]);
 });
 
 test("a malformed section turns sessions and delegation off, the rest of the policy stays", (t) => {
@@ -44,7 +44,7 @@ test("an enabled section applies the operator caps, the listed runtimes and neve
     maxConcurrent: 3, maxStartsPerDay: 10, maxRuntimeMinutes: 30, delegate: { request: false, accept: false }, ownTaskControl: false,
   });
   assert.equal(isAllowed(policy, "session.start"), true);
-  assert.deepEqual(advertisedCapabilities(policy), ["session.list", "messaging.ack.v1", "messaging.progress.v2", "messaging.loop-brake.v1", "messaging.diagnostics.v1", "sessions.v1"]);
+  assert.deepEqual(advertisedCapabilities(policy), ["session.list", "messaging.ack.v1", "messaging.progress.v2", "messaging.loop-brake.v1", "messaging.diagnostics.v1", "messaging.diagnostics.v2", "sessions.v1"]);
 });
 
 test("runtimes default to claude only; codex runs only where the policy lists it", (t) => {
@@ -54,11 +54,11 @@ test("runtimes default to claude only; codex runs only where the policy lists it
 
 test("delegation is off by default and each side opts in separately", (t) => {
   const accept = policyWith(t, { enabled: true, workspaceRoots: [ROOT], delegate: { accept: true } });
-  assert.deepEqual(advertisedCapabilities(accept), ["session.list", "messaging.ack.v1", "messaging.progress.v2", "messaging.loop-brake.v1", "messaging.diagnostics.v1", "sessions.v1",
+  assert.deepEqual(advertisedCapabilities(accept), ["session.list", "messaging.ack.v1", "messaging.progress.v2", "messaging.loop-brake.v1", "messaging.diagnostics.v1", "messaging.diagnostics.v2", "sessions.v1",
     "sessions.delegate.accept.v1"]);
   // A node that only asks for tasks needs no sessions of its own.
   const request = policyWith(t, { delegate: { request: true } });
-  assert.deepEqual(advertisedCapabilities(request), ["session.list", "messaging.ack.v1", "messaging.progress.v2", "messaging.loop-brake.v1", "messaging.diagnostics.v1", "sessions.delegate.request.v1"]);
+  assert.deepEqual(advertisedCapabilities(request), ["session.list", "messaging.ack.v1", "messaging.progress.v2", "messaging.loop-brake.v1", "messaging.diagnostics.v1", "messaging.diagnostics.v2", "sessions.delegate.request.v1"]);
   assert.equal(isAllowed(request, "session.start"), false);
   // accept without enabled sessions accepts nothing.
   assert.equal(policyWith(t, { enabled: false, workspaceRoots: [ROOT], delegate: { accept: true } }).sessions?.delegate.accept, false);

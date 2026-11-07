@@ -1,4 +1,4 @@
-import { MESSAGING_DIAGNOSTICS_CAPABILITY } from "../protocol-diagnostics.mts";
+import { MESSAGING_DIAGNOSTICS_CAPABILITY, MESSAGING_DIAGNOSTICS_V2_CAPABILITY } from "../protocol-diagnostics.mts";
 import { MESSAGING_LOOP_BRAKE_CAPABILITY } from "../protocol-loop-brake.mts";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -65,10 +65,10 @@ test("accept rules match the session exactly or by wildcard, and the sender by i
 
 test("messaging.v1 is advertised only when an accept rule exists", async () => {
   assert.deepEqual(advertisedCapabilities(NO_MESSAGING), [...DEFAULT_POLICY.allowedCommands, MESSAGING_ACK_CAPABILITY,
-    MESSAGING_PROGRESS_V2_CAPABILITY, MESSAGING_LOOP_BRAKE_CAPABILITY, MESSAGING_DIAGNOSTICS_CAPABILITY]);
+    MESSAGING_PROGRESS_V2_CAPABILITY, MESSAGING_LOOP_BRAKE_CAPABILITY, MESSAGING_DIAGNOSTICS_CAPABILITY, MESSAGING_DIAGNOSTICS_V2_CAPABILITY]);
   const policy: NodePolicy = { ...DEFAULT_POLICY, messaging: { accept: [{ session: "*", from: ["operator"] }] } };
   assert.deepEqual(advertisedCapabilities(policy), [...DEFAULT_POLICY.allowedCommands, MESSAGING_CAPABILITY, MESSAGING_ACK_CAPABILITY,
-    MESSAGING_PROGRESS_V2_CAPABILITY, MESSAGING_LOOP_BRAKE_CAPABILITY, MESSAGING_DIAGNOSTICS_CAPABILITY]);
+    MESSAGING_PROGRESS_V2_CAPABILITY, MESSAGING_LOOP_BRAKE_CAPABILITY, MESSAGING_DIAGNOSTICS_CAPABILITY, MESSAGING_DIAGNOSTICS_V2_CAPABILITY]);
   const { frames } = await authed(policy);
   const [register] = frames;
   assert.deepEqual((register.body as { capabilities: string[] }).capabilities, advertisedCapabilities(policy));

@@ -9,13 +9,29 @@ import {
 // Leaves room for the envelope around the body.
 const MAX_BODY_BYTES = MAX_FRAME_BYTES - 1024;
 
+// Round-robin by node, keeping each node's own order.
+function interleaveByNode<T extends { nodeId: string }>(rows: T[]): T[] {
+  const byNode = new Map<string, T[]>();
+  for (const row of rows) {
+    const own = byNode.get(row.nodeId);
+    if (own) own.push(row);
+    else byNode.set(row.nodeId, [row]);
+  }
+  const interleaved: T[] = [];
+  for (let round = 0; interleaved.length < rows.length; round++) {
+    for (const own of byNode.values()) if (round < own.length) interleaved.push(own[round]!);
+  }
+  return interleaved;
+}
+
 // Builds the directory body from Registry rows. Sessions of revoked nodes are
 // left out even though revocation already deletes them. worker names what this
 // Worker supports (issue #408: proxy answers). A node gets intake (issue #441)
 // only when the map holds its measurement: a node without one reads UNKNOWN.
 // A body that would not fit into one frame is cut by a fixed ladder, each step
 // only while still too large, and says so in truncated: sessions from the end,
-// then intake from the end of the node list, then nodes from the end.
+// then intake from the end of the node list, then nodes from the end. Sessions
+// are interleaved by node first, so that cut costs every node alike (issue #706).
 export function directoryBody(nodeRows: Record<string, SqlStorageValue>[],
   sessions: (DirectorySession & { startedAt?: string; updatedAt?: number })[], now: number,
   intake?: Map<string, DirectoryNodeIntake>, maxBodyBytes = MAX_BODY_BYTES): DirectoryBody {
@@ -24,7 +40,7 @@ export function directoryBody(nodeRows: Record<string, SqlStorageValue>[],
     return { nodeId: String(r.id), name: String(r.name), status: String(r.status), ...(measured ? { intake: measured } : {}) };
   });
   const listed = new Set(nodes.map((n) => n.nodeId));
-  const kept = sessions.filter((s) => listed.has(s.nodeId)).map(({ startedAt: _s, updatedAt: _u, ...session }) => session);
+  const kept = interleaveByNode(sessions.filter((s) => listed.has(s.nodeId)).map(({ startedAt: _s, updatedAt: _u, ...session }) => session));
   const body: DirectoryBody = { nodes, sessions: kept.slice(0, MAX_DIRECTORY_SESSIONS), fetchedAt: new Date(now).toISOString(),
     worker: { capabilities: [MESSAGING_PROXY_CAPABILITY, MESSAGING_LOOP_BRAKE_CAPABILITY, MESSAGING_DIAGNOSTICS_CAPABILITY] } };
   if (body.sessions.length < kept.length || nodes.length < nodeRows.length) body.truncated = true;

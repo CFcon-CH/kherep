@@ -1,15 +1,17 @@
 import type { BlockerCode } from "../../protocol-diagnostics.mts";
 import { BINDING_PENDING_LIMIT, BINDING_TTL_MS, isResolveRequest, isResolveResponse, type ResolveRequest, type ResolveResponse } from "../../protocol-message-binding.mts";
 
+// The Registry stamps expiresAt on its own clock; a NodeSession clock behind it must not refuse a fresh request.
+const CLOCK_ALLOWANCE_MS = 30_000;
 interface Pending { socket: WebSocket; token: string; request: ResolveRequest;
   resolve: (value: ResolveResponse | null) => void; timer: ReturnType<typeof setTimeout> }
 export class NodeReferenceRpc {
   private readonly pending = new Map<string, Pending>();
   request(socket: WebSocket, token: string, request: ResolveRequest,
     send: () => void, current: () => boolean, failed: (code: BlockerCode) => void = () => {}): Promise<ResolveResponse | null> {
-    if (!isResolveRequest(request) || this.pending.has(request.requestId) || this.pending.size >= BINDING_PENDING_LIMIT
-      || request.expiresAt <= Date.now() || request.expiresAt > Date.now() + BINDING_TTL_MS || !current()) {
-      try { failed(this.pending.size >= BINDING_PENDING_LIMIT ? "resolution-capacity" : "resolution-unavailable"); } catch { /* observation only */ }
+    const refusal = this.refusal(request, current);
+    if (refusal) {
+      try { failed(refusal); } catch { /* observation only */ }
       return Promise.resolve(null);
     }
     return new Promise(resolve => {
@@ -21,10 +23,16 @@ export class NodeReferenceRpc {
         if (!answer) try { failed(code); } catch { /* observation only */ }
         resolve(answer);
       };
-      const timer = setTimeout(() => finish(null, "resolution-timeout"), request.expiresAt - Date.now());
+      const timer = setTimeout(() => finish(null, "resolution-timeout"), Math.min(request.expiresAt - Date.now(), BINDING_TTL_MS));
       this.pending.set(request.requestId, { socket, token, request, resolve: finish, timer });
       try { if (current()) send(); else finish(null); } catch { finish(null); }
     });
+  }
+  private refusal(request: ResolveRequest, current: () => boolean): BlockerCode | null {
+    if (this.pending.size >= BINDING_PENDING_LIMIT) return "resolution-capacity";
+    if (!isResolveRequest(request) || this.pending.has(request.requestId) || !current()) return "resolution-unavailable";
+    const now = Date.now();
+    return request.expiresAt <= now || request.expiresAt > now + BINDING_TTL_MS + CLOCK_ALLOWANCE_MS ? "resolution-clock" : null;
   }
   receive(socket: WebSocket, token: string, value: unknown): boolean {
     if (!isResolveResponse(value)) return false;
