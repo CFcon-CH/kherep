@@ -179,7 +179,8 @@ async function wakeTask(deps: RunnerDeps, record: TaskRecord, log: (line: string
   const budget = takeTurn(paths, sessionId, now, wakeBudget(policy));
   if (budget !== "ok") {
     publishBudgetDenial(paths, waiting, sessionId, budget, now, wakeBudget(policy));
-    return budget === "exhausted" ? note(paths, now, sessionId, due, "budget") : undefined;
+    if (budget === "exhausted") note(paths, now, sessionId, due, "budget");
+    return;
   }
 
   const context = deliveryContext("UserPromptSubmit", refs, { paths, now: () => now, offeredBy: "codex-wake", owner: { sessionId, runtime: "codex" },

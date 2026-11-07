@@ -101,8 +101,7 @@ test("native queue budget refusal is audited and leaks nothing", async (t) => {
   await node.poll();
   assert.equal(node.fake.runs().length, 0);
   assert.ok(fs.existsSync(path.join(listeners, `${OWNER}.busy-hint.json`)));
-  const lines = budgetLines();
-  assert.deepEqual(lines.map((line) => [line.sessionId, line.messageIds]), [[OWNER, [id]]]);
+  assert.deepEqual(budgetLines().map((line) => [line.sessionId, line.messageIds]), [[OWNER, [id]]]);
   assert.equal(getMessageProgress(node.paths.inbox, id)?.code, "awaiting-user-turn", "progress stays with the CP hint lane");
   node.tick(TURN_SPACING_MS + 1);
   await node.poll();

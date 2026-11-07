@@ -55,7 +55,7 @@ const policyRefusals: Case[] = [
     (node) => writeTask(node.paths, task(node, 9, { state: "running" })), { maxConcurrent: 1 }],
   ["maxStartsPerDay", "retry-pending", /at most 1 task sessions per day/, (node) => writeTask(node.paths, task(node, 9, {})),
     { maxStartsPerDay: 1 }],
-  ["the turn budget", "budget-exhausted", /budget/, (node) => fillBudget(node)],
+  ["the turn budget", "budget-exhausted", /budget/, fillBudget],
   // Issue #396: an unusable recorded cwd is no policy decision; it waits with cwd-refused.
   ["a cwd outside the workspace roots", "cwd-refused", /cwd is outside the workspace roots of this node/,
     (node) => knownCwd(node, node.root)],

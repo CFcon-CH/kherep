@@ -31,13 +31,12 @@ const ledger = (node: Node): string => path.join(listenerDir(node.paths), `${SES
 const code = (node: Node, id: string): string | undefined => getMessageProgress(node.paths.inbox, id)?.code;
 // Sixty seconds apart, so that no test depends on the spacing of turns.
 const fullHour = (now: number): number[] => Array.from({ length: DEFAULT_TURN_BUDGET.perHour }, (_, i) => now - (i + 1) * 60_000);
-const releaseOf = (stamps: number[], now: number): string => evaluateTurnBudget(stamps, DEFAULT_TURN_BUDGET, now).nextAvailableAt!;
 
-function liveListener(node: Node, scope: Record<string, unknown> = { listed: true }): void {
+function liveListener(node: Node): void {
   ensureDir(listenerDir(node.paths));
   publishSynthetic(node.paths, [fixtureEvidence(ROW, "idle-loaded", clock(node))], clock(node), [ROW]);
   writeJsonAtomic(listenerLock(node.paths, SESSION), { token: "live", pid: process.pid, startedAt: clock(node), event: "Stop" });
-  writeJsonAtomic(listenerScope(node.paths, SESSION), { token: "live", ...scope });
+  writeJsonAtomic(listenerScope(node.paths, SESSION), { token: "live", listed: true });
 }
 
 function message(node: Node, taskId?: string): string {
@@ -67,7 +66,7 @@ test("Claude budget denial reaches both status routes", async t => {
   const node = heldNode(t);
   const id = message(node);
   const before = fs.readFileSync(ledger(node));
-  const retryAt = releaseOf(fullHour(T0), T0);
+  const retryAt = evaluateTurnBudget(fullHour(T0), DEFAULT_TURN_BUDGET, T0).nextAvailableAt!;
   observe(node);
   assert.deepEqual(getMessageProgress(node.paths.inbox, id), { phase: "waiting", code: "budget-exhausted", observedAt: iso(T0), retryAt });
   const [report] = unreportedStatuses(node.paths.inbox, T0, [getMessage(node.paths.inbox, id)!]);
