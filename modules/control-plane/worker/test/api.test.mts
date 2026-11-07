@@ -1,8 +1,10 @@
-import { runInDurableObject } from "cloudflare:test";
+import { evictDurableObject, runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { exportJWK, generateKeyPair, SignJWT, type CryptoKey as JoseKey, type JWK } from "jose";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
+import { INTERCOM_SLOTS, replaceIntercomSlot } from "../src/intercom-slots.mts";
+import { initializeRegistrySchema } from "../src/registry-schema.mts";
 import worker from "../src/index.mts";
 import { buildCommit } from "../src/health.mts";
 import rootPackage from "../../../../package.json" with { type: "json" };
@@ -211,5 +213,135 @@ describe("operator API", () => {
     expect((await api(`/api/nodes/${nodeId}`, { method: "DELETE" }, jwt)).status).toBe(404);
     const refused = await api(`/api/nodes/${nodeId}/commands`, { method: "POST", body: JSON.stringify({ command: "node.status" }) }, jwt);
     expect(refused.status).toBe(409);
+  });
+});
+
+
+describe("operator Intercom roster", () => {
+  const path = "/api/intercom/slots";
+  it("requires Access before reading storage and exposes no anonymous health roster", async () => {
+    expect((await api(path)).status).toBe(403);
+    expect((await api(path, {}, "not.a.jwt")).status).toBe(403);
+    expect((await api(path, {}, await token({ aud: "other" }))).status).toBe(403);
+    const request = new Request(`${BASE}${path}`, { headers: { "cf-access-jwt-assertion": await token() } });
+    expect((await worker.fetch(request, { ...env, ACCESS_AUD: "" })).status).toBe(503);
+    expect(await (await workerFetch("/health")).json()).not.toHaveProperty("slots");
+    expect((await workerFetch("/health/intercom/slots")).status).toBe(404);
+  });
+
+  it("returns only the authoritative tuple and revisions without caching or public writes", async () => {
+    const jwt = await token();
+    const occupant = { nodeId: "11111111-1111-4111-8111-111111111111", runtime: "codex" as const,
+      sessionId: "22222222-2222-4222-8222-222222222222", chatName: "  Synthetic roster chat  " };
+    const empty = INTERCOM_SLOTS.map(slot => ({ slot, revision: 0, occupant: null }));
+    expect(await (await api(path, {}, jwt)).json()).toEqual({ slots: empty });
+    await runInDurableObject(registry(), (_instance, state) => {
+      const sql = state.storage.sql;
+      replaceIntercomSlot(sql, "kherep-lead", 0, occupant);
+      sql.exec(`WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<600)
+        INSERT INTO sessions (node_id, session_id, runtime, state, updated_at, name, cwd, kind, title)
+        SELECT 'synthetic-api-history', 'historic-' || i, 'codex', 'unknown', 1, 'Synthetic unrelated chat', '/synthetic/private', 'subagent', 'Synthetic unrelated title' FROM n`);
+      expect(sql.exec("SELECT 1 FROM sessions WHERE session_id=?", occupant.sessionId).toArray()).toEqual([]);
+    });
+    try {
+      const expected = { slots: [{ slot: "kherep-lead", revision: 1, occupant }, ...empty.slice(1)] };
+      const response = await api(path, {}, jwt);
+      expect(response.status).toBe(200);
+      expect(response.headers.get("cache-control")).toBe("no-store");
+      expect(await response.json()).toEqual(expected);
+      for (const method of ["POST", "PUT", "DELETE"]) {
+        expect((await api(path, { method, body: JSON.stringify({ slot: "kherep-lead", occupant: null }) }, jwt)).status).toBe(404);
+      }
+      expect(await (await api(path, {}, jwt)).json()).toEqual(expected);
+      expect((await api(`${path}/`, {}, jwt)).status).toBe(404);
+    } finally {
+      await runInDurableObject(registry(), (_instance, state) => {
+        state.storage.sql.exec("UPDATE intercom_slots SET node_id=NULL,runtime=NULL,session_id=NULL,chat_name=NULL,revision=0");
+        state.storage.sql.exec("DELETE FROM sessions WHERE node_id='synthetic-api-history'");
+      });
+    }
+  });
+
+  it.each(["missing-row", "missing-table"])("returns generic 503 for %s without storage detail", async fault => {
+    const jwt = await token();
+    await runInDurableObject(registry(), (_instance, state) => {
+      if (fault === "missing-row") state.storage.sql.exec("DELETE FROM intercom_slots WHERE slot='kherep-lead'");
+      else state.storage.sql.exec("ALTER TABLE intercom_slots RENAME TO hidden_intercom_slots");
+    });
+    try {
+      // Auth refusal precedes even an unavailable roster read.
+      expect((await api(path)).status).toBe(403);
+      const response = await api(path, {}, jwt);
+      expect(response.status).toBe(503);
+      expect(await response.json()).toEqual({ error: "Intercom roster unavailable" });
+    } finally {
+      await runInDurableObject(registry(), (_instance, state) => {
+        if (fault === "missing-table") state.storage.sql.exec("ALTER TABLE hidden_intercom_slots RENAME TO intercom_slots");
+        else state.storage.sql.exec("INSERT INTO intercom_slots (slot) VALUES ('kherep-lead')");
+      });
+    }
+  });
+});
+
+
+describe("Intercom roster across real Registry eviction", () => {
+  const path = "/api/intercom/slots";
+  const occupant = { nodeId: "11111111-1111-4111-8111-111111111111", runtime: "codex" as const,
+    sessionId: "22222222-2222-4222-8222-222222222222", chatName: "Synthetic persisted lead" };
+  const sentinel = { ...occupant, sessionId: "33333333-3333-4333-8333-333333333333", chatName: "Synthetic sentinel" };
+
+  it.each(["one-row", "all-rows", "intact", "absent-table"])("preserves durable roster integrity after %s eviction", async fault => {
+    const stub = registry(), jwt = await token(), instances = new WeakSet<object>();
+    await runInDurableObject(stub, (instance, state) => {
+      instances.add(instance);
+      replaceIntercomSlot(state.storage.sql, "kherep-lead", 0, occupant);
+      replaceIntercomSlot(state.storage.sql, "codex-mac", 0, sentinel);
+      state.storage.sql.exec(`INSERT INTO sessions (node_id, session_id, runtime, state, updated_at, name)
+        VALUES ('synthetic-restart', 'sentinel-session', 'codex', 'unknown', 1, 'Synthetic unrelated sentinel')`);
+    });
+    expect(await (await api(path, {}, jwt)).json()).toEqual({ slots: INTERCOM_SLOTS.map(slot => ({
+      slot, revision: slot === "kherep-lead" || slot === "codex-mac" ? 1 : 0,
+      occupant: slot === "kherep-lead" ? occupant : slot === "codex-mac" ? sentinel : null,
+    })) });
+    await runInDurableObject(stub, (_instance, state) => {
+      if (fault === "one-row") state.storage.sql.exec("DELETE FROM intercom_slots WHERE slot='kherep-lead'");
+      if (fault === "all-rows") state.storage.sql.exec("DELETE FROM intercom_slots");
+      if (fault === "absent-table") state.storage.sql.exec("DROP TABLE intercom_slots");
+    });
+    try {
+      await evictDurableObject(stub);
+      // The authenticated public GET is the first call to activate the replacement.
+      const response = await api(path, {}, jwt);
+      const persisted = await runInDurableObject(stub, (instance, state) => ({
+        fresh: !instances.has(instance),
+        rows: state.storage.sql.exec("SELECT * FROM intercom_slots ORDER BY slot").toArray(),
+        unrelated: state.storage.sql.exec("SELECT name FROM sessions WHERE node_id='synthetic-restart'").one(),
+      }));
+      expect(persisted.fresh).toBe(true);
+      expect(persisted.unrelated).toEqual({ name: "Synthetic unrelated sentinel" });
+      if (fault === "one-row" || fault === "all-rows") {
+        expect({ status: response.status, rows: persisted.rows.length,
+          leadPresent: persisted.rows.some(row => row.slot === "kherep-lead") })
+          .toEqual({ status: 503, rows: fault === "one-row" ? 4 : 0, leadPresent: false });
+        expect(await response.json()).toEqual({ error: "Intercom roster unavailable" });
+        if (fault === "one-row") expect(persisted.rows.find(row => row.slot === "codex-mac")).toEqual({
+          slot: "codex-mac", revision: 1, node_id: sentinel.nodeId, runtime: sentinel.runtime,
+          session_id: sentinel.sessionId, chat_name: sentinel.chatName,
+        });
+      } else {
+        expect(response.status).toBe(200);
+        const empty = INTERCOM_SLOTS.map(slot => ({ slot, revision: 0, occupant: null }));
+        const expected = fault === "absent-table" ? empty : empty.map(row => row.slot === "kherep-lead"
+          ? { ...row, revision: 1, occupant } : row.slot === "codex-mac" ? { ...row, revision: 1, occupant: sentinel } : row);
+        expect(await response.json()).toEqual({ slots: expected });
+        expect(persisted.rows).toHaveLength(5);
+      }
+    } finally {
+      await runInDurableObject(stub, (_instance, state) => {
+        state.storage.sql.exec("DROP TABLE intercom_slots");
+        initializeRegistrySchema(state.storage);
+        state.storage.sql.exec("DELETE FROM sessions WHERE node_id='synthetic-restart'");
+      });
+    }
   });
 });

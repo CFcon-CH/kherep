@@ -22,6 +22,15 @@ export async function handleApi(request: Request, env: Env, actor: string): Prom
 
   if (parts.length === 2 && parts[1] === "nodes" && method === "GET") return json({ nodes: await registry.listNodes() });
   if (parts.length === 2 && parts[1] === "sessions" && method === "GET") return json({ sessions: await registry.listSessions() });
+  if (pathname === "/api/intercom/slots" && method === "GET") {
+    try {
+      const response = json({ slots: await registry.listIntercomSlots() });
+      response.headers.set("cache-control", "no-store");
+      return response;
+    } catch {
+      return fail(503, "Intercom roster unavailable");
+    }
+  }
   if (pathname === "/api/messages/summary" && method === "GET") return summarizeMessages(new URL(request.url).searchParams, env);
   if (parts.length === 2 && parts[1] === "messages" && method === "GET") return listMessages(new URL(request.url).searchParams, env);
   if (parts.length === 2 && parts[1] === "enrollments" && method === "POST") {
