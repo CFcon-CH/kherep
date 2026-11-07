@@ -28,6 +28,16 @@ increments the minor version; every other release increments the patch version.
 
 ### Fixed
 
+- `msg status` shows that a waiting message is held by the target's turn budget: an
+  accepted message a live listener would wake for reports
+  `waiting/budget-exhausted` with the ledger's release time instead of
+  `wake-pending`, on the received and the sent route. Closed-session fallback and
+  Codex task wakes add the release time, and the native Queue producer audits its
+  refusal once per message. An unreadable ledger leaves `wake-pending` and the hold
+  unknown. The budget itself, the protocol and the Worker are unchanged. Closes #827.
+- Closed-session fallback no longer overwrites the code of a message refused for its
+  own reason with `budget-exhausted` when the rest of its burst is held by the budget
+  (#827).
 - Start wake-name bindings without a liveness source. A daemon has none in production, so `session-labels.json` was never created and a name without its id stayed refused (Refs #828).
 - List Claude background sessions, whose `claude agents` row carries `state` instead of `status`. Dropping them marked every listing incomplete, so wake-name bindings never started (Refs #828).
 - Control Plane Worker: preserve reply admission across validated guarded-parent

@@ -156,3 +156,14 @@ export function inspectTurnBudget(paths: NodePaths, sessionId: string, now: Cloc
   return evaluateTurnBudget(value?.turns, limits, observed);
 }
 
+export type BudgetHold = { kind: "exhausted"; retryAt: number } | { kind: "available" } | { kind: "unknown"; ledgerStatus: LedgerStatus };
+// Read-only. "missing" is a ledger without stamps, which takeTurn would grant.
+// Spacing is not a hold: the listener retries at its next poll.
+export function inspectBudgetHold(paths: NodePaths, sessionId: string, now: number, limits: TurnBudget = DEFAULT_TURN_BUDGET): BudgetHold {
+  const budget = inspectTurnBudget(paths, sessionId, now, limits);
+  if (budget.ledgerStatus === "missing") return { kind: "available" };
+  if (budget.ledgerStatus !== "ok") return { kind: "unknown", ledgerStatus: budget.ledgerStatus };
+  return budget.blockedBy.includes("hour") || budget.blockedBy.includes("day")
+    ? { kind: "exhausted", retryAt: Date.parse(budget.nextAvailableAt!) } : { kind: "available" };
+}
+

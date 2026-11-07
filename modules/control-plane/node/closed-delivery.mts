@@ -6,6 +6,7 @@ import { closedFallbackGeneration } from "./session-lifecycle.mts";
 import { isSessionRef, OPERATOR_NODE_ID, type MessageProgressCode } from "../protocol-messages.mts";
 import { DELEGATED_PERMISSION_MODES, type PermissionMode, type TaskRuntime } from "../protocol-tasks.mts";
 import { bypassesPermissions, rememberedMode, takeTurn, wakeAudit } from "./autonomy.mts";
+import { publishBudgetDenial } from "./budget-denial.mts";
 import { stillRuns } from "./codex-process.mts";
 import { CODEX_RUNTIME, isCodexSessionId, readCodexSession } from "./codex-sessions.mts";
 import { resumeClaude, resumeCodex, skipBusy, startIntercom } from "./closed-resume.mts";
@@ -221,11 +222,11 @@ async function deliver(deps: RunnerDeps, found: Target, all: InboxRecord[], now:
   if (before) return refuse(...before);
   if (!stillEligible()) return false;
   const budget = takeTurn(paths, reusable?.sessionId ?? sessionId, now, wakeBudget(policy));
-  if (budget === "spacing" || budget === "locked") {
-    progressRecords(paths, records, "waiting", "retry-pending", now, undefined, blockerDiagnostic(budget === "spacing" ? "turn-spacing" : "budget-lock-unavailable", now));
+  if (budget !== "ok") {
+    publishBudgetDenial(paths, records, reusable?.sessionId ?? sessionId, budget, now, wakeBudget(policy));
+    if (budget === "exhausted") audit(paths, now, sessionId, records, "refused", "budget of autonomous turns exhausted");
     return false;
   }
-  if (budget === "exhausted") return refuse("budget of autonomous turns exhausted", "budget-exhausted");
   // Issue #627: a record whose lock stays busy is left out of this round, unmarked.
   records = records.filter((r) => marked(deps, r, now, reusable?.sessionId));
   if (records.length === 0) return false;

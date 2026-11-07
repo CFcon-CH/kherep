@@ -14,6 +14,7 @@ import { MAX_NATIVE_ATTEMPTS, nativeAttemptsPath, nativeQueueInput } from "./cod
 import { reserveNativeOwner, releaseNativeOwner } from "./codex-native-pending.mts";
 import { reconcileNativeQueues } from "./codex-native-reconcile.mts";
 import { CODEX_ACTIVE_MS, listCodexSessions, readCodexSession } from "./codex-sessions.mts";
+import { note } from "./codex-wake.mts";
 import { ensureDir, readConfig } from "./config.mts";
 import { getMessage, writeJsonAtomic } from "./inbox.mts";
 import { explicitlyListed, readPolicy, wakeAllowed, wakeBudget } from "./policy.mts";
@@ -126,8 +127,11 @@ async function produce(deps: RunnerDeps, owner: string, messageIds: string[], fi
   if (producer.route !== "local" || producer.approvedFiles.length === 0) return;
   const now = deps.now?.() ?? Date.now();
   if (!reserveNativeOwner(deps.paths, owner, ids)) return;
-  if (takeTurn(deps.paths, owner, now, admission.budget) !== "ok") {
+  const budget = takeTurn(deps.paths, owner, now, admission.budget);
+  if (budget !== "ok") {
     releaseNativeOwner(deps.paths, owner, ids);
+    // Progress of these messages belongs to the CP hint lane (codex-queue.mts); the denial is audited once per message.
+    if (budget === "exhausted") note(deps.paths, now, owner, ids, "budget");
     return;
   }
   const claimed: string[] = [];
