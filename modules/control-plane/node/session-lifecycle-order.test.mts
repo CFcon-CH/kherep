@@ -10,7 +10,7 @@ import type { SessionInfo } from "../protocol.mts";
 import { markUnseen, readKnownSessions } from "./known-sessions.mts";
 import { recordingSessions } from "./exchange-sessions.mts";
 import { getMessage, storeMessage } from "./inbox.mts";
-import { livenessAdmission, readLivenessSnapshot, sessionVerdict, terminalReference, livenessFile } from "./session-lifecycle.mts";
+import { livenessAdmission, publishLiveness, readLivenessSnapshot, sessionVerdict, terminalReference, livenessFile } from "./session-lifecycle.mts";
 import type { Observation, SessionEvidence } from "./session-liveness.mts";
 const now = 1_000_000, target = { runtime: "codex", sessionId: "review-target" };
 const messageId = "00000000-0000-4000-8000-000000000001";
@@ -104,4 +104,55 @@ test("stale hook and rejected restore never resurrect a retained terminal; valid
     assert.equal(readLivenessSnapshot(paths)!.tombstones[0].generation, 5);
     assert.ok(livenessAdmission(paths, target, "queue", now + 3, undefined, authority));
   });
+});
+
+// Issue #706, carry bound. The disk ledger holds at most LIMIT rows (readLivenessSnapshot refuses more), so the overflow
+// arrives as evidence: a full ledger already flagged capped, plus carried rows that no longer fit.
+const LIMIT = 512;
+const carried = (n: number, prefix = "old"): SessionEvidence[] => Array.from({ length: n }, (_, i) => ({ runtime: "codex", sessionId: `${prefix}-${i}`,
+  app: { status: "unknown" as const, observedAt: now, complete: false as const, source: "unsupported" as const, reasonCode: "unsupported" as const } }));
+const ledger = (t: test.TestContext, sessions: number, capped = false, tombstones: object[] = []) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "kherep-lifecycle-carry-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const paths = nodePaths(root);
+  fs.mkdirSync(paths.dir, { recursive: true });
+  fs.writeFileSync(livenessFile(paths), JSON.stringify({ version: 1, generation: 7, tombstones, ...(capped ? { capped: true } : {}),
+    sessions: carried(sessions).map(({ runtime, sessionId }) => ({ runtime, sessionId, state: "unknown", observedAt: now - 1, reasonCode: "stale" })) }));
+  return paths;
+};
+test("publishLiveness does not set capped when only non-current rows exceed LIMIT", t => {
+  const paths = ledger(t, LIMIT, true);
+  const current = carried(10, "listed");
+  const snapshot = publishLiveness(paths, [...carried(600), ...current], now, current);
+  assert.equal(snapshot.capped, undefined);
+  assert.equal(snapshot.sessions.length, LIMIT);
+  for (const row of current) assert.ok(snapshot.sessions.some(s => s.sessionId === row.sessionId), `${row.sessionId} is kept`);
+  assert.notEqual(readLivenessSnapshot(paths), null, "the written ledger reads back");
+});
+test("publishLiveness still sets capped when a current row falls off the slice", t => {
+  const current = carried(LIMIT + 1, "listed");
+  assert.equal(publishLiveness(ledger(t, 0), current, now, current).capped, true);
+});
+test("publishLiveness forgets a prior row no evidence names", t => {
+  const paths = ledger(t, 3);
+  const snapshot = publishLiveness(paths, carried(1), now, []);
+  assert.deepEqual(snapshot.sessions.map(s => s.sessionId), ["old-0"]);
+  assert.equal(sessionVerdict(paths, { runtime: "codex", sessionId: "old-1" }, now).reasonCode, "missing", "a forgotten row reads as it did");
+});
+test("publishLiveness keeps a row by evidence, not by reason code", t => {
+  const [row] = carried(1);
+  const evidence: SessionEvidence = { ...row, app: { ...row.app!, reasonCode: "missing" } as SessionEvidence["app"] };
+  const snapshot = publishLiveness(ledger(t, 2), [evidence], now, []);
+  assert.deepEqual(snapshot.sessions.map(s => [s.sessionId, s.reasonCode]), [["old-0", "missing"]]);
+});
+test("publishLiveness keeps a listed row no evidence names", t => {
+  const snapshot = publishLiveness(ledger(t, 2), [], now, [{ runtime: "codex", sessionId: "old-1" }]);
+  assert.deepEqual(snapshot.sessions.map(s => s.sessionId), ["old-1"]);
+});
+test("forgetting a row leaves its tombstone", t => {
+  const restored = { runtime: "codex", sessionId: "old-0", state: "restored", generation: 3, observedAt: now - 1 };
+  const deleted = { runtime: "codex", sessionId: "gone", state: "deleted", generation: 4, observedAt: now - 1 };
+  const snapshot = publishLiveness(ledger(t, 1, false, [restored, deleted]), [], now, []);
+  assert.deepEqual(snapshot.sessions, []);
+  assert.deepEqual(snapshot.tombstones, [restored, deleted]);
 });
