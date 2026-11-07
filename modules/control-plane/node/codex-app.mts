@@ -76,6 +76,16 @@ function firstLine(file: string): string | null {
 
 // Whether the rollout of sessionId says the Codex desktop app started it.
 export function codexAppRollout(home: string, sessionId: string): AppCheck {
+  return appRollout(home, sessionId, false);
+}
+
+// Assignment additionally requires recognized original-thread provenance. This
+// stricter check must not change the existing wake/task eligibility predicate.
+export function codexAssignmentRollout(home: string, sessionId: string): AppCheck {
+  return appRollout(home, sessionId, true);
+}
+
+function appRollout(home: string, sessionId: string, assignment: boolean): AppCheck {
   if (!isCodexSessionId(sessionId)) return "no-rollout";
   const file = findRollout(home, sessionId);
   if (!file) return "no-rollout";
@@ -90,8 +100,21 @@ export function codexAppRollout(home: string, sessionId: string): AppCheck {
   const { type, payload } = (meta ?? {}) as { type?: unknown; payload?: unknown };
   if (type !== "session_meta" || typeof payload !== "object" || payload === null) return "not-app";
   const p = payload as Record<string, unknown>;
-  const subThread = p.parent_thread_id !== undefined && p.parent_thread_id !== null;
-  return p.id === sessionId && p.originator === "Codex Desktop" && p.source === "vscode" && !subThread ? "ok" : "not-app";
+  if (!assignment) {
+    const subThread = p.parent_thread_id !== undefined && p.parent_thread_id !== null;
+    return p.id === sessionId && p.originator === "Codex Desktop" && p.source === "vscode" && !subThread ? "ok" : "not-app";
+  }
+  // Native SessionMeta provenance (openai/codex, protocol/src/protocol.rs).
+  // Optional fields are absent on older rollouts; a present, malformed marker
+  // is never treated as proof of an original thread. history_base alone may
+  // describe a reverted original, so it is not a fork/child discriminator.
+  const derived = ["parent_thread_id", "forked_from_id", "forked_from_ordinal_exclusive",
+    "agent_nickname", "agent_role", "agent_type", "agent_path", "subagent_history_start_ordinal"]
+    .some((key) => p[key] !== undefined && p[key] !== null);
+  const attached = p.attached_thread !== undefined && p.attached_thread !== false;
+  const foreignRoot = p.session_id !== undefined && p.session_id !== sessionId;
+  return p.id === sessionId && p.originator === "Codex Desktop" && p.source === "vscode"
+    && !derived && !attached && !foreignRoot ? "ok" : "not-app";
 }
 
 // The one session wake.codexApp grants, among the candidate ids: the most

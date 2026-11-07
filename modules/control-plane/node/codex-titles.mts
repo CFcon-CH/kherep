@@ -25,7 +25,7 @@ export function sanitiseTitle(value: unknown): string | undefined {
   return isTitle(title) ? title : undefined;
 }
 
-function readTail(file: string, maxBytes: number): string {
+function readTail(file: string, maxBytes: number, strict = false): string {
   // Only a regular file is opened: a pipe in its place would block the read.
   if (!fs.statSync(file).isFile()) throw new Error("not a file");
   const fd = fs.openSync(file, "r");
@@ -34,8 +34,15 @@ function readTail(file: string, maxBytes: number): string {
     const length = Math.min(size, maxBytes);
     const buffer = Buffer.alloc(length);
     const read = fs.readSync(fd, buffer, 0, length, size - length);
-    const text = buffer.subarray(0, read).toString("utf8");
-    // A cut start is a partial line.
+    const bytes = buffer.subarray(0, read);
+    // A cut start is a partial line. Assignment also refuses malformed UTF-8
+    // rather than changing the native title to replacement characters.
+    if (strict) {
+      const start = length < size ? bytes.indexOf(0x0a) + 1 : 0;
+      if (length < size && start === 0) return "";
+      return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes.subarray(start));
+    }
+    const text = bytes.toString("utf8");
     return length < size ? text.slice(text.indexOf("\n") + 1) : text;
   } finally {
     fs.closeSync(fd);
@@ -70,6 +77,43 @@ export function readCodexTitles(codexHome: string, limits: { maxBytes?: number; 
     titles.set(id, title);
   }
   return titles;
+}
+
+// Exact native assignment name, separate from the lossy display reader above.
+// Protocol length limits belong to the caller: never shorten a valid name here.
+// The latest entry wins even if its name is unsupported, preventing a stale
+// earlier name from being used for assignment. Missing optional timestamps use
+// the same zero-time fallback and later-line tie rule as readCodexTitles. Any
+// malformed retained row denies assignment: its chat/rename order is unknown.
+export async function codexAssignmentTitle(codexHome: string, sessionId: string): Promise<string | null> {
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(sessionId)) return null;
+  let text: string;
+  try {
+    text = readTail(path.join(codexHome, CODEX_INDEX), INDEX_MAX_BYTES, true);
+  } catch {
+    return null;
+  }
+  let latest = -Infinity;
+  let title: string | null = null;
+  for (const line of text.split("\n").slice(-INDEX_MAX_LINES)) {
+    if (line.trim() === "") continue;
+    let entry: unknown;
+    try {
+      entry = JSON.parse(line);
+    } catch {
+      // A corrupt row may be a newer rename of the requested chat.
+      return null;
+    }
+    if (typeof entry !== "object" || entry === null) return null;
+    const { id, thread_name: name, updated_at: at } = entry as Record<string, unknown>;
+    if (typeof id !== "string" || id.length === 0) return null;
+    if (id !== sessionId) continue;
+    const time = (typeof at === "string" && Date.parse(at)) || 0;
+    if (time < latest) continue;
+    latest = time;
+    title = typeof name === "string" && name.trim().length > 0 && !/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Cs}]/u.test(name) ? name : null;
+  }
+  return title;
 }
 
 // Codex sessions with a known thread title carry it; others are unchanged.
