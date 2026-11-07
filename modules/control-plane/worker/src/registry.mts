@@ -1,3 +1,4 @@
+import { readIntercomSlots, type IntercomSlotView } from "./intercom-slots.mts";
 import { identityDiagnostic } from "./message-identity-diagnostics.mts";
 import { type MessageDiagnostic } from "../../protocol-diagnostics.mts";
 import { bindingContext, prepareMessageBinding } from "./message-binding.mts";
@@ -31,7 +32,7 @@ import {
 } from "../../protocol-mcp.mts";
 import type { TaskReportBody } from "../../protocol-tasks.mts";
 import {
-  ENROLLMENT_TTL_DEFAULT_S, ENROLLMENT_TTL_MAX_S, ENROLLMENT_TTL_MIN_S, migrateRegistry, NODE_COLUMNS, REGISTRY_SCHEMA, toNodeRow,
+  ENROLLMENT_TTL_DEFAULT_S, ENROLLMENT_TTL_MAX_S, ENROLLMENT_TTL_MIN_S, initializeRegistrySchema, migrateRegistry, NODE_COLUMNS, toNodeRow,
   type NodeRow, type NodeStatus,
 } from "./registry-schema.mts";
 
@@ -80,7 +81,7 @@ export class Registry extends DurableObject<Env> {
         return [...bytes].map((x) => x.toString(16).padStart(2, "0")).join("");
       };
     });
-    this.sql.exec(REGISTRY_SCHEMA);
+    initializeRegistrySchema(ctx.storage, this.sql);
     migrateRegistry(this.sql);
     this.sessionIdentity = new RegistrySessionIdentity(this.sql);
     this.messages = new MessageStore(this.sql, (...args) => this.audit(...args), (nodeId) => this.capabilitiesOf(nodeId));
@@ -166,6 +167,10 @@ export class Registry extends DurableObject<Env> {
         }));
       return { ...toNodeRow(row), runtimes };
     });
+  }
+
+  listIntercomSlots(): IntercomSlotView[] {
+    return this.metered("listIntercomSlots", () => readIntercomSlots(this.sql));
   }
 
   listSessions(): (SessionInfo & { nodeId: string; updatedAt: number })[] {

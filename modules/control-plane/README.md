@@ -789,6 +789,7 @@ The exchange round's resume of an ended [Codex task](#codex-tasks) for its messa
 | `GET /api/nodes` | List nodes |
 | `GET /api/nodes/{id}` | One node with runtimes, connection state and recent commands |
 | `GET /api/sessions` | Sessions reported by all nodes |
+| `GET /api/intercom/slots` | Authoritative fixed Intercom roster, including vacancies and revisions |
 | `POST /api/nodes/{id}/commands` | Body `{"command": "node.status"}`; only the three read-only commands |
 | `POST /api/enrollments` | Body `{"ttlSeconds": 600}` (optional); returns a one-time `code` |
 | `DELETE /api/nodes/{id}` | Revoke a node |
@@ -800,6 +801,35 @@ The exchange round's resume of an ended [Codex task](#codex-tasks) for its messa
 | `GET /api/tasks/{id}` | One task with its text, state, session id, summary and reason |
 | `POST /api/tasks/{id}/stop` | Stops an active task's session; 409 when it is not active |
 | `POST /api/tasks/{id}/continue` | Body `{"prompt": "..."}`; resumes the session of a task that waits for input or ended; 409 while it runs |
+
+### Intercom roster read
+
+`GET /api/intercom/slots` requires the same valid Access JWT as every operator
+API call. It returns `200` with `Cache-Control: no-store` and exactly five rows
+in this order: `kherep-lead`, `codex-windows`, `claude-windows`, `codex-mac`,
+`claude-mac`. A new Registry returns each row at revision `0` with `occupant: null`.
+An occupied row has this shape:
+
+```json
+{"slot":"kherep-lead","revision":2,"occupant":{"nodeId":"11111111-1111-4111-8111-111111111111","runtime":"codex","sessionId":"22222222-2222-4222-8222-222222222222","chatName":"Synthetic lead chat"}}
+```
+
+The response wraps these rows as `{"slots":[...]}`. The exact stored node,
+runtime, full session ID and chat name describe the assigned address; duplicate
+chat names do not select an address. Replacement increments the revision; a
+clear increments it again and returns `occupant: null`. This read supplies no
+assignment endpoint. Unsupported methods return `404`.
+
+The roster reads central slot storage independently of `/api/sessions`, session
+inventory limits, reconnects and online status. Occupancy proves neither native
+caller ownership nor liveness or permission to send. A missing row or unavailable
+storage returns `503` with `{"error":"Intercom roster unavailable"}`, without a
+partial roster or storage details. Initialization seeds only a newly created slot
+table, atomically. If rows disappear from an existing table, the roster remains
+unavailable across Registry restarts. Complete table loss is indistinguishable
+from an older database without slot storage and initializes five vacancies.
+These are source capabilities; availability
+on a running Control Plane requires separate deployment and target verification.
 
 ## Setup
 

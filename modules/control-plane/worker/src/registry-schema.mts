@@ -2,7 +2,7 @@
 // ctx.storage.sql.exec(); cursors are consumed with toArray()/one() before any
 // await, as the SQLite storage API documentation requires.
 // https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/#exec
-export const REGISTRY_SCHEMA = `
+const REGISTRY_SCHEMA = `
 CREATE TABLE IF NOT EXISTS nodes (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
@@ -56,9 +56,6 @@ CREATE TABLE IF NOT EXISTS intercom_slots (
     OR (slot IN ('codex-windows', 'codex-mac') AND runtime = 'codex')
     OR (slot IN ('claude-windows', 'claude-mac') AND runtime = 'claude-code'))
 );
-INSERT INTO intercom_slots (slot) VALUES
-  ('kherep-lead'), ('codex-windows'), ('claude-windows'), ('codex-mac'), ('claude-mac')
-ON CONFLICT(slot) DO NOTHING;
 CREATE TABLE IF NOT EXISTS audit (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   ts INTEGER NOT NULL,
@@ -68,6 +65,18 @@ CREATE TABLE IF NOT EXISTS audit (
   detail TEXT
 );
 `;
+
+const INITIAL_INTERCOM_SLOTS = `INSERT INTO intercom_slots (slot) VALUES
+  ('kherep-lead'), ('codex-windows'), ('claude-windows'), ('codex-mac'), ('claude-mac')`;
+
+export function initializeRegistrySchema(storage: DurableObjectStorage, sql: SqlStorage = storage.sql): void {
+  storage.transactionSync(() => {
+    const existed = sql.exec("SELECT 1 FROM sqlite_master WHERE type='table' AND name='intercom_slots'").toArray().length > 0;
+    sql.exec(REGISTRY_SCHEMA);
+    // Existing incomplete tables are damage, never evidence of a first install.
+    if (!existed) sql.exec(INITIAL_INTERCOM_SLOTS);
+  });
+}
 
 // Session columns added in Phase 2 (issue #31), label with issue #74 and title with issue #88. CREATE TABLE IF NOT EXISTS
 // leaves a table from an earlier deployment as it was, so each column is added
