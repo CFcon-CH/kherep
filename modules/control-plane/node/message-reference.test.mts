@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { makeEnvelope, parseEnvelope } from "../protocol.mts";
-import { isDeliveryBinding, isResolveRequest, isResolveResponse, type ResolveRequest, type ResolveResponse } from "../protocol-message-binding.mts";
+import { BINDING_TTL_MS, isDeliveryBinding, isResolveRequest, isResolveResponse, type ResolveRequest, type ResolveResponse } from "../protocol-message-binding.mts";
 import { isMessageSendBody } from "../protocol-messages.mts";
 import { NodeClient } from "./client.mts";
 import { nodePaths } from "./config.mts";
@@ -67,6 +67,32 @@ for (const drift of ["policy", "generation", "expiry", "alias", "disconnect"] as
   if (drift === "expiry") now += 5001;
   if (drift === "disconnect") resolver.clear();
   assert.equal(resolver.validate(MID, binding, drift === "policy" ? "policy-2" : "policy-1"), false);
+});
+test("706: a node clock behind the Worker keeps the selection and the lease keeps the request's expiry", t => {
+  const paths = fixture(t); let now = Date.now();
+  const resolver = new MessageReferenceResolver(paths, () => now);
+  const expiresAt = now + 2000 + BINDING_TTL_MS; // created 2 s ahead of this node's clock
+  const lease = () => {
+    const result = resolver.resolve({ ...request(), expiresAt }, "policy-1").results[0];
+    assert.equal(result.code, "BOUND");
+    if (result.code !== "BOUND") throw new Error("expected destination lease");
+    return { version: 1 as const, mode: "exact" as const, from: { sessionId: "source", runtime: null, lifecycleGeneration: null },
+      to: { ...result.owner, lifecycleGeneration: result.lifecycleGeneration }, leaseId: result.leaseId, localGeneration: result.localGeneration };
+  };
+  const before = lease(), at = lease();
+  now = expiresAt - 1;
+  assert.equal(resolver.validate(MID, before, "policy-1"), true, "usable until the request's expiresAt");
+  now = expiresAt;
+  assert.equal(resolver.validate(MID, at, "policy-1"), false, "ended at the request's expiresAt");
+});
+test("706: the clock allowance applies to the upper bound only", t => {
+  const paths = fixture(t), now = Date.now();
+  const resolver = new MessageReferenceResolver(paths, () => now);
+  const code = (expiresAt: number) => resolver.resolve({ ...request(), expiresAt }, "policy-1").results[0].code;
+  assert.equal(code(now + BINDING_TTL_MS + 30_000), "BOUND");
+  assert.equal(code(now + BINDING_TTL_MS + 30_001), "STALE");
+  assert.equal(code(now), "STALE", "a request at its expiry is expired");
+  assert.equal(code(now - 1), "STALE");
 });
 test("S13 S32 S35: protocol rejects extra keys, duplicate roles and sender-injected binding", () => {
   const r = request();

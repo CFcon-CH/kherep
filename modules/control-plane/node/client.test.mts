@@ -6,7 +6,10 @@ import test from "node:test";
 
 import { makeEnvelope, parseEnvelope, PONG_FRAME, type Envelope } from "../protocol.mts";
 import { NodeClient, type CommandHandlers } from "./client.mts";
+import { nodePaths } from "./config.mts";
+import { writeLocalSessions } from "./exchange-sessions.mts";
 import { generateIdentity, verifyChallenge } from "./identity.mts";
+import { MessageReferenceResolver } from "./message-reference.mts";
 import { DEFAULT_POLICY, isAllowed, loadPolicy, type NodePolicy } from "./policy.mts";
 
 const NODE_ID = "00000000-0000-4000-8000-0000000000aa";
@@ -272,4 +275,69 @@ test("828 Directory metadata is stored only on a current authenticated connectio
   await client.onFrame(directory);assert.equal(stores,1);
   await client.onFrame(directory,false);assert.equal(stores,1,"old connection cannot advance metadata");
   client.connectionClosed();await client.onFrame(directory);assert.equal(stores,1);
+});
+
+// Issue #706: a resolve the node skipped or could not bind names why in its log, metadata only.
+const RESOLVE_NOW = 1_000_000_000, SESSION_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", SESSION_NAME = "synthetic-private-name";
+const REQUEST_ID = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
+const resolveFrame = (body: Record<string, unknown>): string => JSON.stringify(makeEnvelope("message.resolve.request", { version: 1, requestId: REQUEST_ID,
+  messageId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd", purpose: "admit", selections: [{ role: "to", ref: SESSION_NAME }], expiresAt: RESOLVE_NOW + 5000, ...body }, 0, 0));
+function resolveClient(t: test.TestContext, overrides: { resolver?: false; storage?: boolean; authenticated?: boolean } = {}) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "kherep-resolve-log-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const paths = nodePaths(root), logs: string[] = [];
+  writeLocalSessions(paths, [{ sessionId: SESSION_ID, name: SESSION_NAME, runtime: "codex", state: "unknown" }], RESOLVE_NOW, 1);
+  const client = new NodeClient({ nodeId: NODE_ID, identity: generateIdentity(), policy: DEFAULT_POLICY, facts: () => FACTS, runtimes: async () => [], sessions: async () => [],
+    handlers: { "node.status": async () => ({}), "runtime.list": async () => [], "session.list": async () => [] }, storeMessage: () => {},
+    ...(overrides.resolver === false ? {} : { selectedReferences: new MessageReferenceResolver(paths, () => RESOLVE_NOW) }),
+    bindingStorageReady: () => overrides.storage !== false, now: () => RESOLVE_NOW, log: line => logs.push(line) });
+  client.authenticated = overrides.authenticated !== false;
+  return { client, logs };
+}
+const assertMetadataOnly = (line: string | undefined): void => {
+  assert.ok(line);
+  for (const forbidden of [SESSION_ID, SESSION_NAME, "codex", "policy", os.tmpdir()]) assert.equal(line.includes(forbidden), false, forbidden);
+};
+
+for (const [reason, overrides, live] of [
+  ["not live", {}, false], ["not authenticated", { authenticated: false }, true],
+  ["storage not ready", { storage: false }, true], ["no resolver", { resolver: false }, true],
+] as const) test(`706: a resolve skipped as ${reason} logs the condition with requestId and margin`, async t => {
+  const { client, logs } = resolveClient(t, overrides);
+  assert.deepEqual(await client.onFrame(resolveFrame({}), live), []);
+  assert.equal(logs.length, 1);
+  assert.match(logs[0], new RegExp(`skipped: ${reason} `));
+  assert.match(logs[0], new RegExp(`requestId=${REQUEST_ID} margin_ms=5000$`));
+  assertMetadataOnly(logs[0]);
+});
+
+test("706: a malformed resolve is skipped without repeating its fields", async t => {
+  const { client, logs } = resolveClient(t);
+  assert.deepEqual(await client.onFrame(resolveFrame({ requestId: SESSION_NAME, expiresAt: SESSION_ID })), []);
+  assert.deepEqual(await client.onFrame(resolveFrame({ extra: SESSION_NAME })), []);
+  assert.deepEqual(logs.map(line => line.replace(/^.*skipped: /, "")), ["malformed requestId=invalid margin_ms=unknown",
+    `malformed requestId=${REQUEST_ID} margin_ms=5000`]);
+  logs.forEach(assertMetadataOnly);
+});
+
+test("706: an answer with a non-BOUND result logs its role:code pairs, the margin may be negative", async t => {
+  const { client, logs } = resolveClient(t);
+  assert.equal((await client.onFrame(resolveFrame({ selections: [{ role: "from", ref: "synthetic-absent" }, { role: "to", ref: SESSION_ID }] }))).length, 1);
+  assert.match(logs[0], new RegExp(`answered from:MISSING,to:BOUND requestId=${REQUEST_ID} margin_ms=5000$`));
+  assert.doesNotMatch(logs[0], /synthetic-absent/);
+  assertMetadataOnly(logs[0]);
+  assert.equal((await client.onFrame(resolveFrame({ expiresAt: RESOLVE_NOW - 200 }))).length, 1);
+  assert.match(logs[1], new RegExp(`answered to:STALE requestId=${REQUEST_ID} margin_ms=-200$`));
+  assert.equal(logs.length, 2);
+});
+
+test("706: a BOUND answer logs only when under one second of margin remains", async t => {
+  const { client, logs } = resolveClient(t);
+  assert.equal((await client.onFrame(resolveFrame({}))).length, 1);
+  assert.equal((await client.onFrame(resolveFrame({ expiresAt: RESOLVE_NOW + 1000 }))).length, 1);
+  assert.deepEqual(logs, [], "a healthy BOUND resolve logs nothing");
+  assert.equal((await client.onFrame(resolveFrame({ expiresAt: RESOLVE_NOW + 999 }))).length, 1);
+  assert.equal(logs.length, 1);
+  assert.match(logs[0], new RegExp(`answered to:BOUND requestId=${REQUEST_ID} margin_ms=999$`));
+  assertMetadataOnly(logs[0]);
 });
