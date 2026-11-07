@@ -28,6 +28,7 @@ increments the minor version; every other release increments the patch version.
 
 ### Fixed
 
+- Control Plane Worker: name the target node's answer when owner resolution fails (`resolution-missing`, `-ambiguous`, `-stale`, `-invalid`, `-unreadable`) and a request outside its time window (`resolution-clock`), instead of one `resolution-unavailable`. Nodes advertise `messaging.diagnostics.v2`; a node without it keeps getting `resolution-unavailable`, because it would drop the frame otherwise. Allow 30 s of clock difference between Durable Objects on the request's upper bound. Cut the directory fairly across nodes, so one node no longer fills the frame while another has no rows. Refs #706.
 - Start wake-name bindings without a liveness source. A daemon has none in production, so `session-labels.json` was never created and a name without its id stayed refused (Refs #828).
 - List Claude background sessions, whose `claude agents` row carries `state` instead of `status`. Dropping them marked every listing incomplete, so wake-name bindings never started (Refs #828).
 - Control Plane Worker: preserve reply admission across validated guarded-parent
