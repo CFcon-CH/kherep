@@ -197,7 +197,7 @@ A message goes from a session on one node to a session on another node. A sessio
 
 ### Directory
 
-The Worker answers `directory.get` from the Registry with every node that is not revoked and the sessions each node last reported; sessions of a revoked node never appear, and `startedAt` is left out. A directory that would not fit into one 64 KiB frame drops sessions from the end and sets `truncated`. Directory requests are not audited: nodes ask every minute, and the frame carries no message content. The Registry keeps the directory rows in memory and reads them again only after a write to nodes, runtimes or sessions (issue #308); a session snapshot that changes nothing is no write.
+The Worker answers `directory.get` from the Registry with every node that is not revoked and the sessions each node last reported; sessions of a revoked node never appear, and `startedAt` is left out. A directory that would not fit into one 64 KiB frame drops sessions from the end, after interleaving them by node so every node loses rows alike, and sets `truncated`. Directory requests are not audited: nodes ask every minute, and the frame carries no message content. The Registry keeps the directory rows in memory and reads them again only after a write to nodes, runtimes or sessions (issue #308); a session snapshot that changes nothing is no write.
 
 ### Session messaging
 
