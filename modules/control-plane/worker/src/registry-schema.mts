@@ -39,6 +39,26 @@ CREATE TABLE IF NOT EXISTS enrollments (
   used_at INTEGER,
   used_by_node TEXT
 );
+-- Internal addresses only; slot occupancy does not prove native caller ownership.
+CREATE TABLE IF NOT EXISTS intercom_slots (
+  slot TEXT PRIMARY KEY NOT NULL CHECK (slot IN ('kherep-lead', 'codex-windows', 'claude-windows', 'codex-mac', 'claude-mac')),
+  revision INTEGER NOT NULL DEFAULT 0 CHECK (typeof(revision) = 'integer' AND revision BETWEEN 0 AND 9007199254740991),
+  node_id TEXT,
+  runtime TEXT,
+  session_id TEXT,
+  chat_name TEXT,
+  CHECK (
+    (node_id IS NULL AND runtime IS NULL AND session_id IS NULL AND chat_name IS NULL)
+    OR (node_id IS NOT NULL AND runtime IS NOT NULL AND session_id IS NOT NULL AND chat_name IS NOT NULL
+      AND length(node_id) > 0 AND runtime IN ('codex', 'claude-code') AND length(session_id) > 0 AND length(chat_name) > 0)
+  ),
+  CHECK (slot = 'kherep-lead'
+    OR (slot IN ('codex-windows', 'codex-mac') AND runtime = 'codex')
+    OR (slot IN ('claude-windows', 'claude-mac') AND runtime = 'claude-code'))
+);
+INSERT INTO intercom_slots (slot) VALUES
+  ('kherep-lead'), ('codex-windows'), ('claude-windows'), ('codex-mac'), ('claude-mac')
+ON CONFLICT(slot) DO NOTHING;
 CREATE TABLE IF NOT EXISTS audit (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   ts INTEGER NOT NULL,
