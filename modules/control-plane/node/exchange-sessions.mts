@@ -9,9 +9,10 @@ import { closedReference, publishLiveness, readLivenessSnapshot, sessionVerdict,
 import { directoryVisibility, observationReason, targetKey } from "./session-liveness.mts";
 import type { SessionEvidence } from "./session-liveness.mts";
 import type { SessionInfo } from "../protocol.mts";
-import { ensureDir, type NodePaths } from "./config.mts";
+import { ensureDir, readConfig, type NodePaths } from "./config.mts";
 import { listInbox, readJson, refuseUndeliverable, UNDELIVERABLE_AFTER_MS, writeJsonAtomic, type InboxRecord } from "./inbox.mts";
 import { knownSessionsFile, markUnseen, rememberSessions, unlistedRuntimes, type KnownSession } from "./known-sessions.mts";
+import { readPolicy } from "./policy.mts";
 import { snapshotObject } from "./wake-snapshot.mts";
 
 // sessions.json, the node's sessions from the last successful listing, and the
@@ -57,7 +58,18 @@ export function localSessionName(paths: NodePaths, sessionId: string): string | 
 const CARRY_LIMIT = 128;
 const carryFaults = new Map<string, string>();
 
-// Sessions something on this node still points at: a listener file, an inbox record, a wake-name binding.
+// The ids and names wake.sessions states literally. "*" names no session, and a node's list may contain it.
+// readPolicy drops a wake section it cannot parse, so that case is told apart from an explicit enabled: false here.
+function wakeLiterals(paths: NodePaths): string[] {
+  const file = readConfig(paths.config)?.policyFile ?? paths.policy;
+  const policy = readPolicy(file);
+  if (!policy) throw new Error("the policy file is unreadable or malformed");
+  if (policy.wake) return policy.wake.sessions.filter(s => s !== "*");
+  const section = readJson<{ wake?: { enabled?: unknown } | null }>(file)?.wake;
+  if (section !== undefined && section?.enabled !== false) throw new Error("the policy's wake section is malformed");
+  return [];
+}
+// Sessions something on this node still points at: a listener file, an inbox record, a wake-name binding, the wake list.
 // Local files only, and every failed read throws, so that the caller carries all rows instead of dropping one.
 function protectedRefs(paths: NodePaths, records?: () => InboxRecord[]): Set<string> {
   const refs = new Set<string>();
@@ -66,6 +78,7 @@ function protectedRefs(paths: NodePaths, records?: () => InboxRecord[]): Set<str
   for (const record of records?.() ?? listInbox(paths.inbox)) refs.add(record.toSession);
   const view = readBindingView(paths);
   for (const binding of view.bindings) refs.add(binding.sessionId);
+  for (const ref of wakeLiterals(paths)) refs.add(ref);
   // No file and no witness is a node without bindings; any other unavailable view is lost history.
   if (view.status !== "healthy" && (fs.statSync(labelsFile(paths), { throwIfNoEntry: false }) || readJson<{ labelBindingEpoch?: unknown }>(paths.sessions)?.labelBindingEpoch !== undefined)) {
     throw new Error("session-labels.json is unavailable");

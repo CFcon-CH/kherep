@@ -80,7 +80,9 @@ separate permanent capacity latch or automatic reset is introduced.
 A listing keeps a prior row it lacks as a carried UNKNOWN row, up to 128 of them
 per round (`CARRY_LIMIT`, `exchange-sessions.mts`). Protected rows are always
 carried: a session with any file in `listeners/`, the target of an inbox record
-(by ID or name), and a session bound in `session-labels.json`. If protected rows
+(by ID or name), a session bound in `session-labels.json`, and a session the
+policy's `wake.sessions` names literally (by ID or name; `*` names none, and a
+disabled wake section protects nothing). If protected rows
 alone exceed 128, all of them are carried and nothing else. The remaining places
 go to the newest rows by `known-sessions.json` `lastSeen`, which moves only when a
 session is listed; a row without an entry ranks oldest and ties break on
