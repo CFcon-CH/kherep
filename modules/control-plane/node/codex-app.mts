@@ -141,7 +141,10 @@ export function findAssignmentRollout(home: string, sessionId: string): string |
         if (++entries > 16_384) throw new Error("native lookup exceeds budget");
         if (pattern.test(entry.name)) names.push(entry.name);
       }
-      return names.sort().reverse();
+      return names.sort((left, right) => {
+        if (left < right) return -1;
+        return left > right ? 1 : 0;
+      }).reverse();
     } finally { opened.closeSync(); }
   };
   directory(root);
