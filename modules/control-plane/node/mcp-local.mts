@@ -166,7 +166,10 @@ export function recordMcpIntentReceipt(paths: NodePaths, inflight: Set<string>, 
   if (!isMcpIntentReceiptBody(body)) return;
   // Only exact canonical Worker negatives can acquire a Worker category. Never
   // trust a remotely supplied local category or retain free-form error text.
-  const category = !body.ok && Object.keys(body).sort().join(",") === "error,ok,requestId"
+  const category = !body.ok && Object.keys(body).sort((left, right) => {
+    if (left < right) return -1;
+    return left > right ? 1 : 0;
+  }).join(",") === "error,ok,requestId"
     ? WORKER_REJECTIONS.get(body.error as Parameters<typeof WORKER_REJECTIONS.get>[0]) : undefined;
   persistMcpIntentReceipt(paths, inflight, body.ok ? body : negativeReceipt(body.requestId, category));
 }
@@ -194,7 +197,10 @@ export function readMcpIntentReceipt(paths: NodePaths, requestId: string): Local
     const recognized = category === "node_assignment_preparation"
       || [...WORKER_REJECTIONS.values()].some(value => value === category);
     const valid = body.requestId === requestId && body.error === NEGATIVE_RECEIPT_ERROR && local.diagnosticVersion === 1
-      && Object.keys(body).sort().join(",") === "diagnosticVersion,error,ok,rejectionCategory,requestId" && recognized;
+      && Object.keys(body).sort((left, right) => {
+        if (left < right) return -1;
+        return left > right ? 1 : 0;
+      }).join(",") === "diagnosticVersion,error,ok,rejectionCategory,requestId" && recognized;
     return { requestId: body.requestId, ok: false, error: body.error,
       ...(valid ? { rejectionCategory: category as McpIntentRejection } : {}) };
   } catch (error) {
