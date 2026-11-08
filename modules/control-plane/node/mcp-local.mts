@@ -19,6 +19,29 @@ const LOCAL_RECORD_RETENTION_MS = 10 * 60_000;
 // The trusted hook still waits eight seconds. Unregistered requests cannot
 // occupy the discovery lane after their originating hook has stopped waiting.
 const NATIVE_INTENT_WINDOW_MS = 8_000;
+const NEGATIVE_RECEIPT_ERROR = "MCP intent rejected";
+const WORKER_REJECTIONS = new Map([
+  ["invalid intent metadata", "worker_metadata"],
+  ["native original assignment evidence is required", "worker_metadata"],
+  ["remote MCP is not enabled for this node", "worker_capability"],
+  ["remote MCP runtime is not enabled for this node", "worker_capability"],
+  ["Codex Mac assignment requires an eligible enrolled Mac node", "worker_enrollment"],
+  ["current enrolled-node registration is required for self-assignment", "worker_enrollment"],
+  ["native session is not registered on this node", "worker_session"],
+  ["remote MCP credential is not provisioned", "worker_credential"],
+  ["requestId already has different intent metadata", "worker_conflict"],
+  ["too many unexpired MCP intents", "worker_capacity"],
+  ["too many retained MCP intents", "worker_capacity"],
+  ["Intercom roster unavailable", "worker_roster"],
+] as const);
+type McpIntentRejection = ReturnType<typeof WORKER_REJECTIONS.get> | "node_assignment_preparation";
+type LocalMcpIntentReceipt = McpIntentReceiptBody & { rejectionCategory?: McpIntentRejection };
+
+// This metadata belongs only to the local one-use receipt, never to the wire.
+function negativeReceipt(requestId: string, category?: McpIntentRejection): LocalMcpIntentReceipt {
+  return { requestId, ok: false, error: NEGATIVE_RECEIPT_ERROR,
+    ...(category ? { diagnosticVersion: 1, rejectionCategory: category } : {}) };
+}
 
 function readJson(file: string): unknown {
   return JSON.parse(fs.readFileSync(file, "utf8"));
@@ -119,9 +142,7 @@ export async function pollMcpIntents(client: NodeClient, paths: NodePaths, infli
     const [frame] = body.tool === "assign_self" ? await client.registerMcpAssignment(body, beforeSnapshot) : client.registerMcpIntent(body);
     if (expired(body)) return true;
     if (!frame && body.tool === "assign_self") {
-      recordMcpIntentReceipt(paths, inflight, { requestId: body.requestId, ok: false, error: body.assignment?.slot === "kherep-lead"
-        ? "latest direct appointment in the current original Codex Mac turn is required"
-        : "verified original Codex Mac identity and native title are required" });
+      persistMcpIntentReceipt(paths, inflight, negativeReceipt(body.requestId, "node_assignment_preparation"));
       return true;
     }
     if (!frame || !send(frame)) return false;
@@ -143,6 +164,14 @@ export async function pollMcpIntents(client: NodeClient, paths: NodePaths, infli
 
 export function recordMcpIntentReceipt(paths: NodePaths, inflight: Set<string>, body: McpIntentReceiptBody): void {
   if (!isMcpIntentReceiptBody(body)) return;
+  // Only exact canonical Worker negatives can acquire a Worker category. Never
+  // trust a remotely supplied local category or retain free-form error text.
+  const category = !body.ok && Object.keys(body).sort().join(",") === "error,ok,requestId"
+    ? WORKER_REJECTIONS.get(body.error as Parameters<typeof WORKER_REJECTIONS.get>[0]) : undefined;
+  persistMcpIntentReceipt(paths, inflight, body.ok ? body : negativeReceipt(body.requestId, category));
+}
+
+function persistMcpIntentReceipt(paths: NodePaths, inflight: Set<string>, body: LocalMcpIntentReceipt): void {
   ensureDir(paths.mcpReceipts);
   for (const name of fs.readdirSync(paths.mcpReceipts).filter((entry) => entry.endsWith(".json"))) {
     const file = path.join(paths.mcpReceipts, name);
@@ -155,17 +184,26 @@ export function recordMcpIntentReceipt(paths: NodePaths, inflight: Set<string>, 
   }
 }
 
-export function readMcpIntentReceipt(paths: NodePaths, requestId: string): McpIntentReceiptBody | null {
+export function readMcpIntentReceipt(paths: NodePaths, requestId: string): LocalMcpIntentReceipt | null {
   try {
     const body = readJson(fileOf(paths.mcpReceipts, requestId));
-    return isMcpIntentReceiptBody(body) ? body : null;
+    if (!isMcpIntentReceiptBody(body)) return null;
+    if (body.ok) return body;
+    const local = body as McpIntentReceiptBody & { diagnosticVersion?: unknown; rejectionCategory?: unknown };
+    const category = local.rejectionCategory;
+    const recognized = category === "node_assignment_preparation"
+      || [...WORKER_REJECTIONS.values()].some(value => value === category);
+    const valid = body.requestId === requestId && body.error === NEGATIVE_RECEIPT_ERROR && local.diagnosticVersion === 1
+      && Object.keys(body).sort().join(",") === "diagnosticVersion,error,ok,rejectionCategory,requestId" && recognized;
+    return { requestId: body.requestId, ok: false, error: body.error,
+      ...(valid ? { rejectionCategory: category as McpIntentRejection } : {}) };
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
     throw error;
   }
 }
 
-export function consumeMcpIntentReceipt(paths: NodePaths, requestId: string): McpIntentReceiptBody | null {
+export function consumeMcpIntentReceipt(paths: NodePaths, requestId: string): LocalMcpIntentReceipt | null {
   const body = readMcpIntentReceipt(paths, requestId);
   if (body) fs.unlinkSync(fileOf(paths.mcpReceipts, requestId));
   return body;

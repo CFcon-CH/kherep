@@ -145,7 +145,7 @@ describe("native MCP invocation modes (issue #193)", () => {
       expect(late.isError).toBe(true);
       expect(late.content).toEqual([{ type: "text", text: "native session is no longer registered" }]);
       expect(await node.nativeHook(nativeInput(CHAT_B, "toolu_ended_2", "send", input))).toStrictEqual({ hookSpecificOutput: {
-        hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: "remote_mcp_intent_rejected" } });
+        hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: "remote_mcp_intent_rejected_worker_session" } });
       expect(await registry().listMessages(node.nodeId, 100)).toEqual([]);
     } finally {
       await node.close();
