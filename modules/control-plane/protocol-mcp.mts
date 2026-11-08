@@ -100,7 +100,10 @@ export function isMcpAssignment(value: unknown, sessionId: string): value is Mcp
 }
 
 export function isMcpLeadConfirmRequest(value: unknown): value is McpLeadConfirmRequest {
-  return isObject(value) && Object.keys(value).sort().join(",") === "argumentsDigest,callId,credentialVersion,expiresAt,leadGuardVersion,nodeId,nonce,requestId,sessionId,slot,threadId,turnId"
+  return isObject(value) && Object.keys(value).sort((left, right) => {
+    if (left < right) return -1;
+    return left > right ? 1 : 0;
+  }).join(",") === "argumentsDigest,callId,credentialVersion,expiresAt,leadGuardVersion,nodeId,nonce,requestId,sessionId,slot,threadId,turnId"
     && typeof value.nonce === "string" && UUID.test(value.nonce) && value.nonce !== value.requestId
     && typeof value.nodeId === "string" && UUID.test(value.nodeId)
     && typeof value.requestId === "string" && UUID.test(value.requestId)
@@ -111,7 +114,10 @@ export function isMcpLeadConfirmRequest(value: unknown): value is McpLeadConfirm
     && Number.isSafeInteger(value.credentialVersion) && Number(value.credentialVersion) > 0 && Number.isSafeInteger(value.expiresAt);
 }
 export function isMcpLeadConfirmResponse(value: unknown): value is McpLeadConfirmResponse {
-  return isObject(value) && Object.keys(value).sort().join(",") === "allowed,nonce"
+  return isObject(value) && Object.keys(value).sort((left, right) => {
+    if (left < right) return -1;
+    return left > right ? 1 : 0;
+  }).join(",") === "allowed,nonce"
     && typeof value.nonce === "string" && UUID.test(value.nonce) && typeof value.allowed === "boolean";
 }
 
