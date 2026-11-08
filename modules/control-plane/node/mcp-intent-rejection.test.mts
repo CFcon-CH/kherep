@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
 import fs from "node:fs";
 import os from "node:os";
@@ -40,6 +40,57 @@ function fixture(t: test.TestContext) {
   return { root, paths };
 }
 
+// Node 24.1 emits this exact warning and hint when loading .mts children.
+// Allow one pair at the start; preserve every other stderr byte for the assertion.
+const TYPE_STRIPPING_WARNING = new RegExp("^\\(node:\\d+\\) ExperimentalWarning: Type Stripping is an experimental "
+  + "feature and might change at any time\\r?\\n\\(Use `node --trace-warnings \\.\\.\\.` to show where the warning was "
+  + "created\\)\\r?\\n");
+
+function readHookOutput(stdout: string, stderr: string): Record<string, unknown> {
+  assert.equal((stdout + stderr).includes(SENTINEL), false, "synthetic secret leaked in raw hook output");
+  assert.equal(stderr.replace(TYPE_STRIPPING_WARNING, ""), "", "unexpected hook stderr");
+  return JSON.parse(stdout).hookSpecificOutput as Record<string, unknown>;
+}
+
+function syntheticHookOutput(stderr: string, stdout = JSON.stringify({ hookSpecificOutput: { synthetic: true } })) {
+  const child = spawnSync(process.execPath, ["-e",
+    "const data = JSON.parse(require('node:fs').readFileSync(0, 'utf8')); "
+      + "process.stdout.write(data.stdout); process.stderr.write(data.stderr);"],
+    { input: JSON.stringify({ stdout, stderr }), encoding: "utf8" });
+  assert.equal(child.status, 0, child.stderr);
+  return readHookOutput(child.stdout, child.stderr);
+}
+
+const SYNTHETIC_TYPE_STRIPPING_WARNING = "(node:1234) ExperimentalWarning: Type Stripping is an experimental feature "
+  + "and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\n";
+
+test("hook output accepts only the known type-stripping warning or empty stderr", () => {
+  for (const stderr of ["", SYNTHETIC_TYPE_STRIPPING_WARNING, SYNTHETIC_TYPE_STRIPPING_WARNING.replaceAll("\n", "\r\n")]) {
+    assert.deepEqual(syntheticHookOutput(stderr), { synthetic: true });
+  }
+});
+
+test("hook output rejects unrelated stderr even alongside the known warning", () => {
+  for (const stderr of ["unexpected noise\n", SYNTHETIC_TYPE_STRIPPING_WARNING + "unexpected noise\n",
+    "unexpected noise\n" + SYNTHETIC_TYPE_STRIPPING_WARNING,
+    SYNTHETIC_TYPE_STRIPPING_WARNING.replace("Type Stripping", "Other Feature"),
+    SYNTHETIC_TYPE_STRIPPING_WARNING.split("\n")[1] + "\n",
+    SYNTHETIC_TYPE_STRIPPING_WARNING.replace("created)", "created) extra"),
+    SYNTHETIC_TYPE_STRIPPING_WARNING + "\n", SYNTHETIC_TYPE_STRIPPING_WARNING.repeat(2),
+    SYNTHETIC_TYPE_STRIPPING_WARNING.split("\n")[0] + "\n"]) {
+    assert.throws(() => syntheticHookOutput(stderr), /unexpected hook stderr/);
+  }
+});
+
+test("hook output checks raw stdout and stderr for synthetic secrets before allowing runtime warnings", () => {
+  for (const stderr of [SENTINEL, SYNTHETIC_TYPE_STRIPPING_WARNING + SENTINEL,
+    SYNTHETIC_TYPE_STRIPPING_WARNING.replace("created)", `created) ${SENTINEL}`)]) {
+    assert.throws(() => syntheticHookOutput(stderr), /synthetic secret leaked in raw hook output/);
+  }
+  assert.throws(() => syntheticHookOutput(SYNTHETIC_TYPE_STRIPPING_WARNING,
+    JSON.stringify({ hookSpecificOutput: { secret: SENTINEL } })), /synthetic secret leaked in raw hook output/);
+});
+
 function hook(t: test.TestContext, root: string, tool = "status", toolInput: object = { messageId: OTHER }) {
   const child = spawn(process.execPath, [path.join(import.meta.dirname, "mcp-intent-hook.mts"), "--config-root", root],
     { stdio: ["pipe", "pipe", "pipe"] });
@@ -49,9 +100,7 @@ function hook(t: test.TestContext, root: string, tool = "status", toolInput: obj
   child.stderr.on("data", chunk => { stderr += String(chunk); });
   const result = once(child, "close").then(([code]) => {
     assert.equal(code, 0, stderr);
-    assert.equal(stderr, "");
-    assert.equal((stdout + stderr).includes(SENTINEL), false);
-    return JSON.parse(stdout).hookSpecificOutput as Record<string, unknown>;
+    return readHookOutput(stdout, stderr);
   });
   child.stdin.end(JSON.stringify({ hook_event_name: "PreToolUse", session_id: SESSION,
     tool_use_id: crypto.randomUUID(), turn_id: OTHER, tool_name: `mcp__kherep_messaging__${tool}`, tool_input: toolInput }));
