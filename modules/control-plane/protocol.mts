@@ -15,6 +15,7 @@ export const MESSAGE_TYPES = [
   "task.report", "task.request",
   "mcp.credential.rotate", "mcp.credential", "mcp.intent.register", "mcp.intent.receipt",
   "mcp.inbox.request", "mcp.inbox.response",
+  "mcp.lead.confirm.request", "mcp.lead.confirm.response",
 ] as const;
 export type MessageType = (typeof MESSAGE_TYPES)[number];
 

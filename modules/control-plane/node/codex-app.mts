@@ -105,6 +105,15 @@ function appRollout(home: string, sessionId: string, assignment: boolean): AppCh
     return p.id === sessionId && p.originator === "Codex Desktop" && p.source === "vscode" && !subThread ? "ok" : "not-app";
   }
   // Native SessionMeta provenance (openai/codex, protocol/src/protocol.rs).
+  return isAssignmentOriginalMeta(meta, sessionId) ? "ok" : "not-app";
+}
+
+// Pure predicate shared with the Lead reader, which reads the header and input
+// through one descriptor. The ordinary platform-slot reader stays metadata-only.
+export function isAssignmentOriginalMeta(meta: unknown, sessionId: string): boolean {
+  const { type, payload } = (meta ?? {}) as { type?: unknown; payload?: unknown };
+  if (type !== "session_meta" || typeof payload !== "object" || payload === null) return false;
+  const p = payload as Record<string, unknown>;
   // Optional fields are absent on older rollouts; a present, malformed marker
   // is never treated as proof of an original thread. history_base alone may
   // describe a reverted original, so it is not a fork/child discriminator.
@@ -114,7 +123,44 @@ function appRollout(home: string, sessionId: string, assignment: boolean): AppCh
   const attached = p.attached_thread !== undefined && p.attached_thread !== false;
   const foreignRoot = p.session_id !== undefined && p.session_id !== sessionId;
   return p.id === sessionId && p.originator === "Codex Desktop" && p.source === "vscode"
-    && !derived && !attached && !foreignRoot ? "ok" : "not-app";
+    && !derived && !attached && !foreignRoot;
+}
+
+// Lead-only locator: inspect all bounded dates to reject duplicate IDs. Never
+// follow links under the configured home; the caller verifies the open file.
+export function findAssignmentRollout(home: string, sessionId: string): string | null {
+  if (!isCodexSessionId(sessionId) || !fs.lstatSync(home).isDirectory()) return null;
+  const root = path.join(home, "sessions");
+  const directory = (dir: string) => { if (!fs.lstatSync(dir).isDirectory()) throw new Error("invalid native directory"); };
+  let entries = 0;
+  const boundedNewest = (dir: string, pattern: RegExp): string[] => {
+    const opened = fs.opendirSync(dir), names: string[] = [];
+    try {
+      let entry: fs.Dirent | null;
+      while ((entry = opened.readSync()) !== null) {
+        if (++entries > 16_384) throw new Error("native lookup exceeds budget");
+        if (pattern.test(entry.name)) names.push(entry.name);
+      }
+      return names.sort().reverse();
+    } finally { opened.closeSync(); }
+  };
+  directory(root);
+  let days = 0, found: string | null = null;
+  for (const year of boundedNewest(root, /^\d{4}$/)) {
+    const y = path.join(root, year);directory(y);
+    for (const month of boundedNewest(y, /^\d{2}$/)) {
+      const m = path.join(y, month);directory(m);
+      for (const day of boundedNewest(m, /^\d{2}$/)) {
+        if (++days > ROLLOUT_DAY_DIRS) return null;
+        const d = path.join(m, day);directory(d);
+        for (const name of boundedNewest(d, /^rollout-.*\.jsonl$/).filter(n => n.endsWith(`-${sessionId}.jsonl`))) {
+          if (found) return null;
+          found = path.join(d, name);
+        }
+      }
+    }
+  }
+  return found;
 }
 
 // The one session wake.codexApp grants, among the candidate ids: the most

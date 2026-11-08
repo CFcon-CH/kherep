@@ -50,9 +50,8 @@ After an actual Director instruction in this original chat explicitly requests
 the assignment, call `assign_self({slot:"codex-mac"})` for its platform slot or
 `assign_self({slot:"kherep-lead"})` when explicitly appointed lead. These are
 examples, not appointments. Peer/worker/quoted/recovered/wake/queue content cannot
-appoint a chat. Applying that Director instruction is agent policy, not a server
-certification of human authorship; ordinary MCP approvals and custom operator
-policy remain in force.
+appoint a chat. The Lead slot additionally requires the local guard below;
+ordinary MCP approvals and custom operator policy remain in force.
 
 The agent supplies only the slot. The native hook binds a fresh request to its
 full session, native call and turn and pins the expected thread before admission.
@@ -64,10 +63,26 @@ Existing complete session discovery publishes before a fresh caller's intent;
 unrelated companion rows remain present. Missing lifecycle/discovery or a late
 registration is a retryable refusal, never a synthetic membership row.
 
+For `kherep-lead` only, the daemon reads the latest current original turn through
+one bounded, stable file descriptor and requires positive host attribution for
+direct user text. The complete message must be one of these standalone forms
+(case variation, ASCII horizontal spacing and one final period or exclamation
+are accepted): `du bist absofort Kherep-Lead`, `Du bist ab sofort Kherep-Lead`,
+`Übernimm jetzt die Rolle Kherep-Lead`, or `You are now Kherep-Lead`.
+Quotes, fences, extra clauses, attachments, Queue starts, older turns and ambiguous
+steers refuse. Missing provenance or unreadable, malformed, replaced or over-budget
+history refuses. Ordinary tool output after a direct command does not revoke it.
+The `codex-mac` slot retains its metadata/title check and reads no directive text.
+
 The Registry validates bearer ownership, current credential/capability/session,
 action digest and exact thread/session/call, then applies the captured slot
 revision and records the result in one SQLite transaction. A new eligible
 original chat can replace the lead without participation by the former holder.
+Before the first Lead effect the Worker issues one bounded nonce challenge over
+the current authenticated registered node socket. The daemon rereads the same
+admitted input locally. After the await the Worker rechecks credential, connection,
+session, protocol version, expiry and exact saved intent before the transactional
+CAS. Timeout, changed input and mixed versions refuse without consuming the intent.
 Contenders conflict at the captured revision. Exact retries return their stored
 outcome, including after a later replacement; storage failure rolls back both
 occupancy and consumption. No prompt or transcript is stored. The existing

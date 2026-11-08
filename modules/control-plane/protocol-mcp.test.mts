@@ -4,7 +4,9 @@ import test from "node:test";
 import {
   CLAUDE_MCP_CAPABILITY, REMOTE_MCP_CAPABILITY, isMcpInboxRequestBody, isMcpIntentClaim,
   isMcpIntentRegistration, type McpIntentRegistration,
+  isMcpLeadConfirmRequest, isMcpLeadConfirmResponse,
 } from "./protocol-mcp.mts";
+import { isMcpIntentRegistration as legacyRegistration } from "./test/fixtures/protocol-mcp-pre-lead.mts";
 
 const base = {
   requestId: "30000000-0000-4000-8000-000000000001",
@@ -13,6 +15,30 @@ const base = {
   tool: "sessions",
   argumentsDigest: "a".repeat(64),
 } as const;
+
+test("Lead enriched proof is exact, slot-specific and refuses both mixed-version downgrades", () => {
+  const sessionId = "11111111-1111-4111-8111-111111111111";
+  const queue = { ...base, runtime: "codex", sessionId, threadId: sessionId, tool: "assign_self",
+    assignment: { slot: "kherep-lead", turnId: "synthetic-turn" } };
+  const native = { sessionId, chatName: "Synthetic original", platform: "darwin", originalMain: true };
+  const guarded = { ...queue, assignment: { ...queue.assignment, native: { ...native, leadGuardVersion: 1 } } };
+  assert.equal(isMcpIntentRegistration(queue), true);
+  assert.equal(isMcpIntentRegistration(guarded), true);assert.equal(legacyRegistration(guarded), false);
+  assert.equal(isMcpIntentRegistration({ ...queue, assignment: { ...queue.assignment, native } }), false);
+  for (const change of [{ leadGuardVersion: 2 }, { approved: true }, { transcriptPath: "/synthetic/override.jsonl" }]) {
+    assert.equal(isMcpIntentRegistration({ ...guarded, assignment: { ...guarded.assignment, native: { ...guarded.assignment.native, ...change } } }), false);
+  }
+  assert.equal(isMcpIntentRegistration({ ...guarded, assignment: { ...guarded.assignment, slot: "codex-mac" } }), false);
+  const request = { nonce: "22222222-2222-4222-8222-222222222222", nodeId: "33333333-3333-4333-8333-333333333333",
+    requestId: base.requestId, sessionId, threadId: sessionId, turnId: "synthetic-turn", callId: base.callId, slot: "kherep-lead",
+    argumentsDigest: base.argumentsDigest, credentialVersion: 1, leadGuardVersion: 1, expiresAt: 1000 };
+  assert.equal(isMcpLeadConfirmRequest(request), true);
+  for (const change of [{ nonce: base.requestId }, { slot: "codex-mac" }, { leadGuardVersion: 2 }, { approved: true }, { transcriptPath: "/synthetic" }, { threadId: "foreign" }])
+    assert.equal(isMcpLeadConfirmRequest({ ...request, ...change }), false);
+  assert.equal(isMcpLeadConfirmResponse({ nonce: request.nonce, allowed: true }), true);
+  assert.equal(isMcpLeadConfirmResponse({ nonce: request.nonce, allowed: true, text: "forged" }), false);
+  assert.equal(isMcpLeadConfirmResponse({ nonce: request.nonce, allowed: "true" }), false);
+});
 
 test("Claude MCP has a separate capability and accepts only native identity without a thread", () => {
   assert.equal(REMOTE_MCP_CAPABILITY, "mcp.messaging.v1");

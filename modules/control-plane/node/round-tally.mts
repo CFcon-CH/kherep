@@ -18,6 +18,7 @@ export const TALLY_KINDS = [
   "frame:directory.get", "frame:directory", "frame:task.report", "frame:task.request",
   "frame:mcp.credential.rotate", "frame:mcp.credential", "frame:mcp.intent.register", "frame:mcp.intent.receipt",
   "frame:mcp.inbox.request", "frame:mcp.inbox.response",
+  "frame:mcp.lead.confirm.request", "frame:mcp.lead.confirm.response",
   "unknown",
 ] as const;
 export type TallyKind = (typeof TALLY_KINDS)[number];

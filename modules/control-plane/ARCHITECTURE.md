@@ -21,8 +21,21 @@ The authenticated `GET /api/intercom/slots` reads exactly these five stored rows
 The scoped MCP `assign_self({slot})` path supports Codex Mac originals and
 captures revision, exact native identity/title and replay outcome in the existing
 intent transaction. The enrolled node recomputes original metadata; the Worker
-binds bearer/session/thread/call and checks enrollment. Explicit appointment is
-agent instruction policy, not independent server proof of human authorship.
+binds bearer/session/thread/call and checks enrollment. For `kherep-lead` only,
+the daemon requires a standalone direct appointment in the latest positively
+attributed input of the bound original turn. Its descriptor/tail reader refuses
+unknown attribution, Queue starts, ambiguous steers and unstable history. Local
+admission witnesses never cross the socket. The Worker requires guard version 1
+and a fresh nonce-bound confirmation from the current registered socket before
+the first effect, then revalidates the exact stored binding and current credential,
+session, connection and expiry before committing CAS and result together.
+Applied retries are historical, read-only outcomes with no renewed appointment.
+Legacy unapplied Lead rows and mixed versions refuse. `codex-mac` keeps its existing
+metadata/title-only route and performs no directive reads or challenges.
+This trusts first-party host attribution within the enrolled-node model; a hostile
+trusted client can impersonate that input. The final stable local sample cannot
+atomically observe future filesystem writes with remote SQLite. Actual Desktop
+emission of the required fields and live activation remain UNKNOWN.
 There is no generic slot setter or caller-supplied identity/name.
 There is no participant registration, directory backfill or discovery change.
 A future deployment of this schema would create five empty revision-zero rows

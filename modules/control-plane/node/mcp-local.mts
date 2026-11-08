@@ -119,7 +119,9 @@ export async function pollMcpIntents(client: NodeClient, paths: NodePaths, infli
     const [frame] = body.tool === "assign_self" ? await client.registerMcpAssignment(body, beforeSnapshot) : client.registerMcpIntent(body);
     if (expired(body)) return true;
     if (!frame && body.tool === "assign_self") {
-      recordMcpIntentReceipt(paths, inflight, { requestId: body.requestId, ok: false, error: "verified original Codex Mac identity and native title are required" });
+      recordMcpIntentReceipt(paths, inflight, { requestId: body.requestId, ok: false, error: body.assignment?.slot === "kherep-lead"
+        ? "latest direct appointment in the current original Codex Mac turn is required"
+        : "verified original Codex Mac identity and native title are required" });
       return true;
     }
     if (!frame || !send(frame)) return false;
