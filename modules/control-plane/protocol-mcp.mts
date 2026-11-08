@@ -12,10 +12,16 @@ export type McpTool = (typeof MCP_TOOLS)[number];
 export type McpRuntime = "codex" | "claude-code";
 export const SELF_ASSIGNMENT_SLOTS = ["codex-mac", "kherep-lead"] as const;
 export type SelfAssignmentSlot = (typeof SELF_ASSIGNMENT_SLOTS)[number];
-export interface McpAssignmentNative { sessionId: string; chatName: string; platform: "darwin"; originalMain: true }
+export interface McpAssignmentNative { sessionId: string; chatName: string; platform: "darwin"; originalMain: true; leadGuardVersion?: 1 }
 export interface McpAssignment { slot: SelfAssignmentSlot; turnId: string; native?: McpAssignmentNative }
 export type McpAssignmentResult = { ok: true; slot: SelfAssignmentSlot; revision: number }
   | { ok: false; error: string; conflict?: true };
+export interface McpLeadConfirmRequest {
+  nonce: string; nodeId: string; requestId: string; sessionId: string; threadId: string; turnId: string;
+  callId: string; slot: "kherep-lead"; argumentsDigest: string; credentialVersion: number; leadGuardVersion: 1; expiresAt: number;
+}
+export interface McpLeadConfirmResponse { nonce: string; allowed: boolean }
+export const MCP_LEAD_CONFIRM_MS = 5_000;
 
 interface McpIntentCommon {
   requestId: string;
@@ -83,13 +89,30 @@ export function isMcpAssignment(value: unknown, sessionId: string): value is Mcp
     || !isSelfAssignmentSlot(value.slot) || !isShortString(value.turnId, 128)) return false;
   if (value.native === undefined) return true;
   const native = value.native;
+  const keys = value.slot === "kherep-lead" ? "chatName,leadGuardVersion,originalMain,platform,sessionId" : "chatName,originalMain,platform,sessionId";
   return isObject(native) && Object.keys(native).sort((left, right) => {
     if (left < right) return -1;
     return left > right ? 1 : 0;
-  }).join(",") === "chatName,originalMain,platform,sessionId"
+  }).join(",") === keys && (value.slot !== "kherep-lead" || native.leadGuardVersion === 1)
     && native.originalMain === true && native.platform === "darwin" && native.sessionId === sessionId
     && isShortString(native.chatName, 1024) && native.chatName.trim().length > 0
     && !/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u.test(native.chatName);
+}
+
+export function isMcpLeadConfirmRequest(value: unknown): value is McpLeadConfirmRequest {
+  return isObject(value) && Object.keys(value).sort().join(",") === "argumentsDigest,callId,credentialVersion,expiresAt,leadGuardVersion,nodeId,nonce,requestId,sessionId,slot,threadId,turnId"
+    && typeof value.nonce === "string" && UUID.test(value.nonce) && value.nonce !== value.requestId
+    && typeof value.nodeId === "string" && UUID.test(value.nodeId)
+    && typeof value.requestId === "string" && UUID.test(value.requestId)
+    && typeof value.sessionId === "string" && UUID.test(value.sessionId) && value.threadId === value.sessionId
+    && isShortString(value.turnId, 128) && isShortString(value.callId, 128)
+    && value.slot === "kherep-lead" && value.leadGuardVersion === 1
+    && typeof value.argumentsDigest === "string" && DIGEST.test(value.argumentsDigest)
+    && Number.isSafeInteger(value.credentialVersion) && Number(value.credentialVersion) > 0 && Number.isSafeInteger(value.expiresAt);
+}
+export function isMcpLeadConfirmResponse(value: unknown): value is McpLeadConfirmResponse {
+  return isObject(value) && Object.keys(value).sort().join(",") === "allowed,nonce"
+    && typeof value.nonce === "string" && UUID.test(value.nonce) && typeof value.allowed === "boolean";
 }
 
 export function isMcpTool(value: unknown): value is McpTool {

@@ -1,10 +1,12 @@
 import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { digestMcpArguments, REMOTE_MCP_CAPABILITY } from "../../protocol-mcp.mts";
 import { FACTS, newKey, registry, authenticate, until } from "./helpers.mts";
-import { makeEnvelope } from "../../protocol.mts";
+import { makeEnvelope, parseEnvelope } from "../../protocol.mts";
+import type { McpAssignmentNative } from "../../protocol-mcp.mts";
+import type { TestSocket } from "./helpers.mts";
 import { handleMcp } from "../src/mcp-http.mts";
 import type { Env } from "../src/env.mts";
 
@@ -30,23 +32,63 @@ async function source(sessionId = SESSION, title = "Synthetic original A") {
   const credential = await registry().rotateMcpCredential(nodeId);
   if (!credential.ok) throw Error("synthetic credential failed");
   const credentialVersion = credential.version;
+  let socket: TestSocket | undefined, sequence = 0, challenges = 0, allowLead = true;
+  let responseMode: "normal" | "wrong-nonce" | "silent" = "normal";
+  let onChallenge: ((nonce: string) => Promise<void>) | undefined;
+  const connectLead = async () => {
+    if (socket) return;
+    socket = await authenticate(nodeId, key);
+    socket.send(makeEnvelope("register", { facts, runtimes: [{ name: "codex", kind: "cli" }], capabilities: [REMOTE_MCP_CAPABILITY] }, ++sequence, 0));
+    await vi.waitFor(async () => {
+      const ready = await runInDurableObject(registry(), (_instance, state) => state.storage.sql.exec("SELECT registration_token,message_connection_token FROM nodes WHERE id=?", nodeId).one());
+      expect(typeof ready.registration_token).toBe("string");expect(ready.registration_token).toBe(ready.message_connection_token);
+    });
+    socket.ws.addEventListener("message", event => {
+      const parsed = parseEnvelope(event.data as string);
+      if (!parsed.ok || parsed.envelope.type !== "mcp.lead.confirm.request") return;
+      challenges++;
+      const body = parsed.envelope.body as { nonce: string };
+      void (async () => {
+        if (onChallenge) await onChallenge(body.nonce);
+        if (socket!.ws.readyState === 1 && responseMode !== "silent") socket!.send(makeEnvelope("mcp.lead.confirm.response", {
+          nonce: responseMode === "wrong-nonce" ? crypto.randomUUID() : body.nonce, allowed: allowLead }, ++sequence, 0));
+      })();
+    });
+  };
   async function registration(slot: "codex-mac" | "kherep-lead") {
     const requestId = crypto.randomUUID(), callId = crypto.randomUUID(), argumentsDigest = await digestMcpArguments({ slot });
     return { requestId, runtime: "codex" as const, sessionId, threadId: sessionId, callId,
       tool: "assign_self" as const, argumentsDigest,
-      assignment: { slot, turnId: TURN, native: { sessionId, chatName: title, platform: "darwin" as const, originalMain: true as const } } };
+      assignment: { slot, turnId: TURN, native: { sessionId, chatName: title, platform: "darwin", originalMain: true,
+        ...(slot === "kherep-lead" ? { leadGuardVersion: 1 } : {}) } as McpAssignmentNative } };
   }
   async function intent(slot: "codex-mac" | "kherep-lead") {
+    if (slot === "kherep-lead") await connectLead();
     const value = await registration(slot);
     const accepted = await registry().registerMcpIntent(nodeId, value);
     expect(accepted.ok).toBe(true);
     return { nodeId, credentialVersion, requestId: value.requestId, runtime: "codex" as const,
       sessionId, threadId: sessionId, callId: value.callId, tool: "assign_self" as const, argumentsDigest: value.argumentsDigest };
   }
-  return { nodeId, sessionId, title, intent, registration, credential, key };
+  return { nodeId, sessionId, title, intent, registration, credential, key, challenges: () => challenges,
+    allowLead: (allow: boolean) => { allowLead = allow; }, onChallenge: (fn: (nonce: string) => Promise<void>) => { onChallenge = fn; },
+    responseMode: (mode: typeof responseMode) => { responseMode = mode; },
+    socket: () => socket, close: () => socket?.ws.close() };
 }
 
 describe("native self-assignment transaction", () => {
+  const pending = (requestId: string) => runInDurableObject(registry(), (_instance, state) =>
+    state.storage.sql.exec("SELECT claimed_at,outcome,assignment_result FROM mcp_intents WHERE request_id=?", requestId).one());
+  it("refuses legacy unstamped Lead registration without changing roster or consuming an intent", async () => {
+    const a = await source(), value = await a.registration("kherep-lead");
+    delete value.assignment.native.leadGuardVersion;
+    const before = await registry().listIntercomSlots();
+    expect((await registry().registerMcpIntent(a.nodeId, value)).ok).toBe(false);
+    expect(await registry().listIntercomSlots()).toEqual(before);
+    await runInDurableObject(registry(), (_instance, state) => {
+      expect(state.storage.sql.exec("SELECT request_id FROM mcp_intents WHERE request_id=?", value.requestId).toArray()).toEqual([]);
+    });
+  });
   beforeEach(async () => {
     await runInDurableObject(registry(), (_instance, state) => {
       state.storage.sql.exec("UPDATE intercom_slots SET revision=0,node_id=NULL,runtime=NULL,session_id=NULL,chat_name=NULL");
@@ -57,9 +99,11 @@ describe("native self-assignment transaction", () => {
     const before = await registry().listIntercomSlots();
     const first = await a.intent("kherep-lead");
     expect(await registry().assignMcpSlot(first, "kherep-lead")).toEqual({ ok: true, slot: "kherep-lead", revision: 1 });
+    expect(a.challenges()).toBe(1);
     const second = await b.intent("kherep-lead");
     expect(await registry().assignMcpSlot(second, "kherep-lead")).toEqual({ ok: true, slot: "kherep-lead", revision: 2 });
     expect(await registry().assignMcpSlot(first, "kherep-lead")).toEqual({ ok: true, slot: "kherep-lead", revision: 1 });
+    expect(a.challenges()).toBe(1);
     const after = await registry().listIntercomSlots();
     expect(after[0]).toEqual({ slot: "kherep-lead", revision: 2, occupant: {
       nodeId: b.nodeId, runtime: "codex", sessionId: b.sessionId, chatName: b.title } });
@@ -81,6 +125,85 @@ describe("native self-assignment transaction", () => {
     expect(await registry().assignMcpSlot(contender, "kherep-lead")).toEqual(conflict);
     expect(await registry().assignMcpSlot(first, "kherep-lead")).toMatchObject({ ok: true, revision: 1 });
     expect((await registry().listIntercomSlots())[0]?.revision).toBe(2);
+  });
+
+  it("denies a changed latest input during the intent TTL without consuming or changing any roster row", async () => {
+    const a = await source(), request = await a.intent("kherep-lead"), before = await registry().listIntercomSlots(), row = await pending(request.requestId);
+    a.allowLead(false);
+    expect((await registry().assignMcpSlot(request, "kherep-lead")).ok).toBe(false);
+    expect(a.challenges()).toBe(1);expect(await pending(request.requestId)).toEqual(row);expect(await registry().listIntercomSlots()).toEqual(before);
+    a.close();
+  });
+
+  it("refuses an old unapplied SQL row but replays an already recorded old outcome without a challenge", async () => {
+    const a = await source(), stale = await a.intent("kherep-lead"), before = await registry().listIntercomSlots();
+    await runInDurableObject(registry(), (_instance, state) => { state.storage.sql.exec("UPDATE mcp_intents SET lead_guard_version=NULL WHERE request_id=?", stale.requestId); });
+    const row = await pending(stale.requestId);
+    expect((await registry().assignMcpSlot(stale, "kherep-lead")).ok).toBe(false);
+    expect(a.challenges()).toBe(0);expect(await pending(stale.requestId)).toEqual(row);expect(await registry().listIntercomSlots()).toEqual(before);
+    const valid = await a.intent("kherep-lead"), applied = await registry().assignMcpSlot(valid, "kherep-lead");expect(applied.ok).toBe(true);
+    await runInDurableObject(registry(), (_instance, state) => { state.storage.sql.exec("UPDATE mcp_intents SET lead_guard_version=NULL WHERE request_id=?", valid.requestId); });
+    expect(await registry().assignMcpSlot(valid, "kherep-lead")).toEqual(applied);expect(a.challenges()).toBe(1);a.close();
+  });
+
+  it("revalidates credentials, session, registration, proof version, saved revision and expiry after the await", async () => {
+    for (const fault of ["credential", "session", "registration", "version", "revision", "expiry"] as const) {
+      const a = await source(), request = await a.intent("kherep-lead"), before = await registry().listIntercomSlots();
+      a.onChallenge(async () => {
+        await runInDurableObject(registry(), (_instance, state) => {
+          if (fault === "credential") state.storage.sql.exec("UPDATE mcp_credentials SET version=version+1 WHERE node_id=?", a.nodeId);
+          if (fault === "session") state.storage.sql.exec("DELETE FROM sessions WHERE node_id=?", a.nodeId);
+          if (fault === "registration") state.storage.sql.exec("UPDATE nodes SET registration_token=NULL WHERE id=?", a.nodeId);
+          if (fault === "version") state.storage.sql.exec("UPDATE mcp_intents SET lead_guard_version=NULL WHERE request_id=?", request.requestId);
+          if (fault === "revision") state.storage.sql.exec("UPDATE mcp_intents SET assignment_revision=assignment_revision+1 WHERE request_id=?", request.requestId);
+          if (fault === "expiry") state.storage.sql.exec("UPDATE mcp_intents SET expires_at=0 WHERE request_id=?", request.requestId);
+        });
+      });
+      expect((await registry().assignMcpSlot(request, "kherep-lead")).ok).toBe(false);
+      expect(await pending(request.requestId)).toEqual({ claimed_at: null, outcome: null, assignment_result: null });
+      expect(await registry().listIntercomSlots()).toEqual(before);a.close();
+    }
+  });
+
+  it("coalesces concurrent exact Lead calls and records one mutation and one historical result", async () => {
+    const a = await source(), request = await a.intent("kherep-lead");
+    const results = await Promise.all([registry().assignMcpSlot(request, "kherep-lead"), registry().assignMcpSlot(request, "kherep-lead")]);
+    expect(results).toEqual([{ ok: true, slot: "kherep-lead", revision: 1 }, { ok: true, slot: "kherep-lead", revision: 1 }]);
+    expect(a.challenges()).toBe(1);expect((await registry().listIntercomSlots())[0]?.revision).toBe(1);a.close();
+  });
+
+  for (const mode of ["wrong-nonce", "silent"] as const) it(`refuses ${mode} confirmation at timeout with no consumption`, async () => {
+    const a = await source(), request = await a.intent("kherep-lead"), before = await registry().listIntercomSlots(), row = await pending(request.requestId);
+    a.responseMode(mode);
+    expect((await registry().assignMcpSlot(request, "kherep-lead")).ok).toBe(false);
+    expect(await pending(request.requestId)).toEqual(row);expect(await registry().listIntercomSlots()).toEqual(before);a.close();
+  });
+
+  it("refuses a socket that closes during confirmation", async () => {
+    const a = await source(), request = await a.intent("kherep-lead"), before = await registry().listIntercomSlots(), row = await pending(request.requestId);
+    a.onChallenge(async () => { a.close(); });
+    expect((await registry().assignMcpSlot(request, "kherep-lead")).ok).toBe(false);
+    expect(await pending(request.requestId)).toEqual(row);expect(await registry().listIntercomSlots()).toEqual(before);
+  });
+
+  it("refuses a nonce response sent by a replacement socket", async () => {
+    const a = await source(), request = await a.intent("kherep-lead"), before = await registry().listIntercomSlots(), row = await pending(request.requestId);
+    let replacement: TestSocket | undefined;
+    a.onChallenge(async nonce => { replacement = await authenticate(a.nodeId, a.key);replacement.send(makeEnvelope("mcp.lead.confirm.response", { nonce, allowed: true }, 1, 0)); });
+    expect((await registry().assignMcpSlot(request, "kherep-lead")).ok).toBe(false);
+    expect(await pending(request.requestId)).toEqual(row);expect(await registry().listIntercomSlots()).toEqual(before);
+    replacement?.ws.close();a.close();
+  });
+
+  it("HTTP Lead tool succeeds only after an authenticated final challenge and replays without a second one", async () => {
+    const a = await source(), request = await a.intent("kherep-lead"), client = await sdk(a.credential.token);
+    try {
+      const args = { slot: "kherep-lead", requestId: request.requestId }, meta = { sessionId: a.sessionId, threadId: a.sessionId, callId: request.callId };
+      const result = await client.callTool({ name: "assign_self", arguments: args, _meta: meta });expect(result.isError).not.toBe(true);
+      expect(result.structuredContent).toEqual({ ok: true, slot: "kherep-lead", revision: 1 });expect(a.challenges()).toBe(1);
+      a.allowLead(false);expect((await client.callTool({ name: "assign_self", arguments: args, _meta: meta })).structuredContent).toEqual(result.structuredContent);
+      expect(a.challenges()).toBe(1);
+    } finally { await client.close();a.close(); }
   });
 
   it("rejects foreign thread/call/credential/slot and missing current registration without consuming intent", async () => {

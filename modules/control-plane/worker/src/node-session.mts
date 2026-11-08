@@ -17,6 +17,7 @@ import { isCommandArgs } from "../../protocol-tasks.mts";
 import {
   isMcpCredentialRotateBody, isMcpInboxResponseBody, isMcpIntentRegistration, MCP_INBOX_TOO_LARGE,
   type McpInboxResponseBody, type McpRuntime,
+  isMcpLeadConfirmRequest, isMcpLeadConfirmResponse, MCP_LEAD_CONFIRM_MS, type McpLeadConfirmRequest,
 } from "../../protocol-mcp.mts";
 import { handleTaskFrame } from "./task-frames.mts";
 import { flushTaskControl, handleTaskControlEvent } from "./task-control-frames.mts";
@@ -46,6 +47,7 @@ export class NodeSession extends DurableObject<Env> {
   private readonly alarms: AlarmSchedule;
   private readonly references = new NodeReferenceRpc();
   private retryPass: { delivery: boolean } | null = null;
+  private readonly pendingLead = new Map<string, { socket: WebSocket; token: string; resolve: (allowed: boolean) => void; timer: ReturnType<typeof setTimeout> }>();
   private readonly pendingInbox = new Map<string, {
     socket: WebSocket;
     resolve: (body: McpInboxResponseBody) => void;
@@ -109,6 +111,7 @@ export class NodeSession extends DurableObject<Env> {
   // Liveness is decided by the alarm, not by a close, so a node that
   // reconnects within its backoff window never flaps to offline.
   async webSocketClose(ws: WebSocket, code: number, reason: string): Promise<void> {
+    this.clearLead(ws);
     this.references.clear(ws);
     const attachment = ws.deserializeAttachment() as Attachment | null;
     if (attachment?.connectionToken) await registryStub(this.env).invalidateMessageConnection(attachment.nodeId, attachment.connectionToken);
@@ -219,7 +222,9 @@ export class NodeSession extends DurableObject<Env> {
     ws.serializeAttachment({ nodeId: attachment.nodeId, authed: true, connectionToken, registrationAccepted: false, loopCapability: false, connectedAt: attachment.connectedAt, lastNodeSeq: 0 } satisfies Attachment);
     if (!await registryStub(this.env).beginMessageConnection(attachment.nodeId, connectionToken)) { ws.close(CLOSE.unknownOrRevoked, "node unavailable"); return; }
     if (this.authedSocket() !== ws) return;
-    for (const other of this.ctx.getWebSockets()) if (other !== ws) other.close(CLOSE.replaced, "replaced by newer connection");
+    for (const other of this.ctx.getWebSockets()) if (other !== ws) {
+      this.clearLead(other);other.close(CLOSE.replaced, "replaced by newer connection");
+    }
     this.store.set("status", "online");
     this.store.set("lastSeen", now);
     await registryStub(this.env).setStatus(attachment.nodeId, "online", now, connectionToken);
@@ -302,6 +307,29 @@ export class NodeSession extends DurableObject<Env> {
       }, MCP_INBOX_TIMEOUT_MS);
       this.pendingInbox.set(requestId, { socket: ws, resolve, timer });
       this.sendControl(ws, "mcp.inbox.request", { requestId, sessionId, limit, runtime, ...(messageId ? { messageId, reply: true } : {}) });
+    });
+  }
+
+  private clearLead(ws: WebSocket): void {
+    for (const [nonce, pending] of this.pendingLead) if (pending.socket === ws) {
+      clearTimeout(pending.timer);this.pendingLead.delete(nonce);pending.resolve(false);
+    }
+  }
+  requestLeadConfirmation(request: McpLeadConfirmRequest): Promise<boolean> {
+    const ws = this.authedSocket(), a = ws?.deserializeAttachment() as Attachment | undefined;
+    const remaining = request.expiresAt - Date.now();
+    if (!isMcpLeadConfirmRequest(request) || !ws || !a?.connectionToken || !a.registrationAccepted
+      || a.nodeId !== request.nodeId || remaining <= 0 || remaining > MCP_LEAD_CONFIRM_MS
+      || this.pendingLead.size >= 32 || this.pendingLead.has(request.nonce)) return Promise.resolve(false);
+    return new Promise(resolve => {
+      const finish = (allowed: boolean) => {
+        const current = ws.deserializeAttachment() as Attachment;
+        resolve(allowed && Date.now() < request.expiresAt && this.authedSocket() === ws
+          && current.connectionToken === a.connectionToken && current.registrationAccepted === true);
+      };
+      const timer = setTimeout(() => { this.pendingLead.delete(request.nonce);finish(false); }, remaining);
+      this.pendingLead.set(request.nonce, { socket: ws, token: a.connectionToken!, resolve: finish, timer });
+      this.sendControl(ws, "mcp.lead.confirm.request", { ...request });
     });
   }
 
@@ -403,6 +431,13 @@ export class NodeSession extends DurableObject<Env> {
         this.pendingInbox.delete(body.requestId);
         pending.resolve(body.ok ? body : { requestId: body.requestId, ok: false,
           error: body.error === MCP_INBOX_TOO_LARGE ? MCP_INBOX_TOO_LARGE : "originating node inbox read failed" });
+        return;
+      }
+      case "mcp.lead.confirm.response": {
+        if (!isMcpLeadConfirmResponse(body)) return;
+        const pending = this.pendingLead.get(body.nonce), a = ws.deserializeAttachment() as Attachment;
+        if (!pending || pending.socket !== ws || this.authedSocket() !== ws || a.connectionToken !== pending.token || !a.registrationAccepted) return;
+        clearTimeout(pending.timer);this.pendingLead.delete(body.nonce);pending.resolve(body.allowed);
         return;
       }
       case "task.report":

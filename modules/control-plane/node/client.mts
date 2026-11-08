@@ -23,10 +23,11 @@ import {
 } from "../protocol-messages.mts";
 import { signChallenge, type NodeIdentity } from "./identity.mts";
 import { discoverMcpSessions } from "./mcp-session-discovery.mts";
-import { nativeMcpAssignment } from "./mcp-assignment.mts";
+import { nativeMcpAssignment, assignmentWitness, type AssignmentContext } from "./mcp-assignment.mts";
 import { acceptsMessage, advertisedCapabilities, isAllowed, mcpRuntimeEnabled, type NodePolicy } from "./policy.mts";
 import {
   isMcpCredentialBody, isMcpInboxRequestBody, isMcpIntentReceiptBody, isMcpIntentRegistration, MCP_INBOX_TOO_LARGE,
+  isMcpLeadConfirmRequest, MCP_LEAD_CONFIRM_MS,
   type McpCredentialBody, type McpInboxItem, type McpIntentReceiptBody, type McpIntentRegistration, type McpAssignmentNative,
 } from "../protocol-mcp.mts";
 
@@ -54,7 +55,7 @@ export interface ClientOptions {
   runtimes: () => Promise<RuntimeInfo[]>;
   // Rejects when the listing failed, which is not the same as no sessions.
   sessions: (signal?: AbortSignal) => Promise<SessionInfo[]>;
-  assignmentIdentity?: (sessionId: string) => Promise<McpAssignmentNative | null>;
+  assignmentIdentity?: (sessionId: string, context?: AssignmentContext) => Promise<McpAssignmentNative | null>;
   // The daemon publishes this after authentication so service-drained session
   // discovery cannot postpone connectedAt. Transport-free clients keep the
   // original synchronous auth snapshot by default.
@@ -116,6 +117,9 @@ export class NodeClient {
   // Issue #706: the last trimmed or withheld line, so an unchanged count logs once.
   private snapshotLimitLog: string | null = null;
   authenticated = false;
+  private now(): number { return this.options.now?.() ?? Date.now(); }
+  private assignmentGeneration = 0;
+  private readonly leadAdmissions = new Map<string, { binding: McpIntentRegistration; witness: string; generation: number; expiresAt: number; version?: number }>();
   // Issue #408, PR 4 (design r3 section 3.3): what the Worker of the current
   // authenticated connection named in a directory frame received on it; null
   // until that frame, again at every close and every auth.ok. Never read from
@@ -154,6 +158,7 @@ export class NodeClient {
   }
 
   connectionClosed(): void {
+    this.assignmentGeneration++;this.leadAdmissions.clear();
     this.options.selectedReferences?.clear();
     this.authenticated = false;
     this.workerCapabilities = null;
@@ -205,6 +210,7 @@ export class NodeClient {
           return [];
         }
         if ((envelope.body as { name?: unknown }).name !== "auth.ok") return [];
+        this.assignmentGeneration++;this.leadAdmissions.clear();
         this.options.selectedReferences?.clear();
         this.authenticated = true;
         this.workerCapabilities = null;
@@ -256,6 +262,7 @@ export class NodeClient {
         if (this.authenticated && this.policy.remoteMcp?.enabled === true) {
           const body = envelope.body;
           if (isMcpCredentialBody(body) && body.requestId === this.credentialRequestPending) {
+            this.assignmentGeneration++;this.leadAdmissions.clear();
             const stored = body.ok && this.callback(body.requestId, () => this.options.mcpCredential?.(body));
             this.credentialRequestPending = null;
             if (!stored) {
@@ -269,9 +276,37 @@ export class NodeClient {
       case "mcp.intent.receipt":
         if (this.authenticated && this.policy.remoteMcp?.enabled === true) {
           const body = envelope.body;
-          if (isMcpIntentReceiptBody(body)) this.callback(body.requestId, () => this.options.mcpIntentReceipt?.(body));
+          if (isMcpIntentReceiptBody(body)) {
+            const admission = this.leadAdmissions.get(body.requestId);
+            if (admission) { if (body.ok) { admission.version = body.version;admission.expiresAt = Math.min(admission.expiresAt, body.expiresAt); }
+              else this.leadAdmissions.delete(body.requestId); }
+            this.callback(body.requestId, () => this.options.mcpIntentReceipt?.(body));
+          }
         }
         return [];
+      case "mcp.lead.confirm.request": {
+        const body = envelope.body;
+        if (!live || !this.authenticated || !isMcpLeadConfirmRequest(body)) return [];
+        const admission = this.leadAdmissions.get(body.requestId), now = this.now();
+        const eligible = () => live && this.authenticated && mcpRuntimeEnabled(this.policy, "codex")
+          && admission?.generation === this.assignmentGeneration && admission.expiresAt > this.now()
+          && body.expiresAt > this.now() && body.expiresAt <= now + MCP_LEAD_CONFIRM_MS
+          && body.nodeId === this.options.nodeId && admission.version === body.credentialVersion
+          && admission.binding.sessionId === body.sessionId && admission.binding.threadId === body.threadId
+          && admission.binding.callId === body.callId && admission.binding.argumentsDigest === body.argumentsDigest
+          && admission.binding.assignment?.slot === body.slot && admission.binding.assignment.turnId === body.turnId
+          && this.knownMcpIntents([admission.binding]).length === 1;
+        let allowed = false;
+        if (eligible() && admission) {
+          try {
+            const current = await (this.options.assignmentIdentity ?? nativeMcpAssignment)(body.sessionId, body);
+            allowed = eligible() && !!current && current.leadGuardVersion === 1
+              && current.chatName === admission.binding.assignment?.native?.chatName
+              && assignmentWitness(current) === admission.witness;
+          } catch { /* A fixed denial never includes local reader errors. */ }
+        }
+        return [this.frame("mcp.lead.confirm.response", { nonce: body.nonce, allowed })];
+      }
       case "mcp.inbox.request": {
         if (!this.authenticated || !isMcpInboxRequestBody(envelope.body)) return [];
         const body = envelope.body;
@@ -373,7 +408,9 @@ export class NodeClient {
     const capabilities = advertisedCapabilities(policy);
     const wasMcpEnabled = this.policy.remoteMcp?.enabled === true;
     const mcpEnabled = policy.remoteMcp?.enabled === true;
-    if (JSON.stringify(this.policy) !== JSON.stringify(policy)) this.options.selectedReferences?.clear();
+    if (JSON.stringify(this.policy) !== JSON.stringify(policy)) {
+      this.options.selectedReferences?.clear();this.assignmentGeneration++;this.leadAdmissions.clear();
+    }
     this.policy = policy;
     if (wasMcpEnabled && !mcpEnabled) {
       this.credentialRequestPending = null;
@@ -418,13 +455,29 @@ export class NodeClient {
     if (body.tool !== "assign_self" || body.runtime !== "codex" || !body.assignment) return [];
     const local: McpIntentRegistration = { ...body, assignment: { slot: body.assignment.slot, turnId: body.assignment.turnId } };
     if (!this.authenticated || !isMcpIntentRegistration(local) || !mcpRuntimeEnabled(this.policy, "codex")) return [];
+    const lead = local.assignment!.slot === "kherep-lead", generation = this.assignmentGeneration;
+    const context = { ...local.assignment!, requestId: local.requestId, callId: local.callId };
+    const reader = this.options.assignmentIdentity ?? nativeMcpAssignment;
     let native: McpAssignmentNative | null;
-    try { native = await (this.options.assignmentIdentity ?? nativeMcpAssignment)(local.sessionId); } catch { return []; }
+    try { native = await reader(local.sessionId, context); } catch { return []; }
     if (beforePublish && !await beforePublish()) return [];
+    if (lead) {
+      if (!native || native.leadGuardVersion !== 1 || !assignmentWitness(native)) return [];
+      const witness = assignmentWitness(native);
+      try { native = await reader(local.sessionId, context); } catch { return []; }
+      if (!native || assignmentWitness(native) !== witness) return [];
+    }
     if (!native || native.sessionId !== local.sessionId || !this.authenticated || !mcpRuntimeEnabled(this.policy, "codex")
-      || this.knownMcpIntents([local]).length !== 1) return [];
+      || generation !== this.assignmentGeneration || this.knownMcpIntents([local]).length !== 1) return [];
     const enriched: McpIntentRegistration = { ...local, assignment: { ...local.assignment!, native } };
-    return isMcpIntentRegistration(enriched) ? [this.frame("mcp.intent.register", { ...enriched })] : [];
+    if (!isMcpIntentRegistration(enriched)) return [];
+    if (lead) {
+      for (const [id, saved] of this.leadAdmissions) if (saved.expiresAt <= this.now()) this.leadAdmissions.delete(id);
+      if (this.leadAdmissions.size >= 128) return [];
+      this.leadAdmissions.set(local.requestId, { binding: enriched, witness: assignmentWitness(native)!, generation,
+        expiresAt: this.now() + (local.ttlMs ?? 120_000) });
+    }
+    return [this.frame("mcp.intent.register", { ...enriched })];
   }
 
   knownMcpIntents(intents: McpIntentRegistration[]): McpIntentRegistration[] {

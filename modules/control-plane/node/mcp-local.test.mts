@@ -29,7 +29,10 @@ test("assignment hook binds only slot plus native session/turn/call and rejects 
     session_id: sessionId, tool_use_id: "native-call", turn_id: turnId, prompt: "SYNTHETIC PROMPT MUST NOT PERSIST",
     tool_input: { slot: "codex-mac" } };
   for (const denied of [{ ...input, turn_id: undefined }, { ...input, session_id: "short" },
-    { ...input, tool_input: { slot: "codex-windows" } }, { ...input, tool_input: { slot: "codex-mac", chatName: "forged" } }]) {
+    { ...input, tool_input: { slot: "codex-windows" } }, { ...input, tool_input: { slot: "codex-mac", chatName: "forged" } },
+    { ...input, tool_input: { slot: "kherep-lead", approved: true } },
+    { ...input, tool_input: { slot: "kherep-lead", leadGuardVersion: 1 } },
+    { ...input, tool_input: { slot: "kherep-lead", transcriptPath: "/synthetic/transcript.jsonl" } }]) {
     const output = await processMcpIntentHook(denied, root);
     assert.equal(output?.hookSpecificOutput.permissionDecision, "deny");
   }
