@@ -77,6 +77,11 @@ test("permission modes map to sandboxes; bypass flags are never passed", posix, 
   // read-only still gets the outbox as its one extra root.
   assert.deepEqual(readOnly.argv.slice(readOnly.argv.indexOf("--add-dir"), readOnly.argv.indexOf("--add-dir") + 2), ["--add-dir", node.paths.outbox]);
   for (const run of node.runs()) assert.equal(run.argv.filter((a) => a === "--add-dir" || a.startsWith("sandbox_workspace_write")).length, 1);
+  for (const n of [1, 2]) {
+    const files = codexFiles(node.paths, taskId(n));
+    await waitFor(() => readExit(files) !== null, "the permission-mode task exit");
+    assert.deepEqual(readExit(files), { code: 0, signal: null }, "permission-mode task must terminate naturally before teardown");
+  }
 });
 
 test("an exit reports codex's last stderr line, redacted", posix, async (t) => {
