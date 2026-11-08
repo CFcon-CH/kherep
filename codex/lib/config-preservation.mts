@@ -344,7 +344,11 @@ function prepareAnchoredConfig(config: string, options: ManagedConfigOptions) {
       ...currentVariants.map(value => parityConfig.render({ ...value, contextWorkspace: options.contextWorkspace })),
       ...[...currentVariants, ...beforeControlPlaneWindowsVariants].flatMap((value) =>
         [parityConfig.renderBeforeShellDispatcher(value), parityConfig.renderBeforeAdaptedDirectGuards(value),
-          parityConfig.renderBeforeAdaptedIntentHook(value), parityConfig.renderBeforeSelfAssignment(value)]),
+          parityConfig.renderBeforeAdaptedIntentHook(value), parityConfig.renderBeforeSelfAssignment(value),
+          // The immediate predecessor was also installed with this exact workspace binding.
+          ...(options.contextWorkspace === undefined ? [] : [parityConfig.renderBeforeSelfAssignment({
+            ...value, contextWorkspace: options.contextWorkspace,
+          })])]),
       ...[...currentVariants, ...beforeControlPlaneWindowsVariants,
         beforeWindowsCommands, beforeControlPlane].flatMap((current) => {
         const previousStop = { ...current, observationStopHook: false };
