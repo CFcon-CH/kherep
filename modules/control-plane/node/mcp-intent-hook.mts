@@ -105,7 +105,11 @@ export async function processMcpIntentHook(input: Record<string, unknown>, root:
     while (Date.now() < deadline) {
       const receipt = consumeMcpIntentReceipt(paths, requestId);
       if (receipt) {
-        if (!receipt.ok) return timed("rejected", deny("remote_mcp_intent_rejected"));
+        if (!receipt.ok) {
+          const category = receipt.rejectionCategory;
+          const coherent = category && (category !== "node_assignment_preparation" || tool === "assign_self");
+          return timed("rejected", deny(`remote_mcp_intent_rejected${coherent ? `_${category}` : ""}`));
+        }
         return timed("accepted", { hookSpecificOutput: { hookEventName: "PreToolUse",
           ...(runtime === "codex" ? { permissionDecision: "allow" as const } : {}),
           updatedInput: { ...input.tool_input, requestId } } });
