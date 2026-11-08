@@ -83,7 +83,10 @@ export function isMcpAssignment(value: unknown, sessionId: string): value is Mcp
     || !isSelfAssignmentSlot(value.slot) || !isShortString(value.turnId, 128)) return false;
   if (value.native === undefined) return true;
   const native = value.native;
-  return isObject(native) && Object.keys(native).sort().join(",") === "chatName,originalMain,platform,sessionId"
+  return isObject(native) && Object.keys(native).sort((left, right) => {
+    if (left < right) return -1;
+    return left > right ? 1 : 0;
+  }).join(",") === "chatName,originalMain,platform,sessionId"
     && native.originalMain === true && native.platform === "darwin" && native.sessionId === sessionId
     && isShortString(native.chatName, 1024) && native.chatName.trim().length > 0
     && !/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u.test(native.chatName);
