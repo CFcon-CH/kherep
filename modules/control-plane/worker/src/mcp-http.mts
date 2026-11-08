@@ -1,3 +1,4 @@
+import { parseIntercomReference } from "../../protocol-message-binding.mts";
 import { isMessageDiagnostic, type MessageDiagnostic } from "../../protocol-diagnostics.mts";
 import { safeLoopReason } from "../../protocol-loop-brake.mts";
 import { createMcpHandler } from "agents/mcp/server";
@@ -18,6 +19,7 @@ const REQUEST_ID_INSTRUCTION = "The native hook supplies requestId; omit it from
 
 const requestId = z.string().uuid();
 const address = z.object({ nodeId: z.string().uuid(), session: z.string().min(1).max(128) });
+const slotAddress = z.object({ slot: z.enum(["kherep-lead", "codex-windows", "claude-windows", "codex-mac", "claude-mac"]) }).strict();
 const baseResult = z.object({ ok: z.boolean() }).passthrough();
 // A fixed text, never a persisted reason, for an accepted message without progress (issue #197).
 const SILENCE_HINT = `no delivery progress from the target node for at least ${ACCEPTED_SILENCE_MS / 60_000} minutes; `
@@ -60,7 +62,7 @@ async function claimReadIntent(env: Env, principal: Principal, tool: McpTool, re
   const prepared = await prepareIntentClaim(principal, tool, request, args, metaValue);
   if (!prepared.ok) return prepared;
   const claimed = await registryStub(env).claimMcpIntent(prepared.intent);
-  return claimed.ok ? { ...claimed, runtime: prepared.intent.runtime } : claimed;
+  return claimed.ok ? { ...claimed, runtime: prepared.intent.runtime, nativeIntent: prepared.intent } : claimed;
 }
 
 async function prepareIntentClaim(principal: Principal, tool: McpTool, request: string,
@@ -107,35 +109,41 @@ function server(env: Env, principal: Principal): McpServer {
   });
 
   mcp.registerTool("send", { description: `Queue one message from the verified originating session. ${REQUEST_ID_INSTRUCTION}`,
-    inputSchema: z.object({ requestId, to: address, text: z.string().min(1).max(16_384) }), outputSchema: baseResult },
+    inputSchema: z.object({ requestId, to: z.union([address.strict(), slotAddress]), text: z.string().min(1).max(16_384) }), outputSchema: baseResult },
   async ({ requestId: id, to, text }, ctx) => {
     const args = { to, text };
     const prepared = await prepareIntentClaim(principal, "send", id, args, ctx.mcpReq._meta);
     if (!prepared.ok) return error(prepared.error);
-    const sent = await registryStub(env).sendMcpMessage(prepared.intent, to, text);
-    if (!sent.ok) return error("denied" in sent ? sent.error : "message was not accepted", "diagnostic" in sent && isMessageDiagnostic(sent.diagnostic) ? sent.diagnostic : undefined);
+    const sent = "slot" in to ? await registryStub(env).sendMcpSlotMessage(prepared.intent, to.slot, text)
+      : await registryStub(env).sendMcpMessage(prepared.intent, to, text);
     try {
-      await routeEffects(env, sent.effects);
+      if ("effects" in sent && sent.effects) await routeEffects(env, sent.effects);
     } catch {
       await registryStub(env).recordMcpOutcome(principal.nodeId, id, "uncertain");
       return error("message state is uncertain; retry the same native call");
     }
-    return result({ ok: true, messageId: prepared.intent.requestId, state: sent.status.state, ...(sent.status.diagnostic ? { diagnostic: sent.status.diagnostic } : {}) });
+    if (!sent.ok) return error("denied" in sent ? sent.error : "message was not accepted", "diagnostic" in sent && isMessageDiagnostic(sent.diagnostic) ? sent.diagnostic : undefined);
+    return result({ ok: true, messageId: "reference" in sent ? sent.reference : prepared.intent.requestId, state: sent.status.state, ...(sent.status.diagnostic ? { diagnostic: sent.status.diagnostic } : {}) });
   });
 
   mcp.registerTool("status", { description: `Read metadata-only status for one message visible to this node. ${REQUEST_ID_INSTRUCTION}`,
-    inputSchema: z.object({ requestId, messageId: z.string().uuid() }), outputSchema: baseResult,
+    inputSchema: z.object({ requestId, messageId: z.string().refine(value => !!parseIntercomReference(value) || z.string().uuid().safeParse(value).success) }), outputSchema: baseResult,
     annotations: { readOnlyHint: true } }, async ({ requestId: id, messageId }, ctx) => {
     const args = { messageId };
     const verified = await claimReadIntent(env, principal, "status", id, args, ctx.mcpReq._meta);
     if (!verified.ok) return error(verified.error);
-    const record = await registryStub(env).mcpMessageStatus(principal.nodeId, messageId);
+    const protectedRef = parseIntercomReference(messageId);
+    const record = await registryStub(env).mcpMessageStatus(principal.nodeId, protectedRef?.id ?? messageId, protectedRef ? verified.nativeIntent : undefined, protectedRef?.issuedAt);
     if (!record) return error("message status is not available to this node");
+    const replyMessageId = protectedRef && record.replyMessageId
+      ? await registryStub(env).slotReferenceFor(principal.nodeId,verified.sessionId,verified.runtime,record.replyMessageId) ?? undefined
+      : record.replyMessageId;
+    if (protectedRef && !await registryStub(env).verifyMcpOriginalClaim(verified.nativeIntent)) return error("native read authority changed");
     const progress = record.state === "accepted" && isMessageProgress(record.progress) ? record.progress : undefined;
     const silent = silentlyAccepted(record.state, progress, record.updatedAt, Date.now());
     return result({ ok: true, messageId, state: record.state, senderState: senderState(record.state, progress), updatedAt: record.updatedAt,
       ...(safeLoopReason(record.reason) ? { reason: safeLoopReason(record.reason) } : {}), ...(progress ? { progress } : {}), ...(isMessageDiagnostic(record.diagnostic) ? { diagnostic: record.diagnostic } : {}), ...(silent ? { hint: SILENCE_HINT } : {}),
-      ...(record.replyMessageId ? { replyMessageId: record.replyMessageId } : {}) });
+      ...(replyMessageId ? { replyMessageId } : {}) });
   });
 
   mcp.registerTool("inbox", { description: `Read the verified originating session inbox from its online node. ${REQUEST_ID_INSTRUCTION}`,
@@ -144,31 +152,43 @@ function server(env: Env, principal: Principal): McpServer {
     const args = limit === undefined ? {} : { limit };
     const verified = await claimReadIntent(env, principal, "inbox", id, args, ctx.mcpReq._meta);
     if (!verified.ok) return error(verified.error);
-    const response = await sessionStub(env, principal.nodeId).requestMcpInbox(verified.sessionId, limit ?? 10, verified.runtime);
+    const response = await sessionStub(env, principal.nodeId).requestMcpInbox(verified.sessionId, limit ?? 10, verified.runtime, undefined, verified.original);
     if (!response.ok) return error(inboxError(response.error));
-    return result({ ok: true, source: { nodeId: principal.nodeId, sessionId: verified.sessionId }, items: response.items });
+    if (verified.original && !await registryStub(env).verifyMcpOriginalClaim(verified.nativeIntent)) return error("native read authority changed");
+    const items = await Promise.all(response.items.map(async item => {
+      if (!item.reference) return item;
+      if (!verified.original) return null;
+      const reference = await registryStub(env).slotReferenceFor(principal.nodeId,verified.sessionId,verified.runtime,item.messageId);
+      if (reference !== item.reference) return null;
+      const parent = item.inReplyTo ? await registryStub(env).slotReferenceFor(principal.nodeId,verified.sessionId,verified.runtime,item.inReplyTo) : null;
+      const {reference: _reference,inReplyTo: _parent,...body} = item;
+      return {...body,messageId:reference,...(parent ? {inReplyTo:parent} : {})};
+    }));
+    if (verified.original && !await registryStub(env).verifyMcpOriginalClaim(verified.nativeIntent)) return error("native read authority changed");
+    return result({ ok: true, source: { nodeId: principal.nodeId, sessionId: verified.sessionId }, items: items.filter(item=>item !== null) });
   });
 
   mcp.registerTool("reply", { description: `Reply through an existing message relationship. ${REQUEST_ID_INSTRUCTION}`,
-    inputSchema: z.object({ requestId, inReplyTo: z.string().uuid(), text: z.string().min(1).max(16_384) }), outputSchema: baseResult },
+    inputSchema: z.object({ requestId, inReplyTo: z.string().refine(value => !!parseIntercomReference(value) || z.string().uuid().safeParse(value).success), text: z.string().min(1).max(16_384) }), outputSchema: baseResult },
   async ({ requestId: id, inReplyTo, text }, ctx) => {
     const prepared = await prepareIntentClaim(principal, "reply", id, { inReplyTo, text }, ctx.mcpReq._meta);
     if (!prepared.ok) return error(prepared.error);
-    let sent = await registryStub(env).replyMcpMessage(prepared.intent, inReplyTo, text);
+    let sent = parseIntercomReference(inReplyTo) ? await registryStub(env).replyMcpSlotMessage(prepared.intent, inReplyTo, text)
+      : await registryStub(env).replyMcpMessage(prepared.intent, inReplyTo, text);
     if (!sent.ok && "lookup" in sent && sent.lookup !== undefined) {
       // The parent row is gone (issue #308): the replying node supplies the item.
       const inbox = await sessionStub(env, principal.nodeId).requestMcpInbox(sent.lookup, 1, prepared.intent.runtime, inReplyTo);
       sent = await registryStub(env).replyMcpMessage(prepared.intent, inReplyTo, text,
         inbox.ok ? inbox.items.find((item) => item.messageId === inReplyTo) ?? null : null);
     }
-    if (!sent.ok) return error("denied" in sent ? sent.error : "reply was not accepted", "diagnostic" in sent && isMessageDiagnostic(sent.diagnostic) ? sent.diagnostic : undefined);
     try {
-      await routeEffects(env, sent.effects);
+      if ("effects" in sent && sent.effects) await routeEffects(env, sent.effects);
     } catch {
       await registryStub(env).recordMcpOutcome(principal.nodeId, id, "uncertain");
       return error("message state is uncertain; retry the same native call");
     }
-    return result({ ok: true, messageId: prepared.intent.requestId, state: sent.status.state, ...(sent.status.diagnostic ? { diagnostic: sent.status.diagnostic } : {}) });
+    if (!sent.ok) return error("denied" in sent ? sent.error : "reply was not accepted", "diagnostic" in sent && isMessageDiagnostic(sent.diagnostic) ? sent.diagnostic : undefined);
+    return result({ ok: true, messageId: "reference" in sent ? sent.reference : prepared.intent.requestId, state: sent.status.state, ...(sent.status.diagnostic ? { diagnostic: sent.status.diagnostic } : {}) });
   });
 
   return mcp;

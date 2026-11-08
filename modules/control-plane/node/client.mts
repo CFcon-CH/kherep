@@ -1,7 +1,7 @@
 import { compatibleDiagnostic, isMessageDiagnostic, type MessageDiagnostic } from "../protocol-diagnostics.mts";
 import { RecordLockBusy } from "./inbox-record-lock.mts";
 import type { BindingStorageSnapshot } from "./inbox-storage.mts";
-import { isResolveRequest, SELECTED_BINDING_CAPABILITY } from "../protocol-message-binding.mts";
+import { isResolveRequest, SELECTED_BINDING_CAPABILITY, SLOT_BINDING_CAPABILITY } from "../protocol-message-binding.mts";
 import type { MessageReferenceResolver } from "./message-reference.mts";
 import { identitySnapshotOf } from "./session-identity.mts";
 import {
@@ -26,7 +26,7 @@ import { discoverMcpSessions } from "./mcp-session-discovery.mts";
 import { nativeMcpAssignment, assignmentWitness, type AssignmentContext } from "./mcp-assignment.mts";
 import { acceptsMessage, advertisedCapabilities, isAllowed, mcpRuntimeEnabled, type NodePolicy } from "./policy.mts";
 import {
-  isMcpCredentialBody, isMcpInboxRequestBody, isMcpIntentReceiptBody, isMcpIntentRegistration, MCP_INBOX_TOO_LARGE,
+  SLOT_MCP_CAPABILITY, isMcpCredentialBody, isMcpInboxRequestBody, isMcpIntentReceiptBody, isMcpIntentRegistration, MCP_INBOX_TOO_LARGE,
   isMcpLeadConfirmRequest, MCP_LEAD_CONFIRM_MS,
   type McpCredentialBody, type McpInboxItem, type McpIntentReceiptBody, type McpIntentRegistration, type McpAssignmentNative,
 } from "../protocol-mcp.mts";
@@ -79,11 +79,11 @@ export interface ClientOptions {
   mcpCredential?: (body: McpCredentialBody) => void;
   mcpIntentReceipt?: (body: McpIntentReceiptBody) => void;
   mcpDisabled?: () => void;
-  readMcpInbox?: (sessionId: string, limit: number, messageId?: string, runtime?: string) => McpInboxItem[] | Promise<McpInboxItem[]>;
+  readMcpInbox?: (sessionId: string, limit: number, messageId?: string, runtime?: string, original?: boolean) => McpInboxItem[] | Promise<McpInboxItem[]>;
   // Issue #308: the messages a returned inbox response carries, offered to their session.
-  offerMcpInbox?: (messageIds: string[], sessionId: string, runtime: string) => void;
+  offerMcpInbox?: (messageIds: string[], sessionId: string, runtime: string, original?: boolean) => void;
   // Issue #308: the item an MCP reply answers (mcp.inbox.request with reply).
-  answerMcpInbox?: (messageIds: string[], sessionId: string, runtime: string) => void;
+  answerMcpInbox?: (messageIds: string[], sessionId: string, runtime: string, original?: boolean) => void;
   // Issue #197: the runtimes whose last readiness probe passed; a change re-registers.
   readyRuntimes?: () => readonly TaskRuntime[];
   log?: (line: string) => void;
@@ -118,6 +118,8 @@ export class NodeClient {
   private snapshotLimitLog: string | null = null;
   authenticated = false;
   private now(): number { return this.options.now?.() ?? Date.now(); }
+  private nativeCredentialVersion = 0;
+  private readonly originalAdmissions = new Map<string, { binding: McpIntentRegistration; generation: number; expiresAt: number; version?: number; read?: string }>();
   private assignmentGeneration = 0;
   private readonly leadAdmissions = new Map<string, { binding: McpIntentRegistration; witness: string; generation: number; expiresAt: number; version?: number }>();
   // Issue #408, PR 4 (design r3 section 3.3): what the Worker of the current
@@ -158,7 +160,7 @@ export class NodeClient {
   }
 
   connectionClosed(): void {
-    this.assignmentGeneration++;this.leadAdmissions.clear();
+    this.assignmentGeneration++;this.leadAdmissions.clear();this.originalAdmissions.clear();
     this.options.selectedReferences?.clear();
     this.authenticated = false;
     this.workerCapabilities = null;
@@ -210,7 +212,7 @@ export class NodeClient {
           return [];
         }
         if ((envelope.body as { name?: unknown }).name !== "auth.ok") return [];
-        this.assignmentGeneration++;this.leadAdmissions.clear();
+        this.assignmentGeneration++;this.leadAdmissions.clear();this.originalAdmissions.clear();
         this.options.selectedReferences?.clear();
         this.authenticated = true;
         this.workerCapabilities = null;
@@ -262,7 +264,8 @@ export class NodeClient {
         if (this.authenticated && this.policy.remoteMcp?.enabled === true) {
           const body = envelope.body;
           if (isMcpCredentialBody(body) && body.requestId === this.credentialRequestPending) {
-            this.assignmentGeneration++;this.leadAdmissions.clear();
+            this.assignmentGeneration++;this.leadAdmissions.clear();this.originalAdmissions.clear();
+            if (body.ok) this.nativeCredentialVersion = body.version;
             const stored = body.ok && this.callback(body.requestId, () => this.options.mcpCredential?.(body));
             this.credentialRequestPending = null;
             if (!stored) {
@@ -277,6 +280,11 @@ export class NodeClient {
         if (this.authenticated && this.policy.remoteMcp?.enabled === true) {
           const body = envelope.body;
           if (isMcpIntentReceiptBody(body)) {
+            const original = this.originalAdmissions.get(body.requestId);
+            if (original) {
+              if (body.ok) { original.version = body.version; this.nativeCredentialVersion = body.version; original.expiresAt = Math.min(original.expiresAt, body.expiresAt); }
+              else this.originalAdmissions.delete(body.requestId);
+            }
             const admission = this.leadAdmissions.get(body.requestId);
             if (admission) { if (body.ok) { admission.version = body.version;admission.expiresAt = Math.min(admission.expiresAt, body.expiresAt); }
               else this.leadAdmissions.delete(body.requestId); }
@@ -308,11 +316,25 @@ export class NodeClient {
         return [this.frame("mcp.lead.confirm.response", { nonce: body.nonce, allowed })];
       }
       case "mcp.inbox.request": {
-        if (!this.authenticated || !isMcpInboxRequestBody(envelope.body)) return [];
+        if (!live || !this.authenticated || !isMcpInboxRequestBody(envelope.body)) return [];
         const body = envelope.body;
         if (!mcpRuntimeEnabled(this.policy, body.runtime ?? "codex")) return [];
         try {
-          const items = await this.options.readMcpInbox?.(body.sessionId, body.limit, body.messageId, body.runtime ?? "codex");
+          const admission = body.original && this.originalAdmissions.get(body.original.requestId);
+          const current = () => !!admission && this.authenticated && live && mcpRuntimeEnabled(this.policy, "codex")
+            && admission.generation === this.assignmentGeneration && admission.expiresAt > this.now()
+            && admission.version === body.original?.credentialVersion && admission.version === this.nativeCredentialVersion
+            && admission.binding.sessionId === body.sessionId && admission.binding.threadId === body.sessionId
+            && admission.binding.callId === body.original?.callId && admission.binding.argumentsDigest === body.original?.argumentsDigest;
+          let original = false;
+          if (body.original) {
+            if (!current() || admission?.read && admission.read !== body.requestId) throw new Error("original read expired");
+            const native = await (this.options.assignmentIdentity ?? nativeMcpAssignment)(body.sessionId);
+            if (!current() || !native || native.sessionId !== body.sessionId || !native.originalMain || native.platform !== "darwin") throw new Error("original read refused");
+            admission!.read = body.requestId; original = true;
+          }
+          const items = await this.options.readMcpInbox?.(body.sessionId, body.limit, body.messageId, body.runtime ?? "codex", original);
+          if (original && !current()) throw new Error("original changed during read");
           const response = this.frame("mcp.inbox.response", items
             ? { requestId: body.requestId, ok: true, items }
             : { requestId: body.requestId, ok: false, error: "local inbox reader is unavailable" });
@@ -321,8 +343,8 @@ export class NodeClient {
           }
           if (items) {
             const ids = items.map((item) => item.messageId);
-            if (body.reply) this.callback("MCP reply", () => this.options.answerMcpInbox?.(ids, body.sessionId, body.runtime ?? "codex"));
-            else this.callback("MCP inbox offer", () => this.options.offerMcpInbox?.(ids, body.sessionId, body.runtime ?? "codex"));
+            if (body.reply) this.callback("MCP reply", () => this.options.answerMcpInbox?.(ids, body.sessionId, body.runtime ?? "codex", original));
+            else this.callback("MCP inbox offer", () => this.options.offerMcpInbox?.(ids, body.sessionId, body.runtime ?? "codex", original));
           }
           return [response];
         } catch {
@@ -409,7 +431,7 @@ export class NodeClient {
     const wasMcpEnabled = this.policy.remoteMcp?.enabled === true;
     const mcpEnabled = policy.remoteMcp?.enabled === true;
     if (JSON.stringify(this.policy) !== JSON.stringify(policy)) {
-      this.options.selectedReferences?.clear();this.assignmentGeneration++;this.leadAdmissions.clear();
+      this.options.selectedReferences?.clear();this.assignmentGeneration++;this.leadAdmissions.clear();this.originalAdmissions.clear();
     }
     this.policy = policy;
     if (wasMcpEnabled && !mcpEnabled) {
@@ -480,6 +502,23 @@ export class NodeClient {
     return [this.frame("mcp.intent.register", { ...enriched })];
   }
 
+  async registerMcpOriginal(body: McpIntentRegistration): Promise<string[]> {
+    if (!body.originalRoot || body.originalRoot.verified !== undefined || body.runtime !== "codex"
+      || body.threadId !== body.sessionId || !this.authenticated || !mcpRuntimeEnabled(this.policy, "codex")) return [];
+    const generation = this.assignmentGeneration;
+    let native: McpAssignmentNative | null;
+    try { native = await (this.options.assignmentIdentity ?? nativeMcpAssignment)(body.sessionId); } catch { return []; }
+    const sessions: SessionInfo[] = this.lastSnapshot ? JSON.parse(this.lastSnapshot).sessions : [];
+    if (!native || native.sessionId !== body.sessionId || native.platform !== "darwin" || !native.originalMain
+      || !this.authenticated || generation !== this.assignmentGeneration || !mcpRuntimeEnabled(this.policy, "codex")
+      || !sessions.some(s => s.sessionId === body.sessionId && s.runtime === "codex" && !["closed", "archived", "deleted"].includes(s.state))) return [];
+    for (const [id, admission] of this.originalAdmissions) if (admission.expiresAt <= this.now()) this.originalAdmissions.delete(id);
+    if (this.originalAdmissions.size >= 128) return [];
+    const binding = { ...body, originalRoot: { ...body.originalRoot, verified: true as const } };
+    this.originalAdmissions.set(body.requestId, { binding, generation, expiresAt: this.now() + (body.ttlMs ?? 120_000) });
+    return [this.frame("mcp.intent.register", { ...binding })];
+  }
+
   knownMcpIntents(intents: McpIntentRegistration[]): McpIntentRegistration[] {
     const sessions: SessionInfo[] = this.lastSnapshot ? JSON.parse(this.lastSnapshot).sessions : [];
     const runtimes = new Map(sessions.map(session => [session.sessionId, session.runtime]));
@@ -546,6 +585,8 @@ export class NodeClient {
   // queued for the next same-socket retry or authentication.
   private onDeliver(body: MessageDeliverBody): string[] {
     const { messageId } = body;
+    if (body.binding?.mode === "slot-exact" && (body.binding.slot?.toNode !== this.options.nodeId
+      || body.binding.slot.operationId !== messageId || body.binding.slot.fromNode !== body.from.nodeId)) return [];
     if (body.binding && (!this.storageReady || !this.options.selectedReferences?.validate(messageId, body.binding, JSON.stringify(this.policy)))) {
       // Lease loss is a deferred receipt: keep durable queued work for a fresh lease.
       return [];
@@ -644,7 +685,9 @@ export class NodeClient {
     this.advertisedReady = JSON.stringify(ready);
     return this.frame("register", {
       facts: this.options.facts(), runtimes: this.lastRuntimes, capabilities: [...advertisedCapabilities(this.policy, ready),
-        ...(this.storageReady && this.options.selectedReferences ? [SELECTED_BINDING_CAPABILITY] : [])],
+        ...(this.storageReady && this.options.selectedReferences ? [SELECTED_BINDING_CAPABILITY,
+          ...(this.options.facts().os === "darwin" && mcpRuntimeEnabled(this.policy, "codex") ? [SLOT_BINDING_CAPABILITY] : [])] : []),
+        ...(this.options.facts().os === "darwin" && mcpRuntimeEnabled(this.policy, "codex") ? [SLOT_MCP_CAPABILITY] : [])],
     });
   }
 

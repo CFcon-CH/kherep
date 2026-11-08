@@ -91,6 +91,7 @@ describe("native self-assignment transaction", () => {
   });
   beforeEach(async () => {
     await runInDurableObject(registry(), (_instance, state) => {
+      state.storage.sql.exec("DELETE FROM intercom_assignment_proofs");
       state.storage.sql.exec("UPDATE intercom_slots SET revision=0,node_id=NULL,runtime=NULL,session_id=NULL,chat_name=NULL");
     });
   });

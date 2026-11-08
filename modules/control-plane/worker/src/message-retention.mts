@@ -1,3 +1,5 @@
+import { isMessageBinding, type MessageBinding } from "../../protocol-message-binding.mts";
+import type { McpIntentClaim } from "../../protocol-mcp.mts";
 import type { MessageDiagnostic } from "../../protocol-diagnostics.mts";
 import { safeLoopReason } from "../../protocol-loop-brake.mts";
 import { LOOP_COLUMNS, ALL_LOOP_FIELDS, loopColumnType, parentOf } from "./message-loop-identity.mts";
@@ -33,6 +35,12 @@ CREATE TABLE IF NOT EXISTS message_tombstones (
   reply_message_id TEXT,
   deleted_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS intercom_operations (
+  id TEXT PRIMARY KEY, principal TEXT NOT NULL, intent TEXT NOT NULL, binding TEXT,
+  error TEXT, expires_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS intercom_operations_expiry ON intercom_operations(expires_at);
+CREATE INDEX IF NOT EXISTS intercom_operations_principal ON intercom_operations(principal);
 CREATE INDEX IF NOT EXISTS tombstones_deleted_at ON message_tombstones (deleted_at);
 CREATE INDEX IF NOT EXISTS messages_delete_after ON messages (delete_after) WHERE delete_after IS NOT NULL;
 `;
@@ -99,6 +107,20 @@ export class MessageRetention {
     }
   }
 
+  slotOperation(id: string): { intent: McpIntentClaim; binding: MessageBinding | null; error: string | null } | null {
+    const row = this.sql.exec("SELECT intent,binding,error FROM intercom_operations WHERE id=?", id).toArray()[0];
+    if (!row) return null;
+    const binding: unknown = row.binding === null ? null : JSON.parse(String(row.binding));
+    if (binding !== null && (!isMessageBinding(binding) || binding.mode !== "slot-exact")) throw new Error("invalid protected route");
+    return { intent: JSON.parse(String(row.intent)), binding: binding as MessageBinding | null, error: row.error as string | null };
+  }
+  saveSlotOperation(intent: McpIntentClaim, binding: MessageBinding | null, error: string | null, now: number): void {
+    // Outlast payload expiry, tombstone retirement, and maximum intent reuse.
+    const count = Number(this.sql.exec("SELECT COUNT(*) AS n FROM intercom_operations WHERE principal=?", intent.nodeId).one().n);
+    if (count >= 32768) throw new Error("protected operation capacity reached");
+    this.sql.exec("INSERT INTO intercom_operations(id,principal,intent,binding,error,expires_at) VALUES (?,?,?,?,?,?)",
+      intent.requestId, intent.nodeId, JSON.stringify(intent), binding ? JSON.stringify(binding) : null, error, now + 3 * TOMBSTONE_TTL_MS);
+  }
   private tombstone(messageId: string): Tombstone | null {
     const row = this.sql.exec(TOMBSTONE, messageId).toArray()[0];
     return row ? {
@@ -144,6 +166,7 @@ export class MessageRetention {
 
   // Drops up to `limit` tombstones older than TOMBSTONE_TTL_MS; true when full.
   pruneTombstones(now: number): boolean {
+    this.sql.exec("DELETE FROM intercom_operations WHERE id IN (SELECT id FROM intercom_operations WHERE expires_at<=? AND id NOT IN (SELECT id FROM messages) AND id NOT IN (SELECT id FROM message_tombstones) LIMIT ?)", now, RETENTION_BATCH);
     const ids = this.sql.exec(PRUNE_DUE, now - TOMBSTONE_TTL_MS, RETENTION_BATCH).toArray();
     for (const { id } of ids) this.sql.exec("DELETE FROM message_tombstones WHERE id = ?", id);
     return ids.length === RETENTION_BATCH;
@@ -153,7 +176,9 @@ export class MessageRetention {
   nextDue(): number | null {
     const next = this.sql.exec(NEXT_DELETE).one().next;
     const oldest = this.sql.exec(OLDEST_TOMBSTONE).one().oldest;
-    return earliest(next === null ? null : Number(next), oldest === null ? null : Number(oldest) + TOMBSTONE_TTL_MS);
+    const operation = this.sql.exec("SELECT MIN(expires_at) AS next FROM intercom_operations WHERE id NOT IN (SELECT id FROM messages) AND id NOT IN (SELECT id FROM message_tombstones)").one().next;
+    return earliest(next === null ? null : Number(next), oldest === null ? null : Number(oldest) + TOMBSTONE_TTL_MS,
+      operation === null ? null : Number(operation));
   }
 
   // A revoked node acknowledges nothing more: its final rows are due now.
@@ -185,7 +210,7 @@ export class MessageRetention {
   // tombstone when one is left, within the depth the Worker derives itself.
   inboxReplyTarget(claimant: MessageAddress, inReplyTo: string, item: McpInboxItem | null): MessageAddress | null {
     const nodeId = claimant.nodeId;
-    if (item?.messageId !== inReplyTo) return null;
+    if (this.slotOperation(inReplyTo) || item?.messageId !== inReplyTo) return null;
     const provenance = parentOf(this.sql, inReplyTo);
     if (provenance.kind === "guarded-invalid") return null;
     if (provenance.kind !== "guarded" && depthExceeded(replyDepth(this.sql, inReplyTo))) return null;

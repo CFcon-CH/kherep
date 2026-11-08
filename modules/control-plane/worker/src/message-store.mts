@@ -9,8 +9,8 @@ import { duplicateSendError, recoveryOwnerError } from "./message-dedup.mts";
 import { RESOLUTION_REQUIRED, type MessageBinding } from "../../protocol-message-binding.mts";
 import { bindingContext, selectedAgreesWithProof, type PreparedBinding } from "./message-binding.mts";
 import { BINDING_COLUMNS, migrateMessageBinding, storedMessageBinding } from "./message-binding-store.mts";
-import { LOOP_LINEAGE, LOOP_STALE, LOOP_COMPATIBILITY, MESSAGING_LOOP_BRAKE_CAPABILITY, type LoopAdmissionV1 } from "../../protocol-loop-brake.mts";
-import { LoopIdentity, LOOP_COLUMNS, ALL_LOOP_FIELDS, loopColumnType, parentOf, storedLoopLineage, type LoopSnapshot } from "./message-loop-identity.mts";
+import { LOOP_LINEAGE, LOOP_STALE, LOOP_COMPATIBILITY, safeLoopReason, MESSAGING_LOOP_BRAKE_CAPABILITY, type LoopAdmissionV1 } from "../../protocol-loop-brake.mts";
+import { LoopIdentity, LOOP_COLUMNS, ALL_LOOP_FIELDS, loopColumnType, parentOf, pairIdentity, storedLoopLineage, type LoopSnapshot } from "./message-loop-identity.mts";
 import { MessageLoopStore, LOOP_QUERIES } from "./message-loop-store.mts";
 import { prepareLoopSignal, type LoopSigner, type LoopSignal } from "./message-loop-signals.mts";
 import {
@@ -55,6 +55,9 @@ CREATE INDEX IF NOT EXISTS messages_state_updated ON messages (state, updated_at
 
 export const MESSAGE_TTL_MS = 24 * 60 * 60_000;
 export const MAX_QUEUED_PER_NODE = 100;
+// One exact unordered pair can settle at most two target queues.
+export const MAX_HOLD_REFUSAL_REFS = 2 * MAX_QUEUED_PER_NODE;
+export type HoldRefusalRef = { messageId: string; nodeId: string };
 
 // Forward-only order of the node-reported progress states. refused and
 // expired are final; a duplicate or late report never moves a message back.
@@ -69,7 +72,7 @@ export interface MessageRecord {
 
 // proxyOf: a proxy answer (message-proxy.mts, issue #408), never with inReplyTo.
 export interface NewMessage {
-  messageId: string; from: MessageAddress; to: MessageAddress; text: string; inReplyTo?: string; taskId?: string; proxyOf?: string; connectionToken?: string;
+  messageId: string; from: MessageAddress; to: MessageAddress; text: string; inReplyTo?: string; taskId?: string; proxyOf?: string; connectionToken?: string; slotBinding?: MessageBinding;
 }
 
 // Frames the caller must push to nodes after the SQL work is done.
@@ -78,7 +81,7 @@ export interface MessageEffects {
   statuses: { nodeId: string; body: MessageStatusBody; observational?: true }[];
 }
 
-export type SendResult = { ok: true; status: MessageStatusBody; effects: MessageEffects } | { ok: false; error: string; diagnostic?: MessageDiagnostic };
+export type SendResult = { ok: true; status: MessageStatusBody; effects: MessageEffects } | { ok: false; error: string; diagnostic?: MessageDiagnostic; effects?: MessageEffects };
 // advancedFrom: the state a node report moved the message out of (issue #441).
 export interface MessageReportResult { effects: MessageEffects; receipt: MessageReceiptBody | null; advancedFrom?: MessageState }
 
@@ -112,7 +115,7 @@ export const HOT_MESSAGE_QUERIES = {
   ...DEPTH_QUERIES, ...RETENTION_QUERIES, ...PROXY_QUERIES, ...LOOP_QUERIES,
 } as const;
 
-export interface PreparedLoop { binding?: PreparedBinding; snapshot: LoopSnapshot; key: string | null; signal: LoopSignal | null; error?: string }
+export interface PreparedLoop { slotBinding?: MessageBinding; binding?: PreparedBinding; snapshot: LoopSnapshot; key: string | null; signal: LoopSignal | null; error?: string }
 function loopOf(row: Record<string, SqlStorageValue>): LoopAdmissionV1 | undefined {
   const lineage = storedLoopLineage(row);
   if (lineage.kind === "guarded-invalid") throw new Error(LOOP_LINEAGE);
@@ -199,18 +202,20 @@ export class MessageStore {
   }
 
   private compareSnapshots(prepared: PreparedLoop, current: LoopSnapshot, now: number) {
+    if (prepared.slotBinding) return { matches: sameLoopIdentity(prepared.snapshot,current,{parentRetirementEquivalent:true}), parentRetirementEquivalent:true };
     const parentRetirementEquivalent = this.identity.parentRetirementEquivalent(prepared.snapshot, current, prepared.key, now);
     return { matches: sameLoopIdentity(prepared.snapshot, current, { parentRetirementEquivalent }), parentRetirementEquivalent };
   }
   compareContext(message: NewMessage, prepared: PreparedLoop): IdentityComparison {
     if (prepared.error) return { matches: false };
+    if (prepared.slotBinding) return this.compareSnapshots(prepared,this.slotSnapshot(message,prepared.slotBinding),Date.now());
     const context = prepared.binding ? bindingContext(this.sql, message) : undefined;
     if (prepared.binding && context?.stamp !== prepared.binding.stamp) return { matches: false, context };
     const now = Date.now(), current = this.identity.snapshot(message.from, message.to, message.inReplyTo ?? message.proxyOf, now);
     return { ...this.compareSnapshots(prepared, current, now), current, context };
   }
   async prepare(message: NewMessage, sign: LoopSigner): Promise<PreparedLoop> {
-    const snapshot = this.identity.snapshot(message.from, message.to, message.inReplyTo ?? message.proxyOf);
+    const snapshot = message.slotBinding ? this.slotSnapshot(message, message.slotBinding) : this.identity.snapshot(message.from, message.to, message.inReplyTo ?? message.proxyOf);
     if (!snapshot.encoding) return { snapshot, key: null, signal: null };
     try {
       const key = await sign("kherep-loop-pair-v1", snapshot.encoding);
@@ -218,8 +223,32 @@ export class MessageStore {
       const proxy = message.proxyOf && proxyRefusal(this.sql, message.proxyOf, message.from, message.to) === null
         ? { owner: message.from.session, messageId: message.proxyOf } : undefined;
       const signal = snapshot.both && snapshot.from && snapshot.to ? await prepareLoopSignal(message.text, sign, proxy) : null;
-      return { snapshot, key, signal };
+      return { snapshot, key, signal, ...(message.slotBinding ? { slotBinding: message.slotBinding,
+        binding: { stamp: "slot-admission", binding: message.slotBinding, denyKey: key, leaseId: null, localGeneration: null } } : {}) };
     } catch { return { snapshot, key: null, signal: null, error: "loop-crypto-unavailable" }; }
+  }
+
+  private slotSnapshot(message: NewMessage, binding: MessageBinding): LoopSnapshot {
+    const pair = pairIdentity(message.from, message.to);
+    const both = [message.from, message.to].every(a => this.capabilities(a.nodeId)?.includes(MESSAGING_LOOP_BRAKE_CAPABILITY));
+    return { from: message.from, to: message.to, both, parent: parentOf(this.sql, message.inReplyTo),
+      encoding: pair?.encoding ?? null, direction: pair?.direction ?? null, identityBinding: null,
+      compatibility: both, proofs: binding, connections: [] };
+  }
+  private slotMode(snapshot: LoopSnapshot, message: NewMessage, key: string | null): "guarded" | { reason: string } {
+    if (!snapshot.both || snapshot.direction === null || !key) return {reason:LOOP_COMPATIBILITY};
+    if (!message.inReplyTo) return "guarded";
+    const p = snapshot.parent, original = this.retention.slotOperation(message.inReplyTo)?.binding;
+    if (p.kind !== "guarded" || !original || p.pair !== key || snapshot.direction !== 1-p.direction
+      || !["accepted","delivered","replied"].includes(String(p.row.state))
+      || p.row.from_node !== original.slot?.fromNode || p.row.to_node !== original.slot?.toNode
+      || p.row.from_session !== null && p.row.from_session !== original.from.sessionId
+      || p.row.to_session !== null && p.row.to_session !== original.to.sessionId
+      || original.slot?.toNode !== message.from.nodeId || original.to.sessionId !== message.from.session
+      || original.slot?.fromNode !== message.to.nodeId || original.from.sessionId !== message.to.session
+      || JSON.stringify(original.to) !== JSON.stringify(message.slotBinding?.from)
+      || JSON.stringify(original.from) !== JSON.stringify(message.slotBinding?.to)) return {reason:LOOP_LINEAGE};
+    return "guarded";
   }
 
   // Authorization is checked by the caller; replay never scores or creates a delivery.
@@ -246,9 +275,34 @@ export class MessageStore {
     return row ? recoveryOwnerError(row, nodeId, sessionId, runtime) : null;
   }
 
+  // Re-offer only this rejected operation's unacknowledged terminal statuses.
+  // Never read payloads, expire rows, admit work or resolve current role holders.
+  outstandingHoldRefusals(reason: string, refs: readonly HoldRefusalRef[]): MessageEffects {
+    if (!reason.startsWith("loop-held:") || safeLoopReason(reason) !== reason || refs.length > MAX_HOLD_REFUSAL_REFS) {
+      throw new Error("invalid hold refusal recovery metadata");
+    }
+    const senders = new Map<string, string>();
+    for (let start = 0; start < refs.length; start += 64) {
+      const batch = refs.slice(start, start + 64);
+      for (const row of this.sql.exec(`SELECT id,from_node FROM messages WHERE id IN (${batch.map(()=>"?").join(",")})
+        AND state='refused' AND reason=? AND settled_state IS NOT state`, ...batch.map(ref=>ref.messageId), reason).toArray()) {
+        senders.set(String(row.id), String(row.from_node));
+      }
+    }
+    const effects = none(), enrolled = new Map<string, boolean>();
+    for (const ref of refs) {
+      if (senders.get(ref.messageId) !== ref.nodeId) continue;
+      if (!enrolled.has(ref.nodeId)) enrolled.set(ref.nodeId, this.capabilities(ref.nodeId) !== null);
+      if (enrolled.get(ref.nodeId)) effects.statuses.push({nodeId:ref.nodeId,body:{messageId:ref.messageId,state:"refused",reason}});
+    }
+    return effects;
+  }
+
   // Records one message as queued, or as refused when the target cannot take
   // it. A bound retry proves the same exact owners before returning status.
   send(message: NewMessage, actor: string, now: number, prepared?: PreparedLoop): SendResult {
+    if (!message.slotBinding && (this.retention.slotOperation(message.messageId)
+      || (message.inReplyTo || message.proxyOf) && this.retention.slotOperation((message.inReplyTo ?? message.proxyOf)!))) return {ok:false,error:"protected native route required"};
     const effects = this.expireDue(now);
     const row = this.sql.exec(`SELECT ${COLUMNS}, text, task_id FROM messages WHERE id = ?`, message.messageId).toArray()[0];
     if (row) {
@@ -278,18 +332,18 @@ export class MessageStore {
     else if (!capabilities.includes(MESSAGING_CAPABILITY)) reason = `target node lacks ${MESSAGING_CAPABILITY}`;
     else if (this.queuedCount(target) >= MAX_QUEUED_PER_NODE) reason = `more than ${MAX_QUEUED_PER_NODE} queued messages for the target node`;
     let loop: LoopAdmissionV1 | undefined;
-    const current = this.identity.snapshot(message.from, message.to, message.inReplyTo ?? message.proxyOf, now);
-    const mode = this.identity.validate(current, prepared?.key ?? null, !!(message.inReplyTo ?? message.proxyOf), now);
+    const current = message.slotBinding ? this.slotSnapshot(message, message.slotBinding) : this.identity.snapshot(message.from, message.to, message.inReplyTo ?? message.proxyOf, now);
+    const mode = message.slotBinding ? this.slotMode(current, message, prepared?.key ?? null) : this.identity.validate(current, prepared?.key ?? null, !!(message.inReplyTo ?? message.proxyOf), now);
     const comparison = prepared ? this.compareSnapshots(prepared, current, now) : undefined;
     const denyKey = prepared?.binding?.binding ? prepared.binding.denyKey : prepared?.key;
-    const bindingRequired = this.loops.hasHeldNodeScope(message.from.nodeId, target)
+    const bindingRequired = !!message.slotBinding || this.loops.hasHeldNodeScope(message.from.nodeId, target)
       || (mode === "guarded" && current.identityBinding !== null);
     let currentContext: ReturnType<typeof bindingContext> | undefined;
     let selectedMismatch = false;
     if (reason === null) {
       if (comparison && !comparison.matches) reason = LOOP_STALE;
       else if (prepared?.error || prepared?.binding?.error) reason = prepared.error ?? prepared.binding!.error!;
-      else if (prepared?.binding && prepared.binding.stamp !== (currentContext = bindingContext(this.sql, message)).stamp) reason = LOOP_STALE;
+      else if (!message.slotBinding && prepared?.binding && prepared.binding.stamp !== (currentContext = bindingContext(this.sql, message)).stamp) reason = LOOP_STALE;
       else if (denyKey && this.loops.held(denyKey)) reason = this.loops.held(denyKey);
       else if (typeof mode === "object") reason = mode.reason;
       else if (bindingRequired && !prepared?.binding?.binding) reason = RESOLUTION_REQUIRED;
@@ -320,6 +374,9 @@ export class MessageStore {
         this.setState(toRecord(row), "refused", reason!, actor, now, effects);
       }
     }
+    // A rejected protected attempt has no message row, but the semantic hold
+    // still settles earlier queued traffic and must publish its status effects.
+    if (message.slotBinding && reason !== null) return { ok: false, error: reason, effects };
     const diagnostic = reason === LOOP_STALE && prepared ? identityDiagnostic(prepared, { ...comparison, matches: false, current, context: currentContext }, "send-admission", now,
       selectedMismatch ? selectedProofDimensions(prepared, current) : []) : reason === RESOLUTION_REQUIRED && prepared?.binding?.diagnosticCode
       ? blockerDiagnostic(prepared.binding.diagnosticCode, now, "send-admission") : undefined;
@@ -571,8 +628,11 @@ export class MessageStore {
     const lineage = storedLoopLineage(row);
     const denyKey = typeof row.delivery_pair === "string" ? row.delivery_pair : lineage.kind === "guarded" ? lineage.pair : null;
     const held = denyKey ? this.loops.held(denyKey) : null;
-    const reason = held ?? (storedMessageBinding(row) === "invalid" ? RESOLUTION_REQUIRED : lineage.kind === "guarded-invalid" ? LOOP_LINEAGE
-      : lineage.kind === "guarded" && lineage.identityBinding !== null && !this.identity.deliveryValid(row, lineage.identityBinding, now) ? LOOP_COMPATIBILITY
+    const protectedBinding = storedMessageBinding(row);
+    const protectedInvalid = protectedBinding && protectedBinding !== "invalid" && protectedBinding.mode === "slot-exact"
+      && (!this.retention.slotOperation(String(row.id))?.binding || !this.capabilities(String(row.from_node)) || !this.capabilities(String(row.to_node)));
+    const reason = held ?? (protectedInvalid ? LOOP_COMPATIBILITY : storedMessageBinding(row) === "invalid" ? RESOLUTION_REQUIRED : lineage.kind === "guarded-invalid" ? LOOP_LINEAGE
+      : lineage.kind === "guarded" && (!protectedBinding || protectedBinding === "invalid" || protectedBinding.mode !== "slot-exact") && lineage.identityBinding !== null && !this.identity.deliveryValid(row, lineage.identityBinding, now) ? LOOP_COMPATIBILITY
       : lineage.kind === "guarded" && (!this.capabilities(String(row.from_node))?.includes(MESSAGING_LOOP_BRAKE_CAPABILITY)
         || !this.capabilities(String(row.to_node))?.includes(MESSAGING_LOOP_BRAKE_CAPABILITY)) ? LOOP_COMPATIBILITY : null);
     if (reason === null) return true;

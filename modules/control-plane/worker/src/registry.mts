@@ -1,12 +1,13 @@
 import { readIntercomSlots, type IntercomSlotView } from "./intercom-slots.mts";
 import { identityDiagnostic } from "./message-identity-diagnostics.mts";
 import { type MessageDiagnostic } from "../../protocol-diagnostics.mts";
+import { intercomReference, parseIntercomReference, SLOT_BINDING_CAPABILITY, type MessageBinding } from "../../protocol-message-binding.mts";
 import { bindingContext, prepareMessageBinding } from "./message-binding.mts";
 import { isSelectedPair, loopCapability, type SelectedPair, type SelectedIdentityEvidence } from "./message-loop-identity-api.mts";
 import { RegistrySessionIdentity } from "./registry-session-identity.mts";
 import type { IdentitySnapshotV1 } from "../../protocol-session-identity.mts";
 import type { LoopSigner } from "./message-loop-signals.mts";
-import { LOOP_STALE } from "../../protocol-loop-brake.mts";
+import { LOOP_STALE, safeLoopReason } from "../../protocol-loop-brake.mts";
 import { DurableObject } from "cloudflare:workers";
 
 import type { NodeFacts, RuntimeInfo, SessionInfo } from "../../protocol.mts";
@@ -28,7 +29,7 @@ import { McpRegistry, type McpOutcome } from "./mcp-registry.mts";
 import { intakeRows, recordTaken } from "./node-intake.mts";
 import { SqlMeter, type SqlRows } from "./sql-meter.mts";
 import {
-  CLAUDE_MCP_CAPABILITY, REMOTE_MCP_CAPABILITY, digestMcpArguments, isSelfAssignmentSlot,
+  SLOT_MCP_CAPABILITY, CLAUDE_MCP_CAPABILITY, REMOTE_MCP_CAPABILITY, digestMcpArguments, isSelfAssignmentSlot,
   type McpInboxItem, type McpIntentClaim, type McpIntentRegistration, type SelfAssignmentSlot,
 } from "../../protocol-mcp.mts";
 import type { TaskReportBody } from "../../protocol-tasks.mts";
@@ -236,6 +237,7 @@ export class Registry extends DurableObject<Env> {
         WHERE id = ? AND revoked_at IS NULL`,
         facts.hostname, facts.os, facts.arch, facts.cpus, facts.memoryBytes, JSON.stringify(capabilities), connectionToken ?? null, nodeId);
       this.writeRuntimes(nodeId, runtimes);
+      this.mcp.registrationChanged(nodeId);
       if (!capabilities.includes(REMOTE_MCP_CAPABILITY)) this.mcp.removeNode(nodeId);
       else if (!capabilities.includes(CLAUDE_MCP_CAPABILITY)) this.mcp.removeRuntime(nodeId, "claude-code");
       return true;
@@ -344,10 +346,17 @@ export class Registry extends DurableObject<Env> {
     return this.metered("authenticateMcpCredential", () => this.mcp.authenticateHashed(hash));
   }
 
-  async registerMcpIntent(nodeId: string, intent: McpIntentRegistration, now = Date.now()) {
+  async registerMcpIntent(nodeId: string, intent: McpIntentRegistration, now = Date.now(), connectionToken?: string) {
     const assignmentDigest = intent?.tool === "assign_self" && intent.assignment
       ? await digestMcpArguments({ slot: intent.assignment.slot }) : undefined;
-    return this.tx("registerMcpIntent", () => this.mcp.register(nodeId, intent, now, assignmentDigest));
+    return this.tx("registerMcpIntent", () => {
+      if (intent.originalRoot) {
+        const node = this.sql.exec("SELECT message_connection_token,registration_token FROM nodes WHERE id=? AND revoked_at IS NULL",nodeId).toArray()[0];
+        if (!connectionToken || node?.message_connection_token !== connectionToken || node.registration_token !== connectionToken)
+          return {ok:false as const,error:"native invocation connection changed"};
+      }
+      return this.mcp.register(nodeId, intent, now, assignmentDigest);
+    });
   }
 
   async assignMcpSlot(intent: McpIntentClaim, slot: SelfAssignmentSlot) {
@@ -358,7 +367,12 @@ export class Registry extends DurableObject<Env> {
   }
 
   claimMcpIntent(intent: McpIntentClaim, now = Date.now()) {
-    return this.tx("claimMcpIntent", () => this.mcp.claim(intent, now));
+    return this.tx("claimMcpIntent", () => {
+      const original = this.mcp.originalClaim(intent, now);
+      const claim = this.mcp.claim(intent, now);
+      return claim.ok ? { ...claim, ...(original.ok ? { original: { requestId: intent.requestId, callId: intent.callId,
+        argumentsDigest: intent.argumentsDigest, credentialVersion: intent.credentialVersion } } : {}) } : claim;
+    });
   }
 
   private async recoverMcpMessage(intent: McpIntentClaim) {
@@ -375,6 +389,106 @@ export class Registry extends DurableObject<Env> {
       const sent = this.messages.replay(intent.requestId, intent.nodeId);
       return sent?.ok ? { ...sent, effects: { deliveries: [...effects.deliveries, ...sent.effects.deliveries], statuses: [...effects.statuses, ...sent.effects.statuses] }, claim } : sent;
     });
+  }
+
+  verifyMcpOriginalClaim(intent: McpIntentClaim): boolean { return this.mcp.originalClaim(intent).ok; }
+  slotReferenceFor(nodeId: string, sessionId: string, runtime: string, messageId: string): string | null {
+    const binding = this.messages.retention.slotOperation(messageId)?.binding;
+    if (!binding?.slot || !((binding.slot.fromNode === nodeId && binding.from.sessionId === sessionId && binding.from.runtime === runtime)
+      || (binding.slot.toNode === nodeId && binding.to.sessionId === sessionId && binding.to.runtime === runtime))) return null;
+    return intercomReference(messageId,binding.slot.issuedAt);
+  }
+  private slotNodeEligible(nodeId: string): boolean {
+    const capabilities = this.capabilitiesOf(nodeId);
+    return !!capabilities && [SLOT_MCP_CAPABILITY, SLOT_BINDING_CAPABILITY, "messaging.v1", "messaging.loop-brake.v1"]
+      .every(c => capabilities.includes(c));
+  }
+  private attestedSlot(slot: string) {
+    const row = readIntercomSlots(this.sql).find(row => row.slot === slot);
+    if (!row?.occupant) return null;
+    const o = row.occupant;
+    const proof = this.sql.exec("SELECT operation_id FROM intercom_assignment_proofs WHERE slot=? AND revision=? AND node_id=? AND runtime=? AND session_id=?",
+      row.slot,row.revision,o.nodeId,o.runtime,o.sessionId).toArray()[0];
+    return proof && this.slotNodeEligible(o.nodeId) ? row : null;
+  }
+  private recoverSlotOperation(intent: McpIntentClaim) {
+    const saved = this.messages.retention.slotOperation(intent.requestId);
+    if (!saved) return null;
+    const original = this.mcp.originalClaim(intent);
+    if (!original.ok || JSON.stringify(saved.intent) !== JSON.stringify(intent)) return {ok:false as const,error:"protected operation identity mismatch",denied:true as const};
+    if (saved.error || !saved.binding) {
+      const effects = saved.binding === null && saved.error?.startsWith("loop-held:") && safeLoopReason(saved.error) === saved.error
+        ? this.messages.outstandingHoldRefusals(saved.error,this.mcp.holdRefusals(intent.nodeId,intent.requestId)) : null;
+      return {ok:false as const,error:saved.error ?? "protected operation refused",denied:true as const,
+        ...(effects?.statuses.length ? {effects} : {})};
+    }
+    const replay = this.messages.replay(intent.requestId,intent.nodeId,false);
+    return replay?.ok ? {...replay,reference:intercomReference(intent.requestId,saved.binding.slot!.issuedAt)}
+      : {ok:false as const,error:"protected operation has expired",denied:true as const};
+  }
+  private async admitSlotMessage(intent: McpIntentClaim, binding: MessageBinding, text: string, precondition: () => boolean, inReplyTo?: string) {
+    const original = this.mcp.originalClaim(intent);
+    if (!original.ok) return {...original,denied:true as const};
+    const message: NewMessage = {messageId:intent.requestId,from:{nodeId:binding.slot!.fromNode,session:binding.from.sessionId},
+      to:{nodeId:binding.slot!.toNode,session:binding.to.sessionId},text,slotBinding:binding,...(inReplyTo ? {inReplyTo} : {})};
+    const prepared = await this.messages.prepare(message,await this.loopSigner);
+    return this.messageTx("sendMcpSlotMessage", () => {
+      const replay = this.recoverSlotOperation(intent);
+      if (replay) return replay;
+      const current = this.mcp.originalClaim(intent);
+      const fail = (error: string) => {
+        if (current.ok) this.messages.retention.saveSlotOperation(intent,null,error,Date.now());
+        return {ok:false as const,error,denied:true as const};
+      };
+      if (!current.ok || current.stamp !== original.stamp || !precondition()
+        || !this.slotNodeEligible(message.from.nodeId) || !this.slotNodeEligible(message.to.nodeId)
+        || !this.messages.compareContext(message,prepared).matches) return fail("protected route changed before admission");
+      const claim = this.mcp.claim(intent,Date.now());
+      if (!claim.ok) return {...claim,denied:true as const};
+      const sent = this.messages.send(message,`mcp:${intent.nodeId}`,Date.now(),prepared);
+      if (!sent.ok && sent.error.startsWith("loop-held:") && safeLoopReason(sent.error) === sent.error) {
+        const refs = sent.effects?.statuses.filter(status=>!status.observational && status.body.state === "refused"
+          && status.body.reason === sent.error && status.body.messageId !== intent.requestId)
+          .map(status=>({messageId:status.body.messageId,nodeId:status.nodeId})) ?? [];
+        if (refs.length) this.mcp.saveHoldRefusals(intent.nodeId,intent.requestId,refs);
+      }
+      this.messages.retention.saveSlotOperation(intent,sent.ok ? binding : null,sent.ok ? null : sent.error,Date.now());
+      this.mcp.recordOutcome(intent.nodeId,intent.requestId,sent.ok ? "succeeded" : "failed");
+      return sent.ok ? {...sent,reference:intercomReference(intent.requestId,binding.slot!.issuedAt)} : sent;
+    });
+  }
+  async sendMcpSlotMessage(intent: McpIntentClaim, slot: string, text: string) {
+    const replay = this.recoverSlotOperation(intent);
+    if (replay) return replay;
+    const original = this.mcp.originalClaim(intent);
+    if (!original.ok) return {...original,denied:true as const};
+    const source = readIntercomSlots(this.sql).filter(row => row.occupant?.nodeId === intent.nodeId
+      && row.occupant.sessionId === original.sessionId && row.occupant.runtime === intent.runtime)
+      .map(row=>this.attestedSlot(row.slot)).find(row=>row !== null);
+    const target = this.attestedSlot(slot);
+    if (!source || !target || target.occupant!.runtime !== "codex") return this.tx("refuseMcpSlotMessage",()=>{
+      if (!this.messages.retention.slotOperation(intent.requestId)) this.messages.retention.saveSlotOperation(intent,null,"verified occupied slot assignments are required",Date.now());
+      return {ok:false as const,error:"verified occupied slot assignments are required",denied:true as const};
+    });
+    const binding: MessageBinding = {version:1,mode:"slot-exact",from:{sessionId:source.occupant!.sessionId,runtime:source.occupant!.runtime,lifecycleGeneration:null},
+      to:{sessionId:target.occupant!.sessionId,runtime:target.occupant!.runtime,lifecycleGeneration:null},slot:{fromNode:intent.nodeId,toNode:target.occupant!.nodeId,
+        fromSlot:source.slot,toSlot:target.slot,fromRevision:source.revision,toRevision:target.revision,operationId:intent.requestId,
+        argumentsDigest:intent.argumentsDigest,issuedAt:Date.now()}};
+    const stamp = JSON.stringify([source,target]);
+    return this.admitSlotMessage(intent,binding,text,()=>JSON.stringify([this.attestedSlot(source.slot),this.attestedSlot(target.slot)]) === stamp);
+  }
+  async replyMcpSlotMessage(intent: McpIntentClaim, reference: string, text: string) {
+    const replay = this.recoverSlotOperation(intent);
+    if (replay) return replay;
+    const parsed = parseIntercomReference(reference), original = this.mcp.originalClaim(intent);
+    const parent = parsed ? this.messages.retention.slotOperation(parsed.id)?.binding : null;
+    if (!original.ok || !parsed || !parent?.slot || parent.slot.issuedAt !== parsed.issuedAt
+      || parent.slot.toNode !== intent.nodeId || parent.to.sessionId !== original.sessionId || parent.to.runtime !== intent.runtime)
+      return {ok:false as const,error:"protected reply relationship is not available",denied:true as const};
+    const binding: MessageBinding = {version:1,mode:"slot-exact",from:{...parent.to},to:{...parent.from},slot:{
+      fromNode:parent.slot.toNode,toNode:parent.slot.fromNode,fromSlot:parent.slot.toSlot,toSlot:parent.slot.fromSlot,
+      fromRevision:parent.slot.toRevision,toRevision:parent.slot.fromRevision,operationId:intent.requestId,argumentsDigest:intent.argumentsDigest,issuedAt:Date.now()}};
+    return this.admitSlotMessage(intent,binding,text,()=>true,parsed.id);
   }
 
   // A failed claim is an authorization denial; its fixed error is visible to the caller.
@@ -418,6 +532,7 @@ export class Registry extends DurableObject<Env> {
     if (replay) return replay;
     const peek = this.mcp.peekClaimSession(intent, Date.now());
     if (!peek.ok) return { ...peek, denied: true as const };
+    if (this.messages.retention.slotOperation(inReplyTo)) return {ok:false as const,error:"protected reference required",denied:true as const};
     const target = this.messages.replyTarget(inReplyTo, intent.nodeId, peek.sessionId);
     if (target === "missing" && item === undefined) return { ok: false as const, lookup: peek.sessionId };
     const to = target === "missing" ? this.messages.retention.inboxReplyTarget({ nodeId: intent.nodeId, session: peek.sessionId }, inReplyTo, item ?? null) : target;
@@ -532,8 +647,11 @@ export class Registry extends DurableObject<Env> {
 
   // A replied message also names the reply that marked it (issue #200); a
   // deleted message answers from its tombstone (#308).
-  mcpMessageStatus(nodeId: string, messageId: string): (MessageRecord & { replyMessageId?: string }) | MessageStatusView | null {
+  mcpMessageStatus(nodeId: string, messageId: string, intent?: McpIntentClaim, issuedAt?: number): (MessageRecord & { replyMessageId?: string }) | MessageStatusView | null {
     return this.metered("mcpMessageStatus", () => {
+      const protectedRoute = this.messages.retention.slotOperation(messageId)?.binding;
+      if (protectedRoute && (!intent || !this.mcp.originalClaim(intent).ok || protectedRoute.slot?.issuedAt !== issuedAt
+        || !this.slotReferenceFor(nodeId,intent.runtime === "codex" ? intent.sessionId : "",intent.runtime,messageId))) return null;
       const record = this.messages.visibleTo(nodeId, messageId);
       if (!record) return this.messages.retention.statusFor(nodeId, messageId);
       if (record.state !== "replied") return record;

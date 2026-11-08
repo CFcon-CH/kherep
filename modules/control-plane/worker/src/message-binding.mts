@@ -1,5 +1,5 @@
 import type { BlockerCode } from "../../protocol-diagnostics.mts";
-import { BINDING_TTL_MS, type BoundOwner, type MessageBinding,
+import { SLOT_BINDING_CAPABILITY, BINDING_TTL_MS, type BoundOwner, type MessageBinding,
   type ResolveRequest, type ResolveResponse, type SelectedResult } from "../../protocol-message-binding.mts";
 import { OPERATOR_NODE_ID, type MessageAddress } from "../../protocol-messages.mts";
 import { RegistrySessionIdentity } from "./registry-session-identity.mts";
@@ -14,6 +14,11 @@ export interface PreparedBinding {
 }
 export function bindingContext(sql: SqlStorage, message: AddressPair): { stamp: string; refs: ReturnType<RegistrySessionIdentity["resolveCanonicalReference"]>[];
   nodes: ReturnType<typeof semanticNodes> } {
+  const stored = sql.exec("SELECT delivery_binding FROM messages WHERE id=?", message.messageId).toArray()[0];
+  if (typeof stored?.delivery_binding === "string" && JSON.parse(stored.delivery_binding).mode === "slot-exact") {
+    const nodes = semanticNodes(sql, [message.from.nodeId, message.to.nodeId]);
+    return { refs: [], nodes, stamp: JSON.stringify(["slot-storage", nodes]) };
+  }
   const identities = new RegistrySessionIdentity(sql);
   const refs = [message.from, message.to].map(a => identities.resolveCanonicalReference(a, Date.now()));
   const nodes = semanticNodes(sql, [message.from.nodeId, message.to.nodeId]);
@@ -35,6 +40,25 @@ export function selectedAgreesWithProof(binding: MessageBinding, proof: string, 
 export async function prepareMessageBinding(sql: SqlStorage, message: AddressPair, sign: LoopSigner, resolve: Resolve,
   purpose: "admit" | "egress" = "admit", stored?: MessageBinding): Promise<PreparedBinding> {
   const context = bindingContext(sql, message);
+  if (stored?.mode === "slot-exact") {
+    const result: PreparedBinding = { context, stamp: context.stamp, binding: null, denyKey: null, leaseId: null, localGeneration: null };
+    const target = sql.exec("SELECT capabilities,message_connection_token,registration_token FROM nodes WHERE id=? AND revoked_at IS NULL AND public_key IS NOT NULL", message.to.nodeId).toArray()[0];
+    if (!target || !target.message_connection_token || target.message_connection_token !== target.registration_token
+      || !JSON.parse(String(target.capabilities)).includes(SLOT_BINDING_CAPABILITY)) return result;
+    const request: ResolveRequest = { version: 1, requestId: crypto.randomUUID(), messageId: message.messageId,
+      purpose: "slot-storage", binding: stored, expiresAt: Date.now() + BINDING_TTL_MS,
+      selections: [{ role: "to", ref: stored.to.sessionId, expected: { sessionId: stored.to.sessionId, runtime: stored.to.runtime } }] };
+    const response = await resolve(message.to.nodeId, request);
+    const answer = response && "answer" in response ? response.answer : response;
+    const selected = answer?.results[0];
+    if (!answer || answer.requestId !== request.requestId || answer.messageId !== message.messageId || selected?.code !== "BOUND"
+      || selected.match !== "exact" || selected.owner.sessionId !== stored.to.sessionId || selected.owner.runtime !== stored.to.runtime
+      || Date.now() >= request.expiresAt) return result;
+    const pair = pairIdentity(message.from, message.to);
+    result.binding = stored;result.leaseId = selected.leaseId;result.localGeneration = selected.localGeneration;
+    result.denyKey = pair ? await sign("kherep-loop-pair-v1", pair.encoding) : null;
+    return result;
+  }
   const result: PreparedBinding = { context, stamp: context.stamp, binding: null, denyKey: null, leaseId: null, localGeneration: null };
   const expiresAt = Date.now() + BINDING_TTL_MS;
   const selected = new Map<"from" | "to", Extract<SelectedResult, { code: "BOUND" }>>();

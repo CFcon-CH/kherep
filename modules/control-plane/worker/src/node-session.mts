@@ -293,7 +293,7 @@ export class NodeSession extends DurableObject<Env> {
   }
   // messageId (issue #308): one item, for an MCP reply whose parent row is
   // gone; the node marks it answered. An older node ignores both fields.
-  requestMcpInbox(sessionId: string, limit: number, runtime: McpRuntime, messageId?: string): Promise<McpInboxResponseBody> {
+  requestMcpInbox(sessionId: string, limit: number, runtime: McpRuntime, messageId?: string, original?: import("../../protocol-mcp.mts").McpOriginalRead): Promise<McpInboxResponseBody> {
     const ws = this.authedSocket();
     if (!ws) return Promise.resolve({ requestId: crypto.randomUUID(), ok: false, error: "originating node is offline" });
     const requestId = crypto.randomUUID();
@@ -306,7 +306,7 @@ export class NodeSession extends DurableObject<Env> {
         resolve({ requestId, ok: false, error: "originating node did not answer inbox request" });
       }, MCP_INBOX_TIMEOUT_MS);
       this.pendingInbox.set(requestId, { socket: ws, resolve, timer });
-      this.sendControl(ws, "mcp.inbox.request", { requestId, sessionId, limit, runtime, ...(messageId ? { messageId, reply: true } : {}) });
+      this.sendControl(ws, "mcp.inbox.request", { requestId, sessionId, limit, runtime, ...(messageId ? { messageId, reply: true } : {}), ...(original ? { original } : {}) });
     });
   }
 
@@ -413,12 +413,12 @@ export class NodeSession extends DurableObject<Env> {
       }
       case "mcp.intent.register": {
         if (!isMcpIntentRegistration(body)) return this.sendControl(ws, "error", { error: "invalid MCP intent metadata" });
-        if (body.tool === "assign_self" && (this.authedSocket() !== ws
+        if ((body.tool === "assign_self" || body.originalRoot !== undefined) && (this.authedSocket() !== ws
           || !(ws.deserializeAttachment() as Attachment).registrationAccepted)) {
           return this.sendControl(ws, "mcp.intent.receipt", { requestId: body.requestId, ok: false,
             error: "current enrolled-node registration is required for self-assignment" });
         }
-        const registered = await registry.registerMcpIntent(nodeId, body);
+        const registered = await registry.registerMcpIntent(nodeId, body, Date.now(), (ws.deserializeAttachment() as Attachment).connectionToken);
         return this.sendControl(ws, "mcp.intent.receipt", registered.ok
           ? { requestId: body.requestId, ok: true, expiresAt: registered.expiresAt, version: registered.version }
           : { requestId: body.requestId, ok: false, error: registered.error });

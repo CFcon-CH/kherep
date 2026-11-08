@@ -4,6 +4,9 @@
 export const REMOTE_MCP_CAPABILITY = "mcp.messaging.v1";
 export const CLAUDE_MCP_CAPABILITY = "mcp.messaging.claude.v1";
 export const MCP_INBOX_TOO_LARGE = "inbox response exceeds transport limit; retry with a smaller limit or use the local inbox CLI";
+export const SLOT_MCP_CAPABILITY = "mcp.messaging.slot-exact.v1";
+export interface McpOriginalRoot { version: 1; threadId: string; turnId: string; verified?: true }
+export interface McpOriginalRead { requestId: string; callId: string; argumentsDigest: string; credentialVersion: number }
 export const MCP_INTENT_TTL_DEFAULT_MS = 120_000;
 export const MCP_INTENT_TTL_MAX_MS = 300_000;
 
@@ -31,6 +34,7 @@ interface McpIntentCommon {
   argumentsDigest: string;
   ttlMs?: number;
   assignment?: McpAssignment;
+  originalRoot?: McpOriginalRoot;
 }
 
 export type McpIntentRegistration = McpIntentCommon & (
@@ -59,9 +63,10 @@ export type McpIntentReceiptBody = { requestId: string; ok: true; expiresAt: num
   | { requestId: string; ok: false; error: string };
 // messageId and reply (issue #308): the one item an MCP reply answers, whose
 // parent row the Worker no longer holds; the node marks it answered.
-export interface McpInboxRequestBody { requestId: string; sessionId: string; limit: number; runtime?: McpRuntime; messageId?: string; reply?: true }
+export interface McpInboxRequestBody { requestId: string; sessionId: string; limit: number; runtime?: McpRuntime; messageId?: string; reply?: true; original?: McpOriginalRead }
 export interface McpInboxItem {
   messageId: string;
+  reference?: string;
   from: { nodeId: string; session: string };
   createdAt: string;
   text: string;
@@ -127,6 +132,10 @@ export function isMcpTool(value: unknown): value is McpTool {
 
 export function isMcpIntentRegistration(value: unknown): value is McpIntentRegistration {
   if (!isObject(value)) return false;
+  if (value.originalRoot !== undefined && (!isObject(value.originalRoot) || value.runtime !== "codex"
+    || value.threadId !== value.sessionId || value.originalRoot.version !== 1 || value.originalRoot.threadId !== value.sessionId
+    || !isShortString(value.originalRoot.turnId, 128) || value.originalRoot.verified !== undefined && value.originalRoot.verified !== true
+    || Object.keys(value.originalRoot).some(key => !["version", "threadId", "turnId", "verified"].includes(key)))) return false;
   const ttl = value.ttlMs;
   const runtime = value.runtime;
   if (value.tool === "assign_self") {
@@ -180,7 +189,10 @@ export function isMcpInboxRequestBody(value: unknown): value is McpInboxRequestB
     && isShortString(value.sessionId, 128) && Number.isSafeInteger(value.limit) && Number(value.limit) > 0 && Number(value.limit) <= 20
     && (value.runtime === undefined || value.runtime === "codex" || value.runtime === "claude-code")
     && (value.messageId === undefined || (typeof value.messageId === "string" && UUID.test(value.messageId)))
-    && (value.reply === undefined || (value.reply === true && value.messageId !== undefined));
+    && (value.reply === undefined || (value.reply === true && value.messageId !== undefined))
+    && (value.original === undefined || isObject(value.original) && typeof value.original.requestId === "string" && UUID.test(value.original.requestId)
+      && isShortString(value.original.callId, 128) && typeof value.original.argumentsDigest === "string" && DIGEST.test(value.original.argumentsDigest)
+      && Number.isSafeInteger(value.original.credentialVersion) && Number(value.original.credentialVersion) > 0);
 }
 
 export function isMcpInboxResponseBody(value: unknown): value is McpInboxResponseBody {
@@ -191,7 +203,8 @@ export function isMcpInboxResponseBody(value: unknown): value is McpInboxRespons
       || !isObject(item.from) || typeof item.from.nodeId !== "string" || !(UUID.test(item.from.nodeId) || item.from.nodeId === "operator")
       || !isShortString(item.from.session, 128) || !isShortString(item.createdAt, 64) || Number.isNaN(Date.parse(item.createdAt))
       || !isShortString(item.text, 16_384) || !Number.isSafeInteger(item.depth) || Number(item.depth) < 0) return false;
-    return item.inReplyTo === undefined || (typeof item.inReplyTo === "string" && UUID.test(item.inReplyTo));
+    return (item.inReplyTo === undefined || (typeof item.inReplyTo === "string" && UUID.test(item.inReplyTo)))
+      && (item.reference === undefined || typeof item.reference === "string" && /^intercom-[0-9]{1,16}-[0-9a-f-]{36}$/.test(item.reference));
   });
 }
 

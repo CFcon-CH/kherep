@@ -1,10 +1,13 @@
 import {
-  CLAUDE_MCP_CAPABILITY, MCP_INTENT_TTL_DEFAULT_MS, REMOTE_MCP_CAPABILITY, isMcpIntentClaim, isMcpIntentRegistration,
+  SLOT_MCP_CAPABILITY, CLAUDE_MCP_CAPABILITY, MCP_INTENT_TTL_DEFAULT_MS, REMOTE_MCP_CAPABILITY, isMcpIntentClaim, isMcpIntentRegistration,
   type McpIntentClaim, type McpIntentRegistration, type McpRuntime,
   type McpAssignmentResult, type SelfAssignmentSlot,
   type McpLeadConfirmRequest, MCP_LEAD_CONFIRM_MS,
 } from "../../protocol-mcp.mts";
 import { replaceIntercomSlot } from "./intercom-slots.mts";
+import { isNodeId } from "../../protocol.mts";
+import { isMessageId } from "../../protocol-messages.mts";
+import { MAX_HOLD_REFUSAL_REFS, type HoldRefusalRef } from "./message-store.mts";
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS mcp_credentials (
@@ -42,6 +45,19 @@ type AssignmentInspection = { ok: true; row: Record<string, SqlStorageValue>; se
 type LeadPreparation = { ok: true; result: McpAssignmentResult } | { ok: true; found: Extract<AssignmentInspection, { ok: true }>; stamp: string } | Failure;
 export type McpOutcome = "succeeded" | "uncertain" | "failed";
 
+const HOLD_REFUSALS_JSON_LIMIT = MAX_HOLD_REFUSAL_REFS * 128;
+const invalidHoldRefusals = () => new Error("invalid hold refusal recovery metadata");
+function checkedHoldRefusals(value: unknown): HoldRefusalRef[] {
+  if (!Array.isArray(value) || value.length === 0 || value.length > MAX_HOLD_REFUSAL_REFS) throw invalidHoldRefusals();
+  const ids = new Set<string>();
+  for (const ref of value) {
+    if (!ref || typeof ref !== "object" || Object.keys(ref).length !== 2 || !isMessageId(ref.messageId)
+      || !isNodeId(ref.nodeId) || ids.has(ref.messageId)) throw invalidHoldRefusals();
+    ids.add(ref.messageId);
+  }
+  return value;
+}
+
 export class McpRegistry {
   private readonly confirmLead: (request: McpLeadConfirmRequest) => Promise<boolean>;
   private readonly atomicAssignment: <T>(run: () => T) => T;
@@ -64,9 +80,30 @@ export class McpRegistry {
     this.sql.exec(SCHEMA);
     const columns = new Set(this.sql.exec<{ name: string }>("PRAGMA table_info(mcp_intents)").toArray().map(row => row.name));
     for (const [name, type] of [["assignment_slot", "TEXT"], ["assignment_title", "TEXT"], ["assignment_turn_id", "TEXT"],
-      ["assignment_revision", "INTEGER"], ["assignment_result", "TEXT"], ["lead_guard_version", "INTEGER"]]) {
+      ["assignment_revision", "INTEGER"], ["assignment_result", "TEXT"], ["lead_guard_version", "INTEGER"], ["original_root", "TEXT"], ["original_epoch", "TEXT"], ["hold_refusals_json", "TEXT"]]) {
       if (!columns.has(name)) this.sql.exec(`ALTER TABLE mcp_intents ADD COLUMN ${name} ${type}`);
     }
+    this.sql.exec("CREATE TABLE IF NOT EXISTS mcp_registration_epochs(node_id TEXT PRIMARY KEY, epoch INTEGER NOT NULL)");
+    this.sql.exec(`CREATE TABLE IF NOT EXISTS intercom_assignment_proofs (
+      slot TEXT NOT NULL, revision INTEGER NOT NULL, node_id TEXT NOT NULL, runtime TEXT NOT NULL,
+      session_id TEXT NOT NULL, operation_id TEXT NOT NULL, PRIMARY KEY(slot, revision))`);
+  }
+
+  saveHoldRefusals(nodeId: string, requestId: string, refs: HoldRefusalRef[]): void {
+    const checked = checkedHoldRefusals(refs);
+    const saved = this.sql.exec(`UPDATE mcp_intents SET hold_refusals_json=? WHERE node_id=? AND request_id=?
+      AND claimed_at IS NOT NULL AND tool_name IN ('send','reply') AND hold_refusals_json IS NULL`, JSON.stringify(checked), nodeId, requestId);
+    if (saved.rowsWritten !== 1) throw invalidHoldRefusals();
+  }
+
+  holdRefusals(nodeId: string, requestId: string): HoldRefusalRef[] {
+    const row = this.sql.exec("SELECT hold_refusals_json FROM mcp_intents WHERE node_id=? AND request_id=?", nodeId, requestId).toArray()[0];
+    if (!row) throw invalidHoldRefusals();
+    if (row.hold_refusals_json === null) return [];
+    if (typeof row.hold_refusals_json !== "string" || row.hold_refusals_json.length > HOLD_REFUSALS_JSON_LIMIT) throw invalidHoldRefusals();
+    let refs: unknown;
+    try { refs = JSON.parse(row.hold_refusals_json); } catch { throw invalidHoldRefusals(); }
+    return checkedHoldRefusals(refs);
   }
 
   rotateHashed(nodeId: string, token: string, tokenHash: string, now: number): Credential {
@@ -94,7 +131,7 @@ export class McpRegistry {
     }
     if (!this.enabled(nodeId, intent.runtime)) return { ok: false, error: this.disabledError(nodeId, intent.runtime) };
     if (intent.tool === "assign_self" && !this.assignmentNode(nodeId)) return { ok: false, error: "Codex Mac assignment requires an eligible enrolled Mac node" };
-    if (this.sessionRuntime(nodeId, intent.sessionId) !== intent.runtime) {
+    if (this.sessionRuntime(nodeId, intent.sessionId) !== intent.runtime && !this.pendingOriginal(nodeId, intent)) {
       return { ok: false, error: "native session is not registered on this node" };
     }
     const credential = this.sql.exec("SELECT version FROM mcp_credentials WHERE node_id = ?", nodeId).toArray()[0];
@@ -125,6 +162,8 @@ export class McpRegistry {
     intent.requestId, nodeId, Number(credential.version), intent.runtime, intent.sessionId, intent.threadId, intent.callId,
     intent.tool, intent.argumentsDigest, now, expiresAt, intent.assignment?.slot ?? null, intent.assignment?.native?.chatName ?? null,
     intent.assignment?.turnId ?? null, assignmentRevision, intent.assignment?.native?.leadGuardVersion ?? null);
+    if (intent.originalRoot) this.sql.exec("UPDATE mcp_intents SET original_root=?, original_epoch=? WHERE request_id=?",
+      JSON.stringify(intent.originalRoot), this.originalEpoch(nodeId), intent.requestId);
     return { ok: true, requestId: intent.requestId, expiresAt, version: Number(credential.version) };
   }
 
@@ -145,11 +184,38 @@ export class McpRegistry {
       return { ok: false, error: "native call identity does not match intent" };
     }
     const sessionId = String(row.session_id);
-    if (this.sessionRuntime(input.nodeId, sessionId) !== input.runtime) {
+    if (this.sessionRuntime(input.nodeId, sessionId) !== input.runtime && !this.currentOriginal(row, input.nodeId)) {
       return { ok: false, error: "native session is no longer registered" };
     }
     if (input.runtime === "codex" && row.thread_id !== null && String(row.thread_id) !== input.threadId) return { ok: false, error: "native call identity does not match intent" };
     return { ok: true, row, sessionId };
+  }
+  registrationChanged(nodeId: string): void {
+    this.sql.exec("INSERT INTO mcp_registration_epochs(node_id,epoch) VALUES (?,1) ON CONFLICT(node_id) DO UPDATE SET epoch=epoch+1",nodeId);
+  }
+  private originalEpoch(nodeId: string): string | null {
+    const n = this.sql.exec("SELECT message_connection_token,registration_token,identity_generation,capabilities FROM nodes WHERE id=? AND revoked_at IS NULL AND public_key IS NOT NULL AND os='darwin'", nodeId).toArray()[0];
+    if (!n || typeof n.message_connection_token !== "string" || n.registration_token !== n.message_connection_token
+      || !JSON.parse(String(n.capabilities)).includes(SLOT_MCP_CAPABILITY)) return null;
+    return JSON.stringify([n,this.sql.exec("SELECT epoch FROM mcp_registration_epochs WHERE node_id=?",nodeId).toArray()[0] ?? null]);
+  }
+  private pendingOriginal(nodeId: string, intent: McpIntentRegistration): boolean {
+    return intent.runtime === "codex" && intent.originalRoot?.verified === true && intent.threadId === intent.sessionId
+      && this.originalEpoch(nodeId) !== null && this.sql.exec("SELECT 1 FROM sessions WHERE node_id=? AND session_id=? AND runtime='codex' AND state='unknown'", nodeId, intent.sessionId).toArray().length === 1;
+  }
+  private currentOriginal(row: Record<string, SqlStorageValue>, nodeId: string): boolean {
+    if (typeof row.original_root !== "string" || row.runtime !== "codex" || row.thread_id !== row.session_id
+      || row.original_epoch === null || row.original_epoch !== this.originalEpoch(nodeId)) return false;
+    const root = JSON.parse(row.original_root);
+    return root.verified === true && root.threadId === row.session_id
+      && this.sql.exec("SELECT 1 FROM sessions WHERE node_id=? AND session_id=? AND runtime='codex' AND state NOT IN ('closed','archived','deleted')", nodeId, row.session_id).toArray().length === 1;
+  }
+  originalClaim(input: McpIntentClaim, now = Date.now()) {
+    const found = this.inspect(input, now);
+    if (!found.ok) return found;
+    return this.currentOriginal(found.row, input.nodeId) && input.runtime === "codex" && input.threadId === found.sessionId
+      ? { ok: true as const, sessionId: found.sessionId, stamp: JSON.stringify(found.row) }
+      : { ok: false as const, error: "current original native invocation is required" };
   }
   // Read-only: no claim, thread binding, or outcome mutation.
   peekClaimSession(input: McpIntentClaim, now: number): { ok: true; sessionId: string } | Failure {
@@ -201,6 +267,9 @@ export class McpRegistry {
     });
     const result: McpAssignmentResult = revision === null
       ? { ok: false, error: "Intercom slot revision conflict", conflict: true } : { ok: true, slot, revision };
+    if (revision !== null) this.sql.exec(`INSERT INTO intercom_assignment_proofs
+      (slot,revision,node_id,runtime,session_id,operation_id) VALUES (?,?,?,?,?,?)`,
+      slot, revision, input.nodeId, "codex", sessionId, input.requestId);
     this.sql.exec("UPDATE mcp_intents SET claimed_at=?, outcome=?, assignment_result=? WHERE request_id=?",
       now, revision === null ? "failed" : "succeeded", JSON.stringify(result), input.requestId);
     return result;
@@ -280,6 +349,7 @@ export class McpRegistry {
       && (row.thread_id === null ? intent.threadId === undefined : String(row.thread_id) === intent.threadId)
       && String(row.call_id) === intent.callId && String(row.tool_name) === intent.tool
       && String(row.arguments_digest) === intent.argumentsDigest
+      && (intent.originalRoot ? row.original_root === JSON.stringify(intent.originalRoot) : row.original_root === null)
       && (intent.assignment ? row.assignment_slot === intent.assignment.slot
         && row.assignment_title === intent.assignment.native?.chatName && row.assignment_turn_id === intent.assignment.turnId
         && (row.lead_guard_version ?? null) === (intent.assignment.native?.leadGuardVersion ?? null)

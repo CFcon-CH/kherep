@@ -1,3 +1,4 @@
+import { isProtectedMessage } from "./message-owner.mts";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 
@@ -153,6 +154,7 @@ async function send(io: Io, rest: string[], values: MsgArgs["values"]): Promise<
     if (!isMessageId(replyTo)) return fail(io, `--reply-to needs a message id, got "${replyTo}"`);
     const original = getMessage(io.paths.inbox, replyTo);
     if (!original) return fail(io, `message ${replyTo} is not in this node's inbox`);
+    if (isProtectedMessage(original)) return fail(io, "protected native route required");
     depth = (original.depth ?? 0) + 1;
     guarded = original.loop !== undefined;
     taskId = original.taskId;

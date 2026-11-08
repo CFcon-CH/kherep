@@ -131,7 +131,7 @@ function sessionRefusal(f: Facts, policy: NodePolicy): PreClaimRefusal | null {
 
 // The operator API cannot be answered with msg send, nor by a proxy answer.
 const eligible = (m: InboxRecord | null, owner: string): m is InboxRecord => m?.state === "accepted" && m.toSession === owner
-  && m.taskId === undefined && m.from.nodeId !== OPERATOR_NODE_ID;
+  && m.binding?.mode !== "slot-exact" && m.taskId === undefined && m.from.nodeId !== OPERATOR_NODE_ID;
 const depthOk = (m: InboxRecord): boolean => automaticReplyDecision(m).allowed;
 
 function messageRefusal(f: Facts, purpose: Purpose): PreClaimRefusal | null {

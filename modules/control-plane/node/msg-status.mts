@@ -1,3 +1,4 @@
+import { isProtectedMessage } from "./message-owner.mts";
 import { isMessageDiagnostic, renderMessageDiagnostic } from "../protocol-diagnostics.mts";
 import { ACCEPTED_SILENCE_CAUSES, isMessageId, senderState, silentlyAccepted } from "../protocol-messages.mts";
 import { getOutbox, getSent, type SentRecord } from "./exchange.mts";
@@ -68,6 +69,7 @@ export function status(io: Io, messageId: string): number {
   }
   // Issue #417: a message this node received.
   const received = getMessage(io.paths.inbox, messageId);
+  if (isProtectedMessage(received)) return fail(io, "protected native route required");
   if (received) {
     const diagnostic = getMessageDiagnostic(io.paths.inbox, messageId);
     const progress = getMessageProgress(io.paths.inbox, messageId);

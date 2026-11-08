@@ -94,12 +94,23 @@ export async function processMcpIntentHook(input: Record<string, unknown>, root:
   };
   try {
     if (tool === "reply") rememberGuardedMcpReply(paths, requestId, input.tool_input.inReplyTo);
+    const nativeName = typeof input.transcript_path === "string" ? input.transcript_path.split(/[\\/]/).at(-1) : "";
+    const nativeThread = /^rollout-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-([0-9a-f-]{36})(?:_[0-9a-f-]{36})?\.jsonl$/.exec(nativeName ?? "")?.[1];
+    const nativeStamp = /^rollout-(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})-/.exec(nativeName ?? "");
+    const nativeIso = nativeStamp ? `${nativeStamp[1]}T${nativeStamp[2]}:${nativeStamp[3]}:${nativeStamp[4]}` : "";
+    const nativeMillis = Date.parse(nativeIso + "Z");
+    const canonicalTime = Number.isFinite(nativeMillis) && new Date(nativeMillis).toISOString().slice(0,19) === nativeIso;
+    const originalRoot = runtime === "codex" && tool !== "assign_self" && fullSessionId(input.session_id)
+      && canonicalTime && nativeThread === input.session_id && (input.thread_id === undefined || input.thread_id === input.session_id)
+      && typeof input.turn_id === "string" && input.turn_id.length > 0 && input.turn_id.length <= 128
+      && !["agent_id", "agent_type", "agent_role", "agent_path", "agent_nickname", "parent_thread_id", "forked_from_id", "forked_from_ordinal_exclusive", "subagent_history_start_ordinal", "attached_thread"].some(key => Object.hasOwn(input, key))
+      ? { version: 1 as const, threadId: input.session_id, turnId: input.turn_id } : undefined;
     const common = { requestId, sessionId: input.session_id, callId: input.tool_use_id,
       tool, argumentsDigest: await digestMcpArguments(input.tool_input) };
     enqueueMcpIntent(paths, tool === "assign_self"
       ? { ...common, runtime: "codex", threadId: input.session_id,
         assignment: { slot: input.tool_input.slot as "codex-mac" | "kherep-lead", turnId: input.turn_id as string } }
-      : runtime === "codex" ? { ...common, runtime: "codex" } : { ...common, runtime: "claude-code" });
+      : runtime === "codex" ? { ...common, runtime: "codex", ...(originalRoot ? { threadId: input.session_id, originalRoot } : {}) } : { ...common, runtime: "claude-code" });
     enqueued = performance.now();
     const deadline = now + ACK_WAIT_MS;
     while (Date.now() < deadline) {

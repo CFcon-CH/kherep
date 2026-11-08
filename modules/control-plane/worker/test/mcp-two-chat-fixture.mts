@@ -2,6 +2,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { createBindingStorage } from "../../node/inbox-storage.mts";
+import { digestMcpArguments } from "../../protocol-mcp.mts";
 import { env } from "cloudflare:workers";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { expect, vi } from "vitest";
@@ -44,12 +46,14 @@ export interface HookOutput {
     permissionDecision?: "allow" | "deny"; permissionDecisionReason?: string };
 }
 interface LocalModule {
+  enqueueMcpIntent(paths: NodePaths, body: unknown): void;
   hasMcpCredential(paths: NodePaths): boolean;
   recordMcpCredential(paths: NodePaths, body: McpCredentialBody): void;
   recordMcpIntentReceipt(paths: NodePaths, inflight: Set<string>, body: McpIntentReceiptBody): void;
   disableMcp(paths: NodePaths, inflight: Set<string>): void;
-  readMcpInbox(paths: NodePaths, sessionId: string, limit: number, messageId?: string): McpInboxItem[];
-  answerMcpInbox(paths: NodePaths, messageIds: string[]): void;
+  readMcpInbox(paths: NodePaths, sessionId: string, limit: number, messageId?: string, runtime?: string, original?: boolean): McpInboxItem[];
+  offerMcpInbox(paths: NodePaths, messageIds: string[], now?: number, owner?: {sessionId:string;runtime:string}, original?: boolean): void;
+  answerMcpInbox(paths: NodePaths, messageIds: string[], owner?: {sessionId:string;runtime:string}, original?: boolean): void;
   pollMcpIntents(client: NodeClient, paths: NodePaths, inflight: Set<string>, send: (frame: string) => boolean): Promise<void>;
 }
 const runtimeOnly = (name: string): Promise<unknown> =>
@@ -69,10 +73,13 @@ export interface NativeNode {
   hook(sessionId: string, toolUseId: string, tool: string, input: Record<string, unknown>): Promise<Record<string, unknown>>;
   // The trusted hook's complete output for a raw native PreToolUse input.
   nativeHook(input: Record<string, unknown>, runtime?: McpRuntime): Promise<HookOutput | null>;
+  externalNativeHook(input: Record<string, unknown>, runtime?: McpRuntime): Promise<HookOutput | null>;
   // Publishes the current session listing, as periodic publication does.
   publishSessions(): Promise<void>;
   // Replaces the daemon connection: a fresh client and in-memory state over the same node files.
   restart(): Promise<void>;
+  offline(): Promise<void>;
+  assign(sessionId: string, slot: "codex-mac" | "kherep-lead"): Promise<void>;
   mcp(): Promise<Client>;
   close(): Promise<void>;
 }
@@ -94,9 +101,9 @@ function trackSyntheticRoot(root: string): () => void {
 }
 
 // `sessions` is read on every listing, so a caller may change it in place.
-export async function startNativeNode(name: string, sessions: SessionInfo[]): Promise<NativeNode> {
+export async function startNativeNode(name: string, sessions: SessionInfo[], originals: string[] = []): Promise<NativeNode> {
   const { processMcpIntentHook } = await runtimeOnly("mcp-intent-hook") as HookModule;
-  const { answerMcpInbox, disableMcp, hasMcpCredential, pollMcpIntents, readMcpInbox, recordMcpCredential, recordMcpIntentReceipt } =
+  const { enqueueMcpIntent, offerMcpInbox, answerMcpInbox, disableMcp, hasMcpCredential, pollMcpIntents, readMcpInbox, recordMcpCredential, recordMcpIntentReceipt } =
     await runtimeOnly("mcp-local") as LocalModule;
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "kherep-two-chat-"));
   // The workerd test file system reports mtimeMs 0 for every file. The intent
@@ -115,12 +122,14 @@ export async function startNativeNode(name: string, sessions: SessionInfo[]): Pr
   const list = recordingSessions(paths, async () => {
     const now = Date.now();
     const rows = [...sessions];
-    return syntheticListing(authority, rows, rows.map(({ runtime, sessionId }) => ({ runtime, sessionId,
+    return syntheticListing(authority, rows, rows.filter(row => row.state !== "unknown").map(({ runtime, sessionId }) => ({ runtime, sessionId,
       holder: { status: "value", value: { present: true, creationIdentity: "synthetic-holder" }, source: "native-holder", observedAt: now, complete: true, reasonCode: "observed" },
       turn: { status: "value", value: "running", source: "native-turn", observedAt: now, complete: true, reasonCode: "observed" },
     })), now);
   }, () => {}, undefined, undefined, undefined, authority);
   let inflight = new Set<string>();
+  let syntheticAssignment: string | undefined;
+  const storage = createBindingStorage(paths.inbox);
   let client: NodeClient;
   let ws: WebSocket;
   // One ordered lane for received frames and intent rounds, as in the daemon.
@@ -132,15 +141,18 @@ export async function startNativeNode(name: string, sessions: SessionInfo[]): Pr
     const connected = new NodeClient({
       nodeId, identity, policy: POLICY,
       handlers: { "node.status": async () => ({}), "runtime.list": async () => [], "session.list": list },
-      facts: () => FACTS, runtimes: async () => [{ name: "claude-code", kind: "cli" }], sessions: list,
+      assignmentIdentity: async sessionId => originals.includes(sessionId)
+        ? { sessionId, chatName: "Synthetic same title", platform: "darwin", originalMain: true } : null,
+      facts: () => ({ ...FACTS, ...(originals.length ? { os: "darwin" } : {}) }), runtimes: async () => [{ name: "claude-code", kind: "cli" }], sessions: list,
       storeMessage: (body) => { storeMessage(paths.inbox, body); },
       mcpCredentialPresent: () => hasMcpCredential(paths),
       mcpCredential: (body) => recordMcpCredential(paths, body),
       mcpIntentReceipt: (body) => recordMcpIntentReceipt(paths, current, body),
       mcpDisabled: () => disableMcp(paths, current),
-      readMcpInbox: (sessionId, limit, messageId) => { inboxReads.push(sessionId); return readMcpInbox(paths, sessionId, limit, messageId); },
-      answerMcpInbox: (messageIds) => answerMcpInbox(paths, messageIds),
-      ...exchangeOptions(paths),
+      readMcpInbox: (sessionId, limit, messageId, runtime, original) => { inboxReads.push(sessionId); return readMcpInbox(paths, sessionId, limit, messageId, runtime, original); },
+      offerMcpInbox: (messageIds, sessionId, runtime, original) => { if (originals.length) offerMcpInbox(paths,messageIds,Date.now(),{sessionId,runtime},original); },
+      answerMcpInbox: (messageIds, sessionId, runtime, original) => answerMcpInbox(paths, messageIds, {sessionId,runtime}, original),
+      ...exchangeOptions(paths), bindingStorageReady: storage.snapshot, bindingStorageFault: storage.fault,
     });
     client = connected;
     const response = await workerFetch(`/node/connect?nodeId=${nodeId}`, { headers: { upgrade: "websocket" } });
@@ -149,6 +161,10 @@ export async function startNativeNode(name: string, sessions: SessionInfo[]): Pr
     socket.addEventListener("message", (event) => {
       const parsed = parseEnvelope(event.data as string);
       if (parsed.ok) received.push(parsed.envelope);
+      if (parsed.ok && parsed.envelope.type === "mcp.lead.confirm.request" && (parsed.envelope.body as {requestId?:string}).requestId === syntheticAssignment) {
+        // Synthetic native provider only: emulate a current exact nonce result.
+        socket.send(JSON.stringify(makeEnvelope("mcp.lead.confirm.response", { nonce: (parsed.envelope.body as {nonce:string}).nonce, allowed: true }, 0, 0))); return;
+      }
       chain = chain.then(async () => {
         for (const frame of await connected.onFrame(event.data as string)) socket.send(frame);
       });
@@ -172,6 +188,31 @@ export async function startNativeNode(name: string, sessions: SessionInfo[]): Pr
   const clients: Client[] = [];
   return {
     nodeId, root, paths, received, inboxReads, nativeHook,
+    async externalNativeHook(input, runtime = "codex") {
+      const host = "http://127.0.0.1:47861";
+      const started = await fetch(host+"/start",{method:"POST",body:JSON.stringify({input,runtime})});
+      const {id} = await started.json() as {id:string};
+      let published: string | null = null;
+      try {
+        const deadline = Date.now()+12_000;
+        while (Date.now()<deadline) {
+          const polled = await (await fetch(`${host}/poll?id=${id}`)).json() as {intent:{requestId:string}|null};
+          if (polled.intent && published === null) {enqueueMcpIntent(paths,polled.intent);published=polled.intent.requestId;}
+          pump();await chain;
+          if (published) {
+            const receiptFile=path.join(paths.mcpReceipts,published+".json");
+            if (fs.existsSync(receiptFile)) {
+              const receipt=JSON.parse(fs.readFileSync(receiptFile,"utf8"));fs.rmSync(receiptFile);
+              await fetch(`${host}/receipt?id=${id}`,{method:"POST",body:JSON.stringify({receipt})});
+            }
+          }
+          const result = await (await fetch(`${host}/result?id=${id}`)).json() as {done:boolean;code:number|null;output:HookOutput|null;error:string|null};
+          if (result.done) {expect(result.code,result.error ?? "external hook exit").toBe(0);expect(result.error).toBeNull();return result.output;}
+          await new Promise(resolve=>setTimeout(resolve,25));
+        }
+        throw new Error("external synthetic hook timed out");
+      } finally {await fetch(`${host}/close?id=${id}`);}
+    },
     async hook(sessionId, toolUseId, tool, input) {
       const output = await nativeHook({ hook_event_name: "PreToolUse", tool_name: `mcp__kherep_messaging__${tool}`,
         session_id: sessionId, tool_use_id: toolUseId, tool_input: input });
@@ -182,6 +223,23 @@ export async function startNativeNode(name: string, sessions: SessionInfo[]): Pr
     async publishSessions() {
       chain = chain.then(async () => { for (const frame of await client.sessionsSnapshot()) send(frame); });
       await chain;
+    },
+    async offline() { await chain; client.connectionClosed(); ws.close(1000, "synthetic offline"); },
+    async assign(sessionId, slot) {
+      // Real assignment Registry CAS and MCP callback; native evidence here is
+      // deliberately synthetic, never a deployment or Director appointment.
+      const requestId = crypto.randomUUID(), callId = crypto.randomUUID();
+      const argumentsDigest = await digestMcpArguments({slot});
+      const registration = { requestId, runtime: "codex" as const, sessionId, threadId: sessionId, callId, tool: "assign_self" as const, argumentsDigest,
+        assignment: { slot, turnId: "synthetic-turn", native: {sessionId,chatName:"Synthetic same title",platform:"darwin" as const,originalMain:true as const,
+          ...(slot === "kherep-lead" ? {leadGuardVersion:1 as const} : {})} } };
+      expect((await registry().registerMcpIntent(nodeId, registration)).ok).toBe(true);
+      syntheticAssignment = requestId;
+      try {
+        const instance = await (this as NativeNode).mcp();
+        const response = await instance.callTool({name:"assign_self",arguments:{requestId,slot},_meta:{sessionId,threadId:sessionId,callId}});
+        expect(response.isError, JSON.stringify(response)).not.toBe(true);
+      } finally { syntheticAssignment = undefined; }
     },
     async restart() {
       await chain;

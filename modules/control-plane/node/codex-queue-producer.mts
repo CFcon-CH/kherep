@@ -93,7 +93,7 @@ function admitted(deps: RunnerDeps, owner: string, messageIds: string[], fingerp
   const ids = messageIds.filter((id) => {
     const record = getMessage(deps.paths.inbox, id);
     return record?.messageId === id && record.toSession === owner && record.state === "accepted"
-      && automaticReplyDecision(record).allowed;
+      && record.binding?.mode !== "slot-exact" && automaticReplyDecision(record).allowed;
   });
   return ids.length ? { ids: [...new Set(ids)], budget: wakeBudget(policy) } : null;
 }

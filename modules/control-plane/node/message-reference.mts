@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import {
-  BINDING_PENDING_LIMIT, BINDING_TTL_MS, isResolveRequest, type BoundOwner, type DeliveryBinding,
+  stableBinding, BINDING_PENDING_LIMIT, BINDING_TTL_MS, isResolveRequest, type BoundOwner, type DeliveryBinding,
   type MessageSelection, type ResolveRequest, type ResolveResponse, type SelectedResult,
 } from "../protocol-message-binding.mts";
 import { isSessionRef } from "../protocol-messages.mts";
@@ -60,7 +60,7 @@ export function readSelectedLocalReferences(paths: NodePaths, selections: Messag
   });
   return { results, stamps };
 }
-interface Lease { messageId: string; selection: MessageSelection; stamp: string; owner: BoundOwner; expiresAt: number; policy: string; localGeneration: number | null }
+interface Lease { messageId: string; selection: MessageSelection; stamp: string; owner: BoundOwner; expiresAt: number; policy: string; localGeneration: number | null; binding?: import("../protocol-message-binding.mts").MessageBinding }
 export class MessageReferenceResolver {
   private readonly leases = new Map<string, Lease>();
   constructor(privatePaths: NodePaths, now: () => number = Date.now) { this.paths = privatePaths; this.now = now; }
@@ -74,6 +74,14 @@ export class MessageReferenceResolver {
       results: request.selections.map(s => ({ role: s.role, code: "STALE" })) });
     if (!isResolveRequest(request) || request.expiresAt <= now || request.expiresAt > now + BINDING_TTL_MS + CLOCK_ALLOWANCE_MS
       || this.leases.size + request.selections.length > BINDING_PENDING_LIMIT) return fail();
+    if (request.purpose === "slot-storage" && request.binding) {
+      const leaseId = crypto.randomUUID(), binding = request.binding;
+      this.leases.set(leaseId, { messageId: request.messageId, selection: request.selections[0], stamp: "slot-storage",
+        owner: { ...binding.to }, expiresAt: request.expiresAt, policy, localGeneration: null, binding });
+      return { version: 1, requestId: request.requestId, messageId: request.messageId, results: [{ role: "to", code: "BOUND",
+        match: "exact", owner: { sessionId: binding.to.sessionId, runtime: binding.to.runtime }, selectionStamp: crypto.randomUUID(),
+        localGeneration: null, lifecycleGeneration: binding.to.lifecycleGeneration, leaseId }] };
+    }
     const selected = readSelectedLocalReferences(this.paths, request.selections);
     selected.results.forEach((r, i) => {
       if (r.code !== "BOUND") return;
@@ -89,6 +97,8 @@ export class MessageReferenceResolver {
     this.leases.delete(binding.leaseId);
     if (!lease || lease.messageId !== messageId || lease.expiresAt <= this.now() || lease.policy !== policy
       || binding.localGeneration !== lease.localGeneration || JSON.stringify(lease.owner) !== JSON.stringify(binding.to)) return false;
+    if (lease.binding) return binding.mode === "slot-exact" && JSON.stringify(stableBinding(binding)) === JSON.stringify(lease.binding);
+    if (binding.mode === "slot-exact") return false;
     const current = readSelectedLocalReferences(this.paths, [lease.selection]);
     return current.results[0]?.code === "BOUND" && current.stamps[0] === lease.stamp;
   }

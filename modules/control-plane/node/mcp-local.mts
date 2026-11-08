@@ -1,5 +1,5 @@
 import { messageOwnerMatches } from "./message-owner.mts";
-import type { SelectedOwner } from "../protocol-message-binding.mts";
+import { intercomReference, type SelectedOwner } from "../protocol-message-binding.mts";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -139,10 +139,12 @@ export async function pollMcpIntents(client: NodeClient, paths: NodePaths, infli
   };
   const register = async (body: McpIntentRegistration): Promise<boolean> => {
     if (expired(body)) return true;
-    const [frame] = body.tool === "assign_self" ? await client.registerMcpAssignment(body, beforeSnapshot) : client.registerMcpIntent(body);
+    const [frame] = body.tool === "assign_self" ? await client.registerMcpAssignment(body, beforeSnapshot)
+      : body.originalRoot ? await client.registerMcpOriginal(body) : client.registerMcpIntent(body);
     if (expired(body)) return true;
-    if (!frame && body.tool === "assign_self") {
-      persistMcpIntentReceipt(paths, inflight, negativeReceipt(body.requestId, "node_assignment_preparation"));
+    if (!frame && (body.tool === "assign_self" || body.originalRoot)) {
+      persistMcpIntentReceipt(paths, inflight, negativeReceipt(body.requestId,
+        body.tool === "assign_self" ? "node_assignment_preparation" : undefined));
       return true;
     }
     if (!frame || !send(frame)) return false;
@@ -216,10 +218,10 @@ export function consumeMcpIntentReceipt(paths: NodePaths, requestId: string): Lo
 }
 
 // messageId (issue #308): only that record, and only when it is addressed to sessionId.
-export function readMcpInbox(paths: NodePaths, sessionId: string, limit: number, messageId?: string, runtime = "codex"): McpInboxItem[] {
-  return listInbox(paths.inbox, sessionId).filter(r => messageOwnerMatches(r, { sessionId, runtime }, [sessionId])).filter((record) => messageId === undefined || record.messageId === messageId)
+export function readMcpInbox(paths: NodePaths, sessionId: string, limit: number, messageId?: string, runtime = "codex", original = false): McpInboxItem[] {
+  return listInbox(paths.inbox, sessionId).filter(r => messageOwnerMatches(r, { sessionId, runtime }, [sessionId], original)).filter((record) => messageId === undefined || record.messageId === messageId)
     .slice(-limit).map((record) => ({
-    messageId: record.messageId, from: { ...record.from }, createdAt: record.createdAt, text: record.text,
+    messageId: record.messageId, ...(record.binding?.mode === "slot-exact" ? {reference:intercomReference(record.messageId,record.binding.slot!.issuedAt)} : {}), from: { ...record.from }, createdAt: record.createdAt, text: record.text,
     ...(record.inReplyTo ? { inReplyTo: record.inReplyTo } : {}), depth: record.depth ?? 0,
   }));
 }
@@ -229,18 +231,18 @@ export function readMcpInbox(paths: NodePaths, sessionId: string, limit: number,
 // client fires hooks) or a reply confirms them; a client without hooks
 // reaches delivered only through a reply. Already offered or final records
 // stay as they are.
-export function offerMcpInbox(paths: NodePaths, messageIds: string[], now: number = Date.now(), owner?: SelectedOwner): void {
+export function offerMcpInbox(paths: NodePaths, messageIds: string[], now: number = Date.now(), owner?: SelectedOwner, original = false): void {
   for (const id of messageIds) {
     const record = getMessage(paths.inbox, id);
-    if (record?.state === "accepted" && messageOwnerMatches(record, owner, [record.toSession])) markOffered(paths.inbox, id, now, "mcp");
+    if (record?.state === "accepted" && messageOwnerMatches(record, owner, [record.toSession], original)) markOffered(paths.inbox, id, now, "mcp");
   }
 }
 
 // An MCP reply the Worker routes through this node (issue #308) answers the
 // record, as `msg send --reply-to` does.
-export function answerMcpInbox(paths: NodePaths, messageIds: string[], owner?: SelectedOwner): void {
+export function answerMcpInbox(paths: NodePaths, messageIds: string[], owner?: SelectedOwner, original = false): void {
   for (const id of messageIds) {
     const record = getMessage(paths.inbox, id);
-    if (record && messageOwnerMatches(record, owner, [record.toSession])) markAnswered(paths.inbox, id);
+    if (record && messageOwnerMatches(record, owner, [record.toSession], original)) markAnswered(paths.inbox, id);
   }
 }
