@@ -9,6 +9,16 @@ import { declareCopy } from './coverage-copy-fixture.mts';
 import test from 'node:test';
 import { auditRepository } from './publication-audit.mts';
 
+// Some Node releases the engines range admits, 24.1.0 among them, print this
+// warning when a child loads a .mts file. Only this exact pair of lines is
+// dropped; any other stderr still fails the assertion.
+const TYPE_STRIPPING_WARNING = new RegExp("^\\(node:\\d+\\) ExperimentalWarning: Type Stripping is an experimental "
+  + "feature and might change at any time\\r?\\n\\(Use `node --trace-warnings \\.\\.\\.` to show where the warning was "
+  + "created\\)\\r?\\n", "gm");
+const withoutTypeStrippingWarning = (stderr: string | Buffer): string =>
+  String(stderr).replace(TYPE_STRIPPING_WARNING, "");
+
+
 function fixture(t: test.TestContext): string {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'publication-audit-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
@@ -303,7 +313,7 @@ test('malformed trusted JSON is generic CLI2 and no partial review', async t => 
 test('missing trusted Git is redacted CLI2, never an unexamined pass', async t => {
   const f = await reviewedFixture(t); f.cli();
   const result = spawnSync(process.execPath, [f.scanner, f.root, path.join(f.trusted, 'synthetic-policy.json')], { encoding: 'utf8', env: { ...process.env, PATH: '' } });
-  assert.equal(result.status, 2); assert.equal(result.stdout, ''); assert.equal(result.stderr.trim(), 'Publication audit could not complete; no clean result is available.');
+  assert.equal(result.status, 2); assert.equal(result.stdout, ''); assert.equal(withoutTypeStrippingWarning(result.stderr).trim(), 'Publication audit could not complete; no clean result is available.');
 });
 
 
@@ -347,4 +357,18 @@ test('unreviewed conflict continues hard content classification in every view', 
   execFileSync('git', ['-C', root, 'update-index', '--index-info'], { input: `100644 ${blob} 1\tplain.md\n100644 ${blob} 2\tplain.md\n100644 ${blob} 3\tplain.md\n` });
   const report = auditRepository(root, ['hard-sentinel']); assert.equal(report.complete, false);
   assert.ok(report.issues.some(x => x.category === 'forbidden-content')); assert.ok(report.issues.some(x => x.category === 'index-conflict')); assert.equal(report.indexed, 3);
+});
+
+
+test('only the exact Node type-stripping warning pair is tolerated by strict stderr checks', () => {
+  const error = 'Publication audit could not complete; no clean result is available.';
+  const warning = '(node:123) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time\n'
+    + '(Use `node --trace-warnings ...` to show where the warning was created)\n';
+  assert.equal(withoutTypeStrippingWarning(warning + error).trim(), error);
+  assert.equal(withoutTypeStrippingWarning(warning.replaceAll('\n', '\r\n') + error).trim(), error);
+  assert.equal(withoutTypeStrippingWarning(error), error);
+  for (const unexpected of ['unexpected diagnostic', warning.replace('Type Stripping', 'Another Feature'), warning.split('\n')[0]]) {
+    assert.notEqual(withoutTypeStrippingWarning(unexpected + '\n' + error).trim(), error);
+  }
+  assert.notEqual(withoutTypeStrippingWarning(warning + error + '\ntrailing diagnostic').trim(), error);
 });
