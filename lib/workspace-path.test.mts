@@ -6,12 +6,12 @@ import { nativeWorkspacePath as localInferenceCopy } from "../modules/local-infe
 
 const CASES: Array<[string, string, string]> = [
   // [input, win32 result, posix result]
-  ["/d/CFcon-DEV", "D:\\CFcon-DEV", "/d/CFcon-DEV"],
+  ["/d/Workspaces", "D:\\Workspaces", "/d/Workspaces"],
   ["/c/Users/example/Kherep", "C:\\Users\\example\\Kherep", "/c/Users/example/Kherep"],
   ["/d", "D:\\", "/d"],
   ["/d/", "D:\\", "/d/"],
-  ["D:/CFcon-DEV", "D:/CFcon-DEV", "D:/CFcon-DEV"],
-  ["D:\\CFcon-DEV", "D:\\CFcon-DEV", "D:\\CFcon-DEV"],
+  ["D:/Workspaces", "D:/Workspaces", "D:/Workspaces"],
+  ["D:\\Workspaces", "D:\\Workspaces", "D:\\Workspaces"],
   ["/ws", "/ws", "/ws"],
   ["/tmp/work", "/tmp/work", "/tmp/work"],
   ["//server/share", "//server/share", "//server/share"],

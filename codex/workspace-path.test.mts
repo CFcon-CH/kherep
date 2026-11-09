@@ -5,14 +5,14 @@ import test from "node:test";
 import { resolveWorkspace } from "./install.mts";
 
 // Issue #75. A Git Bash workspace value reached path.resolve unchanged and
-// became D:\d\CFcon-DEV on Windows.
+// became D:\d\Workspaces on Windows.
 test("resolveWorkspace turns an MSYS drive path into the Windows drive", { skip: process.platform !== "win32" }, () => {
-  assert.equal(resolveWorkspace({ workspace: "/d/CFcon-DEV" }, "win32"), "D:\\CFcon-DEV");
-  assert.equal(resolveWorkspace({ workspace: "D:/CFcon-DEV" }, "win32"), "D:\\CFcon-DEV");
+  assert.equal(resolveWorkspace({ workspace: "/d/Workspaces" }, "win32"), "D:\\Workspaces");
+  assert.equal(resolveWorkspace({ workspace: "D:/Workspaces" }, "win32"), "D:\\Workspaces");
 });
 
 test("resolveWorkspace keeps a POSIX workspace on a POSIX host", { skip: process.platform === "win32" }, () => {
-  assert.equal(resolveWorkspace({ workspace: "/d/CFcon-DEV" }, process.platform), "/d/CFcon-DEV");
+  assert.equal(resolveWorkspace({ workspace: "/d/Workspaces" }, process.platform), "/d/Workspaces");
 });
 
 test("resolveWorkspace still resolves an ordinary workspace", () => {

@@ -158,7 +158,7 @@ for (const home of HOMES) {
 // script and event, whatever root the existing entry names. The replace is the
 // #31 rule, so nothing is reported, and operator hooks stay as they are.
 const PIN = "/Users/x/Library/Application Support/kherep/control-plane/service/source-pins/0123abcd";
-const CHECKOUT = "/Users/x/CFcon-DEV/kherep";
+const CHECKOUT = "/Users/x/Workspaces/kherep";
 const cp = (root: string, script: string, args = ""): HookCommand =>
   ({ type: "command", command: `node "${root}/modules/control-plane/node/${script}"${args}` });
 const cpWake = (root: string, t: number): HookCommand => ({ ...cp(root, "wake-hook.mts", ` --timeout ${t}`), asyncRewake: true, timeout: t });

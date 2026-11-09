@@ -81,13 +81,13 @@ test("the reason names the resolved broker command, never a placeholder", () => 
 // Git Bash consumes the backslashes of a native Windows path: the command uses
 // forward slashes, the form the allow rule has on Windows.
 test("on a Windows workspace the reason uses forward slashes", () => {
-  const result = decision(payload([user(USER_TEXT), WORK, said("done")], { cwd: "D:\\CFcon-DEV\\kherep" }),
-    { KHEREP_WORKSPACE: "D:\\CFcon-DEV" }, inRepo, NO_SOURCES, CONFIG);
+  const result = decision(payload([user(USER_TEXT), WORK, said("done")], { cwd: "D:\\Workspaces\\kherep" }),
+    { KHEREP_WORKSPACE: "D:\\Workspaces" }, inRepo, NO_SOURCES, CONFIG);
   const reason = result?.reason ?? "";
-  const root = path.resolve("D:/CFcon-DEV").replace(/\\/g, "/");
+  const root = path.resolve("D:/Workspaces").replace(/\\/g, "/");
   assert.ok(reason.includes(`node ${root}/tools/atl-confluence-ccoder.mts search --space KB`), reason);
   assert.doesNotMatch(reason, /\\/);
-  if (process.platform === "win32") assert.ok(reason.includes("node D:/CFcon-DEV/tools/atl-confluence-ccoder.mts search"), reason);
+  if (process.platform === "win32") assert.ok(reason.includes("node D:/Workspaces/tools/atl-confluence-ccoder.mts search"), reason);
 });
 
 test("passes a substantial turn that looked up the Brain", () => {

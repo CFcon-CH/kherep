@@ -170,7 +170,7 @@ test("attribution is allowed without identity or trailer restrictions and preser
   setRepoConfig(f, "false");
   for (const attribution of [
     "Co-authored-by: Example <dev@example.com>",
-    "Co-authored-by: Codex <codex@openai.com>",
+    "Co-authored-by: Codex <codex@example.com>",
     "Co-authored-by: Other AI <bot@example.com>\nCo-authored-by: Example <dev@example.com>",
     "Generated with [Claude Code]",
   ]) {

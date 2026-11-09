@@ -12,7 +12,7 @@ import { test } from "node:test";
 
 import { duplicateControlPlaneHooks } from "./duplicate-hooks.mts";
 
-const CHECKOUT = "/Users/x/CFcon-DEV/kherep";
+const CHECKOUT = "/Users/x/Workspaces/kherep";
 const PIN = "/Users/x/Library/Application Support/kherep/control-plane/service/source-pins/0123abcd";
 const cp = (root: string, script: string, args = "") => ({ type: "command", command: `node "${root}/modules/control-plane/node/${script}"${args}` });
 const own = { type: "command", command: 'node "/opt/own/stop-note.mts"' };

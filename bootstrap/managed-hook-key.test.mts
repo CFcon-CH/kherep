@@ -125,10 +125,10 @@ const CP = "modules/control-plane/node";
 
 test("a control-plane script has one key whatever root it runs from, with or without quotes and arguments", () => {
   const keys = [
-    `node "/Users/x/CFcon-DEV/kherep/${CP}/deliver-hook.mts"`,
+    `node "/Users/x/Workspaces/kherep/${CP}/deliver-hook.mts"`,
     `node "/Users/x/Library/Application Support/kherep/control-plane/service/source-pins/0123abcd/${CP}/deliver-hook.mts"`,
     `node /opt/kherep/${CP}/deliver-hook.mts`,
-    `node "/Users/x/CFcon-DEV/kherep/.claude/worktrees/agent-b/${CP}/deliver-hook.js" --timeout 86400`,
+    `node "/Users/x/Workspaces/kherep/.claude/worktrees/agent-b/${CP}/deliver-hook.js" --timeout 86400`,
   ].map((command) => controlPlaneHookKey(command, "darwin"));
   assert.deepEqual(new Set(keys), new Set([`${CP}/deliver-hook`]));
   assert.equal(controlPlaneHookKey(`node "/r/${CP}/wake-hook.mts" --timeout 86400`, "darwin"), `${CP}/wake-hook`);

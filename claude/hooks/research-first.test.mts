@@ -40,11 +40,11 @@ test("in scope: the instruction names the Brain search with the installed space 
 // Issue #13. Git Bash consumes the backslashes of a native Windows path, so the
 // command uses forward slashes, the form the allow rule has on Windows.
 test("on a Windows workspace the command uses forward slashes", () => {
-  const text = promptContext({ cwd: "D:\\CFcon-DEV\\kherep" }, { KHEREP_WORKSPACE: "D:\\CFcon-DEV" }, CONFIG, never);
-  const root = path.resolve("D:/CFcon-DEV").replace(/\\/g, "/");
+  const text = promptContext({ cwd: "D:\\Workspaces\\kherep" }, { KHEREP_WORKSPACE: "D:\\Workspaces" }, CONFIG, never);
+  const root = path.resolve("D:/Workspaces").replace(/\\/g, "/");
   assert.ok(text.includes(`node ${root}/tools/atl-confluence-ccoder.mts search --space KB`), text);
   assert.doesNotMatch(text, /\\/);
-  if (process.platform === "win32") assert.ok(text.includes("node D:/CFcon-DEV/tools/atl-confluence-ccoder.mts search"), text);
+  if (process.platform === "win32") assert.ok(text.includes("node D:/Workspaces/tools/atl-confluence-ccoder.mts search"), text);
 });
 
 test("in a git repository the code graph comes first, worded for an unknown index", () => {

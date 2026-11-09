@@ -50,7 +50,7 @@ test("blocks an exact false lifecycle state with one bounded observation instruc
   assert.match(result.reason, /Independently validate the handback/);
   assert.match(result.reason, /NO further publication/);
   assert.doesNotMatch(result.reason, /__KHEREP_SELECTED_WORKSPACE__/);
-  assert.doesNotMatch(result.reason, /D:\/CFcon-DEV/i);
+  assert.doesNotMatch(result.reason, /D:\/Workspaces/i);
   assert.match(result.reason, /Empty findings cause zero I\/O/i);
   assert.doesNotMatch(result.reason, /trusted Maestro main thread.*node/i);
   assert.match(result.reason, /never dispatch a second pass/i);
