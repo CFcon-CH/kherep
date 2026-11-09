@@ -4,6 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { spawn, spawnSync } from "node:child_process";
+import { pathToFileURL } from "node:url";
 import { parseClaudeSlotCommand, runClaudeSlotHook, deliverForHook } from "./deliver-hook.mts";
 import { nodePaths, writeConfig } from "./config.mts";
 import { connectionClaudeHooks, recordingSessions } from "./exchange-sessions.mts";
@@ -523,7 +524,7 @@ test("slot entry contains dependency construction failure and leaves missing or 
   fs.writeFileSync(preload, `import path from "node:path"; const join = path.join; path.join = (...parts) => {
     if (parts[1] === "control-plane") throw new Error("SYNTHETIC_PRIVATE_SETUP"); return join(...parts); };`);
   const hook = path.join(import.meta.dirname, "deliver-hook.mts");
-  const failed = spawnSync(process.execPath, ["--import", preload, hook], {
+  const failed = spawnSync(process.execPath, ["--import", pathToFileURL(preload).href, hook], {
     input: JSON.stringify(native("kherep-lead")), encoding: "utf8", env: { ...process.env, KHEREP_CONFIG_DIR: root } });
   // Older admitted Node releases emit only this known type-stripping warning.
   const stderr = (value: string) => value.replace(/^\(node:\d+\) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time\r?\n\(Use `node --trace-warnings \.\.\.` to show where the warning was created\)\r?\n/, "");
