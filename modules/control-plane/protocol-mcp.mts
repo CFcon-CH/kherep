@@ -47,7 +47,10 @@ export const CODEX_ACTIVITY_EVIDENCE_MS = 60_000;
 export interface CodexActivityStamp { kind: "codex-activity-v1"; intent: McpIntentRegistration; observedAt: number }
 export interface CodexActivityRegistration extends CodexActivityStamp { sessions: SessionInfo[]; identitySnapshot: IdentitySnapshotV1 }
 export function isCodexActivityStamp(value: unknown): value is CodexActivityStamp {
-  return isObject(value) && Object.keys(value).sort().join(",") === "intent,kind,observedAt"
+  return isObject(value) && Object.keys(value).sort((left, right) => {
+    if (left < right) return -1;
+    return left > right ? 1 : 0;
+  }).join(",") === "intent,kind,observedAt"
     && activityFields(value, false);
 }
 function activityFields(value: Record<string, unknown>, native: boolean): boolean {
@@ -59,7 +62,10 @@ function activityFields(value: Record<string, unknown>, native: boolean): boolea
     && intent.ttlMs === undefined && Object.hasOwn(intent.assignment, "native") === native;
 }
 export function isCodexActivityRegistration(value: unknown): value is CodexActivityRegistration {
-  return isObject(value) && Object.keys(value).sort().join(",") === "identitySnapshot,intent,kind,observedAt,sessions"
+  return isObject(value) && Object.keys(value).sort((left, right) => {
+    if (left < right) return -1;
+    return left > right ? 1 : 0;
+  }).join(",") === "identitySnapshot,intent,kind,observedAt,sessions"
     && activityFields(value, true) && isSessionList(value.sessions) && isIdentitySnapshot(value.identitySnapshot)
     && new Set(value.sessions.map(row => row.sessionId)).size === value.sessions.length;
 }
