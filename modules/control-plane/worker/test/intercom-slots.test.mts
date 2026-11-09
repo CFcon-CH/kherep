@@ -349,10 +349,23 @@ it("v2b: occupied Claude slot permits SQL NULL title without fabrication", async
 });
 
 
-import { makeEnvelope, type ClaudeSlotSelection } from "../../protocol.mts";
+import { isClaudeSlotSelection, makeEnvelope, type ClaudeSlotSelection } from "../../protocol.mts";
 import { authenticate, until, FACTS, session as nodeSession } from "./helpers.mts";
-const selection = (slot: ClaudeSlotSelection["slot"] = "claude-windows", sessionId = b.sessionId): ClaudeSlotSelection => ({
-  slot, sessionId, promptId: crypto.randomUUID(), requestId: crypto.randomUUID(), observedAt: Date.now(), expiresAt: Date.now() + 30_000,
+const selection = (slot: ClaudeSlotSelection["slot"] = "claude-windows", sessionId = b.sessionId): ClaudeSlotSelection => {
+  const observedAt = Date.now();
+  return { slot, sessionId, promptId: crypto.randomUUID(), requestId: crypto.randomUUID(), observedAt, expiresAt: observedAt + 30_000 };
+};
+it("selection fixture stays valid across a clock tick", () => {
+  let clock = 1_800_000_000_000;
+  const clockSpy = vi.spyOn(Date, "now").mockImplementation(() => clock++);
+  let request: ClaudeSlotSelection;
+  try {
+    request = selection();
+  } finally {
+    clockSpy.mockRestore();
+  }
+  expect({ valid: isClaudeSlotSelection(request), ttlMs: request.expiresAt - request.observedAt })
+    .toEqual({ valid: true, ttlMs: 30_000 });
 });
 async function selectionFixture() {
   const key = await newKey(); const nodeId = await enroll(key, "synthetic-claude-selector");
