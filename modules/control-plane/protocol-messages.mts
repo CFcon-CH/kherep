@@ -1,3 +1,4 @@
+import { isFixedSlot, type FixedSlot } from "./protocol.mts";
 import { isMessageDiagnostic, type MessageDiagnostic } from "./protocol-diagnostics.mts";
 // Kherep Control Plane messaging bodies, Phase 2 step 1 (GitHub issue #31).
 // Session-to-session messages between nodes, routed and queued by the Worker.
@@ -278,4 +279,18 @@ export function isDirectoryBody(body: unknown): body is DirectoryBody {
     && (body.truncated === undefined || typeof body.truncated === "boolean")
     && (body.worker === undefined || (isObject(body.worker) && Array.isArray(body.worker.capabilities)
       && body.worker.capabilities.length <= 64 && body.worker.capabilities.every((c) => isText(c, 64))));
+}
+
+// Disjoint from the inventory shape. Never store this reply as directory.json.
+export interface SlotAddressRequest { slot: FixedSlot; requestId: string }
+export type SlotAddressResult = SlotAddressRequest & { kind: "slot-address" } &
+  ({ address: MessageAddress } | { error: "unavailable" });
+export function isSlotAddressRequest(v: unknown): v is SlotAddressRequest {
+  return isObject(v) && Object.keys(v).length === 2 && isFixedSlot(v.slot) && isNodeId(v.requestId);
+}
+export function isSlotAddressResult(v: unknown): v is SlotAddressResult {
+  return isObject(v) && v.kind === "slot-address" && isFixedSlot(v.slot) && isNodeId(v.requestId)
+    && Object.keys(v).length === 4 && (Object.hasOwn(v, "address")
+      ? isObject(v.address) && Object.keys(v.address).length === 2 && isNodeId(v.address.nodeId) && isNodeId(v.address.session)
+      : v.error === "unavailable");
 }

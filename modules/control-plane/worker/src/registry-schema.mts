@@ -49,8 +49,9 @@ CREATE TABLE IF NOT EXISTS intercom_slots (
   chat_name TEXT,
   CHECK (
     (node_id IS NULL AND runtime IS NULL AND session_id IS NULL AND chat_name IS NULL)
-    OR (node_id IS NOT NULL AND runtime IS NOT NULL AND session_id IS NOT NULL AND chat_name IS NOT NULL
-      AND length(node_id) > 0 AND runtime IN ('codex', 'claude-code') AND length(session_id) > 0 AND length(chat_name) > 0)
+    OR (node_id IS NOT NULL AND runtime IS NOT NULL AND session_id IS NOT NULL
+      AND length(node_id) > 0 AND runtime IN ('codex', 'claude-code') AND length(session_id) > 0
+      AND ((runtime = 'claude-code' AND chat_name IS NULL) OR (chat_name IS NOT NULL AND length(chat_name) > 0)))
   ),
   CHECK (slot = 'kherep-lead'
     OR (slot IN ('codex-windows', 'codex-mac') AND runtime = 'codex')
@@ -72,7 +73,17 @@ const INITIAL_INTERCOM_SLOTS = `INSERT INTO intercom_slots (slot) VALUES
 export function initializeRegistrySchema(storage: DurableObjectStorage, sql: SqlStorage = storage.sql): void {
   storage.transactionSync(() => {
     const existed = sql.exec("SELECT 1 FROM sqlite_master WHERE type='table' AND name='intercom_slots'").toArray().length > 0;
+    // The old CHECK required a title for every occupant. Rebuild inside this
+    // transaction, preserving the exact five rows, revisions and historical titles.
+    const old = existed ? sql.exec<{ sql: string }>("SELECT sql FROM sqlite_master WHERE name='intercom_slots'").one().sql : "";
+    const migrate = existed && old.includes("session_id IS NOT NULL AND chat_name IS NOT NULL");
+    if (migrate) sql.exec("ALTER TABLE intercom_slots RENAME TO intercom_slots_before_claude");
     sql.exec(REGISTRY_SCHEMA);
+    if (migrate) {
+      sql.exec("INSERT INTO intercom_slots SELECT * FROM intercom_slots_before_claude");
+      sql.exec("DROP TABLE intercom_slots_before_claude");
+    }
+    sql.exec("CREATE UNIQUE INDEX IF NOT EXISTS claude_slot_event ON audit(target) WHERE action='intercom.claude-selection'");
     // Existing incomplete tables are damage, never evidence of a first install.
     if (!existed) sql.exec(INITIAL_INTERCOM_SLOTS);
   });

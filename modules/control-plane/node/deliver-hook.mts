@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { isClaudeSlot, isClaudeSlotResult, isNodeId, type ClaudeSlotSelection } from "../protocol.mts";
+import { readSlotExchange, writeSlotExchange, slotExchangeFile } from "./exchange.mts";
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -100,6 +102,7 @@ export function hookRuntime(argv: string[]): HookRuntime | null {
 export function runHook(stdin: string, deps: HookDeps, write: (text: string) => void, warn: (line: string) => void,
   runtime: HookRuntime = "claude"): void {
   try {
+    if (Buffer.byteLength(stdin, "utf8") > 64 * 1024) return;
     const input: unknown = JSON.parse(stdin);
     const output = runtime === "codex" ? deliverForCodex(input, deps) : deliverForHook(input, deps);
     if (output) write(output);
@@ -151,7 +154,49 @@ if (isMainModule(import.meta.url)) {
   if (!runtime) process.stderr.write("kherep deliver-hook: unknown --runtime; expected codex\n");
   else if (stdin && runtime === "codex") await runCodexHook(stdin, { paths: nodePaths() },
     (text) => process.stdout.write(text), (line) => process.stderr.write(`${line}\n`));
-  else if (stdin) runHook(stdin, { paths: nodePaths() }, (text) => process.stdout.write(text),
-    (line) => process.stderr.write(`${line}\n`), runtime);
+  else if (stdin && Buffer.byteLength(stdin, "utf8") <= 64 * 1024) {
+    let input: unknown;
+    try { input = JSON.parse(stdin); } catch { /* ordinary parser reports failure */ }
+    if (input && typeof input === "object" && (input as Record<string, unknown>).hook_event_name === "UserPromptExpansion") {
+      process.stdout.write(await runClaudeSlotHook(input, { paths: nodePaths() }));
+    } else runHook(stdin, { paths: nodePaths() }, (text) => process.stdout.write(text), (line) => process.stderr.write(`${line}\n`), runtime);
+  }
   process.exitCode = 0;
+}
+
+
+export function parseClaudeSlotCommand(input: unknown, platform: string = process.platform,
+  now: number = Date.now()): ClaudeSlotSelection | null {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return null;
+  const v = input as Record<string, unknown>;
+  if (v.hook_event_name !== "UserPromptExpansion" || v.expansion_type !== "slash_command"
+    || Object.hasOwn(v, "agent_id") || Object.hasOwn(v, "agent_type") || !isNodeId(v.session_id) || !isNodeId(v.prompt_id)
+    || typeof v.prompt !== "string" || Buffer.byteLength(v.prompt, "utf8") > 256 || typeof v.command_args !== "string") return null;
+  let slot: unknown;
+  if (v.command_name === "kherep-set-lead" && v.command_args === "" && v.prompt === "/kherep-set-lead") slot = "kherep-lead";
+  else if (v.command_name === "kherep-slot" && /^[a-z]+(?:-[a-z]+)*$/.test(v.command_args)
+    && v.prompt === `/kherep-slot ${v.command_args}`) slot = v.command_args;
+  else return null;
+  if (!isClaudeSlot(slot) || !["darwin", "win32"].includes(platform)
+    || slot === "claude-mac" && platform !== "darwin" || slot === "claude-windows" && platform !== "win32") return null;
+  return { slot, sessionId: v.session_id, promptId: v.prompt_id, requestId: crypto.randomUUID(), observedAt: now, expiresAt: now + 30_000 };
+}
+
+export async function runClaudeSlotHook(input: unknown, deps: HookDeps): Promise<string> {
+  const request = parseClaudeSlotCommand(input, process.platform, deps.now?.() ?? Date.now());
+  const block = (reason: string) => JSON.stringify({ decision: "block", reason });
+  if (!request) return block("Kherep slot selection refused: invalid native command.");
+  writeSlotExchange(deps.paths, "selection", request.requestId, request);
+  const deadline = Date.now() + 25_000;
+  try { while (Date.now() < deadline) {
+    const result = readSlotExchange(deps.paths, "selection-result", request.requestId);
+    if (isClaudeSlotResult(result) && result.requestId === request.requestId && result.slot === request.slot) {
+      return block(`Kherep ${result.slot}: ${result.outcome}, revision ${result.revision ?? "unconfirmed"}.`);
+    }
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  return block("Kherep slot selection unconfirmed: no correlated result.");
+  } finally {
+    for (const kind of ["selection", "selection-result"]) fs.rmSync(slotExchangeFile(deps.paths, kind, request.requestId), { force: true });
+  }
 }

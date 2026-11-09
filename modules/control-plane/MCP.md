@@ -354,3 +354,72 @@ Three consecutive bounded ACK/normalized-repeat strikes or the 256-admission pai
 The trusted Claude and Codex reply hook saves deny-only request-ID provenance before publishing an intent when its retained inbox parent has valid guarded context. This local content-free marker survives missing sent records and parent loss; it can refuse a metadata-free descendant but cannot grant any send or advanced authority. Up to 4096 markers are retained without automatic expiry/eviction. A full or unreadable store, invalid retained guarded parent, or persistence failure denies the hook before intent publication. Valid Worker-issued descendants remain allowed; genuine legacy/mixed history retains its compatibility ceiling. Both staged clients include this helper.
 
 Marker capacity uses an exclusive directory mutex at the existing index record-lock path, with bounded contention and no stale-owner takeover. Old file locks and new directory locks exclude each other at that same path. Only the successful owner removes its own empty directory after an identity check. Leftover lock state fails closed and is handled only through existing offline operator maintenance with all writers stopped, never automatic cleanup. This does not change marker retention or the shared inbox lock helper.
+
+
+## Claude user commands and fixed address aliases
+
+Claude users select a top-level session with the personal `/kherep-slot
+claude-mac`, `/kherep-slot claude-windows` or `/kherep-slot kherep-lead`
+command. `/kherep-set-lead` is the zero-argument Lead alias. A selected top-level
+fork is allowed; auxiliary agents and teammates are refused. These user-only
+skills are inert: the native UserPromptExpansion hook performs the operation
+through the existing stable hook entry, local exchange and full session snapshot.
+There is no Claude MCP callback and no title requirement. A missing native
+prompt_id refuses selection. A fresh hook proves reachable-probable only.
+
+The trust boundary is the enrolled local user. A process running as that user
+can forge valid hook stdin or local exchange records and obtain an assignment.
+Event binding and argument digests provide idempotency, not human attribution.
+Accepted success/conflict decisions add one permanent receipt to the existing
+audit table, with no TTL, application row cap or sweeper. Malformed requests,
+lookups and duplicate events add no rows. Storage failure rolls back assignment.
+An exact retained replay returns its historical result even after reassignment
+or expiry; changed arguments refuse. Audit loss/backup rollback has no dedup
+promise. Titles, five rows, revisions and legacy historical occupancy survive
+migration. Occupied Claude rows may have NULL chat_name.
+
+`msg send kherep-lead -- <text>` and the other four canonical bare seat names
+perform a fresh correlated address lookup on the enrolled directory lane, then
+one ordinary message send to the literal node/session tuple. Vacant,
+incompatible legacy Lead, unsupported, offline or unconfirmed lookup enqueues
+no message. `--new` cannot target a seat. Exact node/session destinations and
+ordinary `--reply-to` retain their behavior. Peer text cannot appoint a role.
+This is a current address alias: lookup and send are separate, so it does not
+provide frozen reassignment admission, protected offline queues or retained
+parent routing. Those remain follow-on work.
+
+Before activating v2, deploy the separately reviewed #861 Codex Lead entry
+guard, then inspect the actual Lead occupant and revision. This change preserves
+legacy rows and does not itself remove their old assignment entry. Native macOS,
+Windows, Remote Control and Desktop peer-triggered expansion behavior remain
+unverified by portable tests. No installation or deployment is implied.
+
+
+### Ingress time and daemon lifetime
+
+The hook writes observedAt and the 30-second transport deadline once. Rereading
+the same written element preserves those values; processing never substitutes
+its current time. Within one daemon, session/prompt IDs retain the first
+canonical slot and ingress timestamp in memory. An identical event never
+refreshes the active overlay, including after reconnect; changed slot arguments
+refuse before publication. A distinct event B can advance the source, and a
+later A retry cannot roll it back. Source still expires at its original
+60-second display TTL or disconnect, with all existing identity/lifecycle,
+capacity, full-snapshot and Worker commit/CAS checks in effect.
+
+The daemon remembers at most 4096 distinct events without eviction. At that
+limit unseen events refuse until restart; the separate 128 active-session bound
+remains. Restart intentionally clears the seen-event map. Original written bytes
+still carry their original timestamp/deadline, so cold consumption cannot extend
+them. A local process may instead forge new valid stdin or outbox content with a
+fresh timestamp after restart and establish fresh local activity. This is part
+of the Director's accepted same-local-UID capability. Existing Worker stable
+event receipts still prevent another slot mutation. There is no persistent
+local replay marker, history preflight, new lock or physical durability claim.
+
+The Lead's premise that native Claude emits at most one expansion per prompt,
+including resume/redelivery, is an assumption and remains UNKNOWN on actual
+clients. Portable exact-byte retry tests and deliberately fabricated local input
+do not prove that premise. A later authorized native resume check must measure
+it. Evidence from the rejected marker/durability experiment remains diagnostic
+history and is not presented as passing behavior or a current mechanism.

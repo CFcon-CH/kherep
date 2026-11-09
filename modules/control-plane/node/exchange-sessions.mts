@@ -6,7 +6,7 @@ import { currentIdentity } from "../protocol-session-identity.mts";
 import { commitAuthority, faultAuthority, observationBelongs, revokeAuthority, type AdmissionAuthority } from "./session-authority.mts";
 import { listingObservation } from "./liveness-pass.mts";
 import { closedReference, publishLiveness, readLivenessSnapshot, sessionVerdict, terminalReference } from "./session-lifecycle.mts";
-import { directoryVisibility, observationReason, targetKey } from "./session-liveness.mts";
+import { DISPLAY_TTL_MS, directoryVisibility, observationReason, targetKey } from "./session-liveness.mts";
 import type { SessionEvidence } from "./session-liveness.mts";
 import type { SessionInfo } from "../protocol.mts";
 import { ensureDir, readConfig, type NodePaths } from "./config.mts";
@@ -154,12 +154,14 @@ export function recordingSessions(paths: NodePaths, list: (signal?: AbortSignal)
     rows.push(...boundedCarry(paths, rows.splice(listedRows), records, log));
     const evidence: SessionEvidence[] = rows.flatMap(s => {
       const matches = supplied.filter(e => targetKey(e) === targetKey(s));
-      return matches.length ? matches : [{ runtime: s.runtime, sessionId: s.sessionId,
+      return matches.length ? matches.map(e => ({ ...e })) : [{ runtime: s.runtime, sessionId: s.sessionId,
         app: { status: "unknown" as const, observedAt: listed.some(r => targetKey(r) === targetKey(s)) ? observation?.observedAt ?? observedAt
             : previousSnapshot?.sessions.find(v => targetKey(v) === targetKey(s))?.observedAt ?? observedAt, complete: false as const,
           source: "unsupported" as const, reasonCode: observation?.status === "unknown" ? observation.reasonCode : "unsupported" as const } }];
     });
-    for (const e of supplied) if (!rows.some(v => targetKey(v) === targetKey(e))) evidence.push(e);
+    for (const e of supplied) if (!rows.some(v => targetKey(v) === targetKey(e))) evidence.push({ ...e });
+    markUnseen(rows, unseen);
+    mergeClaudeHooks(paths, rows, evidence, observedAt);
     let sessions: SessionInfo[];
     try {
     const trusted = observationBelongs(authority, observation);
@@ -211,4 +213,31 @@ export function recordingSessions(paths: NodePaths, list: (signal?: AbortSignal)
     }
     return sessions;
   };
+}
+
+
+export interface ClaudeHookObservation { sessionId: string; observedAt: number }
+const claudeHooks = new Map<string, Map<string, ClaudeHookObservation>>();
+export function connectionClaudeHooks(paths: NodePaths): Map<string, ClaudeHookObservation> {
+  const observations = new Map<string, ClaudeHookObservation>();
+  claudeHooks.set(paths.dir, observations);
+  return observations;
+}
+function mergeClaudeHooks(paths: NodePaths, listed: SessionInfo[], evidence: SessionEvidence[], now: number): void {
+  const observations = claudeHooks.get(paths.dir);
+  if (!observations) return;
+  for (const [id, hook] of observations) {
+    if (hook.observedAt > now || now - hook.observedAt > DISPLAY_TTL_MS) { observations.delete(id); continue; }
+    if (unlistedRuntimes(listed).includes("*")) continue;
+    const matches = listed.filter(r => r.sessionId === id);
+    if (matches.length > 1 || matches.some(r => r.runtime !== "claude-code" || r.kind && !["interactive", "session", "fork"].includes(r.kind))) continue;
+    const inputs = evidence.filter(e => e.sessionId === id);
+    if (inputs.length > 1) continue;
+    const e = inputs[0];
+    if (e && (e.runtime !== "claude-code" || [e.app, e.holder, e.hook].some(o => o && ["identity", "conflict", "capped", "malformed"].includes(o.reasonCode)))) continue;
+    if (e) e.hook = { status: "value", value: true, source: "hook", complete: true, reasonCode: "observed", observedAt: hook.observedAt };
+    else evidence.push({ runtime: "claude-code", sessionId: id, hook: {
+      status: "value", value: true, source: "hook", complete: true, reasonCode: "observed", observedAt: hook.observedAt } });
+    if (!matches.length) listed.push({ runtime: "claude-code", sessionId: id, state: "unknown", kind: "interactive" });
+  }
 }

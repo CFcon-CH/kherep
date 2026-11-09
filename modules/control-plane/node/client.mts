@@ -1,3 +1,6 @@
+import { isClaudeSlotResult, type ClaudeSlotResult, type ClaudeSlotSelection } from "../protocol.mts";
+import { isSlotAddressResult, type SlotAddressRequest, type SlotAddressResult } from "../protocol-messages.mts";
+import { unlistedRuntimes } from "./known-sessions.mts";
 import { compatibleDiagnostic, isMessageDiagnostic, type MessageDiagnostic } from "../protocol-diagnostics.mts";
 import { RecordLockBusy } from "./inbox-record-lock.mts";
 import type { BindingStorageSnapshot } from "./inbox-storage.mts";
@@ -67,6 +70,10 @@ export interface ClientOptions {
   localSessions?: () => { sessionId: string; name?: string }[];
   // Step 3a: the directory frame, and the state of a message this node sent.
   storeDirectory?: (body: DirectoryBody) => void;
+  slotSelectionResult?: (body: ClaudeSlotResult) => void;
+  slotAddressResult?: (body: SlotAddressResult) => void;
+  recordClaudeHook?: (selection: ClaudeSlotSelection) => boolean;
+  enqueueSlotWork?: (run: () => Promise<void>) => void;
   sentUpdate?: (messageId: string, state: SentState, reason?: string, progress?: MessageProgress, diagnostic?: MessageDiagnostic) => void;
   receiptUpdate?: (body: MessageReceiptBody) => void;
   // Item 5: the Worker's answer to a task.request this node sent.
@@ -114,6 +121,9 @@ export class NodeClient {
   private processedSeq = 0;
   // The session list last sent in sessions.snapshot, as JSON.
   private lastSnapshot: string | null = null;
+  private slotGeneration = 0;
+  private readonly slotSelections = new Map<string, ClaudeSlotSelection>();
+  private readonly slotAddresses = new Map<string, SlotAddressRequest & { expiresAt: number }>();
   // Issue #706: the last trimmed or withheld line, so an unchanged count logs once.
   private snapshotLimitLog: string | null = null;
   authenticated = false;
@@ -158,6 +168,7 @@ export class NodeClient {
   }
 
   connectionClosed(): void {
+    this.slotGeneration++;this.slotAddresses.clear();this.slotSelections.clear();
     this.assignmentGeneration++;this.leadAdmissions.clear();
     this.options.selectedReferences?.clear();
     this.authenticated = false;
@@ -179,6 +190,14 @@ export class NodeClient {
       case "challenge":
         return [this.frame("auth", this.authBody(envelope.body as unknown as ChallengeBody), false)];
       case "event":
+        if (live && this.authenticated && isClaudeSlotResult(envelope.body)) {
+          const pending = this.slotSelections.get(envelope.body.requestId);
+          if (pending?.slot === envelope.body.slot) {
+            this.slotSelections.delete(envelope.body.requestId);
+            this.options.slotSelectionResult?.(envelope.body);
+          }
+          return [];
+        }
         if (isMessageReceiptBody(envelope.body) && this.authenticated) {
           const body = envelope.body;
           this.callback(body.messageId, () => this.options.receiptUpdate?.(body));
@@ -212,6 +231,7 @@ export class NodeClient {
         if ((envelope.body as { name?: unknown }).name !== "auth.ok") return [];
         this.assignmentGeneration++;this.leadAdmissions.clear();
         this.options.selectedReferences?.clear();
+        this.slotGeneration++;this.slotAddresses.clear();this.slotSelections.clear();
         this.authenticated = true;
         this.workerCapabilities = null;
         this.lastSnapshot = null;
@@ -245,6 +265,15 @@ export class NodeClient {
         if (!live || !this.authenticated || !isMessageDeliverBody(envelope.body)) return [];
         return this.onDeliver(envelope.body);
       case "directory":
+        if ((envelope.body as { kind?: unknown }).kind === "slot-address") {
+          if (!live || !this.authenticated || !isSlotAddressResult(envelope.body)) return [];
+          const pending = this.slotAddresses.get(envelope.body.requestId);
+          if (pending?.slot === envelope.body.slot && pending.expiresAt > this.now()) {
+            this.slotAddresses.delete(envelope.body.requestId);
+            this.options.slotAddressResult?.(envelope.body);
+          }
+          return [];
+        }
         if (!live || !this.authenticated || !isDirectoryBody(envelope.body)) return [];
         this.callback("directory", () => this.options.storeDirectory?.(envelope.body as DirectoryBody));
         // A frame without worker comes from an older Worker: no capability.
@@ -350,6 +379,38 @@ export class NodeClient {
   // A sessions.snapshot frame when the session list changed since the last
   // one sent on this connection. A failed listing sends nothing, so the
   // Registry keeps its last known list instead of being wiped.
+  enqueueSlotSelection(selection: ClaudeSlotSelection, send: (frame: string) => boolean, done: () => void): void {
+    const generation = this.slotGeneration;
+    const run = async (): Promise<void> => {
+      try {
+        if (!this.authenticated || generation !== this.slotGeneration || selection.expiresAt <= this.now()
+          || !this.options.recordClaudeHook?.(selection)) return;
+        const sessions = await this.options.sessions();
+        if (!this.authenticated || generation !== this.slotGeneration || selection.expiresAt <= this.now()) return;
+        const identitySnapshot = identitySnapshotOf(sessions);
+        if (!identitySnapshot || unlistedRuntimes(sessions).includes("*") || !sessions.some(s => s.sessionId === selection.sessionId && s.runtime === "claude-code"
+          && ["running", "idle-loaded", "reachable-probable"].includes(s.state))) return;
+        const body = { sessions, identitySnapshot, slotSelection: selection };
+        // Selection requires the whole snapshot, never the trimming fallback.
+        if (Buffer.byteLength(JSON.stringify(makeEnvelope("sessions.snapshot", body, 1, 0)), "utf8") + STAMP_MARGIN > MAX_FRAME_BYTES) return;
+        for (const [id, pending] of this.slotSelections) if (pending.expiresAt <= this.now()) this.slotSelections.delete(id);
+        if (this.slotSelections.size >= 128) return;
+        this.slotSelections.set(selection.requestId, selection);
+        if (!send(this.frame("sessions.snapshot", body))) this.slotSelections.delete(selection.requestId);
+      } catch { this.options.log?.("kherep-node: Claude slot publication unconfirmed"); }
+      finally { done(); }
+    };
+    if (this.options.enqueueSlotWork) this.options.enqueueSlotWork(run);
+    else void run();
+  }
+
+  slotAddressRequest(request: SlotAddressRequest): string[] {
+    for (const [id, pending] of this.slotAddresses) if (pending.expiresAt <= this.now()) this.slotAddresses.delete(id);
+    if (!this.authenticated || this.slotAddresses.size >= 128) return [];
+    this.slotAddresses.set(request.requestId, { ...request, expiresAt: this.now() + 10_000 });
+    return [this.frame("directory.get", { ...request })];
+  }
+
   async sessionsSnapshot(): Promise<string[]> {
     if (!this.authenticated) return [];
     let sessions: SessionInfo[];

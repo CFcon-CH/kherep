@@ -1,3 +1,6 @@
+import { isClaudeSlotSelection, isFixedSlot, isNodeId, type ClaudeSlotSelection, type ClaudeSlotResult, type FixedSlot } from "../../protocol.mts";
+import { replaceIntercomSlot } from "./intercom-slots.mts";
+import type { SlotAddressResult } from "../../protocol-messages.mts";
 import { readIntercomSlots, type IntercomSlotView } from "./intercom-slots.mts";
 import { identityDiagnostic } from "./message-identity-diagnostics.mts";
 import { type MessageDiagnostic } from "../../protocol-diagnostics.mts";
@@ -249,9 +252,12 @@ export class Registry extends DurableObject<Env> {
     });
   }
 
-  replaceSessions(nodeId: string, sessions: SessionInfo[], identitySnapshot?: IdentitySnapshotV1): { ok: true } | { ok: false; code: "IDENTITY_SNAPSHOT_REJECTED" | "IDENTITY_SNAPSHOT_UNAVAILABLE" } {
+  replaceSessions(nodeId: string, sessions: SessionInfo[], identitySnapshot?: IdentitySnapshotV1, connectionToken?: string): { ok: true } | { ok: false; code: "IDENTITY_SNAPSHOT_REJECTED" | "IDENTITY_SNAPSHOT_UNAVAILABLE" } {
     const now = Date.now();
     try { this.tx("replaceSessions", () => {
+      if (connectionToken !== undefined && this.sql.exec(
+        "SELECT 1 FROM nodes WHERE id=? AND revoked_at IS NULL AND public_key IS NOT NULL AND message_connection_token=?",
+        nodeId, connectionToken).toArray().length !== 1) throw new Error("identity-node-invalid");
       if (!this.sessionIdentity.accept(nodeId, sessions, identitySnapshot)) return;
       const pending = new Map(sessions.map(session => [session.sessionId, session]));
       const existing = this.sql.exec(`SELECT session_id, runtime, state, started_at, name, cwd, kind, label, title, canonical_identity
@@ -289,6 +295,82 @@ export class Registry extends DurableObject<Env> {
       const rejected = error instanceof Error && ["identity-population-invalid", "identity-duplicate", "identity-snapshot-invalid", "identity-proof-invalid", "identity-node-invalid", "identity-generation-rollback", "identity-generation-conflict"].includes(error.message);
       return { ok: false, code: rejected ? "IDENTITY_SNAPSHOT_REJECTED" : "IDENTITY_SNAPSHOT_UNAVAILABLE" };
     }
+  }
+
+  // Authentication and registration are checked again inside every mutation.
+  // Tokens remain internal connection guards and never enter audit/wire results.
+  private claudeConnection(nodeId: string, token: string): boolean {
+    return typeof token === "string" && token.length > 0 && this.sql.exec(
+      "SELECT 1 FROM nodes WHERE id=? AND revoked_at IS NULL AND public_key IS NOT NULL AND message_connection_token=? AND registration_token=?",
+      nodeId, token, token).toArray().length === 1;
+  }
+  private claudeContext(nodeId: string, token: string, slot: string): string | null {
+    if (!this.claudeConnection(nodeId, token)) return null;
+    const node = this.sql.exec("SELECT os, capabilities FROM nodes WHERE id=?", nodeId).one();
+    if (!["darwin", "win32"].includes(String(node.os)) || slot === "claude-mac" && node.os !== "darwin"
+      || slot === "claude-windows" && node.os !== "win32") return null;
+    const runtime = this.sql.exec("SELECT kind FROM runtimes WHERE node_id=? AND name='claude'", nodeId).toArray()[0];
+    if (runtime?.kind !== "cli") return null;
+    return JSON.stringify([node.os, node.capabilities, runtime.kind]);
+  }
+  async prepareClaudeSelection(nodeId: string, request: ClaudeSlotSelection, token: string): Promise<{
+    result?: ClaudeSlotResult; prepared?: { eventKey: string; digest: string; expectedRevision: number; context: string };
+  }> {
+    const denied: ClaudeSlotResult = { kind: "slot-selection", requestId: request.requestId, slot: request.slot, outcome: "denied", revision: null };
+    if (!isClaudeSlotSelection(request)) return { result: denied };
+    const context = this.claudeContext(nodeId, token, request.slot);
+    if (context === null) return { result: denied };
+    // Capture revision and policy context before either asynchronous digest.
+    const expectedRevision = this.listIntercomSlots().find(s => s.slot === request.slot)!.revision;
+    const eventKey = await sha256(JSON.stringify(["kherep-claude-slot-event-v1", nodeId, request.sessionId, request.promptId]));
+    const digest = await sha256(JSON.stringify(["kherep-claude-slot-args-v1", request.slot]));
+    if (this.claudeContext(nodeId, token, request.slot) !== context) return { result: denied };
+    const prior = this.claudeSelectionReceipt(eventKey, digest, request);
+    if (prior) return { result: prior };
+    if (request.expiresAt <= Date.now() || request.observedAt > Date.now()) return { result: denied };
+    return { prepared: { eventKey, digest, expectedRevision, context } };
+  }
+  private claudeSelectionReceipt(eventKey: string, digest: string, request: ClaudeSlotSelection): ClaudeSlotResult | null {
+    const row = this.sql.exec("SELECT detail FROM audit WHERE action='intercom.claude-selection' AND target=?", eventKey).toArray()[0];
+    if (!row) return null;
+    const receipt = JSON.parse(String(row.detail)) as { digest: string; outcome: "assigned" | "conflict"; revision: number };
+    return { kind: "slot-selection", requestId: request.requestId, slot: request.slot,
+      outcome: receipt.digest === digest ? receipt.outcome : "denied", revision: receipt.digest === digest ? receipt.revision : null };
+  }
+  finishClaudeSelection(nodeId: string, request: ClaudeSlotSelection, token: string, generation: number,
+    prepared: { eventKey: string; digest: string; expectedRevision: number; context: string }): ClaudeSlotResult {
+    const denied: ClaudeSlotResult = { kind: "slot-selection", requestId: request.requestId, slot: request.slot, outcome: "denied", revision: null };
+    return this.tx("finishClaudeSelection", () => {
+      if (!isClaudeSlotSelection(request) || this.claudeContext(nodeId, token, request.slot) !== prepared.context) return denied;
+      const replay = this.claudeSelectionReceipt(prepared.eventKey, prepared.digest, request);
+      if (replay) return replay;
+      const now = Date.now();
+      if (request.expiresAt <= now || request.observedAt > now || now - request.observedAt > 60_000) return denied;
+      const node = this.sql.exec("SELECT identity_generation FROM nodes WHERE id=?", nodeId).one();
+      const actor = this.sql.exec("SELECT runtime, state, kind FROM sessions WHERE node_id=? AND session_id=?", nodeId, request.sessionId).toArray()[0];
+      if (node.identity_generation !== generation || !actor || actor.runtime !== "claude-code"
+        || !["running", "idle-loaded", "reachable-probable"].includes(String(actor.state))
+        || actor.kind !== null && !["interactive", "session", "fork"].includes(String(actor.kind))) return denied;
+      const revision = replaceIntercomSlot(this.sql, request.slot, prepared.expectedRevision,
+        { nodeId, runtime: "claude-code", sessionId: request.sessionId, chatName: null });
+      const actual = revision ?? this.listIntercomSlots().find(s => s.slot === request.slot)!.revision;
+      const outcome = revision === null ? "conflict" : "assigned";
+      // Permanent existing audit, unique event key. A write failure rolls back CAS.
+      this.audit(`node:${nodeId}`, "intercom.claude-selection", prepared.eventKey, { digest: prepared.digest, outcome, revision: actual });
+      return { kind: "slot-selection", requestId: request.requestId, slot: request.slot, outcome, revision: actual };
+    });
+  }
+  slotAddress(nodeId: string, token: string, slot: FixedSlot, requestId: string): SlotAddressResult {
+    const unavailable: SlotAddressResult = { kind: "slot-address", slot, requestId, error: "unavailable" };
+    if (!isFixedSlot(slot) || !this.claudeConnection(nodeId, token)) return unavailable;
+    const occupant = this.listIntercomSlots().find(s => s.slot === slot)?.occupant;
+    if (!occupant || !isNodeId(occupant.nodeId) || !isNodeId(occupant.sessionId) || slot === "kherep-lead" && occupant.runtime !== "claude-code") return unavailable;
+    const wanted = slot.startsWith("codex-") ? "codex" : "claude-code";
+    if (occupant.runtime !== wanted) return unavailable;
+    const row = this.sql.exec("SELECT os FROM nodes WHERE id=? AND revoked_at IS NULL AND public_key IS NOT NULL", occupant.nodeId).toArray()[0];
+    if (!row || !["darwin", "win32"].includes(String(row.os)) || slot.endsWith("-mac") && row.os !== "darwin"
+      || slot.endsWith("-windows") && row.os !== "win32") return unavailable;
+    return { kind: "slot-address", slot, requestId, address: { nodeId: occupant.nodeId, session: occupant.sessionId } };
   }
 
   // Narrow two-selector read; never uses a directory or command-history accessor.

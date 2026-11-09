@@ -1,3 +1,5 @@
+import { isClaudeSlotSelection, type ClaudeSlotResult } from "../../protocol.mts";
+import { isSlotAddressRequest } from "../../protocol-messages.mts";
 import { blockerDiagnostic, compatibleDiagnostic, type BlockerCode, type MessageDiagnostic, MESSAGING_DIAGNOSTICS_CAPABILITY } from "../../protocol-diagnostics.mts";
 import { isResolveRequest, SELECTED_BINDING_CAPABILITY, type ResolveRequest, type ResolveResponse } from "../../protocol-message-binding.mts";
 import { NodeReferenceRpc } from "./node-reference-rpc.mts";
@@ -371,15 +373,30 @@ export class NodeSession extends DurableObject<Env> {
         if (!isSessionList(body.sessions)) return this.sendControl(ws, "error", { error: "invalid sessions" });
         if (body.identitySnapshot !== undefined && !isIdentitySnapshot(body.identitySnapshot)) return this.sendControl(ws, "error", { error: "invalid identity snapshot" });
         {
-          const result = await registry.replaceSessions(nodeId, body.sessions, body.identitySnapshot);
-          if (!result.ok) this.sendControl(ws, "error", { error: result.code });
+          if (body.slotSelection !== undefined && !isClaudeSlotSelection(body.slotSelection)) return this.sendControl(ws, "error", { error: "invalid slot selection" });
+          const token = (ws.deserializeAttachment() as Attachment).connectionToken;
+          if (!token || this.authedSocket() !== ws) return;
+          const request = isClaudeSlotSelection(body.slotSelection) ? body.slotSelection : undefined;
+          const preparation = request ? await registry.prepareClaudeSelection(nodeId, request, token) : undefined;
+          if (this.authedSocket() !== ws) return;
+          if (preparation?.result) return this.sendControl(ws, "event", { ...preparation.result });
+          // Commit the ordinary full snapshot before selection. Registry checks
+          // the accepted socket inside its transaction, so an old socket writes nothing.
+          const result = await registry.replaceSessions(nodeId, body.sessions, body.identitySnapshot, token);
+          if (!request) { if (!result.ok) this.sendControl(ws, "error", { error: result.code }); return; }
+          let answer: ClaudeSlotResult = { kind: "slot-selection", requestId: request.requestId, slot: request.slot, outcome: "denied", revision: null };
+          if (result.ok && preparation?.prepared && isIdentitySnapshot(body.identitySnapshot) && this.authedSocket() === ws) {
+            try { answer = await registry.finishClaudeSelection(nodeId, request, token, body.identitySnapshot.generation, preparation.prepared); }
+            catch { /* Storage failure is unconfirmed; CAS transaction rolled back. */ }
+          }
+          if (this.authedSocket() === ws) this.sendControl(ws, "event", { ...answer });
         }
         return;
       case "command.ack":
         if (typeof body.commandId === "string") this.store.markCommand(body.commandId, "acked");
         return;
       case "command.result":
-        return this.handleResult(nodeId, body);
+        return this.handleResult(ws, nodeId, body);
       case "message.resolve.response": {
         const a = ws.deserializeAttachment() as Attachment;
         if (a.connectionToken) this.references.receive(ws, a.connectionToken, body);
@@ -404,6 +421,13 @@ export class NodeSession extends DurableObject<Env> {
         return;
       }
       case "directory.get":
+        if (isSlotAddressRequest(body)) {
+          const token = (ws.deserializeAttachment() as Attachment).connectionToken;
+          if (!token || this.authedSocket() !== ws) return;
+          const result = await registry.slotAddress(nodeId, token, body.slot, body.requestId);
+          if (this.authedSocket() === ws) this.sendControl(ws, "directory", { ...result });
+          return;
+        }
         if (!isDirectoryGetBody(body)) return this.sendControl(ws, "error", { error: "invalid directory.get body" });
         return this.sendControl(ws, "directory", { ...await registry.directory() });
       case "mcp.credential.rotate": {
@@ -459,12 +483,12 @@ export class NodeSession extends DurableObject<Env> {
     }
   }
 
-  private async handleResult(nodeId: string, body: Record<string, unknown>): Promise<void> {
+  private async handleResult(ws: WebSocket, nodeId: string, body: Record<string, unknown>): Promise<void> {
     if (!isCommandResultBody(body)) return;
     const command = this.store.markCommand(body.commandId, body.ok ? "done" : "failed", body.result ?? null, body.error ?? null);
     if (!body.ok) return;
     if (command === "runtime.list" && isRuntimeList(body.result)) await registryStub(this.env).replaceRuntimes(nodeId, body.result);
-    if (command === "session.list" && isSessionList(body.result)) await registryStub(this.env).replaceSessions(nodeId, body.result);
+    if (command === "session.list" && isSessionList(body.result)) await registryStub(this.env).replaceSessions(nodeId, body.result, undefined, (ws.deserializeAttachment() as Attachment).connectionToken);
   }
 
   private sendControl(ws: WebSocket, type: MessageType, body: Record<string, unknown>): void {

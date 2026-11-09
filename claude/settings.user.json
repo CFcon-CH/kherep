@@ -251,6 +251,18 @@
           }
         ]
       }
+    ],
+    "UserPromptExpansion": [
+      {
+        "matcher": "^(kherep-slot|kherep-set-lead)$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"__KHEREP_CLAUDE_HOME__/kherep/control-plane/claude-control-plane-hook.mts\" deliver",
+            "timeout": 30
+          }
+        ]
+      }
     ]
   },
   "attribution": {

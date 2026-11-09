@@ -1,3 +1,4 @@
+import { connectionClaudeHooks } from "./exchange-sessions.mts";
 import { beginSessionDiscovery } from "./exchange-sessions.mts";
 import { createConnectionSupervisor } from "./connection-supervisor.mts";
 import { createConnectionWatchdog } from "./connection-watchdog.mts";
@@ -9,7 +10,7 @@ import { createAdmissionAuthority, revokeAuthority, stopAuthority } from "./sess
 import { readLivenessSnapshot } from "./session-lifecycle.mts";
 import { targetKey } from "./session-liveness.mts";
 import { attachLiveness, createLivenessPass, type LivenessSource } from "./liveness-pass.mts";
-import { parseEnvelope, PING_FRAME, PONG_FRAME, type SessionInfo } from "../protocol.mts";
+import { isClaudeSlotSelection, parseEnvelope, PING_FRAME, PONG_FRAME, type ClaudeSlotSelection, type SessionInfo } from "../protocol.mts";
 import { isTaskRuntime, type TaskRuntime } from "../protocol-tasks.mts";
 import { reconnectDelay } from "./backoff.mts";
 import { NodeClient, type CommandHandlers } from "./client.mts";
@@ -152,6 +153,10 @@ export function startDaemon(config: NodeConfig, paths: NodePaths, log: (line: st
   }, unreported: (...args: Parameters<typeof indexedInbox.unreported>) => {
     try { return indexedInbox.unreported(...args); } catch (error) { storageFault(); throw error; }
   } };
+  const currentClaudeHooks = connectionClaudeHooks(paths);
+  // Daemon-lifetime only: reconnect clears active source, never these first
+  // ingress observations. Restart intentionally begins a new local trust scope.
+  const seenClaudeGestures = new Map<string, { slot: ClaudeSlotSelection["slot"]; observedAt: number; expiresAt: number }>();
   const sessions = recordingSessions(paths, (signal) => {
     backgroundDiscovery?.controller.abort();
     return source(signal);
@@ -191,6 +196,22 @@ export function startDaemon(config: NodeConfig, paths: NodePaths, log: (line: st
     nodeId: config.nodeId, identity, policy, handlers: commandHandlers(config, Date.now(), sessions, live, runtimeDiscovery),
     facts: detectFacts, runtimes: runtimeDiscovery, readyRuntimes: () => readiness.ready(),
     sessions, deferInitialSessions: true,
+    recordClaudeHook: (request) => {
+      if (!isClaudeSlotSelection(request)) return false;
+      const key = `${request.sessionId}/${request.promptId}`;
+      const now = Date.now();
+      if (request.observedAt > now || request.expiresAt <= now) return false;
+      const seen = seenClaudeGestures.get(key);
+      if (seen) return seen.slot === request.slot && seen.observedAt === request.observedAt && seen.expiresAt === request.expiresAt;
+      if (seenClaudeGestures.size >= 4096
+        || currentClaudeHooks.size >= 128 && !currentClaudeHooks.has(request.sessionId)) return false;
+      const first = { slot: request.slot, observedAt: request.observedAt, expiresAt: request.expiresAt };
+      seenClaudeGestures.set(key, first);
+      const prior = currentClaudeHooks.get(request.sessionId);
+      if (!prior || first.observedAt > prior.observedAt) currentClaudeHooks.set(request.sessionId, { sessionId: request.sessionId, observedAt: first.observedAt });
+      return true;
+    },
+    enqueueSlotWork: (run) => { chain = chain.then(run).catch(() => log("kherep-node: Claude slot work unconfirmed")); },
     // Issue #520: a reply records the sent message it answers replied; settleReplied never throws.
     storeMessage: (body) => storeDaemonMessage(paths, body, Date.now(), storageFault, log),
     taskRequestResult: (result) => recordRequestResult(paths, result),
@@ -279,6 +300,7 @@ export function startDaemon(config: NodeConfig, paths: NodePaths, log: (line: st
     };
     const generation = connections.begin(() => {
       // Revoke connection proof immediately; serialize the full reset after old work.
+      currentClaudeHooks.clear();
       authenticated = false; client.authenticated = false; client.workerCapabilities = null; selectedReferences.clear();
       watchdog.stop(); intakeWindow?.close();
       for (const timer of [snapshots, exchange, directory]) if (timer) clearInterval(timer);

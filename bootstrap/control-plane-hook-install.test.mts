@@ -128,7 +128,16 @@ test("install wires the hooks through the stable entry, points it at the checkou
   }
   assert.deepEqual(attributionGroup(settings)!.hooks.map((hook) => stableArgs(hook.command, f.claude)), ["attribution"]);
   const all = Object.keys(settings.hooks).flatMap((event) => commandsOf(settings, event)).filter(controlPlane);
-  assert.equal(all.length, 8, all.join("\n"));
+  assert.equal(all.length, 9, all.join("\n"));
+  const expansion = settings.hooks.UserPromptExpansion;
+  assert.equal(expansion.length, 1);
+  assert.equal(expansion[0].matcher, "^(kherep-slot|kherep-set-lead)$");
+  assert.deepEqual(expansion[0].hooks.map(({ command, ...fields }) => ({ args: stableArgs(command, f.claude), ...fields })),
+    [{ args: "deliver", type: "command", timeout: 30 }]);
+  for (const name of ["kherep-slot", "kherep-set-lead"]) {
+    assert.ok(fs.readFileSync(path.join(f.claude, "skills", name, "SKILL.md"))
+      .equals(fs.readFileSync(path.join(HERE, "..", "claude", "skills", name, "SKILL.md"))), `${name} installed bytes`);
+  }
   assert.ok(all.every((command) => stableArgs(command, f.claude) !== undefined), all.join("\n"));
 
   // The entry is a manifest file; the pointer names the checkout this installer ran from.
@@ -143,7 +152,12 @@ test("install wires the hooks through the stable entry, points it at the checkou
   for (const event of Object.keys(settings.hooks)) {
     for (const command of commandsOf(settings, event).filter(controlPlane)) {
       const run = bash(["-c", command], f, payload(event));
-      assert.deepEqual([run.status, run.stdout, withoutTypeStrippingWarning(run.stderr)], [0, "", ""], `${event} ${command}: ${run.stderr}`);
+      if (event === "UserPromptExpansion") {
+        assert.deepEqual([run.status, JSON.parse(run.stdout), withoutTypeStrippingWarning(run.stderr)],
+          [0, { decision: "block", reason: "Kherep slot selection refused: invalid native command." }, ""], `${event} ${command}: ${run.stderr}`);
+      } else {
+        assert.deepEqual([run.status, run.stdout, withoutTypeStrippingWarning(run.stderr)], [0, "", ""], `${event} ${command}: ${run.stderr}`);
+      }
     }
   }
   // The entry runs the hook in its own process as the main module: the hook's own argument check answers.
@@ -164,6 +178,7 @@ test("install wires the hooks through the stable entry, points it at the checkou
   const source = JSON.parse(fs.readFileSync(path.join(HERE, "..", "claude", "settings.user.json"), "utf8")) as HookGroups;
   const folded = (command: string | undefined) => command?.replace("__KHEREP_CLAUDE_HOME__", "~/.claude");
   for (const event of EVENTS) assert.equal(deliverCommand(captured, event), folded(deliverCommand(source, event)), event);
+  assert.equal(commandsOf(captured, "UserPromptExpansion")[0], folded(commandsOf(source, "UserPromptExpansion")[0]));
   for (const event of WAKE_EVENTS) assert.equal(wakeEntry(captured, event)?.command, folded(wakeEntry(source, event)?.command), event);
   // The listener joins SessionStart last; the hooks before it keep their order.
   const scripts = (value: HookGroups) => value.hooks.SessionStart.flatMap((group) => group.hooks)

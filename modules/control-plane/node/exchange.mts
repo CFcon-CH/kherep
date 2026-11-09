@@ -1,3 +1,5 @@
+import { isClaudeSlotSelection, isClaudeSlotResult, isNodeId, type ClaudeSlotSelection, type ClaudeSlotResult } from "../protocol.mts";
+import { isSlotAddressRequest, isSlotAddressResult, type SlotAddressResult } from "../protocol-messages.mts";
 import { isMessageDiagnostic, type MessageDiagnostic } from "../protocol-diagnostics.mts";
 import { MessageReferenceResolver } from "./message-reference.mts";
 import { wasGuardedMcpReply } from "./guarded-replies.mts";
@@ -181,8 +183,10 @@ function takeDirectoryRequest(paths: NodePaths): boolean {
 // The client callbacks that record directory frames and sent states, and read
 // the local session listing for the messaging policy.
 export function exchangeOptions(paths: NodePaths, now: () => number = Date.now):
-  Pick<ClientOptions, "storeDirectory" | "sentUpdate" | "receiptUpdate" | "localSessions" | "selectedReferences"> {
+  Pick<ClientOptions, "storeDirectory" | "sentUpdate" | "receiptUpdate" | "localSessions" | "selectedReferences" | "slotSelectionResult" | "slotAddressResult"> {
   return {
+    slotSelectionResult: (body) => writeSlotExchange(paths, "selection-result", body.requestId, body),
+    slotAddressResult: (body) => writeSlotExchange(paths, "address-result", body.requestId, body),
     selectedReferences: new MessageReferenceResolver(paths, now),
     storeDirectory: (body) => writeDirectory(paths, body),
     sentUpdate: (messageId, state, reason, progress, diagnostic) => { recordSent(paths, messageId, state, reason, now(), progress, diagnostic); },
@@ -223,6 +227,7 @@ export interface ExchangeCounts { status: number; outbox: number }
 export interface ExchangeSources { unreported?: (now: number) => UnreportedStatus[]; counts?: ExchangeCounts }
 export function pollExchange(client: NodeClient, paths: NodePaths, inflight: Map<string, number>, send: (frame: string) => boolean,
   now: number = Date.now(), random: () => number = Math.random, proxySend?: ProxySend, sources: ExchangeSources = {}): void {
+  pollSlots(client, paths, send, now);
   const counts = sources.counts ?? { status: 0, outbox: 0 };
   const sendAll = (frames: string[]): boolean => frames.length > 0 && frames.every(send);
   const schedule = sendSchedule(inflight);
@@ -264,4 +269,47 @@ export function pollExchange(client: NodeClient, paths: NodePaths, inflight: Map
       counts.status++;
     }
   }
+}
+
+
+export function slotExchangeFile(paths: NodePaths, kind: string, id: string): string {
+  if (!isNodeId(id) || !["selection", "selection-result", "address", "address-result"].includes(kind)) throw new Error("invalid slot exchange key");
+  return path.join(paths.dir, "slot-exchange", `${kind}-${id}.json`);
+}
+export function writeSlotExchange(paths: NodePaths, kind: string, id: string, value: unknown): void {
+  ensureDir(path.join(paths.dir, "slot-exchange"));
+  writeJsonAtomic(slotExchangeFile(paths, kind, id), value);
+}
+export function readSlotExchange(paths: NodePaths, kind: string, id: string): unknown {
+  return readJson<unknown>(slotExchangeFile(paths, kind, id));
+}
+const slotQueued = new WeakMap<NodeClient, Set<string>>();
+function pollSlots(client: NodeClient, paths: NodePaths, send: (frame: string) => boolean, now: number): void {
+  if (!client.authenticated) return;
+  let files: string[];
+  try { files = fs.readdirSync(path.join(paths.dir, "slot-exchange")); } catch { return; }
+  const queued = slotQueued.get(client) ?? new Set<string>();
+  slotQueued.set(client, queued);
+  for (const file of files.filter(f => /^(selection|address)-/.test(f)).slice(0, 512)) {
+    const match = /^(selection|address)-([0-9a-f-]{36})\.json$/.exec(file);
+    if (!match || queued.has(file)) continue;
+    const [, kind, id] = match;
+    if (!isNodeId(id)) continue;
+    const value = readSlotExchange(paths, kind, id);
+    if (kind === "selection" && isClaudeSlotSelection(value) && value.expiresAt <= now) {
+      for (const part of ["selection", "selection-result"]) fs.rmSync(slotExchangeFile(paths, part, id), { force: true });
+      queued.delete(file); continue;
+    }
+    if (kind === "selection" && isClaudeSlotSelection(value) && value.requestId === id
+      && value.expiresAt > now && value.observedAt <= now && !isClaudeSlotResult(readSlotExchange(paths, "selection-result", id))) {
+      queued.add(file);
+      client.enqueueSlotSelection(value, send, () => queued.delete(file));
+    } else if (kind === "address" && isSlotAddressRequest(value) && value.requestId === id
+      && !isSlotAddressResult(readSlotExchange(paths, "address-result", id))) {
+      // Address requests carry no text. The pending CLI expires and removes it.
+      queued.add(file);
+      for (const frame of client.slotAddressRequest(value)) if (!send(frame)) queued.delete(file);
+    }
+  }
+  for (const file of queued) if (!files.includes(file)) queued.delete(file);
 }

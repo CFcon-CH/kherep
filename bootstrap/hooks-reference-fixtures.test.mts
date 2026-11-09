@@ -27,7 +27,11 @@ test("the classifier accepts the coordinated wrapper and a direct Control Plane 
   assert.deepEqual(classify("Stop", 'node "/synthetic/claude/kherep/control-plane/claude-control-plane-hook.mts" wake --timeout 86400'),
     { stems: ["claude-control-plane-hook", "wake-hook"], controlPlane: true });
   const stable = templateCommands("claude/settings.user.json").filter(({ command }) => command.includes("/kherep/control-plane/claude-control-plane-hook.mts"));
-  assert.equal(stable.length, 8, "the template wires the stable entry eight times");
+  assert.equal(stable.length, 9, "the template wires the stable entry nine times");
+  const expansion = stable.filter(({ event }) => event === "UserPromptExpansion");
+  assert.equal(expansion.length, 1);
+  assert.deepEqual(classify(expansion[0].event, expansion[0].command),
+    { stems: ["claude-control-plane-hook", "deliver-hook"], controlPlane: true });
   for (const { event, command } of stable) {
     assert.equal((classify(event, command) as { controlPlane?: boolean }).controlPlane, true, command);
   }

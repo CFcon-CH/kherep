@@ -56,7 +56,9 @@
     "improve-codebase-architecture",
     "local-inference",
     "session-optimizer",
-    "vite-base-forge"
+    "vite-base-forge",
+    "kherep-slot",
+    "kherep-set-lead"
   ],
   "commands": [
     "btw.md",

@@ -212,3 +212,28 @@ export function fromBase64Url(text: string): Uint8Array {
   for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
   return bytes;
 }
+
+// User-only Claude selection travels on the ordinary full snapshot lane. The
+// enrolled local user attests the gesture; this is not human-origin cryptography.
+export const FIXED_SLOTS = ["kherep-lead", "codex-windows", "claude-windows", "codex-mac", "claude-mac"] as const;
+export type FixedSlot = typeof FIXED_SLOTS[number];
+export type ClaudeSlot = "kherep-lead" | "claude-mac" | "claude-windows";
+export const isFixedSlot = (v: unknown): v is FixedSlot => (FIXED_SLOTS as readonly unknown[]).includes(v);
+export const isClaudeSlot = (v: unknown): v is ClaudeSlot => v === "kherep-lead" || v === "claude-mac" || v === "claude-windows";
+export interface ClaudeSlotSelection {
+  slot: ClaudeSlot; sessionId: string; promptId: string; requestId: string; observedAt: number; expiresAt: number;
+}
+export interface ClaudeSlotResult {
+  kind: "slot-selection"; requestId: string; slot: ClaudeSlot; outcome: "assigned" | "conflict" | "denied"; revision: number | null;
+}
+const exactKeys = (v: Record<string, unknown>, keys: string[]): boolean => Object.keys(v).length === keys.length && keys.every(k => Object.hasOwn(v, k));
+export function isClaudeSlotSelection(v: unknown): v is ClaudeSlotSelection {
+  return isObject(v) && exactKeys(v, ["slot", "sessionId", "promptId", "requestId", "observedAt", "expiresAt"])
+    && isClaudeSlot(v.slot) && isNodeId(v.sessionId) && isNodeId(v.promptId) && isNodeId(v.requestId)
+    && isCounter(v.observedAt) && isCounter(v.expiresAt) && v.expiresAt > v.observedAt && v.expiresAt - v.observedAt <= 30_000;
+}
+export function isClaudeSlotResult(v: unknown): v is ClaudeSlotResult {
+  return isObject(v) && exactKeys(v, ["kind", "requestId", "slot", "outcome", "revision"])
+    && v.kind === "slot-selection" && isNodeId(v.requestId) && isClaudeSlot(v.slot)
+    && ["assigned", "conflict", "denied"].includes(v.outcome as string) && (v.revision === null || isCounter(v.revision));
+}
