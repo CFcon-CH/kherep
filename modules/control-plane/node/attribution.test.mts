@@ -63,9 +63,9 @@ test("an append trims records older than 90 days and keeps the fresh ones", (t) 
 
 test("repoSlug keeps owner/name and never the userinfo of a remote URL", () => {
   const cases: [string, string | null][] = [
-    ["https://user:secret-token@github.com/example/repo.git", "example/repo"],
-    ["https://github.com/example/repo", "example/repo"],
-    ["git@github.com:example/repo.git", "example/repo"],
+    ["https://user:secret-token@git.example.test/example/repo.git", "example/repo"],
+    ["https://git.example.test/example/repo", "example/repo"],
+    ["git@git.example.test:example/repo.git", "example/repo"],
     ["ssh://git@example.com:2222/example/repo.git/", "example/repo"],
     ["/synthetic/remotes/example/repo.git", "example/repo"],
     ["C:\\synthetic\\remotes\\example\\repo.git", "example/repo"],

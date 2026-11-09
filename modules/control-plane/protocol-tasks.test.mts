@@ -54,7 +54,7 @@ test("task reports, requests and requirements", () => {
 
 test("a label is letters, digits, space and : @ - _ . with at most 64 characters (issue #74)", () => {
   assert.equal(intercomLabel("claude", "sekhmet"), "intercom: claude@sekhmet");
-  for (const good of ["intercom: claude@sekhmet", "intercom: codex@mac-mini.local", "a", "A_b-9.x", "x".repeat(64)]) {
+  for (const good of ["intercom: claude@sekhmet", "intercom: agent-name@example.test", "a", "A_b-9.x", "x".repeat(64)]) {
     assert.equal(isTaskLabel(good), true, good);
   }
   for (const bad of ["", " lead", "trail ", "x".repeat(65), "a\nb", "a/b", "café", "a\tb", 'quote"', "semi;colon", 42]) {

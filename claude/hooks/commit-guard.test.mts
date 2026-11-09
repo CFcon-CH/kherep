@@ -24,11 +24,11 @@ assert.equal(run('git commit -m "plain subject"', { KHEREP_WORK_ITEM_REQUIRED: "
 assert.equal(run('git commit -m "TASK_12 valid subject"', { KHEREP_WORK_ITEM_REQUIRED: "1", KHEREP_WORK_ITEM_PATTERN: "TASK_\\d+" }), 0);
 assert.equal(run('git commit -m "subject"', { KHEREP_WORK_ITEM_REQUIRED: "1", KHEREP_WORK_ITEM_PATTERN: "[" }), 2);
 assert.equal(run('git commit -m "x Co-Authored-By: bot"'), 0);
-assert.equal(run('git commit -m "plain subject\n\nCo-authored-by: Codex <codex@openai.com>"', { KHEREP_WORK_ITEM_REQUIRED: "1" }), 2);
+assert.equal(run('git commit -m "plain subject\n\nCo-authored-by: Codex <codex@example.com>"', { KHEREP_WORK_ITEM_REQUIRED: "1" }), 2);
 assert.equal(run('git commit -m "ABC-12 valid subject\n\nCo-authored-by: Example <dev@example.com>"', { KHEREP_WORK_ITEM_REQUIRED: "1" }), 0);
 assert.equal(run('git commit -m "em — dash\n\nCo-authored-by: Example <dev@example.com>"'), 2);
 assert.equal(run('git commit -m "em — dash"'), 2);
-assert.equal(run('git commit -m "plain subject\n\nCo-authored-by: Codex <codex@openai.com>"', {}, "/work/repo", undefined, "PowerShell"), 0);
+assert.equal(run('git commit -m "plain subject\n\nCo-authored-by: Codex <codex@example.com>"', {}, "/work/repo", undefined, "PowerShell"), 0);
 assert.equal(run('git commit -m "plain subject\n\nCo-authored-by: Example <dev@example.com>"', { KHEREP_WORK_ITEM_REQUIRED: "1" }, "/work/repo", undefined, "PowerShell"), 2);
 assert.equal(run('git commit -m "em — dash\n\nCo-authored-by: Example <dev@example.com>"', {}, "/work/repo", undefined, "PowerShell"), 2);
 // Per-repository opt-out (kherep.workItemRequired=false). The guard's only key

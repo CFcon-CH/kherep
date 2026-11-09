@@ -297,12 +297,12 @@ test("a stray file adds the warning without changing the block decision", () => 
 
 test("a stray file from another drive letter is reported too", () => {
   const { ws, repo } = strayRepo();
-  fs.writeFileSync(path.join(repo, "DCFcon-DEVkherepfinding1_body.txt"), "body");
+  fs.writeFileSync(path.join(repo, "DWorkspaceskherepfinding1_body.txt"), "body");
   const parsed = warningOf(runIn(repo, ws, TRIVIAL));
   assert.match(parsed.systemMessage, /\b1 stray\b/);
   assert.match(parsed.systemMessage, /\/D<U\+F03A>/);
   // A name that only contains U+F03A later is not a drive path.
-  fs.rmSync(path.join(repo, "DCFcon-DEVkherepfinding1_body.txt"));
+  fs.rmSync(path.join(repo, "DWorkspaceskherepfinding1_body.txt"));
   fs.writeFileSync(path.join(repo, "notesbody.txt"), "body");
   assertSilent(runIn(repo, ws, TRIVIAL));
 });

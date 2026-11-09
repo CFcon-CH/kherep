@@ -55,7 +55,7 @@ function delivered(node: ReturnType<typeof taskNode>, options: { name: string; o
   writeOutbox(node.paths, { messageId: MESSAGE, fromSession: "owner", to: { nodeId: TARGET, session: SESSION }, text: "work",
     createdAt: new Date(T0).toISOString() });
   recordSent(node.paths, MESSAGE, "accepted", undefined, T0, progress);
-  writeDirectory(node.paths, { fetchedAt: new Date(T0).toISOString(), nodes: [{ nodeId: TARGET, name: "winbox", status: "online" }],
+  writeDirectory(node.paths, { fetchedAt: new Date(T0).toISOString(), nodes: [{ nodeId: TARGET, name: "node-a", status: "online" }],
     sessions: [{ nodeId: TARGET, sessionId: SESSION, runtime: "codex", state: "running", name: options.name, kind: "codex-task" }] });
   if (options.owned) {
     writeRequest(node.paths, { requestId: REQUEST, title: "t", text: "work", requirements: {}, directive: "d", requestedBy: "owner",
@@ -76,7 +76,7 @@ test("msg stop for a message delivered into the sender's own task stops that tas
     { name: "task.control.submit", action: "status", taskId: TASK },
     { name: "task.control.submit", action: "stop", taskId: TASK, expectedRunVersion: RUN },
   ]);
-  assert.ok(run.out.includes(`message ${MESSAGE} was delivered into the existing session winbox/${SESSION} of your own task ${TASK}; `
+  assert.ok(run.out.includes(`message ${MESSAGE} was delivered into the existing session node-a/${SESSION} of your own task ${TASK}; `
     + "stopping that task (later messages to it wait until an explicit continue of that task)"), run.out.join("\n"));
   assert.equal(run.out.at(-1), `stopped: task ${TASK}; its process and child processes ended at the target (task stopped)`);
 });
@@ -99,7 +99,7 @@ test("msg stop for a message delivered into a session that is no task of the sen
     assert.equal(run.code, 1);
     assert.deepEqual(run.submits.map((s) => s.action), ["status"]);
     assert.equal(run.err.at(-1), `kherep-node msg: not stopped: message ${MESSAGE} was delivered into the existing session `
-      + `winbox/${SESSION} (progress target-busy), which matches no task you own; it cannot be stopped by message id`);
+      + `node-a/${SESSION} (progress target-busy), which matches no task you own; it cannot be stopped by message id`);
   }
 });
 

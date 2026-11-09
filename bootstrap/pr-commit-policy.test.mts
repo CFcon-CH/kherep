@@ -63,7 +63,7 @@ test("the strict canary survives repo opt-out and caller pattern without leaking
   const f = fixture(t);
   f.git("config", "--local", "kherep.workItemRequired", "false");
   const base = f.git("rev-parse", "HEAD");
-  const head = f.commit("Key-free attributed change\n\nCo-authored-by: Codex <codex@openai.com>");
+  const head = f.commit("Key-free attributed change\n\nCo-authored-by: Codex <codex@example.com>");
   const result = spawnSync(process.execPath, [script, base, head], {
     cwd: f.repo, encoding: "utf8", env: { ...hostEnv, KHEREP_WORK_ITEM_REQUIRED: "0", KHEREP_WORK_ITEM_PATTERN: ".*" },
   });

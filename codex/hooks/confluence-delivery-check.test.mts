@@ -120,8 +120,8 @@ test("the complete message keeps native and live publication status UNKNOWN", ()
 });
 
 test("scope follows the configured workspace", () => {
-  const env = { KHEREP_WORKSPACE: "D:/CFcon-DEV" } as NodeJS.ProcessEnv;
-  assert.equal(isKherepScope({ cwd: "D:/CFcon-DEV/kherep" }, env), true);
+  const env = { KHEREP_WORKSPACE: "D:/Workspaces" } as NodeJS.ProcessEnv;
+  assert.equal(isKherepScope({ cwd: "D:/Workspaces/kherep" }, env), true);
   assert.equal(isKherepScope({ cwd: "D:/elsewhere" }, env), false);
   assert.equal(isKherepScope({}, env), false);
   assert.equal(isKherepScope({ cwd: "D:/Work/app///" }, { KHEREP_WORKSPACE: "D:/Work///" }), true);
@@ -129,7 +129,7 @@ test("scope follows the configured workspace", () => {
 });
 
 test("the paths it uses follow the configured workspace and CODEX_HOME", () => {
-  const env = { KHEREP_WORKSPACE: "D:/CFcon-DEV", CODEX_HOME: "D:/home/.codex" } as NodeJS.ProcessEnv;
-  assert.equal(toolsDir(env).replace(/\\/g, "/"), "D:/CFcon-DEV/tools");
+  const env = { KHEREP_WORKSPACE: "D:/Workspaces", CODEX_HOME: "D:/home/.codex" } as NodeJS.ProcessEnv;
+  assert.equal(toolsDir(env).replace(/\\/g, "/"), "D:/Workspaces/tools");
   assert.equal(statePath(env).replace(/\\/g, "/"), "D:/home/.codex/orchestra/confluence-delivery.json");
 });

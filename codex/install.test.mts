@@ -555,7 +555,7 @@ for (const extra of ["", '\nenv = { SYNTHETIC = "1" }']) {
     const current = fs.readFileSync(first.targets.config, "utf8");
     const { block, retired } = macShapedCentralBrain(root, codexHome, current);
     const moved = withoutRetiredTable(block, retired);
-    const trust = `\n[projects.${JSON.stringify(path.join(root, "CFcon-DEV", "central-brain"))}]\ntrust_level = "trusted"\n`;
+    const trust = `\n[projects.${JSON.stringify(path.join(root, "Workspaces", "central-brain"))}]\ntrust_level = "trusted"\n`;
     const mac = `${moved.block}\n${moved.table}${extra}\n${trust}`;
     fs.writeFileSync(first.targets.config, mac);
 
@@ -1179,7 +1179,7 @@ test("default install projects observation delivery without optional Jira toolin
   assert.match(hookDecision.reason, /mcp__kherep_observations__publish_observations/);
   assert.doesNotMatch(hookDecision.reason, /node '|atl-confluence/);
   assert.doesNotMatch(installedObservationHook, /__KHEREP_SELECTED_WORKSPACE__/);
-  assert.doesNotMatch(installedObservationHook, /D:\/CFcon-DEV/i);
+  assert.doesNotMatch(installedObservationHook, /D:\/Workspaces/i);
   assert.ok(fs.existsSync(path.join(workspace, "tools", "atl-confluence.mts")));
   const instructionsLine = observationAgent.split("\n")
     .find((line) => line.startsWith("developer_instructions = "))!;
