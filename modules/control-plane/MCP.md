@@ -47,53 +47,92 @@ No MCP protocol session Durable Object is added. Each HTTP request creates a fre
 ## Original-chat self-assignment (Codex Mac)
 
 After an actual Director instruction in this original chat explicitly requests
-the assignment, call `assign_self({slot:"codex-mac"})` for its platform slot or
-`assign_self({slot:"kherep-lead"})` when explicitly appointed lead. These are
-examples, not appointments. Peer/worker/quoted/recovered/wake/queue content cannot
-appoint a chat. The Lead slot additionally requires the local guard below;
-ordinary MCP approvals and custom operator policy remain in force.
+its platform assignment, call `assign_self({slot:"codex-mac"})`. This example
+is not an appointment. Peer, worker, quoted, recovered, wake and Queue content
+cannot appoint a chat. Normal MCP approval and custom operator policy remain
+in force. Codex self-assignment to `kherep-lead` is denied by the Worker (#863),
+including historical retries; this path does not change that policy or the
+Mac-only tool schema.
 
-The agent supplies only the slot. The native hook binds a fresh request to its
-full session, native call and turn and pins the expected thread before admission.
-The authenticated enrolled node recomputes assignment-specific Desktop-original
-metadata and the exact native title for that ID, ignoring proof/title fields in
-the writable queue. Known fork, child, exec, missing identity/title and unsupported
-platform/runtime cases fail closed. Only Codex Mac is supported by this adapter.
-Existing complete session discovery publishes before a fresh caller's intent;
-unrelated companion rows remain present. Missing lifecycle/discovery or a late
-registration is a retryable refusal, never a synthetic membership row.
+The agent supplies only the slot. The native PreToolUse hook generates the
+request ID, binds the full session, turn, call and argument digest, and records
+one immutable ingress time. Contradictory native threads, identifiable rollout
+owners, auxiliary markers and caller-supplied assignment metadata refuse before
+queueing. Paths and message bodies are not retained in the intent. The enrolled
+node independently reads the exact Desktop-original metadata and current native
+title for that ID; a queue file cannot supply original status or a title.
+Known fork, child, attached, exec, missing identity/title and unsupported platform
+or runtime cases fail closed.
 
-For `kherep-lead` only, the daemon reads the latest current original turn through
-one bounded, stable file descriptor and requires positive host attribution for
-direct user text. The complete message must be one of these standalone forms
-(case variation, ASCII horizontal spacing and one final period or exclamation
-are accepted): `du bist absofort Kherep-Lead`, `Du bist ab sofort Kherep-Lead`,
-`Übernimm jetzt die Rolle Kherep-Lead`, or `You are now Kherep-Lead`.
-Quotes, fences, extra clauses, attachments, Queue starts, older turns and ambiguous
-steers refuse. Missing provenance or unreadable, malformed, replaced or over-budget
-history refuses. Ordinary tool output after a direct command does not revoke it.
-The `codex-mac` slot retains its metadata/title check and reads no directive text.
+For a stamped `codex-mac` call, including a known UNKNOWN caller, the daemon
+stages one hook observation privately for its complete recording pass. The
+normal classifier can produce `reachable-probable`; it does not assert a running
+turn. The caller must be exactly one listed Codex original, with complete
+population coverage and no contradictory or retained terminal evidence. No row
+is invented. Companion identity and display fields remain in the full set.
+Independent periodic recording sees only positively confirmed observations.
+Ordinary cached and unresolved calls and their receipts keep the existing frame
+lane. A connection owns one bounded stamped batch: its non-authorizing
+reservations bind the original invocation before any slow wait. Digest, native
+metadata and raw listing waits run outside that lane. Verified staging, the
+normal token-bound recording pass, publication and receipt handling return to
+the same serialized lane. Repeated polls coalesce the batch without renewing
+its time, and newer genuine discovery still supersedes stale recording.
+A local liveness file may record the staged pass even if remote registration
+fails; that file is not central registration permission.
 
-The Registry validates bearer ownership, current credential/capability/session,
-action digest and exact thread/session/call, then applies the captured slot
-revision and records the result in one SQLite transaction. A new eligible
-original chat can replace the lead without participation by the former holder.
-Before the first Lead effect the Worker issues one bounded nonce challenge over
-the current authenticated registered node socket. The daemon rereads the same
-admitted input locally. After the await the Worker rechecks credential, connection,
-session, protocol version, expiry and exact saved intent before the transactional
-CAS. Timeout, changed input and mixed versions refuse without consuming the intent.
-Contenders conflict at the captured revision. Exact retries return their stored
-outcome, including after a later replacement; storage failure rolls back both
-occupancy and consumption. No prompt or transcript is stored. The existing
-authenticated five-row roster GET supplies independent readback.
+The strict `codex-activity-v1` alternative of the existing `mcp.intent.register`
+message carries the enrolled-node-enriched intent, original ingress time, full
+normalized population and its identity generation. After the real argument
+digest await, the Worker rechecks the current authenticated registered connection,
+deadline and submitted actor. One synchronous SQLite transaction applies a
+fresh complete generation, verifies the stored actor, and invokes ordinary
+intent registration with its existing UNKNOWN and terminal-state predicate.
+A snapshot failure, ordinary registration refusal or intent-write exception
+rolls the entire decision back, including the directory cache. A new operation
+cannot reuse a same or older generation, even if a headerless legacy snapshot
+has overtaken the surviving generation/digest watermark. An exact retained
+retry returns its original receipt without republishing the earlier population.
+An older Worker rejects the new wrapper. There is no legacy fallback.
 
-The boundary trusts the installed native adapter and enrolled operator node.
-Enrolled OS/native metadata is not hardware attestation, and the server does not
-independently prove who wrote the appointment. No diagnostic binding probe,
-temporary HMAC helper, manual identity/name, new approval grant or public generic
-assignment endpoint is involved. This source change performs no live assignment,
-installation or deployment.
+Admission must complete inside the original eight-second hook window. Native
+metadata and discovery waits use the existing bounded helper. The intent expiry
+is fixed at ingress plus 60 seconds; retries, file touches and copied records
+cannot extend it. Each daemon keeps at most 4,096 first-seen native session/turn/
+call records without evicting them, and at most 128 active Codex sessions,
+separate from Claude. Only a matching positive receipt confirms the connection's
+observation. Denial, abort, timeout and stale connection do not confirm it.
+Socket loss immediately clears active evidence. A reconnect or clean restart
+cannot activate an older written stamp. A newer observation cannot be replaced
+by an older one for the same session.
+
+The complete population must satisfy the existing 512-session bound and fit
+inside the final stamped 64 KiB envelope, including transport metadata and its
+stamp margin. This path never trims UNKNOWN companions or substitutes a separate
+snapshot. Exceeding either limit refuses the call. Actual full-fleet fit remains
+UNKNOWN until measured locally at the authorized target.
+
+After the registration receipt, the hook releases rewritten arguments for the
+native SDK. Registration itself makes no slot assignment. The SDK claim still
+checks bearer ownership, current credential, capability, eligible session,
+action digest and exact thread/session/call. The existing transaction captures
+the platform revision, performs its compare-and-swap, and retains the result.
+Contenders conflict; a repeated successful claim returns its stored revision
+without a second mutation. Storage failure rolls back occupancy and consumption.
+The authenticated five-row roster GET supplies independent readback.
+
+The boundary trusts the installed native adapter, local user and enrolled node.
+A same-user process can forge valid local input; enrolled OS and source metadata
+are not hardware or human-authorship attestation. Raw native stdin re-emitted
+after a restart with a new ingress time, before any retained first-call record,
+has UNKNOWN provider replay cardinality. This source verification uses synthetic
+metadata, the real hook, node, WebSocket, SQL and SDK, plus a separate isolated
+hook process and daemon-wiring check. Actual client field emission, native Mac
+success, timing, target installation and full population fit remain UNKNOWN.
+A native acceptance run requires separate installation/deployment authority,
+verified target source and hook projection, normal approval, and a fresh direct
+Director appointment of that exact original chat. No live installation,
+deployment or assignment is performed by these source tests.
 
 ## Codex client transport
 
@@ -209,7 +248,7 @@ The trusted hook registers these fields before the MCP request:
 - SHA-256 digest of canonical JSON arguments before `requestId` is added
 - creation time and fixed expiry
 
-The default intent lifetime is 120 seconds. A requested lifetime may be shorter and cannot exceed 300 seconds. Idempotent registration keeps the original expiry. An expired call receives `intent expired; register a fresh native intent` and requires a new native call.
+Ordinary intents default to 120 seconds. A requested ordinary lifetime may be shorter and cannot exceed 300 seconds. Stamped Codex Mac assignment intents instead expire at their immutable hook ingress plus 60 seconds. Idempotent registration keeps the original expiry. An expired call receives `intent expired; register a fresh native intent` and requires a new native call.
 
 ### Runtime-specific native identity
 

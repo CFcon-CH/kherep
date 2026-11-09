@@ -1,10 +1,14 @@
+import fs from "node:fs";
+import path from "node:path";
+import type { McpRegistry } from "../src/mcp-registry.mts";
+import { type NativeNode, startNativeNode } from "./mcp-two-chat-fixture.mts";
 import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { digestMcpArguments, REMOTE_MCP_CAPABILITY } from "../../protocol-mcp.mts";
+import { type CodexActivityRegistration, type McpIntentReceiptBody, digestMcpArguments, REMOTE_MCP_CAPABILITY } from "../../protocol-mcp.mts";
 import { FACTS, newKey, registry, authenticate, until } from "./helpers.mts";
-import { makeEnvelope, parseEnvelope } from "../../protocol.mts";
+import { type SessionInfo, makeEnvelope, parseEnvelope } from "../../protocol.mts";
 import type { McpAssignmentNative } from "../../protocol-mcp.mts";
 import type { TestSocket } from "./helpers.mts";
 import { handleMcp } from "../src/mcp-http.mts";
@@ -365,4 +369,425 @@ describe("native self-assignment transaction", () => {
       expect((await registry().listIntercomSlots()).find(row => row.slot === "codex-mac")?.occupant?.chatName).toBe(a.title);
     } finally { await client.close();socket.ws.close(); }
   });
+});
+
+
+describe("fresh Codex original activity", () => {
+    it("UNKNOWN original crosses real hook, enrolled WS, SQLite and SDK exactly once", async () => {
+        const companion = "44444444-4444-4444-8444-444444444444";
+        const node = await startNativeNode("synthetic-codex", [
+            { sessionId: SESSION, runtime: "codex", kind: "codex", state: "unknown", title: "Synthetic original A" },
+            { sessionId: companion, runtime: "codex", kind: "codex", state: "unknown", title: "Synthetic companion B" },
+        ], true);
+        try {
+            await node.publishSessions();
+            const rows = () => runInDurableObject(registry(), (_instance, state) => state.storage.sql.exec("SELECT * FROM sessions WHERE node_id=? ORDER BY session_id", node.nodeId).toArray());
+            const initialRows = await rows();
+            expect(initialRows.map(row => row.state)).toEqual(["unknown", "unknown"]);
+            const roster = await registry().listIntercomSlots();
+            expect(await registry().registerMcpIntent(node.nodeId, { requestId: crypto.randomUUID(), runtime: "codex", sessionId: SESSION, callId: "ordinary-unknown", tool: "status", argumentsDigest: "a".repeat(64) }))
+                .toEqual({ ok: false, error: "native session is not registered on this node" });
+            const output = await node.nativeHook({ hook_event_name: "PreToolUse", session_id: SESSION, turn_id: TURN,
+                tool_use_id: "synthetic-original-call", tool_name: "mcp__kherep_messaging__assign_self", tool_input: { slot: "codex-mac" } }, "codex");
+            const hook = output?.hookSpecificOutput;
+            if (!hook?.updatedInput) {
+                const sent = node.sent.findLast(f => f.type === "mcp.intent.register");
+                const received = node.received.findLast(f => f.type === "mcp.intent.receipt");
+                expect((sent?.body as {
+                    assignment?: {
+                        native?: {
+                            originalMain?: boolean;
+                        };
+                    };
+                })?.assignment?.native?.originalMain).toBe(true);
+                expect(received?.body).toMatchObject({ ok: false, error: "native session is not registered on this node" });
+                expect(hook?.permissionDecisionReason).toBe("remote_mcp_intent_rejected_worker_session");
+                expect(await registry().listIntercomSlots()).toEqual(roster);
+            }
+            expect(hook?.updatedInput, `actual hook decision: ${hook?.permissionDecisionReason}`).toMatchObject({ slot: "codex-mac", requestId: expect.any(String) });
+            const stamped = node.sent.findLast(f => f.type === "mcp.intent.register")!.body as CodexActivityRegistration;
+            const ledger = JSON.parse(fs.readFileSync(path.join(node.paths.dir, "session-liveness.json"), "utf8")) as {
+                sessions: {
+                    sessionId: string;
+                    observedAt: number;
+                }[];
+            };
+            expect(ledger.sessions.find(row => row.sessionId === SESSION)!.observedAt).toBe(stamped.observedAt);
+            const persisted = await runInDurableObject(registry(), (_instance, state) => ({
+                header: state.storage.sql.exec("SELECT identity_generation FROM nodes WHERE id=?", node.nodeId).one(),
+                intent: state.storage.sql.exec("SELECT * FROM mcp_intents WHERE request_id=?", stamped.intent.requestId).one(),
+            }));
+            expect(persisted.header.identity_generation).toBe(stamped.identitySnapshot.generation);
+            expect(persisted.intent).toMatchObject({ session_id: SESSION, call_id: stamped.intent.callId,
+                arguments_digest: stamped.intent.argumentsDigest, expires_at: stamped.observedAt + 60000, claimed_at: null,
+                assignment_revision: roster.find(row => row.slot === "codex-mac")!.revision });
+            const committed = await rows();
+            expect(committed.map(row => row.state)).toEqual(["reachable-probable", "unknown"]);
+            expect(committed.find(row => row.session_id === companion)).toEqual(initialRows.find(row => row.session_id === companion));
+            expect(await registry().listIntercomSlots()).toEqual(roster);
+            const client = await node.mcp();
+            const call = { name: "assign_self", arguments: hook!.updatedInput!, _meta: { sessionId: SESSION, threadId: SESSION, callId: "synthetic-original-call" } };
+            const result = await client.callTool(call);
+            expect(result.isError).not.toBe(true);
+            const revision = roster.find(row => row.slot === "codex-mac")!.revision + 1;
+            expect(result.structuredContent).toEqual({ ok: true, slot: "codex-mac", revision });
+            expect((await client.callTool(call)).structuredContent).toEqual(result.structuredContent);
+            const after = await registry().listIntercomSlots();
+            expect(after.find(row => row.slot === "codex-mac")).toEqual({ slot: "codex-mac", revision, occupant: {
+                    nodeId: node.nodeId, runtime: "codex", sessionId: SESSION, chatName: "Synthetic original A"
+                } });
+            expect(after.filter(row => row.slot !== "codex-mac")).toEqual(roster.filter(row => row.slot !== "codex-mac"));
+        }
+        finally {
+            await node.close();
+        }
+    });
+});
+const B = "44444444-4444-4444-8444-444444444444";
+const C = "55555555-5555-4555-8555-555555555555";
+const S = "66666666-6666-4666-8666-666666666666";
+const originalRow = (state = "unknown"): SessionInfo => ({ sessionId: SESSION, runtime: "codex", kind: "codex", state, title: "Synthetic original A" });
+const companionRow = (id = B): SessionInfo => ({ sessionId: id, runtime: "codex", kind: "codex", state: "unknown", title: `Synthetic companion ${id === B ? "B" : "C"}` });
+async function activityNode() {
+    const node = await startNativeNode("synthetic-atomic", [originalRow(), companionRow()], true);
+    await node.publishSessions();
+    return node;
+}
+async function completeState(nodeId: string) {
+    return runInDurableObject(registry(), (instance, state) => {
+        const directory = instance.directory();
+        expect(directory.truncated).not.toBe(true);
+        return {
+            directory: directory.sessions.filter(row => row.nodeId === nodeId).sort((a, b) => a.sessionId.localeCompare(b.sessionId)),
+            sessions: state.storage.sql.exec("SELECT * FROM sessions WHERE node_id=? ORDER BY session_id", nodeId).toArray(),
+            watermark: state.storage.sql.exec("SELECT identity_generation,identity_digest FROM nodes WHERE id=?", nodeId).one(),
+            intents: state.storage.sql.exec("SELECT * FROM mcp_intents WHERE node_id=? ORDER BY request_id", nodeId).toArray(),
+            slots: state.storage.sql.exec("SELECT * FROM intercom_slots ORDER BY slot").toArray(),
+        };
+    });
+}
+async function activityBody(node: NativeNode, generation: number, sessions: SessionInfo[], observedAt = Date.now()): Promise<CodexActivityRegistration> {
+    const native = await node.nativeAssignment(SESSION);
+    expect(native).not.toBeNull();
+    return { kind: "codex-activity-v1", observedAt, identitySnapshot: { version: 1, generation }, sessions,
+        intent: { requestId: crypto.randomUUID(), runtime: "codex", sessionId: SESSION, threadId: SESSION, callId: crypto.randomUUID(),
+            tool: "assign_self", argumentsDigest: await digestMcpArguments({ slot: "codex-mac" }),
+            assignment: { slot: "codex-mac", turnId: crypto.randomUUID(), native: native! } } };
+}
+async function sendActivity(node: NativeNode, body: CodexActivityRegistration): Promise<McpIntentReceiptBody> {
+    const start = node.received.length;
+    node.sendFrame("mcp.intent.register", { ...body });
+    let receipt: McpIntentReceiptBody | undefined;
+    await vi.waitFor(() => {
+        receipt = node.received.slice(start).filter(frame => frame.type === "mcp.intent.receipt")
+            .map(frame => frame.body as McpIntentReceiptBody).find(value => value.requestId === body.intent.requestId);
+        expect(receipt).toBeDefined();
+    });
+    return receipt!;
+}
+async function claimActivity(node: NativeNode, body: CodexActivityRegistration) {
+    const client = await node.mcp();
+    return client.callTool({ name: "assign_self", arguments: { slot: "codex-mac", requestId: body.intent.requestId },
+        _meta: { sessionId: SESSION, threadId: SESSION, callId: body.intent.callId } });
+}
+describe("atomic Codex full-population registration", () => {
+    it("retains historical retry after legacy snapshot, refuses new identical same-generation call, then commits a newer generation", async () => {
+        const node = await activityNode();
+        try {
+            const before = await completeState(node.nodeId), generation = Number(before.watermark.identity_generation) + 1;
+            const first = await activityBody(node, generation, [originalRow("reachable-probable"), companionRow()]);
+            const accepted = await sendActivity(node, first);
+            expect(accepted).toMatchObject({ ok: true, expiresAt: first.observedAt + 60000 });
+            const registered = await completeState(node.nodeId);
+            expect(registered.slots).toEqual(before.slots);
+            expect(registered.watermark.identity_digest).toBe(JSON.stringify([
+                [SESSION, "codex", "reachable-probable", null, null, null, "codex", null, "Synthetic original A", null],
+                [B, "codex", "unknown", null, null, null, "codex", null, "Synthetic companion B", null],
+            ]));
+            expect(registered.sessions.map(row => [row.session_id, row.state, row.title])).toEqual(first.sessions.map(row => [row.sessionId, row.state, row.title]));
+            const claimed = await claimActivity(node, first);
+            expect(claimed.isError).not.toBe(true);
+            const applied = await completeState(node.nodeId);
+            expect(applied.intents[0]).toMatchObject({ outcome: "succeeded", assignment_result: JSON.stringify(claimed.structuredContent) });
+            // Actual headerless publication keeps the watermark/digest while changing physical rows.
+            const legacy = [originalRow("reachable-probable"), companionRow(C)];
+            node.sendFrame("sessions.snapshot", { sessions: legacy });
+            await vi.waitFor(async () => expect((await completeState(node.nodeId)).sessions.map(row => row.session_id)).toEqual([SESSION, C]));
+            const intervening = await completeState(node.nodeId);
+            expect(intervening.watermark).toEqual(applied.watermark);
+            expect(intervening.intents).toEqual(applied.intents);
+            expect(intervening.slots).toEqual(applied.slots);
+            expect(intervening.sessions).not.toEqual(applied.sessions);
+            expect(await sendActivity(node, first)).toEqual(accepted);
+            expect(await completeState(node.nodeId)).toEqual(intervening);
+            expect((await claimActivity(node, first)).structuredContent).toEqual(claimed.structuredContent);
+            expect(await completeState(node.nodeId)).toEqual(intervening);
+            const second = await activityBody(node, generation, first.sessions);
+            expect(await sendActivity(node, second)).toMatchObject({ ok: false });
+            expect((await claimActivity(node, second)).isError).toBe(true);
+            expect(await completeState(node.nodeId)).toEqual(intervening);
+            const conflict = await activityBody(node, generation, [originalRow("reachable-probable"), companionRow(C)]);
+            expect(await sendActivity(node, conflict)).toMatchObject({ ok: false });
+            expect(await completeState(node.nodeId)).toEqual(intervening);
+            const third = await activityBody(node, generation + 1, [originalRow("reachable-probable"), { ...companionRow(C), title: "Synthetic newer companion" }]);
+            expect(await sendActivity(node, third)).toMatchObject({ ok: true, expiresAt: third.observedAt + 60000 });
+            const newer = await completeState(node.nodeId);
+            expect(newer.watermark.identity_generation).toBe(generation + 1);
+            expect(newer.watermark.identity_digest).toBe(JSON.stringify([
+                [SESSION, "codex", "reachable-probable", null, null, null, "codex", null, "Synthetic original A", null],
+                [C, "codex", "unknown", null, null, null, "codex", null, "Synthetic newer companion", null],
+            ]));
+            expect(newer.sessions.map(row => row.title)).toEqual(third.sessions.map(row => row.title));
+            expect(newer.directory.map(row => row.title)).toEqual(third.sessions.map(row => row.title));
+            expect(newer.slots).toEqual(intervening.slots);
+            expect(newer.intents.find(row => row.request_id === first.intent.requestId)).toEqual(intervening.intents[0]);
+            expect(newer.intents.find(row => row.request_id === third.intent.requestId)).toMatchObject({ claimed_at: null, outcome: null });
+            const thirdClaim = await claimActivity(node, third);
+            expect(thirdClaim.isError).not.toBe(true);
+            expect(Number((thirdClaim.structuredContent as {
+                revision: number;
+            }).revision)).toBe(Number((claimed.structuredContent as {
+                revision: number;
+            }).revision) + 1);
+            expect((await claimActivity(node, third)).structuredContent).toEqual(thirdClaim.structuredContent);
+        }
+        finally {
+            await node.close();
+        }
+    });
+    for (const fault of ["capacity", "insert-abort"] as const)
+        it(`rolls back full SQL and warmed directory after real post-snapshot ${fault}`, async () => {
+            const node = await activityNode();
+            try {
+                if (fault === "capacity") {
+                    node.sendFrame("sessions.snapshot", { sessions: [originalRow(), companionRow(), { sessionId: S, runtime: "codex", state: "running", title: "Independent sender" }] });
+                    await vi.waitFor(async () => expect((await completeState(node.nodeId)).sessions.length).toBe(3));
+                    for (let i = 0; i < 128; i++)
+                        expect((await registry().registerMcpIntent(node.nodeId, {
+                            requestId: crypto.randomUUID(), runtime: "codex", sessionId: S, callId: `synthetic-capacity-${i}`, tool: "status", argumentsDigest: "a".repeat(64),
+                        })).ok).toBe(true);
+                }
+                const baseline = await completeState(node.nodeId), generation = Number(baseline.watermark.identity_generation) + 1;
+                const population = [originalRow("reachable-probable"), companionRow(C), ...(fault === "capacity" ? [{ sessionId: S, runtime: "codex", state: "running", title: "Independent sender" }] : [])];
+                const body = await activityBody(node, generation, population);
+                let witnessed = false, actualError = "";
+                const result = await runInDurableObject(registry(), async (instance, state) => {
+                    const mcp = (instance as unknown as {
+                        mcp: McpRegistry;
+                    }).mcp;
+                    const original = mcp.register;
+                    const spy = vi.spyOn(mcp, "register").mockImplementation(function (...args) {
+                        expect(state.storage.sql.exec("SELECT identity_generation FROM nodes WHERE id=?", node.nodeId).one().identity_generation).toBe(generation);
+                        expect(state.storage.sql.exec("SELECT session_id,state FROM sessions WHERE node_id=? ORDER BY session_id", node.nodeId).toArray())
+                            .toEqual(population.map(row => ({ session_id: row.sessionId, state: row.state })));
+                        expect(state.storage.sql.exec("SELECT request_id FROM mcp_intents WHERE request_id=?", body.intent.requestId).toArray()).toEqual([]);
+                        witnessed = true;
+                        try {
+                            const returned = original.apply(mcp, args);
+                            if (!returned.ok)
+                                actualError = returned.error;
+                            return returned;
+                        }
+                        catch (error) {
+                            actualError = String(error);
+                            throw error;
+                        }
+                    });
+                    if (fault === "insert-abort")
+                        state.storage.sql.exec(`CREATE TRIGGER synthetic_activity_insert_failure BEFORE INSERT ON mcp_intents
+          WHEN NEW.request_id='${body.intent.requestId}'
+            AND (SELECT identity_generation FROM nodes WHERE id='${node.nodeId}')=${generation}
+            AND EXISTS(SELECT 1 FROM sessions WHERE node_id='${node.nodeId}' AND session_id='${SESSION}' AND state='reachable-probable')
+            AND EXISTS(SELECT 1 FROM sessions WHERE node_id='${node.nodeId}' AND session_id='${C}')
+            AND NOT EXISTS(SELECT 1 FROM sessions WHERE node_id='${node.nodeId}' AND session_id='${B}')
+          BEGIN SELECT RAISE(ABORT, 'synthetic activity insert abort'); END`);
+                    try {
+                        const token = String(state.storage.sql.exec("SELECT registration_token FROM nodes WHERE id=?", node.nodeId).one().registration_token);
+                        const result = await instance.registerCodexActivity(node.nodeId, body, token);
+                        // Read the actual warmed cache before removing the test trigger/spy.
+                        expect(instance.directory().sessions.filter(row => row.nodeId === node.nodeId).sort((a, b) => a.sessionId.localeCompare(b.sessionId))).toEqual(baseline.directory);
+                        expect(state.storage.sql.exec("SELECT * FROM sessions WHERE node_id=? ORDER BY session_id", node.nodeId).toArray()).toEqual(baseline.sessions);
+                        expect(state.storage.sql.exec("SELECT identity_generation,identity_digest FROM nodes WHERE id=?", node.nodeId).one()).toEqual(baseline.watermark);
+                        expect(state.storage.sql.exec("SELECT * FROM mcp_intents WHERE node_id=? ORDER BY request_id", node.nodeId).toArray()).toEqual(baseline.intents);
+                        expect(state.storage.sql.exec("SELECT * FROM intercom_slots ORDER BY slot").toArray()).toEqual(baseline.slots);
+                        return result;
+                    }
+                    finally {
+                        spy.mockRestore();
+                        if (fault === "insert-abort")
+                            state.storage.sql.exec("DROP TRIGGER synthetic_activity_insert_failure");
+                    }
+                });
+                expect(witnessed).toBe(true);
+                expect(result.ok).toBe(false);
+                if (fault === "capacity") {
+                    expect(await sendActivity(node, body)).toEqual({ requestId: body.intent.requestId, ok: false, error: "too many unexpired MCP intents" });
+                }
+                expect(actualError).toContain(fault === "capacity" ? "too many unexpired MCP intents" : "synthetic activity insert abort");
+                expect(await completeState(node.nodeId)).toEqual(baseline);
+                expect((await claimActivity(node, body)).isError).toBe(true);
+                expect(await completeState(node.nodeId)).toEqual(baseline);
+                if (fault === "insert-abort") {
+                    const control = await activityBody(node, generation, population);
+                    expect(await sendActivity(node, control)).toMatchObject({ ok: true });
+                    const committed = await completeState(node.nodeId);
+                    expect(committed.slots).toEqual(baseline.slots);
+                    expect(committed.sessions.map(row => row.session_id)).toEqual([SESSION, C]);
+                    expect(committed.directory.map(row => row.sessionId)).toEqual([SESSION, C]);
+                    expect((await claimActivity(node, control)).isError).not.toBe(true);
+                }
+            }
+            finally {
+                await node.close();
+            }
+        });
+});
+describe("Codex activity final authority after the real digest", () => {
+    for (const change of ["unchanged", "connection-token", "deadline", "newer-generation"] as const) {
+        it(`rechecks ${change} after the actual digest await without leaked population, intent or cache`, async () => {
+            const node = await activityNode();
+            try {
+                const before = await completeState(node.nodeId), generation = Number(before.watermark.identity_generation) + 1;
+                const body = await activityBody(node, generation, [originalRow("reachable-probable"), companionRow(C)]);
+                const read = await runInDurableObject(registry(), async (instance, state) => {
+                    const token = String(state.storage.sql.exec("SELECT registration_token FROM nodes WHERE id=?", node.nodeId).one().registration_token);
+                    const original = crypto.subtle.digest.bind(crypto.subtle);
+                    let release!: () => void, began!: () => void, gated = false;
+                    const hold = new Promise<void>(resolve => { release = resolve; });
+                    const started = new Promise<void>(resolve => { began = resolve; });
+                    const spy = vi.spyOn(crypto.subtle, "digest").mockImplementation(async (...args) => {
+                        // Forward the real digest unchanged; only its resolution is delayed.
+                        const digest = await original(...args);
+                        gated = true;
+                        began();
+                        await hold;
+                        return digest;
+                    });
+                    const clock = vi.spyOn(Date, "now");
+                    const snapshot = () => {
+                        const directory = instance.directory();
+                        expect(directory.truncated).not.toBe(true);
+                        return { sessions: state.storage.sql.exec("SELECT * FROM sessions WHERE node_id=? ORDER BY session_id", node.nodeId).toArray(),
+                            watermark: state.storage.sql.exec("SELECT identity_generation,identity_digest FROM nodes WHERE id=?", node.nodeId).one(),
+                            intents: state.storage.sql.exec("SELECT * FROM mcp_intents WHERE node_id=? ORDER BY request_id", node.nodeId).toArray(),
+                            slots: state.storage.sql.exec("SELECT * FROM intercom_slots ORDER BY slot").toArray(),
+                            directory: directory.sessions.filter(row => row.nodeId === node.nodeId).sort((a, b) => a.sessionId.localeCompare(b.sessionId)) };
+                    };
+                    try {
+                        const pending = instance.registerCodexActivity(node.nodeId, body, token);
+                        await started;
+                        expect(gated).toBe(true);
+                        if (change === "connection-token") {
+                            expect(instance.beginMessageConnection(node.nodeId, "synthetic-replacement-token")).toBe(true);
+                            expect(instance.updateRegistration(node.nodeId, { ...FACTS, os: "darwin" }, [{ name: "codex", kind: "cli" }], [REMOTE_MCP_CAPABILITY], "synthetic-replacement-token")).toBe(true);
+                        }
+                        if (change === "deadline")
+                            clock.mockReturnValue(body.observedAt + 8000);
+                        if (change === "newer-generation")
+                            expect(instance.replaceSessions(node.nodeId, [originalRow(), { ...companionRow(C), title: "Synthetic intervening generation" }], { version: 1, generation: generation + 1 }, token)).toEqual({ ok: true });
+                        const baseline = snapshot();
+                        release();
+                        const result = await pending;
+                        if (change === "unchanged") {
+                            expect(result.ok).toBe(true);
+                            expect(snapshot().slots).toEqual(baseline.slots);
+                            expect(snapshot().sessions.map(row => row.session_id)).toEqual([SESSION, C]);
+                        }
+                        else {
+                            expect(result.ok).toBe(false);
+                            expect(snapshot()).toEqual(baseline);
+                        }
+                        return result;
+                    }
+                    finally {
+                        release();
+                        spy.mockRestore();
+                        clock.mockRestore();
+                    }
+                });
+                if (change === "unchanged")
+                    expect((await claimActivity(node, body)).isError).not.toBe(true);
+                else {
+                    expect(read.ok).toBe(false);
+                    const baseline = await completeState(node.nodeId);
+                    expect((await claimActivity(node, body)).isError).toBe(true);
+                    expect(await completeState(node.nodeId)).toEqual(baseline);
+                }
+            }
+            finally {
+                await node.close();
+            }
+        });
+    }
+    it("retained native call and ingress cannot be rebound, and a replacement passive connection revokes claim eligibility", async () => {
+        const node = await activityNode();
+        try {
+            const initial = await completeState(node.nodeId), body = await activityBody(node, Number(initial.watermark.identity_generation) + 1, [originalRow("reachable-probable"), companionRow()]);
+            const accepted = await sendActivity(node, body);
+            expect(accepted.ok).toBe(true);
+            const baseline = await completeState(node.nodeId);
+            for (const changed of [{ ...body, observedAt: body.observedAt + 1 }, { ...body, intent: { ...body.intent, requestId: crypto.randomUUID() } },
+                { ...body, intent: { ...body.intent, callId: "synthetic-rebound-call" } },
+                { ...body, intent: { ...body.intent, assignment: { ...body.intent.assignment!, native: { ...body.intent.assignment!.native!, chatName: "Synthetic changed title" } } } }]) {
+                expect(await sendActivity(node, changed)).toMatchObject({ ok: false });
+                expect(await completeState(node.nodeId)).toEqual(baseline);
+            }
+            await node.restart();
+            await node.publishSessions();
+            const replaced = await completeState(node.nodeId);
+            expect(replaced.sessions.map(row => row.state)).toEqual(["unknown", "unknown"]);
+            expect((await claimActivity(node, body)).isError).toBe(true);
+            expect(await completeState(node.nodeId)).toEqual(replaced);
+            expect(replaced.slots).toEqual(initial.slots);
+        }
+        finally {
+            await node.close();
+        }
+    });
+    it("old eligible actor cannot substitute for a failed fresh full snapshot", async () => {
+        const node = await activityNode();
+        try {
+            node.sendFrame("sessions.snapshot", { sessions: [originalRow("reachable-probable"), companionRow()] });
+            await vi.waitFor(async () => expect((await completeState(node.nodeId)).sessions[0].state).toBe("reachable-probable"));
+            const before = await completeState(node.nodeId), body = await activityBody(node, Number(before.watermark.identity_generation) + 1, [originalRow("reachable-probable"), companionRow(C)]);
+            await runInDurableObject(registry(), (_instance, state) => state.storage.sql.exec(`CREATE TRIGGER synthetic_activity_snapshot_failure BEFORE INSERT ON sessions
+        WHEN NEW.node_id='${node.nodeId}' AND NEW.session_id='${C}' BEGIN SELECT RAISE(ABORT,'synthetic snapshot abort'); END`));
+            try {
+                expect(await sendActivity(node, body)).toMatchObject({ ok: false });
+                expect(await completeState(node.nodeId)).toEqual(before);
+                expect((await claimActivity(node, body)).isError).toBe(true);
+                expect(await completeState(node.nodeId)).toEqual(before);
+            }
+            finally {
+                await runInDurableObject(registry(), (_instance, state) => state.storage.sql.exec("DROP TRIGGER synthetic_activity_snapshot_failure"));
+            }
+        }
+        finally {
+            await node.close();
+        }
+    });
+});
+
+
+it("real ordinary ACK precedes an expired stamped pickup with no registered intent or SDK/CAS effect",async()=>{
+  const node=await activityNode();let release:()=>void=()=>{};let clock:ReturnType<typeof vi.spyOn>|undefined;
+  try{
+    node.sendFrame("sessions.snapshot",{sessions:[originalRow(),{...companionRow(),state:"running"}]});
+    await vi.waitFor(async()=>expect((await completeState(node.nodeId)).sessions.find(row=>row.session_id===B)?.state).toBe("running"));
+    const before=await completeState(node.nodeId),gate=node.holdAssignment();release=gate.release;
+    const pending=node.nativeHook({hook_event_name:"PreToolUse",session_id:SESSION,turn_id:TURN,tool_use_id:"synthetic-expired-stamp",tool_name:"mcp__kherep_messaging__assign_self",tool_input:{slot:"codex-mac"}},"codex");
+    await vi.waitFor(()=>expect(gate.entered()).toBe(true));
+    const name=fs.readdirSync(node.paths.mcpIntents).find(name=>name.endsWith(".json"))!;
+    const stamp=JSON.parse(fs.readFileSync(path.join(node.paths.mcpIntents,name),"utf8")) as {observedAt:number;intent:{requestId:string}};
+    const ordinary=await node.nativeHook({hook_event_name:"PreToolUse",session_id:B,tool_use_id:"synthetic-ordinary-ack",tool_name:"mcp__kherep_messaging__status",tool_input:{messageId:crypto.randomUUID()}},"codex");
+    expect(ordinary?.hookSpecificOutput.updatedInput).toHaveProperty("requestId");
+    clock=vi.spyOn(Date,"now").mockReturnValue(stamp.observedAt+8000);release();
+    expect((await pending)?.hookSpecificOutput.updatedInput).toBeUndefined();
+    await vi.waitFor(()=>expect(node.activityIdle()).toBe(true));
+    expect(node.sent.filter(frame=>frame.type==="mcp.intent.register"&&(frame.body as {kind?:string}).kind==="codex-activity-v1")).toEqual([]);
+    const state=await completeState(node.nodeId);expect(state.intents.find(row=>row.request_id===stamp.intent.requestId)).toBeUndefined();
+    expect(state.sessions.find(row=>row.session_id===SESSION)?.state).toBe("unknown");expect(state.slots).toEqual(before.slots);
+    const client=await node.mcp();const claim=await client.callTool({name:"assign_self",arguments:{slot:"codex-mac",requestId:stamp.intent.requestId},_meta:{sessionId:SESSION,threadId:SESSION,callId:"synthetic-expired-stamp"}});
+    expect(claim.isError).toBe(true);expect((await completeState(node.nodeId)).slots).toEqual(before.slots);
+  }finally{release();clock?.mockRestore();await node.close();}
 });

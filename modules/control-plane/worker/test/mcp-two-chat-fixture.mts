@@ -2,17 +2,21 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { expect, vi } from "vitest";
 
-import { makeEnvelope, parseEnvelope, type Envelope, type SessionInfo } from "../../protocol.mts";
+import { makeEnvelope, parseEnvelope, type Envelope, type SessionInfo, type MessageType } from "../../protocol.mts";
 import type { McpCredentialBody, McpInboxItem, McpIntentReceiptBody, McpRuntime } from "../../protocol-mcp.mts";
 import { MESSAGING_CAPABILITY, type MessageDeliverBody } from "../../protocol-messages.mts";
 import { NodeClient } from "../../node/client.mts";
 import { nodePaths, type NodePaths } from "../../node/config.mts";
 import { exchangeOptions, recordingSessions } from "../../node/exchange.mts";
 import { generateIdentity } from "../../node/identity.mts";
+import { CodexActivity } from "../../node/exchange-sessions.mts";
+import { readNativeMcpAssignment } from "../../node/mcp-assignment.mts";
+import { attachLiveness } from "../../node/liveness-pass.mts";
 import { createAdmissionAuthority } from "../../node/session-authority.mts";
 import { syntheticListing } from "../../node/session-authority-fixture.mts";
 import { storeMessage } from "../../node/inbox.mts";
@@ -64,6 +68,11 @@ export interface NativeNode {
   paths: NodePaths;
   // Every frame the Worker sent to this node, in arrival order.
   received: Envelope[];
+  sent: Envelope[];
+  sendFrame(type: MessageType, body: Record<string, unknown>): void;
+  nativeAssignment(sessionId: string): ReturnType<typeof readNativeMcpAssignment>;
+  holdAssignment(): { entered(): boolean; release(): void };
+  activityIdle(): boolean;
   // Every session the local MCP inbox reader was asked for.
   inboxReads: string[];
   hook(sessionId: string, toolUseId: string, tool: string, input: Record<string, unknown>): Promise<Record<string, unknown>>;
@@ -94,7 +103,7 @@ function trackSyntheticRoot(root: string): () => void {
 }
 
 // `sessions` is read on every listing, so a caller may change it in place.
-export async function startNativeNode(name: string, sessions: SessionInfo[]): Promise<NativeNode> {
+export async function startNativeNode(name: string, sessions: SessionInfo[], codex = false): Promise<NativeNode> {
   const { processMcpIntentHook } = await runtimeOnly("mcp-intent-hook") as HookModule;
   const { answerMcpInbox, disableMcp, hasMcpCredential, pollMcpIntents, readMcpInbox, recordMcpCredential, recordMcpIntentReceipt } =
     await runtimeOnly("mcp-local") as LocalModule;
@@ -106,33 +115,50 @@ export async function startNativeNode(name: string, sessions: SessionInfo[]): Pr
   const releaseRename = trackSyntheticRoot(root);
   const paths = nodePaths(root);
   fs.mkdirSync(paths.dir, { recursive: true });
-  fs.writeFileSync(paths.policy, JSON.stringify(POLICY));
+  const policy: NodePolicy = codex ? { ...POLICY, remoteMcp: { enabled: true } } : POLICY;
+  fs.writeFileSync(paths.policy, JSON.stringify(policy));
+  const nativeHome = path.join(root, "synthetic-native");
+  if (codex) {
+    const dir = path.join(nativeHome, "sessions", "2026", "11", "09");fs.mkdirSync(dir, { recursive: true });
+    for (const row of sessions) fs.writeFileSync(path.join(dir, `rollout-synthetic-${row.sessionId}.jsonl`),
+      JSON.stringify({ type: "session_meta", payload: { id: row.sessionId, originator: "Codex Desktop", source: "vscode" } }) + "\n");
+    fs.writeFileSync(path.join(nativeHome, "session_index.jsonl"), sessions.map(row => JSON.stringify({ id: row.sessionId,
+      thread_name: row.title, updated_at: "2026-11-09T00:00:00Z" })).join("\n") + "\n");
+  }
   const identity = generateIdentity();
   const nodeId = await enroll({ publicKey: identity.publicKey, privateKey: undefined as unknown as CryptoKey }, name);
   const received: Envelope[] = [];
+  const sent: Envelope[] = [];
+  const facts = codex ? { ...FACTS, os: "darwin" } : FACTS;
   const inboxReads: string[] = [];
   const authority = createAdmissionAuthority(paths);
+  let codexActivity = new CodexActivity();
+  let assignmentGate: Promise<void> | undefined, assignmentEntered = false;
   const list = recordingSessions(paths, async () => {
     const now = Date.now();
     const rows = [...sessions];
+    if (codex) return attachLiveness(rows, { status: "unknown", observedAt: now, complete: false, source: "unsupported", reasonCode: "unsupported" });
     return syntheticListing(authority, rows, rows.map(({ runtime, sessionId }) => ({ runtime, sessionId,
       holder: { status: "value", value: { present: true, creationIdentity: "synthetic-holder" }, source: "native-holder", observedAt: now, complete: true, reasonCode: "observed" },
       turn: { status: "value", value: "running", source: "native-turn", observedAt: now, complete: true, reasonCode: "observed" },
     })), now);
-  }, () => {}, undefined, undefined, undefined, authority);
+  }, () => {}, undefined, undefined, undefined, authority, undefined, codexActivity);
   let inflight = new Set<string>();
   let client: NodeClient;
   let ws: WebSocket;
   // One ordered lane for received frames and intent rounds, as in the daemon.
   let chain = Promise.resolve();
-  const send = (frame: string): boolean => { ws.send(frame); return true; };
+  const send = (frame: string): boolean => { const parsed = parseEnvelope(frame);if (parsed.ok) sent.push(parsed.envelope); ws.send(frame); return true; };
   const connect = async (): Promise<void> => {
     const current = new Set<string>();
     inflight = current;
     const connected = new NodeClient({
-      nodeId, identity, policy: POLICY,
+      nodeId, identity, policy, codexActivity,
+      ...(codex ? { assignmentIdentity: async (id: string, context: Parameters<typeof readNativeMcpAssignment>[2]) => {
+        const native = await readNativeMcpAssignment(nativeHome,id,context);assignmentEntered = true;await assignmentGate;return native;
+      } } : {}),
       handlers: { "node.status": async () => ({}), "runtime.list": async () => [], "session.list": list },
-      facts: () => FACTS, runtimes: async () => [{ name: "claude-code", kind: "cli" }], sessions: list,
+      facts: () => facts, runtimes: async () => [{ name: codex ? "codex" : "claude-code", kind: "cli" }], sessions: list,
       storeMessage: (body) => { storeMessage(paths.inbox, body); },
       mcpCredentialPresent: () => hasMcpCredential(paths),
       mcpCredential: (body) => recordMcpCredential(paths, body),
@@ -156,6 +182,7 @@ export async function startNativeNode(name: string, sessions: SessionInfo[]): Pr
     socket.accept();
     try { await vi.waitFor(() => expect(connected.authenticated && hasMcpCredential(paths)).toBe(true), WAIT); }
     catch (cause) { throw new Error(`synthetic connection failed: authenticated=${connected.authenticated}; frameTypes=${received.map((f) => f.type).join(",")}`, { cause }); }
+    await chain;
   };
   await connect();
   const token = (): string => (JSON.parse(fs.readFileSync(paths.mcpCredential, "utf8")) as { token: string }).token;
@@ -171,7 +198,11 @@ export async function startNativeNode(name: string, sessions: SessionInfo[]): Pr
   };
   const clients: Client[] = [];
   return {
-    nodeId, root, paths, received, inboxReads, nativeHook,
+    nodeId, root, paths, received, sent, inboxReads, nativeHook,
+    sendFrame(type, body) { send(JSON.stringify(makeEnvelope(type, body, 0, 0))); },
+    nativeAssignment(id) { return readNativeMcpAssignment(nativeHome, id); },
+    holdAssignment() { let release!:()=>void;assignmentEntered=false;assignmentGate=new Promise<void>(resolve=>{release=resolve;});return {entered:()=>assignmentEntered,release}; },
+    activityIdle() { return (client as unknown as {activityBatch:unknown}).activityBatch === null; },
     async hook(sessionId, toolUseId, tool, input) {
       const output = await nativeHook({ hook_event_name: "PreToolUse", tool_name: `mcp__kherep_messaging__${tool}`,
         session_id: sessionId, tool_use_id: toolUseId, tool_input: input });
@@ -182,9 +213,15 @@ export async function startNativeNode(name: string, sessions: SessionInfo[]): Pr
     async publishSessions() {
       chain = chain.then(async () => { for (const frame of await client.sessionsSnapshot()) send(frame); });
       await chain;
+      const latest = sent.findLast(frame => frame.type === "sessions.snapshot")?.body as { identitySnapshot?: { generation: number } } | undefined;
+      if (latest?.identitySnapshot) await vi.waitFor(async () => {
+        const generation = await runInDurableObject(registry(), (_instance, state) => state.storage.sql.exec("SELECT identity_generation FROM nodes WHERE id=?", nodeId).one().identity_generation);
+        expect(generation).toBe(latest.identitySnapshot!.generation);
+      }, WAIT);
     },
     async restart() {
       await chain;
+      client.connectionClosed();
       ws.close(1000, "restart");
       await connect();
     },

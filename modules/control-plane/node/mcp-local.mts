@@ -4,6 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import {
+  isCodexActivityStamp, type CodexActivityStamp, CODEX_ACTIVITY_INGRESS_MS,
   isMcpCredentialBody, isMcpIntentReceiptBody, isMcpIntentRegistration,
   type McpCredentialBody, type McpInboxItem, type McpIntentReceiptBody, type McpIntentRegistration,
 } from "../protocol-mcp.mts";
@@ -101,8 +102,8 @@ export function disableMcp(paths: NodePaths, inflight: Set<string>): void {
   if (failure) throw failure;
 }
 
-export function enqueueMcpIntent(paths: NodePaths, body: McpIntentRegistration): void {
-  if (!isMcpIntentRegistration(body)) throw new Error("invalid MCP intent metadata");
+export function enqueueMcpIntent(paths: NodePaths, body: McpIntentRegistration | CodexActivityStamp): void {
+  if (!isMcpIntentRegistration(body) && !isCodexActivityStamp(body)) throw new Error("invalid MCP intent metadata");
   ensureDir(paths.mcpIntents);
   const files = fs.readdirSync(paths.mcpIntents).filter((name) => name.endsWith(".json"));
   for (const name of files) {
@@ -112,7 +113,7 @@ export function enqueueMcpIntent(paths: NodePaths, body: McpIntentRegistration):
   if (fs.readdirSync(paths.mcpIntents).filter((name) => name.endsWith(".json")).length >= MAX_LOCAL_INTENTS) {
     throw new Error("too many pending MCP intents");
   }
-  writeJsonAtomic(fileOf(paths.mcpIntents, body.requestId), body);
+  writeJsonAtomic(fileOf(paths.mcpIntents, isCodexActivityStamp(body) ? body.intent.requestId : body.requestId), body);
 }
 
 export async function pollMcpIntents(client: NodeClient, paths: NodePaths, inflight: Set<string>, send: (frame: string) => boolean,
@@ -120,18 +121,24 @@ export async function pollMcpIntents(client: NodeClient, paths: NodePaths, infli
   if (!client.authenticated) return;
   ensureDir(paths.mcpIntents);
   const pending: McpIntentRegistration[] = [];
+  const stamped: CodexActivityStamp[] = [];
   const deadlines = new Map<string, number>();
   for (const name of fs.readdirSync(paths.mcpIntents).filter((entry) => entry.endsWith(".json")).slice(0, 128)) {
     const file = path.join(paths.mcpIntents, name);
     let body: unknown;
     try { body = readJson(file); } catch { continue; }
+    if (isCodexActivityStamp(body)) {
+      if (name !== `${body.intent.requestId}.json` || inflight.has(body.intent.requestId)) continue;
+      if (body.observedAt > Date.now() || body.observedAt + CODEX_ACTIVITY_INGRESS_MS <= Date.now()) { fs.rmSync(file, { force: true });continue; }
+      stamped.push(body);continue;
+    }
     if (!isMcpIntentRegistration(body) || inflight.has(body.requestId)) continue;
     const deadline = fs.statSync(file).mtimeMs + NATIVE_INTENT_WINDOW_MS;
     if (deadline <= Date.now()) { fs.rmSync(file, { force: true }); continue; }
     pending.push(body);
     deadlines.set(body.requestId, deadline);
   }
-  if (pending.length === 0) return;
+  if (pending.length === 0 && stamped.length === 0) return;
   const expired = (body: McpIntentRegistration): boolean => {
     if (deadlines.get(body.requestId)! > Date.now()) return false;
     fs.rmSync(fileOf(paths.mcpIntents, body.requestId), { force: true });
@@ -151,15 +158,29 @@ export async function pollMcpIntents(client: NodeClient, paths: NodePaths, infli
   };
   const known = new Set(client.knownMcpIntents(pending));
   for (const body of known) if (!await register(body)) return;
-  let unresolved = pending.filter(body => !known.has(body));
-  if (unresolved.length === 0) return;
-  const remainingMs = Math.min(...unresolved.map(body => deadlines.get(body.requestId)!)) - Date.now();
-  const snapshots = await client.sessionsBeforeMcpIntents(beforeSnapshot, remainingMs);
-  if (snapshots === null) return;
-  unresolved = unresolved.filter(body => !expired(body));
-  if (unresolved.length === 0) { client.invalidateSessionsSnapshot(); return; }
-  if (!publishSessionFrames(client, snapshots, send)) return;
-  for (const body of unresolved) if (!await register(body)) return;
+  const unresolved = pending.filter(body => !known.has(body));
+  if (unresolved.length > 0) {
+    const remainingMs = Math.min(...unresolved.map(body => deadlines.get(body.requestId)!)) - Date.now();
+    const snapshots = await client.sessionsBeforeMcpIntents(beforeSnapshot, remainingMs);
+    if (snapshots !== null) {
+      const ready = unresolved.filter(body => !expired(body));
+      if (ready.length === 0) client.invalidateSessionsSnapshot();
+      else {
+        if (!publishSessionFrames(client, snapshots, send)) return;
+        for (const body of ready) if (!await register(body)) return;
+      }
+    }
+  }
+  client.queueCodexActivityBatch(stamped, {
+    current: stamp => {
+      try { const body = readJson(fileOf(paths.mcpIntents, stamp.intent.requestId));return isCodexActivityStamp(body)
+        && JSON.stringify(body) === JSON.stringify(stamp) && !inflight.has(stamp.intent.requestId); }
+      catch { return false; }
+    },
+    send,
+    sent: stamp => { inflight.add(stamp.intent.requestId); },
+    refused: stamp => persistMcpIntentReceipt(paths, inflight, negativeReceipt(stamp.intent.requestId, "node_assignment_preparation")),
+  });
 }
 
 export function recordMcpIntentReceipt(paths: NodePaths, inflight: Set<string>, body: McpIntentReceiptBody): void {

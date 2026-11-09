@@ -1,4 +1,5 @@
 import {
+  CODEX_ACTIVITY_EVIDENCE_MS, CODEX_ACTIVITY_INGRESS_MS,
   CLAUDE_MCP_CAPABILITY, MCP_INTENT_TTL_DEFAULT_MS, REMOTE_MCP_CAPABILITY, isMcpIntentClaim, isMcpIntentRegistration,
   type McpIntentClaim, type McpIntentRegistration, type McpRuntime,
   type McpAssignmentResult, type SelfAssignmentSlot,
@@ -126,6 +127,22 @@ export class McpRegistry {
     intent.tool, intent.argumentsDigest, now, expiresAt, intent.assignment?.slot ?? null, intent.assignment?.native?.chatName ?? null,
     intent.assignment?.turnId ?? null, assignmentRevision, intent.assignment?.native?.leadGuardVersion ?? null);
     return { ok: true, requestId: intent.requestId, expiresAt, version: Number(credential.version) };
+  }
+
+  // Retained native-call equality is read before any new full publication.
+  // Expiry encodes the original immutable stamp without a new schema column.
+  activityRetry(nodeId: string, intent: McpIntentRegistration, observedAt: number, now: number, digest: string): Registration | null {
+    const existing = this.sql.exec("SELECT * FROM mcp_intents WHERE request_id=?", intent.requestId).toArray()[0];
+    if (existing) {
+      if (Number(existing.expires_at) !== observedAt + CODEX_ACTIVITY_EVIDENCE_MS || Number(existing.expires_at) <= now
+        || Number(existing.created_at) < observedAt || Number(existing.created_at) >= observedAt + CODEX_ACTIVITY_INGRESS_MS) {
+        return { ok: false, error: "requestId already has different intent metadata" };
+      }
+      return this.register(nodeId, intent, now, digest);
+    }
+    const duplicate = this.sql.exec(`SELECT 1 FROM mcp_intents WHERE node_id=? AND runtime='codex' AND session_id=?
+      AND assignment_turn_id=? AND call_id=? LIMIT 1`, nodeId, intent.sessionId, intent.assignment!.turnId, intent.callId).toArray().length;
+    return duplicate ? { ok: false, error: "requestId already has different intent metadata" } : null;
   }
 
   private inspect(input: McpIntentClaim, now: number): { ok: true; row: Record<string, SqlStorageValue>; sessionId: string } | Failure {

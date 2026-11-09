@@ -5,7 +5,7 @@ import path from "node:path";
 import test from "node:test";
 
 import { makeEnvelope, parseEnvelope, type SessionInfo } from "../protocol.mts";
-import { type McpIntentRegistration } from "../protocol-mcp.mts";
+import { isCodexActivityRegistration, type McpIntentRegistration } from "../protocol-mcp.mts";
 import { NodeClient } from "./client.mts";
 import { nodePaths } from "./config.mts";
 import { generateIdentity } from "./identity.mts";
@@ -370,4 +370,52 @@ test("expired unresolved callers do not retry discovery after the native hook wi
   assert.equal(f.reads(), 0);
   assert.deepEqual(f.frames, []);
   assert.equal(fs.existsSync(file), false);
+});
+
+
+test("stamped polling never uses the known UNKNOWN legacy assignment shortcut", async (t) => {
+    const { CodexActivity, recordingSessions } = await import("./exchange-sessions.mts");
+    const { attachLiveness } = await import("./liveness-pass.mts");
+    const { digestMcpArguments } = await import("../protocol-mcp.mts");
+    const { recordMcpIntentReceipt } = await import("./mcp-local.mts");
+    const { readLivenessSnapshot } = await import("./session-lifecycle.mts");
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "kherep-stamped-sync-"));
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const paths = nodePaths(root);
+    fs.mkdirSync(paths.dir, { recursive: true });
+    fs.writeFileSync(paths.policy, JSON.stringify({ version: 1, allowedCommands: [], remoteMcp: { enabled: true } }));
+    const home = path.join(root, "synthetic-native"), dir = path.join(home, "sessions", "2026", "11", "09");
+    fs.mkdirSync(dir, { recursive: true });
+    const sessionId = "11111111-1111-4111-8111-111111111111";
+    fs.writeFileSync(path.join(dir, `rollout-synthetic-${sessionId}.jsonl`), JSON.stringify({ type: "session_meta", payload: { id: sessionId, originator: "Codex Desktop", source: "vscode" } }) + "\n");
+    fs.writeFileSync(path.join(home, "session_index.jsonl"), JSON.stringify({ id: sessionId, thread_name: "Synthetic current title" }) + "\n");
+    const owner = new CodexActivity(), inflight = new Set<string>(), sent: string[] = [];
+    let now = Date.now();
+    const list = recordingSessions(paths, async () => attachLiveness([{ sessionId, runtime: "codex", kind: "codex", state: "unknown" }], { status: "unknown", observedAt: now, complete: false, source: "unsupported", reasonCode: "unsupported" }), () => { }, () => now, undefined, undefined, undefined, undefined, owner);
+    const client = new NodeClient({ nodeId: "00000000-0000-4000-8000-0000000000aa", identity: generateIdentity(), policy: { version: 1, allowedCommands: [], remoteMcp: { enabled: true } },
+        handlers: { "node.status": async () => ({}), "runtime.list": async () => [], "session.list": async () => [] }, facts: () => ({ hostname: "synthetic.example.invalid", os: "darwin", arch: "arm64", cpus: 1, memoryBytes: 1 }),
+        runtimes: async () => [], sessions: list, codexActivity: owner, now: () => now, assignmentIdentity: (id, context) => readNativeMcpAssignment(home, id, context), storeMessage: () => { },
+        mcpIntentReceipt: body => recordMcpIntentReceipt(paths, inflight, body) });
+    await client.onFrame(JSON.stringify(makeEnvelope("event", { name: "auth.ok" }, 0, 0)));
+    now++;
+    const request = { kind: "codex-activity-v1" as const, observedAt: now, intent: { requestId: crypto.randomUUID(), runtime: "codex" as const, sessionId, threadId: sessionId, callId: "synthetic-current-call", tool: "assign_self" as const,
+            argumentsDigest: await digestMcpArguments({ slot: "codex-mac" }), assignment: { slot: "codex-mac" as const, turnId: "synthetic-current-turn" } } };
+    assert.equal(client.knownMcpIntents([request.intent]).length, 1);
+    enqueueMcpIntent(paths, request);
+    await pollMcpIntents(client, paths, inflight, raw => { sent.push(raw); return true; });
+    for (let i=0;i<1000 && sent.length===0;i++) await new Promise(resolve=>setTimeout(resolve,5));
+    assert.deepEqual(sent.map(raw => decode(raw).type), ["mcp.intent.register"]);
+    const wire = decode(sent[0]).body;
+    assert.ok(isCodexActivityRegistration(wire));
+    assert.equal(wire.sessions[0].state, "reachable-probable");
+    assert.equal(wire.intent.assignment!.native!.chatName, "Synthetic current title");
+    assert.deepEqual(owner.observations(now), []);
+    await client.onFrame(JSON.stringify(makeEnvelope("mcp.intent.receipt", { requestId: request.intent.requestId, ok: false, error: "too many unexpired MCP intents" }, 0, 0)));
+    assert.deepEqual(owner.observations(now), []);
+    assert.equal((await list())[0].state, "unknown");
+    assert.equal(readLivenessSnapshot(paths)!.sessions[0].state, "unknown");
+    const receipt = JSON.parse(fs.readFileSync(path.join(paths.mcpReceipts, `${request.intent.requestId}.json`), "utf8"));
+    assert.equal(receipt.rejectionCategory, "worker_capacity");
+    assert.equal(receipt.ok, false);
+    assert.equal(inflight.size, 0);
 });
