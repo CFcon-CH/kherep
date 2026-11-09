@@ -1,3 +1,7 @@
+import fs from "node:fs";
+import { isFixedSlot, type FixedSlot } from "../protocol.mts";
+import { isSlotAddressResult } from "../protocol-messages.mts";
+import { readSlotExchange, writeSlotExchange, slotExchangeFile } from "./exchange.mts";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 
@@ -138,6 +142,7 @@ async function send(io: Io, rest: string[], values: MsgArgs["values"]): Promise<
     if (replyTo !== undefined || values.to !== undefined) return fail(io, "--new starts a conversation and takes neither --reply-to nor --to");
     const [node, ...words] = rest;
     if (!node) return fail(io, `no target node\n${MSG_USAGE}`);
+    if (isFixedSlot(node)) return fail(io, "--new cannot target a fixed slot");
     const directory = directoryFor(io);
     return directory ? sendNew(io, directory, node, words, values) : 1;
   }
@@ -163,6 +168,10 @@ async function send(io: Io, rest: string[], values: MsgArgs["values"]): Promise<
   } else {
     [target, ...words] = rest;
     if (!target) return fail(io, `no target\n${MSG_USAGE}`);
+  }
+  if (!to && replyTo === undefined && isFixedSlot(target)) {
+    to = await currentSlotAddress(io, target);
+    if (!to) return 1;
   }
   if (!to) {
     const directory = directoryFor(io);
@@ -207,5 +216,24 @@ async function waitForAnswer(io: Io, messageId: string, timeoutMs: number): Prom
       return 1;
     }
     await io.sleep(WAIT_POLL_MS);
+  }
+}
+
+async function currentSlotAddress(io: Io, slot: FixedSlot): Promise<MessageAddress | null> {
+  const requestId = crypto.randomUUID();
+  writeSlotExchange(io.paths, "address", requestId, { slot, requestId });
+  const start = Date.now();
+  try {
+    while (Date.now() - start < 10_000) {
+      const result = readSlotExchange(io.paths, "address-result", requestId);
+      if (isSlotAddressResult(result) && result.requestId === requestId && result.slot === slot) {
+        if ("address" in result) return result.address;
+        fail(io, `slot ${slot} is unavailable`); return null;
+      }
+      await io.sleep(100);
+    }
+    fail(io, `slot ${slot} lookup unconfirmed`); return null;
+  } finally {
+    for (const kind of ["address", "address-result"]) fs.rmSync(slotExchangeFile(io.paths, kind, requestId), { force: true });
   }
 }

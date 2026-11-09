@@ -12,7 +12,7 @@ const ELIGIBLE_NODE = `EXISTS (SELECT 1 FROM nodes
   WHERE id=? AND revoked_at IS NULL AND public_key IS NOT NULL AND os IN (?, ?))`;
 
 // An address and display name only, never proof of native caller ownership.
-export interface SlotOccupant { nodeId: string; runtime: IdentityRuntime; sessionId: string; chatName: string }
+export interface SlotOccupant { nodeId: string; runtime: IdentityRuntime; sessionId: string; chatName: string | null }
 
 export interface IntercomSlotView { slot: IntercomSlot; revision: number; occupant: SlotOccupant | null }
 
@@ -40,7 +40,7 @@ export function replaceIntercomSlot(sql: SqlStorage, slot: IntercomSlot, expecte
   if (occupant !== null) {
     if (typeof occupant !== "object" || Array.isArray(occupant)
       || !isNodeId(occupant.nodeId) || !identityRuntime(occupant.runtime) || !fullSessionId(occupant.sessionId)
-      || typeof occupant.chatName !== "string" || !occupant.chatName.trim()
+      || !(occupant.runtime === "claude-code" && occupant.chatName === null) && (typeof occupant.chatName !== "string" || !occupant.chatName.trim())
       || (slot.startsWith("codex-") && occupant.runtime !== "codex")
       || (slot.startsWith("claude-") && occupant.runtime !== "claude-code")) {
       throw new TypeError("invalid Intercom slot occupant");

@@ -210,3 +210,6 @@ skills/codebase-design
 skills/improve-codebase-architecture
 skills/kherep-grill
 skills/session-optimizer
+
+skills/kherep-slot
+skills/kherep-set-lead
