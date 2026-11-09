@@ -401,10 +401,22 @@ Claude users select a top-level session with the personal `/kherep-slot
 claude-mac`, `/kherep-slot claude-windows` or `/kherep-slot kherep-lead`
 command. `/kherep-set-lead` is the zero-argument Lead alias. A selected top-level
 fork is allowed; auxiliary agents and teammates are refused. These user-only
-skills are inert: the native UserPromptExpansion hook performs the operation
-through the existing stable hook entry, local exchange and full session snapshot.
-There is no Claude MCP callback and no title requirement. A missing native
-prompt_id refuses selection. A fresh hook proves reachable-probable only.
+skills leave selection to the native UserPromptExpansion hook through the
+existing stable entry, local exchange and full session snapshot. The hook adds
+one fixed correlated outcome as additionalContext without blocking expansion.
+The model reports that outcome first, then handles concurrently delivered peer
+work with its existing authorized tools and any required threaded reply before
+ordinary Stop. The skill grants no new authority and forbids another selection,
+`assign_self` or repetition of the command.
+
+Only the current validated hook result can supply the slot sentence. Missing,
+ambiguous or malformed results use "Kherep could not confirm a slot selection."
+Null assigned/conflict revisions, exchange failures and uncertain cleanup never
+establish success or authorize a retry: a central selection may already have
+committed. Native first-sentence compliance, before-Stop peer processing and
+subsequent idle wake require separate native verification. There is no Claude
+MCP callback and no title requirement. A missing native prompt_id refuses
+selection. A fresh hook proves reachable-probable only.
 
 The trust boundary is the enrolled local user. A process running as that user
 can forge valid hook stdin or local exchange records and obtain an assignment.
