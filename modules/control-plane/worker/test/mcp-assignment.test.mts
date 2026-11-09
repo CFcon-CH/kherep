@@ -79,6 +79,40 @@ async function source(sessionId = SESSION, title = "Synthetic original A") {
 describe("native self-assignment transaction", () => {
   const pending = (requestId: string) => runInDurableObject(registry(), (_instance, state) =>
     state.storage.sql.exec("SELECT claimed_at,outcome,assignment_result FROM mcp_intents WHERE request_id=?", requestId).one());
+  // Native producer attestation is synthetic, otherwise this is the complete
+  // registered original/current credential path, including the real RPC/SDK.
+  it("Codex Lead policy refuses an eligible RPC caller before confirmation or mutations", async () => {
+    const a = await source(), request = await a.intent("kherep-lead");
+    const before = await registry().listIntercomSlots(), row = await pending(request.requestId);
+    const messages = await runInDurableObject(registry(), (_instance, state) => state.storage.sql.exec("SELECT COUNT(*) AS n FROM messages").one().n);
+    try {
+      expect(await registry().assignMcpSlot(request, "kherep-lead")).toEqual({ ok: false, error: "Codex cannot self-assign kherep-lead" });
+      expect(a.challenges()).toBe(0);
+      expect(await registry().listIntercomSlots()).toEqual(before);
+      expect(await pending(request.requestId)).toEqual(row);
+      expect(await pending(request.requestId)).toEqual({ claimed_at: null, outcome: null, assignment_result: null });
+      expect(await runInDurableObject(registry(), (_instance, state) => state.storage.sql.exec("SELECT COUNT(*) AS n FROM messages").one().n)).toBe(messages);
+    } finally { a.close(); }
+  });
+
+  it("Codex Lead policy refuses the actual HTTP SDK and retry with no successful receipt", async () => {
+    const a = await source(), request = await a.intent("kherep-lead"), client = await sdk(a.credential.token);
+    const before = await registry().listIntercomSlots(), row = await pending(request.requestId);
+    try {
+      const args = { slot: "kherep-lead", requestId: request.requestId };
+      const meta = { sessionId: a.sessionId, threadId: a.sessionId, callId: request.callId };
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const result = await client.callTool({ name: "assign_self", arguments: args, _meta: meta });
+        expect(result.isError).toBe(true);
+        expect(JSON.stringify(result)).toContain("Codex cannot self-assign kherep-lead");
+        expect(result.structuredContent).not.toMatchObject({ ok: true });
+        expect(a.challenges()).toBe(0);
+        expect(await pending(request.requestId)).toEqual(row);
+        expect(await registry().listIntercomSlots()).toEqual(before);
+      }
+    } finally { await client.close(); a.close(); }
+  });
+
   it("refuses legacy unstamped Lead registration without changing roster or consuming an intent", async () => {
     const a = await source(), value = await a.registration("kherep-lead");
     delete value.assignment.native.leadGuardVersion;
@@ -94,59 +128,73 @@ describe("native self-assignment transaction", () => {
       state.storage.sql.exec("UPDATE intercom_slots SET revision=0,node_id=NULL,runtime=NULL,session_id=NULL,chat_name=NULL");
     });
   });
-  it("assigns automatic original identity/title and replaces lead without the former holder", async () => {
+  it("assigns automatic original identity/title and replaces its platform slot without the former holder", async () => {
     const a = await source(), b = await source("33333333-3333-4333-8333-333333333333", "Synthetic original B");
     const before = await registry().listIntercomSlots();
-    const first = await a.intent("kherep-lead");
-    expect(await registry().assignMcpSlot(first, "kherep-lead")).toEqual({ ok: true, slot: "kherep-lead", revision: 1 });
-    expect(a.challenges()).toBe(1);
-    const second = await b.intent("kherep-lead");
-    expect(await registry().assignMcpSlot(second, "kherep-lead")).toEqual({ ok: true, slot: "kherep-lead", revision: 2 });
-    expect(await registry().assignMcpSlot(first, "kherep-lead")).toEqual({ ok: true, slot: "kherep-lead", revision: 1 });
-    expect(a.challenges()).toBe(1);
+    const first = await a.intent("codex-mac");
+    expect(await registry().assignMcpSlot(first, "codex-mac")).toEqual({ ok: true, slot: "codex-mac", revision: 1 });
+    expect(a.challenges()).toBe(0);
+    const second = await b.intent("codex-mac");
+    expect(await registry().assignMcpSlot(second, "codex-mac")).toEqual({ ok: true, slot: "codex-mac", revision: 2 });
+    expect(await registry().assignMcpSlot(first, "codex-mac")).toEqual({ ok: true, slot: "codex-mac", revision: 1 });
+    expect(a.challenges()).toBe(0);
     const after = await registry().listIntercomSlots();
-    expect(after[0]).toEqual({ slot: "kherep-lead", revision: 2, occupant: {
+    expect(after.find(row => row.slot === "codex-mac")).toEqual({ slot: "codex-mac", revision: 2, occupant: {
       nodeId: b.nodeId, runtime: "codex", sessionId: b.sessionId, chatName: b.title } });
-    expect(after.slice(1)).toEqual(before.slice(1));
+    expect(after.filter(row => row.slot !== "codex-mac")).toEqual(before.filter(row => row.slot !== "codex-mac"));
     await runInDurableObject(registry(), (_instance, state) => {
       expect(JSON.stringify(state.storage.sql.exec("SELECT * FROM mcp_intents WHERE request_id=?", first.requestId).one()))
         .not.toContain("prompt");
     });
   });
 
-  it("captures first-registration revision, keeps contender conflict and applied replay immutable", async () => {
+  it("captures platform first-registration revision, keeps contender conflict and applied replay immutable", async () => {
     const a = await source(), b = await source("33333333-3333-4333-8333-333333333333", "Synthetic B");
-    const first = await a.intent("kherep-lead"), contender = await b.intent("kherep-lead");
-    expect(await registry().assignMcpSlot(first, "kherep-lead")).toMatchObject({ ok: true, revision: 1 });
+    const first = await a.intent("codex-mac"), contender = await b.intent("codex-mac");
+    expect(await registry().assignMcpSlot(first, "codex-mac")).toMatchObject({ ok: true, revision: 1 });
     const conflict = { ok: false, error: "Intercom slot revision conflict", conflict: true };
-    expect(await registry().assignMcpSlot(contender, "kherep-lead")).toEqual(conflict);
-    const fresh = await b.intent("kherep-lead");
-    expect(await registry().assignMcpSlot(fresh, "kherep-lead")).toMatchObject({ ok: true, revision: 2 });
-    expect(await registry().assignMcpSlot(contender, "kherep-lead")).toEqual(conflict);
-    expect(await registry().assignMcpSlot(first, "kherep-lead")).toMatchObject({ ok: true, revision: 1 });
-    expect((await registry().listIntercomSlots())[0]?.revision).toBe(2);
+    expect(await registry().assignMcpSlot(contender, "codex-mac")).toEqual(conflict);
+    const fresh = await b.intent("codex-mac");
+    expect(await registry().assignMcpSlot(fresh, "codex-mac")).toMatchObject({ ok: true, revision: 2 });
+    expect(await registry().assignMcpSlot(contender, "codex-mac")).toEqual(conflict);
+    expect(await registry().assignMcpSlot(first, "codex-mac")).toMatchObject({ ok: true, revision: 1 });
+    expect((await registry().listIntercomSlots()).find(row => row.slot === "codex-mac")?.revision).toBe(2);
   });
 
   it("denies a changed latest input during the intent TTL without consuming or changing any roster row", async () => {
     const a = await source(), request = await a.intent("kherep-lead"), before = await registry().listIntercomSlots(), row = await pending(request.requestId);
     a.allowLead(false);
     expect((await registry().assignMcpSlot(request, "kherep-lead")).ok).toBe(false);
-    expect(a.challenges()).toBe(1);expect(await pending(request.requestId)).toEqual(row);expect(await registry().listIntercomSlots()).toEqual(before);
+    expect(a.challenges()).toBe(0);expect(await pending(request.requestId)).toEqual(row);expect(await registry().listIntercomSlots()).toEqual(before);
     a.close();
   });
 
-  it("refuses an old unapplied SQL row but replays an already recorded old outcome without a challenge", async () => {
-    const a = await source(), stale = await a.intent("kherep-lead"), before = await registry().listIntercomSlots();
-    await runInDurableObject(registry(), (_instance, state) => { state.storage.sql.exec("UPDATE mcp_intents SET lead_guard_version=NULL WHERE request_id=?", stale.requestId); });
-    const row = await pending(stale.requestId);
-    expect((await registry().assignMcpSlot(stale, "kherep-lead")).ok).toBe(false);
-    expect(a.challenges()).toBe(0);expect(await pending(stale.requestId)).toEqual(row);expect(await registry().listIntercomSlots()).toEqual(before);
-    const valid = await a.intent("kherep-lead"), applied = await registry().assignMcpSlot(valid, "kherep-lead");expect(applied.ok).toBe(true);
-    await runInDurableObject(registry(), (_instance, state) => { state.storage.sql.exec("UPDATE mcp_intents SET lead_guard_version=NULL WHERE request_id=?", valid.requestId); });
-    expect(await registry().assignMcpSlot(valid, "kherep-lead")).toEqual(applied);expect(a.challenges()).toBe(1);a.close();
+  it("denies legacy unapplied and recorded Codex Lead assignments while preserving historical outcomes", async () => {
+    const a = await source(), stale = await a.intent("kherep-lead");
+    // A pre-policy occupant and its endpoint rights are retained, not retired
+    // by a new denied appointment. This seed is synthetic historical state.
+    await runInDurableObject(registry(), (_instance, state) => state.storage.sql.exec(
+      "UPDATE intercom_slots SET revision=17,node_id=?,runtime='codex',session_id=?,chat_name=? WHERE slot='kherep-lead'",
+      a.nodeId, a.sessionId, a.title));
+    const before = await registry().listIntercomSlots();
+    try {
+      await runInDurableObject(registry(), (_instance, state) => { state.storage.sql.exec("UPDATE mcp_intents SET lead_guard_version=NULL WHERE request_id=?", stale.requestId); });
+      const row = await pending(stale.requestId);
+      expect((await registry().assignMcpSlot(stale, "kherep-lead")).ok).toBe(false);
+      expect(a.challenges()).toBe(0); expect(await pending(stale.requestId)).toEqual(row);
+      const historical = await a.intent("kherep-lead");
+      // Synthetic pre-policy success: the new policy may not erase or rewrite it.
+      await runInDurableObject(registry(), (_instance, state) => state.storage.sql.exec(
+        "UPDATE mcp_intents SET lead_guard_version=NULL,claimed_at=?,outcome='succeeded',assignment_result=? WHERE request_id=?",
+        Date.now(), JSON.stringify({ ok: true, slot: "kherep-lead", revision: 7 }), historical.requestId));
+      const recorded = await pending(historical.requestId);
+      expect(await registry().assignMcpSlot(historical, "kherep-lead")).toEqual({ ok: false, error: "Codex cannot self-assign kherep-lead" });
+      expect(await pending(historical.requestId)).toEqual(recorded);
+      expect(a.challenges()).toBe(0); expect(await registry().listIntercomSlots()).toEqual(before);
+    } finally { a.close(); }
   });
 
-  it("revalidates credentials, session, registration, proof version, saved revision and expiry after the await", async () => {
+  it("denies Lead before any credential, session, registration, proof, revision or expiry challenge callback", async () => {
     for (const fault of ["credential", "session", "registration", "version", "revision", "expiry"] as const) {
       const a = await source(), request = await a.intent("kherep-lead"), before = await registry().listIntercomSlots();
       a.onChallenge(async () => {
@@ -161,48 +209,49 @@ describe("native self-assignment transaction", () => {
       });
       expect((await registry().assignMcpSlot(request, "kherep-lead")).ok).toBe(false);
       expect(await pending(request.requestId)).toEqual({ claimed_at: null, outcome: null, assignment_result: null });
-      expect(await registry().listIntercomSlots()).toEqual(before);a.close();
+      expect(a.challenges()).toBe(0);expect(await registry().listIntercomSlots()).toEqual(before);a.close();
     }
   });
 
-  it("coalesces concurrent exact Lead calls and records one mutation and one historical result", async () => {
-    const a = await source(), request = await a.intent("kherep-lead");
+  it("denies concurrent exact Lead calls without confirmation, mutation or receipt", async () => {
+    const a = await source(), request = await a.intent("kherep-lead"), before = await registry().listIntercomSlots(), row = await pending(request.requestId);
     const results = await Promise.all([registry().assignMcpSlot(request, "kherep-lead"), registry().assignMcpSlot(request, "kherep-lead")]);
-    expect(results).toEqual([{ ok: true, slot: "kherep-lead", revision: 1 }, { ok: true, slot: "kherep-lead", revision: 1 }]);
-    expect(a.challenges()).toBe(1);expect((await registry().listIntercomSlots())[0]?.revision).toBe(1);a.close();
+    expect(results).toEqual([{ ok: false, error: "Codex cannot self-assign kherep-lead" }, { ok: false, error: "Codex cannot self-assign kherep-lead" }]);
+    expect(a.challenges()).toBe(0);expect(await registry().listIntercomSlots()).toEqual(before);expect(await pending(request.requestId)).toEqual(row);a.close();
   });
 
-  for (const mode of ["wrong-nonce", "silent"] as const) it(`refuses ${mode} confirmation at timeout with no consumption`, async () => {
+  for (const mode of ["wrong-nonce", "silent"] as const) it(`refuses Lead before a ${mode} source can be asked for confirmation`, async () => {
     const a = await source(), request = await a.intent("kherep-lead"), before = await registry().listIntercomSlots(), row = await pending(request.requestId);
     a.responseMode(mode);
     expect((await registry().assignMcpSlot(request, "kherep-lead")).ok).toBe(false);
-    expect(await pending(request.requestId)).toEqual(row);expect(await registry().listIntercomSlots()).toEqual(before);a.close();
+    expect(a.challenges()).toBe(0);expect(await pending(request.requestId)).toEqual(row);expect(await registry().listIntercomSlots()).toEqual(before);a.close();
   });
 
-  it("refuses a socket that closes during confirmation", async () => {
+  it("denies Lead without contacting a source that would close during confirmation", async () => {
     const a = await source(), request = await a.intent("kherep-lead"), before = await registry().listIntercomSlots(), row = await pending(request.requestId);
     a.onChallenge(async () => { a.close(); });
     expect((await registry().assignMcpSlot(request, "kherep-lead")).ok).toBe(false);
-    expect(await pending(request.requestId)).toEqual(row);expect(await registry().listIntercomSlots()).toEqual(before);
+    expect(a.challenges()).toBe(0);expect(await pending(request.requestId)).toEqual(row);expect(await registry().listIntercomSlots()).toEqual(before);a.close();
   });
 
-  it("refuses a nonce response sent by a replacement socket", async () => {
+  it("denies Lead after socket replacement without requesting a new confirmation", async () => {
     const a = await source(), request = await a.intent("kherep-lead"), before = await registry().listIntercomSlots(), row = await pending(request.requestId);
-    let replacement: TestSocket | undefined;
-    a.onChallenge(async nonce => { replacement = await authenticate(a.nodeId, a.key);replacement.send(makeEnvelope("mcp.lead.confirm.response", { nonce, allowed: true }, 1, 0)); });
-    expect((await registry().assignMcpSlot(request, "kherep-lead")).ok).toBe(false);
-    expect(await pending(request.requestId)).toEqual(row);expect(await registry().listIntercomSlots()).toEqual(before);
-    replacement?.ws.close();a.close();
+    const replacement = await authenticate(a.nodeId, a.key);
+    try {
+      expect((await registry().assignMcpSlot(request, "kherep-lead")).ok).toBe(false);
+      expect(a.challenges()).toBe(0);
+      expect(await pending(request.requestId)).toEqual(row);expect(await registry().listIntercomSlots()).toEqual(before);
+    } finally { replacement.ws.close();a.close(); }
   });
 
-  it("HTTP Lead tool succeeds only after an authenticated final challenge and replays without a second one", async () => {
-    const a = await source(), request = await a.intent("kherep-lead"), client = await sdk(a.credential.token);
+  it("HTTP platform assignment succeeds and replays without any Lead challenge", async () => {
+    const a = await source(), request = await a.intent("codex-mac"), client = await sdk(a.credential.token);
     try {
-      const args = { slot: "kherep-lead", requestId: request.requestId }, meta = { sessionId: a.sessionId, threadId: a.sessionId, callId: request.callId };
+      const args = { slot: "codex-mac", requestId: request.requestId }, meta = { sessionId: a.sessionId, threadId: a.sessionId, callId: request.callId };
       const result = await client.callTool({ name: "assign_self", arguments: args, _meta: meta });expect(result.isError).not.toBe(true);
-      expect(result.structuredContent).toEqual({ ok: true, slot: "kherep-lead", revision: 1 });expect(a.challenges()).toBe(1);
+      expect(result.structuredContent).toEqual({ ok: true, slot: "codex-mac", revision: 1 });expect(a.challenges()).toBe(0);
       a.allowLead(false);expect((await client.callTool({ name: "assign_self", arguments: args, _meta: meta })).structuredContent).toEqual(result.structuredContent);
-      expect(a.challenges()).toBe(1);
+      expect(a.challenges()).toBe(0);
     } finally { await client.close();a.close(); }
   });
 
@@ -255,7 +304,7 @@ describe("native self-assignment transaction", () => {
 
   it("refuses expired, rotated and revoked callers and unsupported enrolled platform", async () => {
     for (const fault of ["expired", "rotated", "revoked", "windows"] as const) {
-      const a = await source(), request = await a.intent("kherep-lead"), before = await registry().listIntercomSlots();
+      const a = await source(), request = await a.intent("codex-mac"), before = await registry().listIntercomSlots();
       if (fault === "expired") await runInDurableObject(registry(), (_instance, state) => {
         state.storage.sql.exec("UPDATE mcp_intents SET expires_at=0 WHERE request_id=?", request.requestId);
       });
@@ -264,7 +313,7 @@ describe("native self-assignment transaction", () => {
       if (fault === "windows") await runInDurableObject(registry(), (_instance, state) => {
         state.storage.sql.exec("UPDATE nodes SET os='win32' WHERE id=?", a.nodeId);
       });
-      expect((await registry().assignMcpSlot(request, "kherep-lead")).ok).toBe(false);
+      expect((await registry().assignMcpSlot(request, "codex-mac")).ok).toBe(false);
       expect(await registry().listIntercomSlots()).toEqual(before);
     }
   });

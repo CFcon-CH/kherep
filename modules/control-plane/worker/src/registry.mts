@@ -353,6 +353,7 @@ export class Registry extends DurableObject<Env> {
   async assignMcpSlot(intent: McpIntentClaim, slot: SelfAssignmentSlot) {
     if (!isSelfAssignmentSlot(slot) || intent?.tool !== "assign_self"
       || await digestMcpArguments({ slot }) !== intent.argumentsDigest) return { ok: false as const, error: "invalid self-assignment arguments" };
+    if (slot === "kherep-lead" && intent.runtime === "codex") return { ok: false as const, error: "Codex cannot self-assign kherep-lead" };
     if (slot === "kherep-lead") return this.mcp.assignLead(intent);
     return this.tx("assignMcpSlot", () => this.mcp.assign(intent, slot, Date.now()));
   }
