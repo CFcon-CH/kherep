@@ -527,7 +527,17 @@ test("slot entry contains dependency construction failure and leaves missing or 
     input: JSON.stringify(native("kherep-lead")), encoding: "utf8", env: { ...process.env, KHEREP_CONFIG_DIR: root } });
   // Older admitted Node releases emit only this known type-stripping warning.
   const stderr = (value: string) => value.replace(/^\(node:\d+\) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time\r?\n\(Use `node --trace-warnings \.\.\.` to show where the warning was created\)\r?\n/, "");
-  assert.equal(failed.status, 0); assert.equal(stderr(failed.stderr), "");
+  const diagnostic = (value: string, limit: number) => {
+    for (const [location, label] of [[root, "<fixture>"],
+      [path.resolve(import.meta.dirname, "../../.."), "<checkout>"], [process.execPath, "<node>"]]) {
+      value = value.replaceAll(location, label).replaceAll(location.replaceAll("\\", "/"), label);
+    }
+    return value.slice(0, limit);
+  };
+  assert.equal(failed.status, 0, JSON.stringify({ status: failed.status, signal: failed.signal,
+    error: failed.error ? diagnostic(String(failed.error), 512) : null,
+    stderr: diagnostic(failed.stderr ?? "", 2048) }));
+  assert.equal(stderr(failed.stderr), "");
   assert.deepEqual(JSON.parse(failed.stdout), expansion("Kherep could not confirm a slot selection."));
   for (const input of ["", JSON.stringify({ ...native(), extra: "x".repeat(65_536) })]) {
     const child = spawnSync(process.execPath, [hook], { input, encoding: "utf8", env: { ...process.env, KHEREP_CONFIG_DIR: root } });
