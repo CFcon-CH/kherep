@@ -158,7 +158,10 @@ if (isMainModule(import.meta.url)) {
     let input: unknown;
     try { input = JSON.parse(stdin); } catch { /* ordinary parser reports failure */ }
     if (input && typeof input === "object" && (input as Record<string, unknown>).hook_event_name === "UserPromptExpansion") {
-      process.stdout.write(await runClaudeSlotHook(input, { paths: nodePaths() }));
+      let output = contextOutput("UserPromptExpansion", "Kherep could not confirm a slot selection.");
+      try { output = await runClaudeSlotHook(input, { paths: nodePaths() }); }
+      catch { /* Dependency construction cannot turn a recognized expansion into a raw error. */ }
+      process.stdout.write(output);
     } else runHook(stdin, { paths: nodePaths() }, (text) => process.stdout.write(text), (line) => process.stderr.write(`${line}\n`), runtime);
   }
   process.exitCode = 0;
@@ -183,20 +186,37 @@ export function parseClaudeSlotCommand(input: unknown, platform: string = proces
 }
 
 export async function runClaudeSlotHook(input: unknown, deps: HookDeps): Promise<string> {
-  const request = parseClaudeSlotCommand(input, process.platform, deps.now?.() ?? Date.now());
-  const block = (reason: string) => JSON.stringify({ decision: "block", reason });
-  if (!request) return block("Kherep slot selection refused: invalid native command.");
-  writeSlotExchange(deps.paths, "selection", request.requestId, request);
-  const deadline = Date.now() + 25_000;
-  try { while (Date.now() < deadline) {
-    const result = readSlotExchange(deps.paths, "selection-result", request.requestId);
-    if (isClaudeSlotResult(result) && result.requestId === request.requestId && result.slot === request.slot) {
-      return block(`Kherep ${result.slot}: ${result.outcome}, revision ${result.revision ?? "unconfirmed"}.`);
+  let request: ClaudeSlotSelection | null = null;
+  let sentence = "Kherep could not confirm a slot selection.";
+  const unconfirmed = () => request ? `Kherep could not confirm the ${request.slot} selection.`
+    : "Kherep could not confirm a slot selection.";
+  try {
+    request = parseClaudeSlotCommand(input, process.platform, deps.now?.() ?? Date.now());
+    if (!request) return contextOutput("UserPromptExpansion", "Kherep rejected the slot command as invalid.");
+    sentence = unconfirmed();
+    writeSlotExchange(deps.paths, "selection", request.requestId, request);
+    const deadline = Date.now() + 25_000;
+    while (Date.now() < deadline) {
+      const result = readSlotExchange(deps.paths, "selection-result", request.requestId);
+      if (isClaudeSlotResult(result) && result.requestId === request.requestId && result.slot === request.slot) {
+        if (result.outcome === "assigned" && result.revision !== null) {
+          sentence = `Kherep assigned ${request.slot} at revision ${result.revision}.`;
+        } else if (result.outcome === "conflict" && result.revision !== null) {
+          sentence = `Kherep could not assign ${request.slot} because its revision changed to ${result.revision}.`;
+        } else if (result.outcome === "denied") {
+          sentence = `Kherep denied the ${request.slot} selection (revision ${result.revision ?? "unconfirmed"}).`;
+        }
+        break;
+      }
+      await new Promise(resolve => setTimeout(resolve, 100));
     }
-    await new Promise(resolve => setTimeout(resolve, 100));
-  }
-  return block("Kherep slot selection unconfirmed: no correlated result.");
+  } catch {
+    sentence = unconfirmed();
   } finally {
-    for (const kind of ["selection", "selection-result"]) fs.rmSync(slotExchangeFile(deps.paths, kind, request.requestId), { force: true });
+    if (request) for (const kind of ["selection", "selection-result"]) {
+      try { fs.rmSync(slotExchangeFile(deps.paths, kind, request.requestId), { force: true }); }
+      catch { sentence = unconfirmed(); }
+    }
   }
+  return contextOutput("UserPromptExpansion", sentence);
 }

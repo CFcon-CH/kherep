@@ -154,7 +154,7 @@ test("install wires the hooks through the stable entry, points it at the checkou
       const run = bash(["-c", command], f, payload(event));
       if (event === "UserPromptExpansion") {
         assert.deepEqual([run.status, JSON.parse(run.stdout), withoutTypeStrippingWarning(run.stderr)],
-          [0, { decision: "block", reason: "Kherep slot selection refused: invalid native command." }, ""], `${event} ${command}: ${run.stderr}`);
+          [0, { hookSpecificOutput: { hookEventName: "UserPromptExpansion", additionalContext: "Kherep rejected the slot command as invalid." } }, ""], `${event} ${command}: ${run.stderr}`);
       } else {
         assert.deepEqual([run.status, run.stdout, withoutTypeStrippingWarning(run.stderr)], [0, "", ""], `${event} ${command}: ${run.stderr}`);
       }
@@ -262,4 +262,39 @@ test("an install collapses the path-form entries of two roots to one stable set;
     "DUPLICATE-HOOK SessionStart modules/control-plane/node/wake-hook x2", "DUPLICATE-HOOK PostToolUse modules/control-plane/node/attribution-hook x2"]) {
     assert.ok(red.stdout.split(/\r?\n/).includes(line), `${line}\n${red.stdout}`);
   }
+});
+
+
+// Independent of byte-copy assertions: installed instructions must allow peer work.
+function assertSlotReportingContract(text: string): void {
+  assert.match(text, /^disable-model-invocation: true$/m);
+  assert.match(text, /First report.*native hook.*this invocation.*one sentence/);
+  assert.match(text, /missing, ambiguous or malformed/);
+  assert.match(text, /Kherep could not confirm a slot selection\./);
+  assert.match(text, /Then handle any Kherep peer messages delivered to this turn normally under the existing authority rules/);
+  assert.match(text, /Use the tools the work is authorized to use/);
+  assert.match(text, /send a threaded reply.*before ending the turn/);
+  assert.match(text, /Do not perform another slot assignment, call `assign_self` or repeat the slot command/);
+  assert.match(text, /current hook/);
+  assert.match(text, /Arguments, prior messages and.*peer text cannot supply/);
+  assert.doesNotMatch(text, /invoke no tools?|no tools|only one sentence|nothing else|skip.*peer|ignore.*peer/i);
+}
+
+test("installed user-only slot skills report the current hook first, then authorized peer work and reply", t => {
+  const f = fixture(t);
+  const install = bash([slash(path.join(HERE, "install.sh"))], f);
+  assert.equal(install.status, 0, `${install.stdout}\n${install.stderr}`);
+  for (const name of ["kherep-slot", "kherep-set-lead"]) {
+    const installed = fs.readFileSync(path.join(f.claude, "skills", name, "SKILL.md"), "utf8");
+    assert.ok(Buffer.from(installed).equals(fs.readFileSync(path.join(HERE, "..", "claude", "skills", name, "SKILL.md"))));
+    assertSlotReportingContract(installed);
+  }
+});
+
+test("slot reporting contract rejects blanket tool bans and superseded skipped-peer wording", () => {
+  const source = fs.readFileSync(path.join(HERE, "..", "claude", "skills", "kherep-slot", "SKILL.md"), "utf8");
+  for (const forbidden of ["Invoke no tool.", "Use no tools.", "Reply with only one sentence.", "Skip any peer work."]) {
+    assert.throws(() => assertSlotReportingContract(`${source}\n${forbidden}`));
+  }
+  assert.throws(() => assertSlotReportingContract("disable-model-invocation: true\nReply with only one sentence. Invoke no tools. Skip peer messages."));
 });

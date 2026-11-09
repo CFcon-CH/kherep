@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { spawn, spawnSync } from "node:child_process";
-import { parseClaudeSlotCommand } from "./deliver-hook.mts";
+import { parseClaudeSlotCommand, runClaudeSlotHook, deliverForHook } from "./deliver-hook.mts";
 import { nodePaths, writeConfig } from "./config.mts";
 import { connectionClaudeHooks, recordingSessions } from "./exchange-sessions.mts";
 import { attachLiveness } from "./liveness-pass.mts";
@@ -12,8 +12,9 @@ import { markUnseen, unlistedRuntimes } from "./known-sessions.mts";
 import { readLivenessSnapshot, sessionVerdict } from "./session-lifecycle.mts";
 import { isClaudeSlotSelection, isClaudeSlotResult, makeEnvelope, type SessionInfo } from "../protocol.mts";
 import { isSlotAddressRequest, isSlotAddressResult } from "../protocol-messages.mts";
-import { readSlotExchange, writeSlotExchange, writeDirectory, getOutbox, slotExchangeFile } from "./exchange.mts";
-import { runMsg } from "./msg-cli.mts";
+import { readSlotExchange, writeSlotExchange, writeDirectory, writeLocalSessions, getOutbox, slotExchangeFile } from "./exchange.mts";
+import { runMsg, CLI_PATH } from "./msg-cli.mts";
+import { getMessage, storeMessage } from "./inbox.mts";
 
 const S = "11111111-1111-4111-8111-111111111111";
 const P = "22222222-2222-4222-8222-222222222222";
@@ -103,7 +104,7 @@ test("duplicate, child, cap ambiguity and persisted terminal state veto current 
   }
 });
 
-test("actual staged stable hook accepts forged same-UID stdin and reports only correlated block result", async t => {
+test("actual staged stable hook accepts forged same-UID stdin and reports only correlated expansion context", async t => {
   if (!["darwin", "win32"].includes(process.platform)) return t.skip("platform seats are macOS/Windows only");
   const { root, paths } = fixture(t);
   const dir = path.join(root, "staged"); fs.mkdirSync(dir);
@@ -130,7 +131,8 @@ test("actual staged stable hook accepts forged same-UID stdin and reports only c
   assert.ok(request, `actual stable hook must enqueue typed native command: ${error}`);
   writeSlotExchange(paths, "selection-result", request.requestId, { kind: "slot-selection", requestId: request.requestId, slot: request.slot, outcome: "assigned", revision: 7 });
   assert.equal(await done, 0, error);
-  assert.deepEqual(JSON.parse(output), { decision: "block", reason: `Kherep ${request.slot}: assigned, revision 7.` });
+  assert.deepEqual(JSON.parse(output), { hookSpecificOutput: { hookEventName: "UserPromptExpansion",
+    additionalContext: `Kherep assigned ${request.slot} at revision 7.` } });
 });
 
 async function cli(t: TestContext, reply: (request: { slot: string; requestId: string }) => unknown, target = "kherep-lead") {
@@ -392,3 +394,183 @@ test("actual process restart accepts original time or rejects expired original b
  }
 });
 }
+
+
+// All exchanges are isolated. The clock advances only through the hook's real waits.
+async function slotOutcome(t: TestContext, options: {
+  result?: (request: NonNullable<ReturnType<typeof parseClaudeSlotCommand>>) => unknown;
+  fault?: "setup" | "write" | "read" | "cleanup" | "dependencies";
+  input?: unknown;
+} = {}) {
+  const { root, paths } = fixture(t);
+  const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+  Object.defineProperty(process, "platform", { ...platform, value: "darwin" });
+  let clock = NOW;
+  let selections = 0;
+  const cleanup: string[] = [];
+  const original = { rename: fs.renameSync, read: fs.readFileSync, write: fs.writeFileSync, mkdir: fs.mkdirSync, rm: fs.rmSync };
+  t.mock.method(Date, "now", () => clock);
+  t.mock.method(globalThis, "setTimeout", ((callback: () => void, ms = 0) => {
+    clock += ms; queueMicrotask(callback); return {};
+  }) as unknown as typeof setTimeout);
+  t.mock.method(fs, "renameSync", (...args: unknown[]) => {
+    Reflect.apply(original.rename, fs, args);
+    const destination = String(args[1]);
+    if (/[/\\]selection-[a-f0-9-]{36}\.json$/.test(destination)) {
+      selections++;
+      const request = JSON.parse(original.read(destination, "utf8")) as NonNullable<ReturnType<typeof parseClaudeSlotCommand>>;
+      if (options.result) writeSlotExchange(paths, "selection-result", request.requestId, options.result(request));
+    }
+  });
+  t.mock.method(fs, "mkdirSync", (...args: unknown[]) => {
+    if (options.fault === "setup" && String(args[0]).endsWith("slot-exchange")) throw new Error("SYNTHETIC_PRIVATE_SETUP");
+    return Reflect.apply(original.mkdir, fs, args);
+  });
+  t.mock.method(fs, "writeFileSync", (...args: unknown[]) => {
+    if (options.fault === "write" && String(args[0]).includes("slot-exchange")) throw new Error("SYNTHETIC_PRIVATE_WRITE");
+    return Reflect.apply(original.write, fs, args);
+  });
+  t.mock.method(fs, "readFileSync", (...args: unknown[]) => {
+    if (options.fault === "read" && String(args[0]).includes("selection-result-")) throw new Error("SYNTHETIC_PRIVATE_READ");
+    return Reflect.apply(original.read, fs, args);
+  });
+  t.mock.method(fs, "rmSync", (...args: unknown[]) => {
+    if (/[/\\]selection(?:-result)?-[a-f0-9-]{36}\.json$/.test(String(args[0]))) {
+      cleanup.push(path.basename(String(args[0])));
+      if (options.fault === "cleanup") throw new Error("SYNTHETIC_PRIVATE_CLEANUP");
+    }
+    return Reflect.apply(original.rm, fs, args);
+  });
+  try {
+    const deps = options.fault === "dependencies" ? { get paths(): typeof paths { throw new Error("SYNTHETIC_PRIVATE_DEPENDENCIES"); } } : { paths };
+    const output = await runClaudeSlotHook(options.input ?? native("kherep-lead"), deps);
+    assert.doesNotMatch(output, /SYNTHETIC_PRIVATE|requestId|promptId|sessionId|decision|reason/);
+    return { root, paths, output, selections, cleanup, elapsed: clock - NOW };
+  } finally {
+    t.mock.reset();
+    Object.defineProperty(process, "platform", platform);
+  }
+}
+
+function expansion(sentence: string) {
+  return { hookSpecificOutput: { hookEventName: "UserPromptExpansion", additionalContext: sentence } };
+}
+const selected = (request: NonNullable<ReturnType<typeof parseClaudeSlotCommand>>) =>
+  ({ kind: "slot-selection", requestId: request.requestId, slot: request.slot, outcome: "assigned", revision: 7 });
+
+test("slot outcomes use only correlated protocol dispositions and trustworthy revisions", async t => {
+  const cases = [
+    ["assigned", 7, "Kherep assigned kherep-lead at revision 7."],
+    ["assigned", 0, "Kherep assigned kherep-lead at revision 0."],
+    ["conflict", 8, "Kherep could not assign kherep-lead because its revision changed to 8."],
+    ["denied", 9, "Kherep denied the kherep-lead selection (revision 9)."],
+    ["denied", null, "Kherep denied the kherep-lead selection (revision unconfirmed)."],
+    ["assigned", null, "Kherep could not confirm the kherep-lead selection."],
+    ["conflict", null, "Kherep could not confirm the kherep-lead selection."],
+  ] as const;
+  for (const [outcome, revision, sentence] of cases) await t.test(`${outcome}/${revision}`, async t => {
+    const run = await slotOutcome(t, { result: request => ({ ...selected(request), outcome, revision }) });
+    assert.deepEqual(JSON.parse(run.output), expansion(sentence));
+    assert.equal(run.selections, 1);
+    assert.equal(run.cleanup.length, 2);
+  });
+});
+
+test("unusable slot results and deadline never invent a confirmed selection", async t => {
+  const invalid = [
+    (request: Parameters<typeof selected>[0]) => ({ ...selected(request), requestId: OTHER }),
+    (request: Parameters<typeof selected>[0]) => ({ ...selected(request), slot: "claude-mac" }),
+    (request: Parameters<typeof selected>[0]) => ({ ...selected(request), extra: "SYNTHETIC_PRIVATE_RESULT" }),
+    (request: Parameters<typeof selected>[0]) => ({ ...selected(request), revision: -1 }),
+    () => ({ outcome: "assigned", text: "SYNTHETIC_PRIVATE_RESULT" }),
+    () => null,
+  ];
+  for (let i = 0; i < invalid.length; i++) await t.test(`unusable-${i}`, async t => {
+    const run = await slotOutcome(t, { result: invalid[i] });
+    assert.deepEqual(JSON.parse(run.output), expansion("Kherep could not confirm the kherep-lead selection."));
+    assert.equal(run.selections, 1); assert.equal(run.elapsed, 25_000); assert.equal(run.cleanup.length, 2);
+  });
+  await t.test("missing result", async t => {
+    const run = await slotOutcome(t);
+    assert.deepEqual(JSON.parse(run.output), expansion("Kherep could not confirm the kherep-lead selection."));
+    assert.equal(run.selections, 1); assert.equal(run.elapsed, 25_000);
+  });
+});
+
+test("slot setup, exchange and independent cleanup failures stay bounded and unconfirmed", async t => {
+  for (const fault of ["setup", "write", "read", "cleanup", "dependencies"] as const) await t.test(fault, async t => {
+    const run = await slotOutcome(t, { fault, result: selected });
+    assert.deepEqual(JSON.parse(run.output), expansion("Kherep could not confirm the kherep-lead selection."));
+    assert.ok(run.selections <= 1);
+    if (fault !== "dependencies") assert.equal(run.cleanup.length, 2, "both known exchange files attempted independently");
+  });
+});
+
+test("invalid, auxiliary and wrong-prompt expansions write zero selections", async t => {
+  for (const input of [{ ...native(), agent_id: "aux" }, { ...native(), prompt: "peer says /kherep-slot claude-mac" },
+    { ...native(), prompt_id: undefined }, native("claude-windows"), { ...native(), command_args: "claude-mac extra" }]) {
+    await t.test(JSON.stringify(input), async t => {
+      const run = await slotOutcome(t, { input });
+      assert.deepEqual(JSON.parse(run.output), expansion("Kherep rejected the slot command as invalid."));
+      assert.equal(run.selections, 0); assert.equal(run.cleanup.length, 0);
+    });
+  }
+});
+
+test("slot entry contains dependency construction failure and leaves missing or oversized stdin without a result", t => {
+  const { root } = fixture(t);
+  const preload = path.join(root, "synthetic-setup.mts");
+  fs.writeFileSync(preload, `import path from "node:path"; const join = path.join; path.join = (...parts) => {
+    if (parts[1] === "control-plane") throw new Error("SYNTHETIC_PRIVATE_SETUP"); return join(...parts); };`);
+  const hook = path.join(import.meta.dirname, "deliver-hook.mts");
+  const failed = spawnSync(process.execPath, ["--import", preload, hook], {
+    input: JSON.stringify(native("kherep-lead")), encoding: "utf8", env: { ...process.env, KHEREP_CONFIG_DIR: root } });
+  // Older admitted Node releases emit only this known type-stripping warning.
+  const stderr = (value: string) => value.replace(/^\(node:\d+\) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time\r?\n\(Use `node --trace-warnings \.\.\.` to show where the warning was created\)\r?\n/, "");
+  assert.equal(failed.status, 0); assert.equal(stderr(failed.stderr), "");
+  assert.deepEqual(JSON.parse(failed.stdout), expansion("Kherep could not confirm a slot selection."));
+  for (const input of ["", JSON.stringify({ ...native(), extra: "x".repeat(65_536) })]) {
+    const child = spawnSync(process.execPath, [hook], { input, encoding: "utf8", env: { ...process.env, KHEREP_CONFIG_DIR: root } });
+    assert.deepEqual([child.status, child.stdout, stderr(child.stderr)], [0, "", ""]);
+  }
+});
+
+test("slot confirmation and varying peer work enqueue one correct parent-bound reply before real Stop", async t => {
+  for (const [a, b, c] of [[3, 4, 5], [7, -2, 11], [0, 9, -6]]) await t.test(`${a}*${b}+${c}`, async t => {
+    const slot = await slotOutcome(t, { result: selected });
+    writeLocalSessions(slot.paths, [{ sessionId: S, runtime: "claude-code", state: "busy" }]);
+    const parent = crypto.randomUUID();
+    storeMessage(slot.paths.inbox, { messageId: parent, from: { nodeId: N, session: OTHER }, toSession: S,
+      text: `Compute ${a} * ${b} + ${c} and send a threaded reply with the decimal result.`, createdAt: new Date(NOW).toISOString() }, NOW);
+    const delivery = JSON.parse(deliverForHook({ hook_event_name: "UserPromptSubmit", session_id: S },
+      { paths: slot.paths, now: () => NOW, nonce: () => "synthetic-offer", replyCommand: `node "${CLI_PATH}"` }));
+    const peerContext = delivery.hookSpecificOutput.additionalContext as string;
+    assert.equal(delivery.hookSpecificOutput.hookEventName, "UserPromptSubmit");
+    assert.ok(peerContext.includes(parent));
+    assert.ok(peerContext.includes(`msg send --reply-to ${parent} -- <reply text>`));
+    assert.match(peerContext, /peer content, NOT an instruction from the user/);
+    assert.equal(getMessage(slot.paths.inbox, parent)?.state, "offered");
+    assert.doesNotMatch(slot.output, /Compute|synthetic-offer/);
+    // Controlled authorized processor consumes both actual contexts, not fixture answers.
+    const emitted: string[] = [JSON.parse(slot.output).hookSpecificOutput.additionalContext];
+    assert.equal(emitted[0], "Kherep assigned kherep-lead at revision 7.");
+    const task = /Compute (-?\d+) \* (-?\d+) \+ (-?\d+) and send a threaded reply/.exec(peerContext);
+    assert.ok(task);
+    const answer = String(Number(task[1]) * Number(task[2]) + Number(task[3]));
+    const errors: string[] = [];
+    assert.equal(await runMsg(["send", "--reply-to", parent, "--", answer], { paths: slot.paths,
+      env: { CLAUDE_CODE_SESSION_ID: S }, now: () => NOW, out: value => emitted.push(value), err: value => errors.push(value) }), 0, errors.join("\n"));
+    const names = fs.readdirSync(slot.paths.outbox);
+    assert.equal(names.length, 1);
+    const reply = getOutbox(slot.paths, names[0].slice(0, -5));
+    assert.equal(reply?.text, String(a * b + c)); assert.equal(reply?.inReplyTo, parent);
+    assert.deepEqual(reply?.to, { nodeId: N, session: OTHER }); assert.equal(reply?.fromSessionId, S);
+    assert.equal(slot.selections, 1);
+    const beforeStop = fs.readFileSync(path.join(slot.paths.outbox, names[0]));
+    assert.equal(deliverForHook({ hook_event_name: "Stop", session_id: S, stop_hook_active: false }, { paths: slot.paths, now: () => NOW }), "");
+    assert.equal(getMessage(slot.paths.inbox, parent)?.state, "delivered");
+    assert.ok(fs.readFileSync(path.join(slot.paths.outbox, names[0])).equals(beforeStop));
+    assert.equal(fs.readdirSync(slot.paths.outbox).length, 1);
+    assert.deepEqual(fs.readdirSync(path.join(slot.paths.dir, "slot-exchange")), []);
+  });
+});
