@@ -10,6 +10,7 @@ import { makeEnvelope } from "../protocol.mts";
 import { NodeClient } from "./client.mts";
 import { nodePaths, type NodePaths } from "./config.mts";
 import { generateIdentity } from "./identity.mts";
+import { writeJsonAtomic } from "./inbox.mts";
 import { consumeMcpIntentReceipt, pollMcpIntents, recordMcpIntentReceipt } from "./mcp-local.mts";
 
 const SESSION = "11111111-1111-4111-8111-111111111111";
@@ -183,7 +184,7 @@ test("unknown, legacy, spoofed and noncanonical negatives remain generic", async
   ]) {
     const pending = hook(t, root), requestId = await queued(paths);
     fs.mkdirSync(paths.mcpReceipts, { recursive: true });
-    fs.writeFileSync(path.join(paths.mcpReceipts, `${requestId}.json`), JSON.stringify({ requestId, ok: false, ...body }));
+    writeJsonAtomic(path.join(paths.mcpReceipts, `${requestId}.json`), { requestId, ok: false, ...body });
     denied(await pending, GENERIC);
     fs.unlinkSync(path.join(paths.mcpIntents, `${requestId}.json`));
   }
