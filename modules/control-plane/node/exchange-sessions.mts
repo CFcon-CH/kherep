@@ -1,3 +1,4 @@
+import { CODEX_ACTIVITY_EVIDENCE_MS, CODEX_ACTIVITY_INGRESS_MS, isCodexActivityStamp, type CodexActivityStamp } from "../protocol-mcp.mts";
 import fs from "node:fs";
 import { listenerDir } from "./autonomy.mts";
 import { labelsFile, policyStamp, readBindingView, recordLocalLabels } from "./session-labels.mts";
@@ -7,7 +8,7 @@ import { commitAuthority, faultAuthority, observationBelongs, revokeAuthority, t
 import { listingObservation } from "./liveness-pass.mts";
 import { closedReference, publishLiveness, readLivenessSnapshot, sessionVerdict, terminalReference } from "./session-lifecycle.mts";
 import { DISPLAY_TTL_MS, directoryVisibility, observationReason, targetKey } from "./session-liveness.mts";
-import type { SessionEvidence } from "./session-liveness.mts";
+import type { Observation, SessionEvidence } from "./session-liveness.mts";
 import type { SessionInfo } from "../protocol.mts";
 import { ensureDir, readConfig, type NodePaths } from "./config.mts";
 import { listInbox, readJson, refuseUndeliverable, UNDELIVERABLE_AFTER_MS, writeJsonAtomic, type InboxRecord } from "./inbox.mts";
@@ -122,16 +123,24 @@ function boundedCarry(paths: NodePaths, lacking: SessionInfo[], records: (() => 
 // records: the daemon's inbox index (issue #589), one stat per record instead of a
 // read; each refusal is still judged on the file it rewrites. Without it the files are read.
 const discoveries = new Map<string, number>();
+// Ordinary periodic wrappers use only this owner's confirmed connection map.
+const codexActivities = new Map<string, CodexActivity>();
 export interface SessionDiscovery { sequence:number; stamp:string|null }
 export function beginSessionDiscovery(paths:NodePaths):SessionDiscovery {
   const sequence=(discoveries.get(paths.dir)??0)+1;
   discoveries.set(paths.dir,sequence);
   return {sequence,stamp:policyStamp(paths)};
 }
+export type RecordedSessions = ((signal?: AbortSignal, pending?: CodexActivityStamp) => Promise<SessionInfo[]>) & {
+  raw(signal?: AbortSignal): Promise<SessionInfo[]>;
+  begin(): SessionDiscovery;
+  record(listed: SessionInfo[], discovery: SessionDiscovery, signal?: AbortSignal, pending?: CodexActivityStamp): Promise<SessionInfo[]>;
+};
 export function recordingSessions(paths: NodePaths, list: (signal?: AbortSignal) => Promise<SessionInfo[]>, log: (line: string) => void,
   now: () => number = Date.now, undeliverableAfterMs: number = UNDELIVERABLE_AFTER_MS,
-  records?: () => InboxRecord[], authority?: AdmissionAuthority, discovery?:SessionDiscovery): (signal?: AbortSignal) => Promise<SessionInfo[]> {
-  return async (signal) => {
+  records?: () => InboxRecord[], authority?: AdmissionAuthority, discovery?:SessionDiscovery, codexActivity?: CodexActivity): RecordedSessions {
+  if (codexActivity) codexActivities.set(paths.dir, codexActivity);
+  const record = async (signal?: AbortSignal, pending?: CodexActivityStamp): Promise<SessionInfo[]> => {
     const {sequence,stamp}=discovery??beginSessionDiscovery(paths);
     revokeAuthority(authority);
     const listed = await list(signal);
@@ -162,6 +171,7 @@ export function recordingSessions(paths: NodePaths, list: (signal?: AbortSignal)
     for (const e of supplied) if (!rows.some(v => targetKey(v) === targetKey(e))) evidence.push({ ...e });
     markUnseen(rows, unseen);
     mergeClaudeHooks(paths, rows, evidence, observedAt);
+    mergeCodexHooks(paths, listed, evidence, observedAt, codexActivity ?? codexActivities.get(paths.dir), pending);
     let sessions: SessionInfo[];
     try {
     const trusted = observationBelongs(authority, observation);
@@ -213,6 +223,12 @@ export function recordingSessions(paths: NodePaths, list: (signal?: AbortSignal)
     }
     return sessions;
   };
+  return Object.assign(record, {
+    raw: list,
+    begin: () => beginSessionDiscovery(paths),
+    record: (listed: SessionInfo[], token: SessionDiscovery, signal?: AbortSignal, pending?: CodexActivityStamp) =>
+      recordingSessions(paths, async () => listed, log, now, undeliverableAfterMs, records, authority, token, codexActivity)(signal, pending),
+  });
 }
 
 
@@ -239,5 +255,95 @@ function mergeClaudeHooks(paths: NodePaths, listed: SessionInfo[], evidence: Ses
     else evidence.push({ runtime: "claude-code", sessionId: id, hook: {
       status: "value", value: true, source: "hook", complete: true, reasonCode: "observed", observedAt: hook.observedAt } });
     if (!matches.length) listed.push({ runtime: "claude-code", sessionId: id, state: "unknown", kind: "interactive" });
+  }
+}
+
+
+// One owner per daemon. First-seen entries are never evicted or renewed;
+// active evidence belongs only to the current authenticated connection.
+export class CodexActivity {
+  private connectedAt = Infinity;
+  private readonly seen = new Map<string, { stamp: CodexActivityStamp; binding: string; usable: boolean; staged: boolean }>();
+  private readonly active = new Map<string, CodexActivityStamp>();
+  private readonly latest = new Map<string, { observedAt: number; key: string }>();
+  connect(now: number): void { this.disconnect();this.connectedAt = now; }
+  disconnect(): void {
+    this.connectedAt = Infinity;this.active.clear();
+    for (const entry of this.seen.values()) entry.usable = false;
+  }
+  private key(stamp: CodexActivityStamp): string {
+    return JSON.stringify([stamp.intent.sessionId, stamp.intent.assignment!.turnId, stamp.intent.callId]);
+  }
+  private prune(now: number): void {
+    for (const [id, stamp] of this.active) if (stamp.observedAt + CODEX_ACTIVITY_EVIDENCE_MS <= now) this.active.delete(id);
+  }
+  reserve(stamp: CodexActivityStamp, now: number): boolean {
+    this.prune(now);
+    if (!isCodexActivityStamp(stamp) || stamp.observedAt <= this.connectedAt || stamp.observedAt > now
+      || now >= stamp.observedAt + CODEX_ACTIVITY_INGRESS_MS) return false;
+    const { sessionId } = stamp.intent;
+    const key = this.key(stamp), binding = JSON.stringify(stamp), prior = this.seen.get(key);
+    const latest = this.latest.get(sessionId);
+    if (latest && latest.observedAt > stamp.observedAt) return false;
+    if (prior) return prior.usable && prior.binding === binding && latest?.key === key;
+    const pendingSessions = new Set([...this.seen.values()].filter(e => e.usable
+      && e.stamp.observedAt + CODEX_ACTIVITY_EVIDENCE_MS > now).map(e => e.stamp.intent.sessionId));
+    if (this.seen.size >= 4096 || !pendingSessions.has(sessionId) && pendingSessions.size >= 128) return false;
+    this.seen.set(key, { stamp: structuredClone(stamp), binding, usable: true, staged: false });
+    this.latest.set(sessionId, { observedAt: stamp.observedAt, key });
+    return true;
+  }
+  stage(stamp: CodexActivityStamp, now: number): boolean {
+    const entry = this.seen.get(this.key(stamp));
+    if (!entry?.usable || entry.binding !== JSON.stringify(stamp) || stamp.observedAt <= this.connectedAt
+      || stamp.observedAt > now || stamp.observedAt + CODEX_ACTIVITY_INGRESS_MS <= now
+      || this.latest.get(stamp.intent.sessionId)?.key !== this.key(stamp)) return false;
+    entry.staged = true;return true;
+  }
+  hasRequest(requestId: string): boolean {
+    return [...this.seen.values()].some(entry => entry.stamp.intent.requestId === requestId);
+  }
+  reject(requestId: string): void {
+    for (const entry of this.seen.values()) if (entry.stamp.intent.requestId === requestId) entry.usable = false;
+    for (const [id, stamp] of this.active) if (stamp.intent.requestId === requestId) this.active.delete(id);
+  }
+  confirm(stamp: CodexActivityStamp, now: number): boolean {
+    const entry = this.seen.get(this.key(stamp));
+    if (!entry?.usable || !entry.staged || entry.binding !== JSON.stringify(stamp) || stamp.observedAt <= this.connectedAt
+      || stamp.observedAt > now || stamp.observedAt + CODEX_ACTIVITY_EVIDENCE_MS <= now
+      || this.latest.get(stamp.intent.sessionId)?.key !== this.key(stamp)) return false;
+    this.prune(now);this.active.set(stamp.intent.sessionId, entry.stamp);return true;
+  }
+  observations(now: number, pending?: CodexActivityStamp): CodexActivityStamp[] {
+    this.prune(now);
+    const stamps = new Map(this.active);
+    if (pending) {
+      const entry = this.seen.get(this.key(pending));
+      if (!entry?.usable || !entry.staged || entry.binding !== JSON.stringify(pending) || pending.observedAt <= this.connectedAt
+        || pending.observedAt > now || pending.observedAt + CODEX_ACTIVITY_INGRESS_MS <= now
+        || this.latest.get(pending.intent.sessionId)?.key !== this.key(pending)) throw new Error("Codex activity unavailable");
+      stamps.set(pending.intent.sessionId, pending);
+    }
+    return [...stamps.values()];
+  }
+}
+function mergeCodexHooks(paths: NodePaths, listed: SessionInfo[], evidence: SessionEvidence[], now: number,
+  owner?: CodexActivity, pending?: CodexActivityStamp): void {
+  if (!owner) { if (pending) throw new Error("Codex activity unavailable");return; }
+  const unseen = unlistedRuntimes(listed);
+  for (const stamp of owner.observations(now, pending)) {
+    const id = stamp.intent.sessionId;
+    const matches = listed.filter(row => row.sessionId === id);
+    const inputs = evidence.filter(e => e.sessionId === id);
+    const eligible = listed.length <= 512 && !unseen.includes("*") && !unseen.includes("codex")
+      && matches.length === 1 && matches[0].runtime === "codex" && matches[0].kind === "codex"
+      && !["closed", "archived", "deleted"].includes(matches[0].state)
+      && !["closed", "archived", "deleted"].includes(sessionVerdict(paths, { runtime: "codex", sessionId: id }, now).state)
+      && inputs.length === 1 && inputs[0].runtime === "codex"
+      && !Object.values(inputs[0]).some(o => o === null || typeof o === "object"
+        && ["identity", "conflict", "capped", "malformed", "failed", "aborted", "incomplete", "future"]
+          .includes(String(observationReason(o as Observation<unknown>, now))));
+    if (!eligible) { if (stamp === pending) throw new Error("Codex activity population unavailable");continue; }
+    inputs[0].hook = { status: "value", value: true, source: "hook", complete: true, reasonCode: "observed", observedAt: stamp.observedAt };
   }
 }

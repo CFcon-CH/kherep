@@ -1,4 +1,4 @@
-import { connectionClaudeHooks } from "./exchange-sessions.mts";
+import { CodexActivity, connectionClaudeHooks } from "./exchange-sessions.mts";
 import { beginSessionDiscovery } from "./exchange-sessions.mts";
 import { createConnectionSupervisor } from "./connection-supervisor.mts";
 import { createConnectionWatchdog } from "./connection-watchdog.mts";
@@ -154,13 +154,16 @@ export function startDaemon(config: NodeConfig, paths: NodePaths, log: (line: st
     try { return indexedInbox.unreported(...args); } catch (error) { storageFault(); throw error; }
   } };
   const currentClaudeHooks = connectionClaudeHooks(paths);
+  const codexActivity = new CodexActivity();
+  let codexActivityBatch: { controller: AbortController; socket: WebSocket } | null = null;
+  let refreshCodexActivityPolicy = async (): Promise<boolean> => false;
   // Daemon-lifetime only: reconnect clears active source, never these first
   // ingress observations. Restart intentionally begins a new local trust scope.
   const seenClaudeGestures = new Map<string, { slot: ClaudeSlotSelection["slot"]; observedAt: number; expiresAt: number }>();
   const sessions = recordingSessions(paths, (signal) => {
     backgroundDiscovery?.controller.abort();
     return source(signal);
-  }, log, undefined, undefined, () => inbox.records(), livenessAuthority);
+  }, log, undefined, undefined, () => inbox.records(), livenessAuthority, undefined, codexActivity);
   // Issue #197: one readiness probe per enabled runtime at the start, then only
   // when a run needs a runtime whose verdict aged out (runtime-readiness.mts).
   // Issue #420: none at the start for a runtime with a carried-over verdict.
@@ -195,7 +198,19 @@ export function startDaemon(config: NodeConfig, paths: NodePaths, log: (line: st
   const client = new NodeClient({
     nodeId: config.nodeId, identity, policy, handlers: commandHandlers(config, Date.now(), sessions, live, runtimeDiscovery),
     facts: detectFacts, runtimes: runtimeDiscovery, readyRuntimes: () => readiness.ready(),
-    sessions, deferInitialSessions: true,
+    sessions, codexActivity, deferInitialSessions: true,
+    refreshCodexActivityPolicy: () => refreshCodexActivityPolicy(),
+    beforeCodexActivityDiscovery: () => backgroundDiscovery?.controller.abort(),
+    runCodexActivityBatch: run => {
+      const currentSocket = socket;
+      if (codexActivityBatch || !currentSocket || !client.authenticated || currentSocket.readyState !== WebSocket.OPEN) return false;
+      const batch = { controller: new AbortController(), socket: currentSocket };
+      codexActivityBatch = batch;
+      void run(batch.controller.signal).catch(() => log("kherep-node: Codex activity unconfirmed")).finally(() => {
+        if (codexActivityBatch === batch) codexActivityBatch = null;
+      });
+      return true;
+    },
     recordClaudeHook: (request) => {
       if (!isClaudeSlotSelection(request)) return false;
       const key = `${request.sessionId}/${request.promptId}`;
@@ -300,7 +315,8 @@ export function startDaemon(config: NodeConfig, paths: NodePaths, log: (line: st
     };
     const generation = connections.begin(() => {
       // Revoke connection proof immediately; serialize the full reset after old work.
-      currentClaudeHooks.clear();
+      currentClaudeHooks.clear();codexActivity.disconnect();
+      if (codexActivityBatch?.socket === ws) { codexActivityBatch.controller.abort();codexActivityBatch = null; }
       authenticated = false; client.authenticated = false; client.workerCapabilities = null; selectedReferences.clear();
       watchdog.stop(); intakeWindow?.close();
       for (const timer of [snapshots, exchange, directory]) if (timer) clearInterval(timer);
@@ -309,6 +325,11 @@ export function startDaemon(config: NodeConfig, paths: NodePaths, log: (line: st
       }
       if (socket === ws) socket = null;
     });
+    refreshCodexActivityPolicy = async () => {
+      if (!generation.current() || ws.readyState !== WebSocket.OPEN) return false;
+      const refreshed = await client.refreshPolicy(loadPolicy(config.policyFile));
+      return generation.current() && ws.readyState === WebSocket.OPEN && publishRegistration(refreshed);
+    };
     const watchdog = createConnectionWatchdog({ clock, sendPing: () => {
       if (generation.current() && ws.readyState === WebSocket.OPEN) { ws.send(PING_FRAME); diagnostics.sent(PING_FRAME); }
     }, expire: event => {

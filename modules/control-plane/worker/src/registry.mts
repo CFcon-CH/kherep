@@ -32,6 +32,7 @@ import { intakeRows, recordTaken } from "./node-intake.mts";
 import { SqlMeter, type SqlRows } from "./sql-meter.mts";
 import {
   CLAUDE_MCP_CAPABILITY, REMOTE_MCP_CAPABILITY, digestMcpArguments, isSelfAssignmentSlot,
+  isCodexActivityRegistration, CODEX_ACTIVITY_INGRESS_MS, CODEX_ACTIVITY_EVIDENCE_MS, type CodexActivityRegistration,
   type McpInboxItem, type McpIntentClaim, type McpIntentRegistration, type SelfAssignmentSlot,
 } from "../../protocol-mcp.mts";
 import type { TaskReportBody } from "../../protocol-tasks.mts";
@@ -254,46 +255,89 @@ export class Registry extends DurableObject<Env> {
 
   replaceSessions(nodeId: string, sessions: SessionInfo[], identitySnapshot?: IdentitySnapshotV1, connectionToken?: string): { ok: true } | { ok: false; code: "IDENTITY_SNAPSHOT_REJECTED" | "IDENTITY_SNAPSHOT_UNAVAILABLE" } {
     const now = Date.now();
-    try { this.tx("replaceSessions", () => {
-      if (connectionToken !== undefined && this.sql.exec(
-        "SELECT 1 FROM nodes WHERE id=? AND revoked_at IS NULL AND public_key IS NOT NULL AND message_connection_token=?",
-        nodeId, connectionToken).toArray().length !== 1) throw new Error("identity-node-invalid");
-      if (!this.sessionIdentity.accept(nodeId, sessions, identitySnapshot)) return;
-      const pending = new Map(sessions.map(session => [session.sessionId, session]));
-      const existing = this.sql.exec(`SELECT session_id, runtime, state, started_at, name, cwd, kind, label, title, canonical_identity
-        FROM sessions WHERE node_id = ?`, nodeId).toArray();
-      for (const row of existing) {
-        const sessionId = String(row.session_id);
-        const session = pending.get(sessionId);
-        if (!session) {
-          this.directoryRows = null;
-          this.sql.exec("DELETE FROM sessions WHERE node_id = ? AND session_id = ?", nodeId, sessionId);
-          continue;
-        }
-        pending.delete(sessionId);
-        const unchanged = row.runtime === session.runtime && row.state === session.state
-          && row.started_at === (session.startedAt ?? null) && row.name === (session.name ?? null)
-          && row.cwd === (session.cwd ?? null) && row.kind === (session.kind ?? null)
-          && row.label === (session.label ?? null) && row.title === (session.title ?? null)
-          && row.canonical_identity === (session.canonicalIdentity ? JSON.stringify(session.canonicalIdentity) : null);
-        if (unchanged) continue;
-        this.directoryRows = null;
-        this.sql.exec(`UPDATE sessions SET runtime = ?, state = ?, started_at = ?, name = ?, cwd = ?, kind = ?, label = ?, title = ?, canonical_identity = ?,
-          updated_at = ? WHERE node_id = ? AND session_id = ?`, session.runtime, session.state, session.startedAt ?? null,
-          session.name ?? null, session.cwd ?? null, session.kind ?? null, session.label ?? null, session.title ?? null, session.canonicalIdentity ? JSON.stringify(session.canonicalIdentity) : null, now, nodeId, sessionId);
-      }
-      if (pending.size > 0) this.directoryRows = null;
-      for (const session of pending.values()) {
-        this.sql.exec(`INSERT INTO sessions (node_id, session_id, runtime, state, started_at, name, cwd, kind, label, title,
-          canonical_identity, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, nodeId, session.sessionId, session.runtime, session.state,
-          session.startedAt ?? null, session.name ?? null, session.cwd ?? null, session.kind ?? null, session.label ?? null,
-          session.title ?? null, session.canonicalIdentity ? JSON.stringify(session.canonicalIdentity) : null, now);
-      }
-    });
+    try { this.tx("replaceSessions", () => this.applySessions(nodeId, sessions, identitySnapshot, connectionToken, now));
       return { ok: true };
     } catch (error) {
       const rejected = error instanceof Error && ["identity-population-invalid", "identity-duplicate", "identity-snapshot-invalid", "identity-proof-invalid", "identity-node-invalid", "identity-generation-rollback", "identity-generation-conflict"].includes(error.message);
       return { ok: false, code: rejected ? "IDENTITY_SNAPSHOT_REJECTED" : "IDENTITY_SNAPSHOT_UNAVAILABLE" };
+    }
+  }
+
+  // Shared synchronous SQL operation; callers own the single transaction.
+  private applySessions(nodeId: string, sessions: SessionInfo[], identitySnapshot: IdentitySnapshotV1 | undefined,
+    connectionToken: string | undefined, now: number): boolean {
+    if (connectionToken !== undefined && this.sql.exec(
+      "SELECT 1 FROM nodes WHERE id=? AND revoked_at IS NULL AND public_key IS NOT NULL AND message_connection_token=?",
+      nodeId, connectionToken).toArray().length !== 1) throw new Error("identity-node-invalid");
+    if (!this.sessionIdentity.accept(nodeId, sessions, identitySnapshot)) return false;
+    const pending = new Map(sessions.map(session => [session.sessionId, session]));
+    const existing = this.sql.exec(`SELECT session_id, runtime, state, started_at, name, cwd, kind, label, title, canonical_identity
+      FROM sessions WHERE node_id = ?`, nodeId).toArray();
+    for (const row of existing) {
+      const sessionId = String(row.session_id);
+      const session = pending.get(sessionId);
+      if (!session) {
+        this.directoryRows = null;
+        this.sql.exec("DELETE FROM sessions WHERE node_id = ? AND session_id = ?", nodeId, sessionId);
+        continue;
+      }
+      pending.delete(sessionId);
+      const unchanged = row.runtime === session.runtime && row.state === session.state
+        && row.started_at === (session.startedAt ?? null) && row.name === (session.name ?? null)
+        && row.cwd === (session.cwd ?? null) && row.kind === (session.kind ?? null)
+        && row.label === (session.label ?? null) && row.title === (session.title ?? null)
+        && row.canonical_identity === (session.canonicalIdentity ? JSON.stringify(session.canonicalIdentity) : null);
+      if (unchanged) continue;
+      this.directoryRows = null;
+      this.sql.exec(`UPDATE sessions SET runtime = ?, state = ?, started_at = ?, name = ?, cwd = ?, kind = ?, label = ?, title = ?, canonical_identity = ?,
+        updated_at = ? WHERE node_id = ? AND session_id = ?`, session.runtime, session.state, session.startedAt ?? null,
+        session.name ?? null, session.cwd ?? null, session.kind ?? null, session.label ?? null, session.title ?? null, session.canonicalIdentity ? JSON.stringify(session.canonicalIdentity) : null, now, nodeId, sessionId);
+    }
+    if (pending.size > 0) this.directoryRows = null;
+    for (const session of pending.values()) {
+      this.sql.exec(`INSERT INTO sessions (node_id, session_id, runtime, state, started_at, name, cwd, kind, label, title,
+        canonical_identity, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, nodeId, session.sessionId, session.runtime, session.state,
+        session.startedAt ?? null, session.name ?? null, session.cwd ?? null, session.kind ?? null, session.label ?? null,
+        session.title ?? null, session.canonicalIdentity ? JSON.stringify(session.canonicalIdentity) : null, now);
+    }
+    return true;
+  }
+
+  async registerCodexActivity(nodeId: string, body: CodexActivityRegistration, connectionToken: string) {
+    const failure = { ok: false as const, error: "invalid intent metadata" };
+    if (!isCodexActivityRegistration(body)) return failure;
+    // Deliberately before the final clock, socket and generation checks.
+    const digest = await digestMcpArguments({ slot: body.intent.assignment!.slot });
+    const cached = this.directoryRows;
+    let refusal: { ok: false; error: string } | undefined;
+    try {
+      return this.tx("registerCodexActivity", () => {
+        const now = Date.now(), { intent, observedAt, sessions, identitySnapshot } = body;
+        if (!this.claudeConnection(nodeId, connectionToken) || digest !== intent.argumentsDigest) return failure;
+        const retry = this.mcp.activityRetry(nodeId, intent, observedAt, now, digest);
+        if (retry) return retry;
+        if (observedAt > now || observedAt + CODEX_ACTIVITY_INGRESS_MS <= now) return failure;
+        const node = this.sql.exec("SELECT identity_generation FROM nodes WHERE id=?", nodeId).one();
+        // A watermark can survive a legacy snapshot. New calls always require
+        // a genuinely newer, full commit; a same-generation no-op is unsafe.
+        if (node.identity_generation !== null && identitySnapshot.generation <= Number(node.identity_generation)) return failure;
+        const actor = sessions.filter(row => row.sessionId === intent.sessionId);
+        if (actor.length !== 1 || actor[0].runtime !== "codex" || actor[0].kind !== "codex"
+          || !["running", "idle-loaded", "reachable-probable"].includes(actor[0].state)) return failure;
+        if (!this.applySessions(nodeId, sessions, identitySnapshot, connectionToken, now)) throw new Error("activity-snapshot-noop");
+        const committed = this.sql.exec("SELECT identity_generation FROM nodes WHERE id=?", nodeId).one();
+        const current = this.sql.exec("SELECT runtime,state,kind FROM sessions WHERE node_id=? AND session_id=?", nodeId, intent.sessionId).one();
+        if (committed.identity_generation !== identitySnapshot.generation || current.runtime !== actor[0].runtime
+          || current.state !== actor[0].state || current.kind !== actor[0].kind) throw new Error("activity-snapshot-unconfirmed");
+        const result = this.mcp.register(nodeId, { ...intent, ttlMs: observedAt + CODEX_ACTIVITY_EVIDENCE_MS - now }, now, digest);
+        if (!result.ok) { refusal = result;throw new Error("activity-registration-refused"); }
+        if (result.expiresAt !== observedAt + CODEX_ACTIVITY_EVIDENCE_MS) throw new Error("activity-expiry-unconfirmed");
+        return result;
+      });
+    } catch {
+      // transactionSync rolled SQL back; restore the pre-primed projection too.
+      this.directoryRows = cached;
+      return refusal ?? failure;
     }
   }
 

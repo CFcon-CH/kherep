@@ -26,7 +26,7 @@ test("assignment hook binds only slot plus native session/turn/call and rejects 
   fs.writeFileSync(paths.policy, JSON.stringify({ version: 1, allowedCommands: [], remoteMcp: { enabled: true } }));
   const sessionId = "11111111-1111-4111-8111-111111111111", turnId = "22222222-2222-4222-8222-222222222222";
   const input = { hook_event_name: "PreToolUse", tool_name: "mcp__kherep_messaging__assign_self",
-    session_id: sessionId, tool_use_id: "native-call", turn_id: turnId, prompt: "SYNTHETIC PROMPT MUST NOT PERSIST",
+    session_id: sessionId, tool_use_id: "native-call", turn_id: turnId, thread_id: sessionId, rollout_path: `/synthetic/rollout-test-${sessionId}.jsonl`, prompt: "SYNTHETIC PROMPT MUST NOT PERSIST",
     tool_input: { slot: "codex-mac" } };
   for (const denied of [{ ...input, turn_id: undefined }, { ...input, session_id: "short" },
     { ...input, tool_input: { slot: "codex-windows" } }, { ...input, tool_input: { slot: "codex-mac", chatName: "forged" } },
@@ -39,9 +39,10 @@ test("assignment hook binds only slot plus native session/turn/call and rejects 
   assert.equal((await processMcpIntentHook(input, root, Date.now(), "claude-code"))?.hookSpecificOutput.permissionDecision, "deny");
   const pending = processMcpIntentHook(input, root);
   const requestId = await queuedRequestId(paths);
-  const text = fs.readFileSync(path.join(paths.mcpIntents, `${requestId}.json`), "utf8"), queued = JSON.parse(text);
+  const text = fs.readFileSync(path.join(paths.mcpIntents, `${requestId}.json`), "utf8"), local = JSON.parse(text), queued = local.intent;
+  assert.equal(local.kind, "codex-activity-v1");assert.ok(Number.isSafeInteger(local.observedAt));
   assert.equal(queued.sessionId, sessionId);assert.equal(queued.threadId, sessionId);assert.equal(queued.callId, "native-call");
-  assert.deepEqual(queued.assignment, { slot: "codex-mac", turnId });assert.equal(text.includes(input.prompt), false);
+  assert.deepEqual(queued.assignment, { slot: "codex-mac", turnId });assert.equal(text.includes(input.prompt), false);assert.equal(text.includes("rollout-test"), false);
   recordMcpIntentReceipt(paths, new Set(), { requestId, ok: true, expiresAt: Date.now() + 30_000, version: 1 });
   assert.deepEqual((await pending)?.hookSpecificOutput.updatedInput, { slot: "codex-mac", requestId });
 });
@@ -263,4 +264,21 @@ test("trusted hook rejects a disabled custom policy even when the default path i
     session_id: "session-a", tool_use_id: "call-a", tool_input: { limit: 5 } }, root, Date.now() - 8_000);
   assert.equal(result?.hookSpecificOutput.permissionDecisionReason, "remote_mcp_disabled");
   assert.equal(fs.existsSync(paths.mcpIntents), false);
+});
+
+
+test("platform hook refuses contradictory or derived native provenance before queuing", async (t) => {
+    const { root, paths } = temporary(t);
+    fs.mkdirSync(paths.dir, { recursive: true });
+    fs.writeFileSync(paths.policy, JSON.stringify({ version: 1, allowedCommands: [], remoteMcp: { enabled: true } }));
+    const sessionId = "11111111-1111-4111-8111-111111111111", other = "33333333-3333-4333-8333-333333333333";
+    const input = { hook_event_name: "PreToolUse", tool_name: "mcp__kherep_messaging__assign_self", session_id: sessionId, turn_id: "synthetic-turn", tool_use_id: "synthetic-call", tool_input: { slot: "codex-mac" } };
+    for (const extra of [{ parent_thread_id: other }, { forked_from_id: other }, { call_id: "foreign-call" }, { turnId: "foreign-turn" }, { sessionId: other }, { source: "cli" }, { agent_role: "worker" }, { attached_thread: true }, { source: "exec" }, { source: "attached" }, { agent_id: "worker" }, { is_subagent: true },
+        { thread_id: other }, { threadId: other }, { observedAt: Date.now() }, { stamp: {} }, { native: {} }, { chatName: "forged" }, { requestId: MESSAGE },
+        { rollout_path: `/synthetic/rollout-test-${other}.jsonl` }, { rollout_path: `C:\\synthetic/rollout-test-${sessionId}.jsonl` },
+        { rollout_path: `/synthetic/rollout-${sessionId}-${sessionId}.jsonl` }]) {
+        const result = await processMcpIntentHook({ ...input, ...extra }, root);
+        assert.equal(result?.hookSpecificOutput.permissionDecision, "deny");
+        assert.equal(fs.existsSync(paths.mcpIntents), false);
+    }
 });

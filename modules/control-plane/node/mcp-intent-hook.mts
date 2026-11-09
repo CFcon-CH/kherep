@@ -83,6 +83,9 @@ export async function processMcpIntentHook(input: Record<string, unknown>, root:
     || Object.keys(input.tool_input).join(",") !== "slot" || !isSelfAssignmentSlot(input.tool_input.slot))) {
     return deny("remote_mcp_invalid_self_assignment");
   }
+  if (tool === "assign_self" && input.tool_input.slot === "codex-mac" && !originalCodexIngress(input)) {
+    return deny("remote_mcp_invalid_self_assignment");
+  }
   const requestId = crypto.randomUUID();
   const hookStart = performance.now();
   let enqueued: number | null = null;
@@ -96,10 +99,12 @@ export async function processMcpIntentHook(input: Record<string, unknown>, root:
     if (tool === "reply") rememberGuardedMcpReply(paths, requestId, input.tool_input.inReplyTo);
     const common = { requestId, sessionId: input.session_id, callId: input.tool_use_id,
       tool, argumentsDigest: await digestMcpArguments(input.tool_input) };
-    enqueueMcpIntent(paths, tool === "assign_self"
-      ? { ...common, runtime: "codex", threadId: input.session_id,
+    const pending = tool === "assign_self"
+      ? { ...common, runtime: "codex" as const, threadId: input.session_id,
         assignment: { slot: input.tool_input.slot as "codex-mac" | "kherep-lead", turnId: input.turn_id as string } }
-      : runtime === "codex" ? { ...common, runtime: "codex" } : { ...common, runtime: "claude-code" });
+      : runtime === "codex" ? { ...common, runtime: "codex" as const } : { ...common, runtime: "claude-code" as const };
+    enqueueMcpIntent(paths, tool === "assign_self" && input.tool_input.slot === "codex-mac"
+      ? { kind: "codex-activity-v1", observedAt: now, intent: pending } : pending);
     enqueued = performance.now();
     const deadline = now + ACK_WAIT_MS;
     while (Date.now() < deadline) {
@@ -120,6 +125,31 @@ export async function processMcpIntentHook(input: Record<string, unknown>, root:
   } catch {
     return timed("storage_error", deny("remote_mcp_intent_storage_error"));
   }
+}
+
+// Only metadata supplied with this native invocation. Discard paths after
+// checking their owner; never open a rollout or inspect a message body here.
+function originalCodexIngress(input: Record<string, unknown>): boolean {
+  for (const key of ["observedAt", "stamp", "native", "chatName", "requestId"]) if (Object.hasOwn(input, key)) return false;
+  for (const key of ["parent_thread_id", "parent_session_id", "forked_from_id", "fork_id", "agent_id", "subagent_id",
+    "worker_id", "proxy_of", "attached_to", "attached_thread", "is_fork", "is_subagent", "forked_from_ordinal_exclusive",
+    "agent_nickname", "agent_role", "agent_type", "agent_path", "subagent_history_start_ordinal"]) if (input[key] !== undefined) return false;
+  for (const key of ["thread_id", "threadId"]) if (input[key] !== undefined && input[key] !== input.session_id) return false;
+  for (const [key, expected] of [["sessionId", input.session_id], ["call_id", input.tool_use_id], ["callId", input.tool_use_id], ["turnId", input.turn_id]]) {
+    if (input[key as string] !== undefined && input[key as string] !== expected) return false;
+  }
+  if (input.source !== undefined && input.source !== "vscode") return false;
+  if (input.originator !== undefined && input.originator !== "Codex Desktop") return false;
+  for (const key of ["transcript_path", "rollout_path"]) {
+    if (input[key] === undefined) continue;
+    if (typeof input[key] !== "string" || /[\\]/.test(input[key]) && /[/]/.test(input[key])) return false;
+    const leaf = input[key].split(/[/\\]/).at(-1)!;
+    if (leaf.startsWith("rollout-")) {
+      const ids = leaf.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g);
+      if (ids?.length !== 1 || ids[0] !== input.session_id || !leaf.endsWith(`-${input.session_id}.jsonl`)) return false;
+    }
+  }
+  return true;
 }
 
 function main(argv: string[]): Promise<void> {

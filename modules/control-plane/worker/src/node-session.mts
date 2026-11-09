@@ -17,6 +17,7 @@ import {
 } from "../../protocol-messages.mts";
 import { isCommandArgs } from "../../protocol-tasks.mts";
 import {
+  isCodexActivityRegistration,
   isMcpCredentialRotateBody, isMcpInboxResponseBody, isMcpIntentRegistration, MCP_INBOX_TOO_LARGE,
   type McpInboxResponseBody, type McpRuntime,
   isMcpLeadConfirmRequest, isMcpLeadConfirmResponse, MCP_LEAD_CONFIRM_MS, type McpLeadConfirmRequest,
@@ -436,6 +437,17 @@ export class NodeSession extends DurableObject<Env> {
         return this.sendControl(ws, "mcp.credential", { requestId: body.requestId, ...rotated });
       }
       case "mcp.intent.register": {
+        if (isCodexActivityRegistration(body)) {
+          const attachment = ws.deserializeAttachment() as Attachment;
+          if (this.authedSocket() !== ws || !attachment.registrationAccepted || !attachment.connectionToken) {
+            return this.sendControl(ws, "mcp.intent.receipt", { requestId: body.intent.requestId, ok: false,
+              error: "current enrolled-node registration is required for self-assignment" });
+          }
+          const registered = await registry.registerCodexActivity(nodeId, body, attachment.connectionToken);
+          return this.sendControl(ws, "mcp.intent.receipt", registered.ok
+            ? { requestId: body.intent.requestId, ok: true, expiresAt: registered.expiresAt, version: registered.version }
+            : { requestId: body.intent.requestId, ok: false, error: registered.error });
+        }
         if (!isMcpIntentRegistration(body)) return this.sendControl(ws, "error", { error: "invalid MCP intent metadata" });
         if (body.tool === "assign_self" && (this.authedSocket() !== ws
           || !(ws.deserializeAttachment() as Attachment).registrationAccepted)) {

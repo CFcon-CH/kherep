@@ -1,3 +1,6 @@
+import { isSessionList, type SessionInfo } from "./protocol.mts";
+import { isIdentitySnapshot, type IdentitySnapshotV1 } from "./protocol-session-identity.mts";
+
 // Shared remote MCP identity protocol. This file intentionally has no Node or
 // Workers imports so the authenticated node and Worker validate identical data.
 
@@ -37,6 +40,29 @@ export type McpIntentRegistration = McpIntentCommon & (
   { runtime: "codex"; threadId?: string }
   | { runtime: "claude-code"; threadId?: never }
 );
+
+// Disjoint from the legacy intent: old peers reject it without a fallback.
+export const CODEX_ACTIVITY_INGRESS_MS = 8_000;
+export const CODEX_ACTIVITY_EVIDENCE_MS = 60_000;
+export interface CodexActivityStamp { kind: "codex-activity-v1"; intent: McpIntentRegistration; observedAt: number }
+export interface CodexActivityRegistration extends CodexActivityStamp { sessions: SessionInfo[]; identitySnapshot: IdentitySnapshotV1 }
+export function isCodexActivityStamp(value: unknown): value is CodexActivityStamp {
+  return isObject(value) && Object.keys(value).sort().join(",") === "intent,kind,observedAt"
+    && activityFields(value, false);
+}
+function activityFields(value: Record<string, unknown>, native: boolean): boolean {
+  if (value.kind !== "codex-activity-v1" || !Number.isSafeInteger(value.observedAt) || Number(value.observedAt) < 0
+    || !Number.isSafeInteger(Number(value.observedAt) + CODEX_ACTIVITY_EVIDENCE_MS)
+    || !isMcpIntentRegistration(value.intent)) return false;
+  const intent = value.intent;
+  return intent.runtime === "codex" && intent.tool === "assign_self" && intent.assignment?.slot === "codex-mac"
+    && intent.ttlMs === undefined && Object.hasOwn(intent.assignment, "native") === native;
+}
+export function isCodexActivityRegistration(value: unknown): value is CodexActivityRegistration {
+  return isObject(value) && Object.keys(value).sort().join(",") === "identitySnapshot,intent,kind,observedAt,sessions"
+    && activityFields(value, true) && isSessionList(value.sessions) && isIdentitySnapshot(value.identitySnapshot)
+    && new Set(value.sessions.map(row => row.sessionId)).size === value.sessions.length;
+}
 
 interface McpIntentClaimCommon {
   nodeId: string;

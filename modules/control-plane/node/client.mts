@@ -1,3 +1,4 @@
+import { type CodexActivity, type RecordedSessions } from "./exchange-sessions.mts";
 import { isClaudeSlotResult, type ClaudeSlotResult, type ClaudeSlotSelection } from "../protocol.mts";
 import { isSlotAddressResult, type SlotAddressRequest, type SlotAddressResult } from "../protocol-messages.mts";
 import { unlistedRuntimes } from "./known-sessions.mts";
@@ -31,6 +32,8 @@ import { acceptsMessage, advertisedCapabilities, isAllowed, mcpRuntimeEnabled, t
 import {
   isMcpCredentialBody, isMcpInboxRequestBody, isMcpIntentReceiptBody, isMcpIntentRegistration, MCP_INBOX_TOO_LARGE,
   isMcpLeadConfirmRequest, MCP_LEAD_CONFIRM_MS,
+  digestMcpArguments, isCodexActivityRegistration, isCodexActivityStamp, CODEX_ACTIVITY_INGRESS_MS, CODEX_ACTIVITY_EVIDENCE_MS,
+  type CodexActivityStamp, type CodexActivityRegistration,
   type McpCredentialBody, type McpInboxItem, type McpIntentReceiptBody, type McpIntentRegistration, type McpAssignmentNative,
 } from "../protocol-mcp.mts";
 
@@ -57,7 +60,11 @@ export interface ClientOptions {
   facts: () => NodeFacts;
   runtimes: () => Promise<RuntimeInfo[]>;
   // Rejects when the listing failed, which is not the same as no sessions.
-  sessions: (signal?: AbortSignal) => Promise<SessionInfo[]>;
+  sessions: ((signal?: AbortSignal, pending?: CodexActivityStamp) => Promise<SessionInfo[]>) & Partial<Pick<RecordedSessions, "raw" | "begin" | "record">>;
+  runCodexActivityBatch?: (run: (signal: AbortSignal) => Promise<void>) => boolean;
+  refreshCodexActivityPolicy?: () => Promise<boolean>;
+  beforeCodexActivityDiscovery?: () => void;
+  codexActivity?: CodexActivity;
   assignmentIdentity?: (sessionId: string, context?: AssignmentContext) => Promise<McpAssignmentNative | null>;
   // The daemon publishes this after authentication so service-drained session
   // discovery cannot postpone connectedAt. Transport-free clients keep the
@@ -129,6 +136,15 @@ export class NodeClient {
   authenticated = false;
   private now(): number { return this.options.now?.() ?? Date.now(); }
   private assignmentGeneration = 0;
+  private snapshotGeneration = 0;
+  private readonly activityAdmissions = new Map<string, { stamp: CodexActivityStamp; wire: CodexActivityRegistration; generation: number; snapshotGeneration: number; confirmed: boolean }>();
+  private activityBatch: { controller: AbortController; generation: number } | null = null;
+  private clearCodexActivity(): void {
+    this.activityBatch?.controller.abort();this.activityBatch = null;
+    this.options.codexActivity?.disconnect();this.activityAdmissions.clear();
+  }
+  rejectCodexActivity(requestId: string): void { this.options.codexActivity?.reject(requestId);this.activityAdmissions.delete(requestId); }
+
   private readonly leadAdmissions = new Map<string, { binding: McpIntentRegistration; witness: string; generation: number; expiresAt: number; version?: number }>();
   // Issue #408, PR 4 (design r3 section 3.3): what the Worker of the current
   // authenticated connection named in a directory frame received on it; null
@@ -169,7 +185,7 @@ export class NodeClient {
 
   connectionClosed(): void {
     this.slotGeneration++;this.slotAddresses.clear();this.slotSelections.clear();
-    this.assignmentGeneration++;this.leadAdmissions.clear();
+    this.assignmentGeneration++;this.leadAdmissions.clear();this.clearCodexActivity();
     this.options.selectedReferences?.clear();
     this.authenticated = false;
     this.workerCapabilities = null;
@@ -229,7 +245,8 @@ export class NodeClient {
           return [];
         }
         if ((envelope.body as { name?: unknown }).name !== "auth.ok") return [];
-        this.assignmentGeneration++;this.leadAdmissions.clear();
+        this.assignmentGeneration++;this.leadAdmissions.clear();this.clearCodexActivity();
+        this.options.codexActivity?.connect(this.now());
         this.options.selectedReferences?.clear();
         this.slotGeneration++;this.slotAddresses.clear();this.slotSelections.clear();
         this.authenticated = true;
@@ -292,6 +309,7 @@ export class NodeClient {
           const body = envelope.body;
           if (isMcpCredentialBody(body) && body.requestId === this.credentialRequestPending) {
             this.assignmentGeneration++;this.leadAdmissions.clear();
+            for (const id of this.activityAdmissions.keys()) this.rejectCodexActivity(id);
             const stored = body.ok && this.callback(body.requestId, () => this.options.mcpCredential?.(body));
             this.credentialRequestPending = null;
             if (!stored) {
@@ -306,6 +324,32 @@ export class NodeClient {
         if (this.authenticated && this.policy.remoteMcp?.enabled === true) {
           const body = envelope.body;
           if (isMcpIntentReceiptBody(body)) {
+            const activity = this.activityAdmissions.get(body.requestId);
+            if (!live && (activity || this.options.codexActivity?.hasRequest(body.requestId))) {
+              this.rejectCodexActivity(body.requestId);return [];
+            }
+            if (!activity && body.ok && this.options.codexActivity?.hasRequest(body.requestId)) {
+              this.callback(body.requestId, () => this.options.mcpIntentReceipt?.({ requestId: body.requestId, ok: false, error: "MCP activity unconfirmed" }));
+              return [];
+            }
+            if (activity) {
+              if (body.ok && activity.generation === this.assignmentGeneration && (activity.confirmed || activity.snapshotGeneration === this.snapshotGeneration)
+                && this.now() < activity.stamp.observedAt + CODEX_ACTIVITY_INGRESS_MS
+                && body.expiresAt === activity.stamp.observedAt + CODEX_ACTIVITY_EVIDENCE_MS
+                && this.options.codexActivity?.confirm(activity.stamp, this.now())) {
+                activity.confirmed = true;
+                if (activity.snapshotGeneration === this.snapshotGeneration) {
+                  this.lastSnapshot = JSON.stringify({ sessions: activity.wire.sessions, identitySnapshot: activity.wire.identitySnapshot });
+                }
+              } else {
+                this.rejectCodexActivity(body.requestId);
+                // Preserve canonical Worker denials and their local category.
+                // A late/obsolete positive cannot release SDK arguments.
+                this.callback(body.requestId, () => this.options.mcpIntentReceipt?.(body.ok
+                  ? { requestId: body.requestId, ok: false, error: "MCP activity unconfirmed" } : body));
+                return [];
+              }
+            }
             const admission = this.leadAdmissions.get(body.requestId);
             if (admission) { if (body.ok) { admission.version = body.version;admission.expiresAt = Math.min(admission.expiresAt, body.expiresAt); }
               else this.leadAdmissions.delete(body.requestId); }
@@ -425,6 +469,7 @@ export class NodeClient {
 
   sessionFrames(sessions: SessionInfo[]): string[] {
     if (!this.authenticated) return [];
+    this.snapshotGeneration++;
     const identitySnapshot = identitySnapshotOf(sessions);
     const extras = identitySnapshot ? { identitySnapshot } : {};
     const rows = this.rowsWithinFrame(sessions, extras);
@@ -470,7 +515,8 @@ export class NodeClient {
     const wasMcpEnabled = this.policy.remoteMcp?.enabled === true;
     const mcpEnabled = policy.remoteMcp?.enabled === true;
     if (JSON.stringify(this.policy) !== JSON.stringify(policy)) {
-      this.options.selectedReferences?.clear();this.assignmentGeneration++;this.leadAdmissions.clear();
+      this.options.selectedReferences?.clear();this.assignmentGeneration++;this.leadAdmissions.clear();this.clearCodexActivity();
+      if (this.authenticated) this.options.codexActivity?.connect(this.now());
     }
     this.policy = policy;
     if (wasMcpEnabled && !mcpEnabled) {
@@ -539,6 +585,114 @@ export class NodeClient {
         expiresAt: this.now() + (local.ttlMs ?? 120_000) });
     }
     return [this.frame("mcp.intent.register", { ...enriched })];
+  }
+
+  private activitySerial<T>(run: () => Promise<T>): Promise<T> {
+    if (!this.options.enqueueSlotWork) return run();
+    return new Promise<T>((resolve, reject) => this.options.enqueueSlotWork!(async () => {
+      try { resolve(await run()); } catch (error) { reject(error); }
+    }));
+  }
+
+  // Called on the ordinary poll lane, but never awaited by that lane. The
+  // filesystem remains the queue and reservation remains non-authorizing.
+  queueCodexActivityBatch(stamps: CodexActivityStamp[], io: {
+    current(stamp: CodexActivityStamp): boolean; send(frame: string): boolean;
+    sent(stamp: CodexActivityStamp): void; refused(stamp: CodexActivityStamp): void;
+  }): void {
+    const generation = this.assignmentGeneration;
+    const run = async (signal: AbortSignal): Promise<void> => {
+      const current = () => !signal.aborted && this.authenticated && generation === this.assignmentGeneration
+        && mcpRuntimeEnabled(this.policy, "codex");
+      // Reserve the entire capped pickup synchronously, before the first await.
+      const picked = stamps.filter(stamp => current() && io.current(stamp)
+        && this.options.codexActivity?.reserve(stamp, this.now()));
+      for (const stamp of stamps) if (!picked.includes(stamp) && current() && io.current(stamp)) io.refused(stamp);
+      for (const stamp of picked) {
+        if (!current()) return;
+        if (!io.current(stamp)) { this.rejectCodexActivity(stamp.intent.requestId);continue; }
+        const sent = await this.prepareCodexActivity(stamp, signal, current, undefined, frame => {
+          if (!current() || !io.current(stamp) || !io.send(frame)) return false;
+          io.sent(stamp);return true;
+        });
+        if (!sent.length && current() && io.current(stamp) && this.now() < stamp.observedAt + CODEX_ACTIVITY_INGRESS_MS) {
+          await this.activitySerial(async () => { if (current() && io.current(stamp)) io.refused(stamp); });
+        }
+      }
+    };
+    if (this.options.runCodexActivityBatch) { this.options.runCodexActivityBatch(run);return; }
+    if (this.activityBatch) return;
+    const batch = { controller: new AbortController(), generation };
+    this.activityBatch = batch;
+    void run(batch.controller.signal).catch(() => {}).finally(() => { if (this.activityBatch === batch) this.activityBatch = null; });
+  }
+
+  async registerCodexActivity(stamp: CodexActivityStamp, beforePublish?: () => Promise<boolean>): Promise<string[]> {
+    if (!isCodexActivityStamp(stamp) || !this.options.codexActivity?.reserve(stamp, this.now())) return [];
+    return this.prepareCodexActivity(stamp, new AbortController().signal, () => true, beforePublish);
+  }
+
+  private async prepareCodexActivity(stamp: CodexActivityStamp, signal: AbortSignal, owned: () => boolean,
+    beforePublish?: () => Promise<boolean>, send?: (frame: string) => boolean): Promise<string[]> {
+    const generation = this.assignmentGeneration, snapshotGeneration = this.snapshotGeneration;
+    const live = () => owned() && !signal.aborted && this.authenticated && generation === this.assignmentGeneration
+      && mcpRuntimeEnabled(this.policy, "codex");
+    const valid = () => live() && snapshotGeneration === this.snapshotGeneration && this.now() >= stamp.observedAt
+      && this.now() < stamp.observedAt + CODEX_ACTIVITY_INGRESS_MS;
+    const source = this.options.sessions, owner = this.options.codexActivity;
+    let prepared = false;
+    try {
+      if (!isCodexActivityStamp(stamp) || !valid() || !owner || !source.raw || !source.begin || !source.record) return [];
+      const saved = this.activityAdmissions.get(stamp.intent.requestId);
+      if (saved) return await this.activitySerial(async () => {
+        if (!valid() || JSON.stringify(saved.stamp) !== JSON.stringify(stamp)) return [];
+        const frame = this.frame("mcp.intent.register", { ...saved.wire });
+        if (send && !send(frame)) return [];
+        prepared = true;return [frame];
+      });
+      const intent = stamp.intent;
+      const proof: { digest: string | null; native: McpAssignmentNative | null } = { digest: null, native: null };
+      await discoverMcpSessions(async aborted => {
+        const digest = await digestMcpArguments({ slot: intent.assignment!.slot });
+        aborted?.throwIfAborted();if (!valid()) throw new Error("activity-stale");proof.digest = digest;return [];
+      }, stamp.observedAt + CODEX_ACTIVITY_INGRESS_MS - this.now());
+      if (!valid() || proof.digest !== intent.argumentsDigest) return [];
+      await discoverMcpSessions(async aborted => {
+        const native = await (this.options.assignmentIdentity ?? nativeMcpAssignment)(intent.sessionId,
+          { ...intent.assignment!, callId: intent.callId, requestId: intent.requestId });
+        aborted?.throwIfAborted();if (!valid()) throw new Error("activity-stale");proof.native = native;return [];
+      }, stamp.observedAt + CODEX_ACTIVITY_INGRESS_MS - this.now());
+      const native = proof.native;
+      if (!valid() || !native || native.sessionId !== intent.sessionId) return [];
+      const enriched: McpIntentRegistration = { ...intent, assignment: { ...intent.assignment!, native } };
+      if (!isMcpIntentRegistration(enriched)) return [];
+      const token = await this.activitySerial(async () => {
+        if (!valid() || this.options.refreshCodexActivityPolicy && !await this.options.refreshCodexActivityPolicy()
+          || beforePublish && !await beforePublish() || !valid() || !owner.stage(stamp, this.now())) return null;
+        this.options.beforeCodexActivityDiscovery?.();return source.begin!();
+      });
+      if (!token || !valid()) return [];
+      const listed = await discoverMcpSessions(aborted => source.raw!(aborted), stamp.observedAt + CODEX_ACTIVITY_INGRESS_MS - this.now());
+      if (!valid()) return [];
+      return await this.activitySerial(async () => {
+        if (!valid() || this.options.refreshCodexActivityPolicy && !await this.options.refreshCodexActivityPolicy()
+          || beforePublish && !await beforePublish() || !valid()) return [];
+        const sessions = await source.record!(listed, token, signal, stamp);
+        if (!valid()) return [];
+        const identitySnapshot = identitySnapshotOf(sessions);
+        if (!identitySnapshot || unlistedRuntimes(sessions).length || !sessions.some(row => row.sessionId === intent.sessionId
+          && row.runtime === "codex" && row.kind === "codex" && ["running", "idle-loaded", "reachable-probable"].includes(row.state))) return [];
+        const wire: CodexActivityRegistration = { kind: "codex-activity-v1", intent: enriched, observedAt: stamp.observedAt, sessions, identitySnapshot };
+        if (!isCodexActivityRegistration(wire) || Buffer.byteLength(JSON.stringify(makeEnvelope("mcp.intent.register", wire, this.built + 1, this.processedSeq)), "utf8") + STAMP_MARGIN > MAX_FRAME_BYTES) return [];
+        for (const [id, entry] of this.activityAdmissions) if (entry.stamp.observedAt + CODEX_ACTIVITY_EVIDENCE_MS <= this.now()) this.rejectCodexActivity(id);
+        if (this.activityAdmissions.size >= 128 || !valid()) return [];
+        this.activityAdmissions.set(intent.requestId, { stamp: structuredClone(stamp), wire, generation, snapshotGeneration, confirmed: false });
+        const frame = this.frame("mcp.intent.register", { ...wire });
+        if (send && !send(frame)) return [];
+        prepared = true;return [frame];
+      });
+    } catch { return []; }
+    finally { if (!prepared && live()) this.rejectCodexActivity(stamp.intent.requestId); }
   }
 
   knownMcpIntents(intents: McpIntentRegistration[]): McpIntentRegistration[] {
