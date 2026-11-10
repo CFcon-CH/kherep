@@ -71,7 +71,7 @@ for (const timing of ["stable live", "already retired", "crossing ACK"] as const
 }
 
 for (const change of ["old live owner", "wrong pair", "wrong direction", "legacy", "corrupt tuple", "thread", "pair", "generation", "ordinal", "direction", "depth", "reason", "binding gained", "missing tombstone"] as const) {
-  it(`compatibility retirement cannot erase ${change}`, async () => {
+  it(change === "legacy" ? "compatibility retirement keeps a legacy parent legacy" : `compatibility retirement cannot erase ${change}`, async () => {
     const f = await compatibilityPair(), { id } = await deliveredParent(f);
     await query(sql => {
       if (change === "old live owner") sql.exec("UPDATE messages SET from_session=? WHERE id=?", ID_A, id);
@@ -99,8 +99,17 @@ for (const change of ["old live owner", "wrong pair", "wrong direction", "legacy
     });
     const result = await f.send(ID_A, ID_B, id);
     expect(hooks).toBe(1);
-    expect(result.ok && result.status.reason).toBe("loop-context-changed");
-    expect(result.ok && result.effects.deliveries).toEqual([]);
+    if (change === "legacy") {
+      // #765: the parent is legacy on both snapshots, so retirement keeps it legacy.
+      if (!result.ok) throw new Error(result.error);
+      expect({ state: result.status.state, reason: result.status.reason }).toEqual({ state: "queued", reason: undefined });
+      expect(result.effects.deliveries).toHaveLength(1);
+      expect(await query(sql => sql.exec("SELECT depth,loop_thread,loop_pair,loop_generation,loop_ordinal,loop_direction,loop_identity FROM messages WHERE id=?", result.status.messageId).one()))
+        .toEqual({ depth: 1, loop_thread: null, loop_pair: null, loop_generation: null, loop_ordinal: null, loop_direction: null, loop_identity: null });
+    } else {
+      expect(result.ok && result.status.reason).toBe("loop-context-changed");
+      expect(result.ok && result.effects.deliveries).toEqual([]);
+    }
     expect(await pairs(f.nodeId)).toEqual(before);
   });
 }

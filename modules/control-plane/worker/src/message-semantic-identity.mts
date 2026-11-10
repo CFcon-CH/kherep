@@ -38,10 +38,11 @@ export const sameBinding = (a: MessageBinding, b: MessageBinding): boolean => JS
 interface ComparisonOptions { parentRetirementEquivalent?: boolean }
 function semanticParent(parent: Parent, options: ComparisonOptions) {
   if (parent.kind === "missing") return parent;
-  // These are precisely the states validate() admits as a guarded parent.
-  // A processing/status advance keeps the lineage eligible; refusal or expiry
-  // never joins that class and is revalidated against the current parent.
-  const state = ["accepted", "delivered", "replied"].includes(String(parent.row.state)) ? "accepted" : parent.row.state;
+  // These states only move forward into each other, so an advance between two
+  // snapshots is not a lineage change. Admission is decided by validate() on
+  // the current snapshot, which still refuses a guarded parent that is queued.
+  // Refusal or expiry never joins the class.
+  const state = ["queued", "accepted", "delivered", "replied"].includes(String(parent.row.state)) ? "accepted" : parent.row.state;
   return { ...parent, row: { ...parent.row, state,
     ...(options.parentRetirementEquivalent ? { from_session: null, to_session: null } : {}) } };
 }
