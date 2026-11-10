@@ -6,9 +6,11 @@ import fs from "node:fs";
 import {
   bypassesPermissions, isPlainSessionId, listenerLock, listenerScope, rememberedMode, type ListenerLock, type ListenerScope,
 } from "./autonomy.mts";
+import { inspectTurnBudget } from "./autonomy-budget.mts";
 import type { NodePaths } from "./config.mts";
 import { readLocalSessions, type LocalSession } from "./exchange.mts";
 import { listInbox, readJson, setMessageProgress, type InboxRecord } from "./inbox.mts";
+import { wakeBudget } from "./policy.mts";
 import { resolveWakeSelection } from "./wake-bindings.mts";
 import type { RunnerDeps } from "./session-runner.mts";
 import { isActive, listTasks, taskForSession, taskGrants } from "./task-records.mts";
@@ -75,7 +77,14 @@ function observeAccepted(deps: RunnerDeps, session: LocalSession, accepted: Inbo
   const covered = (record: InboxRecord): boolean => listener
     && (own?.listed === true || (granted.includes(record) && (own === null || own.taskId === task?.taskId))
       || (replies.includes(record) && own?.replies === true));
-  progressRecords(deps.paths, authorized.filter(covered), "waking", "wake-pending", now);
+  const wakeable = authorized.filter(covered);
+  // Issue #827: the live listener is denied while an hour or day window is full
+  // (wake-hook.mts takeTurn). Read-only, as doctor's wakeBudget: no lock, no
+  // charge. Spacing and an unknown ledger claim no hold.
+  const budget = wakeable.length > 0 ? inspectTurnBudget(deps.paths, session.sessionId, now, wakeBudget(deps.policy)) : null;
+  if (budget?.nextAvailableAt && (budget.blockedBy.includes("hour") || budget.blockedBy.includes("day"))) {
+    progressRecords(deps.paths, wakeable, "waiting", "budget-exhausted", now, Date.parse(budget.nextAvailableAt));
+  } else progressRecords(deps.paths, wakeable, "waking", "wake-pending", now);
   progressRecords(deps.paths, authorized.filter((record) => !covered(record)), "waiting", "awaiting-user-turn", now);
 }
 
