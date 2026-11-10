@@ -83,16 +83,18 @@ export class LoopIdentity {
     return snapshot.both && !!snapshot.from && !!snapshot.to && snapshot.identityBinding === binding;
   }
   // Only validated forward retirement may omit the old live parent sessions.
+  // A legacy parent has no binding; both snapshots must validate to its kind.
   parentRetirementEquivalent(before: LoopSnapshot, after: LoopSnapshot, key: string | null, now: number): boolean {
     const a = before.parent, b = after.parent;
-    if (a.kind !== "guarded" || b.kind !== "guarded" || a.identityBinding !== b.identityBinding
+    if ((a.kind !== "guarded" && a.kind !== "legacy") || a.kind !== b.kind
       || typeof a.row.from_session !== "string" || typeof a.row.to_session !== "string"
-      || b.row.from_session !== null || b.row.to_session !== null
-      || (a.identityBinding === null && (!before.compatibility || !after.compatibility))) return false;
+      || b.row.from_session !== null || b.row.to_session !== null) return false;
+    if (a.kind === "guarded" && b.kind === "guarded" && (a.identityBinding !== b.identityBinding
+      || (a.identityBinding === null && (!before.compatibility || !after.compatibility)))) return false;
     // Compare only parent lineage here; remaining context still compares normally.
-    // Validate the old live endpoints too: retirement must not erase a bad owner.
+    // Validate the old live snapshot too: retirement must not erase a bad guarded owner.
     return sameLoopIdentity(before, { ...before, parent: b }, { parentRetirementEquivalent: true })
-      && this.validate(before, key, true, now) === "guarded" && this.validate(after, key, true, now) === "guarded";
+      && this.validate(before, key, true, now) === a.kind && this.validate(after, key, true, now) === a.kind;
   }
   validate(snapshot: LoopSnapshot, key: string | null, hasParent: boolean, now = Date.now()): "legacy" | "guarded" | { reason: string } {
     const { parent: p, from, to } = snapshot;

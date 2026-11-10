@@ -99,7 +99,7 @@ for (const reply of [false, true]) for (const initial of ["running", "unknown"] 
 }
 
 for (const change of ["old live owner", "unbound", "legacy", "corrupt tuple", "refused", "expired", "thread", "pair", "generation", "ordinal", "direction", "depth", "reason", "missing tombstone"] as const) {
-  it(`N1: parent retirement cannot launder ${change}`, async () => {
+  it(change === "legacy" ? "N1: parent retirement keeps a legacy parent legacy" : `N1: parent retirement cannot launder ${change}`, async () => {
     const f = await attestedPair([...BRAKE_CAPS, MESSAGING_DIAGNOSTICS_CAPABILITY]);
     const parent = await f.send(ID_B, ID_A); if (!parent.ok) throw new Error(parent.error);
     const id = parent.status.messageId;
@@ -127,8 +127,17 @@ for (const change of ["old live owner", "unbound", "legacy", "corrupt tuple", "r
       });
     });
     const result = await f.send(ID_A, ID_B, id);
-    expect(result.ok && result.status.reason).toBe("loop-context-changed");
-    expect(result.ok && result.effects.deliveries).toEqual([]);
+    if (change === "legacy") {
+      // #765: the parent is legacy on both snapshots, so retirement keeps it legacy.
+      if (!result.ok) throw new Error(result.error);
+      expect({ state: result.status.state, reason: result.status.reason }).toEqual({ state: "queued", reason: undefined });
+      expect(result.effects.deliveries).toHaveLength(1);
+      expect(await query(sql => sql.exec("SELECT depth,loop_thread,loop_pair,loop_generation,loop_ordinal,loop_direction,loop_identity FROM messages WHERE id=?", result.status.messageId).one()))
+        .toEqual({ depth: 1, loop_thread: null, loop_pair: null, loop_generation: null, loop_ordinal: null, loop_direction: null, loop_identity: null });
+    } else {
+      expect(result.ok && result.status.reason).toBe("loop-context-changed");
+      expect(result.ok && result.effects.deliveries).toEqual([]);
+    }
     expect(await pairs(f.nodeId)).toEqual(before);
   });
 }

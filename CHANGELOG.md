@@ -45,6 +45,13 @@ increments the minor version; every other release increments the patch version.
   CLI diagnostics and live reply acceptance remain separate work.
 - Control Plane Worker: extend that retirement equivalence to unbound guarded
   parents with positive-state compatibility on both snapshots. Refs #765.
+- Control Plane Worker: stop refusing an ordinary reply with `loop-context-changed`
+  (`lineage`) when its parent moves forward during send preparation. A legacy
+  parent may now retire to its tombstone as a guarded parent already could, and
+  a parent may leave `queued` for `accepted`. Both snapshots must still validate
+  to the same parent kind; a changed node, depth, reason, kind or a refused or
+  expired parent still refuses. The legacy reply limit of six, strikes, holds
+  and the segment limit are unchanged. Refs #765.
 
 ### Security
 
