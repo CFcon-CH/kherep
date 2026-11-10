@@ -28,6 +28,14 @@ increments the minor version; every other release increments the patch version.
 
 ### Fixed
 
+- Control Plane node: `msg status` names a Claude target's exhausted wake budget.
+  An accepted message that a live listener covers reports `waiting/budget-exhausted`
+  with the time the next slot frees while the session's hour or day window is full,
+  instead of `waking/wake-pending`. The daemon reads the ledger without a lock or a
+  charge; a spacing wait and a missing or unreadable ledger still read
+  `wake-pending`. Budget values, protocol and Worker are unchanged (#827); node
+  upgrade and restart, no Worker deployment.
+
 - Control Plane node: keep `sessions.snapshot` within the 64 KiB frame limit. A
   node over it drops `unknown` rows without proof from the end and logs the count;
   with only other rows left it sends nothing and logs that. A Worker `frame too

@@ -1092,8 +1092,13 @@ unobserved sessions. No ledger is charged or repaired.
 Stage 1 (#769, related #827) renders existing `budget-exhausted` progress on the
 sent route of `msg status`, on accepted received messages and on offered received
 messages whose progress is newer than the offer, with observation and retry times.
-An expired retry time does not prove a current hold. Exact per-message hold production remains a
-separate stage; no Worker update is required for these existing fields.
+An expired retry time does not prove a current hold. No Worker update is required for these existing fields.
+
+The target node produces that hold for Claude sessions (#827): an accepted message
+for an idle Claude session whose live listener covers it reports
+`waiting`/`budget-exhausted` with `retryAt` while the session's hour or day window
+is full. The daemon reads the ledger without a lock or a charge. A spacing wait and
+a missing or unreadable ledger keep `waking`/`wake-pending`.
 
 ### Node messaging
 
