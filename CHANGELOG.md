@@ -38,6 +38,17 @@ increments the minor version; every other release increments the patch version.
 
 ### Fixed
 
+- Control Plane node: a Codex busy-hint lock left behind by a dead owner no
+  longer blocks the busy-hint path for good (`target hint lock is busy`). The
+  lock now records its owner's pid, start time and a token. A lock whose owner
+  is gone, which names this process without being held, or which is empty and
+  older than 60 seconds is replaced under a reclaim gate by rename and compare;
+  a live owner's lock, unparseable content and Windows transient create errors
+  stay busy (#602). A failed release still reports failed but leaves a lock the
+  next call recovers, and `kherep-node doctor` counts busy-hint locks by class
+  under `listeners.busyHintLocks`. An existing empty orphan is recovered on the
+  first publish or claim for that owner after the upgrade. Closes #877.
+
 - Control Plane node: resuming a session that `sessions.json` already lists with
   a runtime no longer adds a second, runtime-less row for the same id. The
   duplicate made the node's message-reference population invalid, so every

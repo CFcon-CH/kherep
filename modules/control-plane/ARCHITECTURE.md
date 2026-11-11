@@ -770,7 +770,23 @@ do not establish that a particular host has installed and processed this path.
 
 `node/codex-busy-ticket.mts` uses exclusive owner locks and atomic writes; a
 lock create failing with EPERM, EACCES or EBUSY reports busy, every other
-error failed (issue #602). The
+error failed (issue #602). `node/busy-hint-lock.mts` owns the lock (issue
+#877): right after the exclusive create the holder writes
+`{version, pid, startedAt, token}` into it and runs its body only after reading
+its own token back. An existing lock is stale only when its recorded pid is gone
+(`kill(pid, 0)` reports ESRCH), when it names this process's pid without this
+process holding it (a leak, or a reused pid of a dead owner), or when it is
+empty and its mtime lies more than 60 seconds in the past on the wall clock.
+Everything else stays busy: unparseable content, read errors, a future mtime,
+a pid reused by another live process, a re-entrant call. A stale lock is taken
+only under the `<lock>.reclaim.lock` gate (at most two gates deep): the lock is
+read again, renamed to a tombstone and removed only if bytes and file identity
+still match; otherwise it is linked back, never over a newer lock. Release
+compares the token before unlinking. A failed unlink still reports failed but
+leaves a lock naming this process, which the next call (or any call after the
+process ended) recovers. The liveness check spawns nothing. `kherep-node doctor`
+counts busy-hint locks and gates under `listeners.busyHintLocks` as live,
+dead-owner, empty-old or unverifiable, without owner ids. The
 retained generation is immutable; a strictly newer admission may replace it.
 `node/codex-hook-owner.mts` validates matching native session/transcript-basename
 identities and rejects child contexts without opening the transcript.

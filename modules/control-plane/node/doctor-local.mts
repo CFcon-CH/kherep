@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { listenerDir, type ListenerLock } from "./autonomy.mts";
+import { classifyBusyHintLock } from "./busy-hint-lock.mts";
 import { FORK_ATTEMPT_STATES, forkAttempts, type ForkAttemptState } from "./codex-fork-attempts.mts";
 import { CODEX_ACTIVE_MS, isCodexHookEvent, isCodexSessionId, type CodexHookEvent, type CodexSessionRecord } from "./codex-sessions.mts";
 import { readConfig, type NodeConfig, type NodePaths } from "./config.mts";
@@ -196,8 +197,21 @@ function orphanedFiles(paths: NodePaths, now: number): number | PruneSkip {
   return candidates instanceof Map ? [...candidates.values()].reduce((sum, files) => sum + files.length, 0) : candidates.skipped;
 }
 
+// Busy-hint owner locks and their reclaim gates by class (issue #877), present only when there are any.
+const BUSY_HINT_LOCK = /^[0-9a-f-]{36}\.busy-hint\.json\.lock(?:\.reclaim\.lock){0,2}$/;
+type BusyHintLockCounts = { live: number; deadOwner: number; emptyOld: number; unverifiable: number };
+function busyHintLocks(dir: string, names: string[], pidAlive: (pid: unknown) => boolean, now: number):
+  { busyHintLocks?: BusyHintLockCounts } {
+  const counts: BusyHintLockCounts = { live: 0, deadOwner: 0, emptyOld: 0, unverifiable: 0 };
+  const key = { live: "live", "dead-owner": "deadOwner", "empty-old": "emptyOld", unverifiable: "unverifiable" } as const;
+  const locks = names.filter((name) => BUSY_HINT_LOCK.test(name));
+  for (const name of locks) counts[key[classifyBusyHintLock(path.join(dir, name), now, pidAlive)]]++;
+  return locks.length ? { busyHintLocks: counts } : {};
+}
+
 // Live: the lock's process runs and the lock is younger than the listener's
-// longest wait. Orphaned is hygiene, never a fault. Counts only; session ids stay out of the report.
+// longest wait. Orphaned is hygiene, never a fault, as is a busy-hint lock
+// that outlived its owner. Counts only; session ids stay out of the report.
 export function checkListeners(paths: NodePaths, pidAlive: (pid: unknown) => boolean, now: number): Check {
   let names: string[];
   try {
@@ -214,5 +228,5 @@ export function checkListeners(paths: NodePaths, pidAlive: (pid: unknown) => boo
     if (lock && pidAlive(lock.pid) && now - lock.startedAt <= WAKE_MAX_WAIT_MS) live++;
     else stale++;
   }
-  return { ok: true, live, stale, orphaned: orphanedFiles(paths, now) };
+  return { ok: true, live, stale, orphaned: orphanedFiles(paths, now), ...busyHintLocks(listenerDir(paths), names, pidAlive, now) };
 }

@@ -39,12 +39,14 @@ test("pre-existing temporary data is preserved and cannot authorize a claim", (t
   assert.equal(fs.readFileSync(temporary, "utf8"), "synthetic interrupted write");
 });
 
-test("failure to release the owned lock is fail-closed after claim persistence", (t) => {
+test("failure to release the owned lock is fail-closed after claim persistence and leaves a recoverable lock", (t) => {
   const { directory, file } = fixture(t);
   const mock = t.mock.method(fs, "unlinkSync", () => { throw Object.assign(new Error("synthetic lock error"), { code: "EACCES" }); });
   assert.deepEqual(claimBusyHint(directory, OWNER, POLICY, NOW, () => 1), { status: "failed" });
   assert.equal(JSON.parse(fs.readFileSync(file, "utf8")).claimed, true);
   assert.equal(fs.existsSync(file + ".lock"), true);
   mock.mock.restore();
-  assert.deepEqual(claimBusyHint(directory, OWNER, POLICY, NOW, () => assert.fail("held lock")), { status: "busy" });
+  // Issue #877: the lock records this process, so the next call recovers it.
+  assert.deepEqual(claimBusyHint(directory, OWNER, POLICY, NOW, () => assert.fail("claimed generation")), { status: "empty" });
+  assert.equal(fs.existsSync(file + ".lock"), false);
 });

@@ -107,6 +107,28 @@ test("the listener check counts live and stale listener locks only", async (t) =
   assert.deepEqual((await runDoctor(h.deps)).checks.listeners, { ok: true, live: 1, stale: 2, orphaned: 1 });
 });
 
+test("the listener check counts busy-hint locks that outlived their owner, without owner ids (issue #877)", async (t) => {
+  const h = host(t);
+  const dir = listenerDir(h.paths);
+  fs.mkdirSync(dir, { recursive: true });
+  const now = Date.parse("2026-10-04T12:00:00.000Z");
+  const lock = (n: number, content: string, mtime = now) => {
+    const file = path.join(dir, `01a0db74-0000-7000-8000-00000000000${n}.busy-hint.json.lock`);
+    fs.writeFileSync(file, content);
+    fs.utimesSync(file, mtime / 1000, mtime / 1000);
+  };
+  const owner = (pid: number) => JSON.stringify({ version: 1, pid, startedAt: 1, token: "01a0db74-0000-7000-8000-0000000000ff" });
+  lock(1, owner(LIVE_PID));
+  lock(2, owner(99));
+  lock(3, "", now - 120_000);
+  lock(4, "", now - 1_000);
+  lock(5, "synthetic unparseable lock");
+  const listeners = (await runDoctor(h.deps)).checks.listeners;
+  assert.deepEqual(listeners, { ok: true, live: 0, stale: 0, orphaned: 0,
+    busyHintLocks: { live: 2, deadOwner: 1, emptyOld: 1, unverifiable: 1 } });
+  assert.doesNotMatch(JSON.stringify(listeners), /01a0db74/);
+});
+
 test("the Codex session check counts recorded sessions by their last hook event, without session ids (issue #408)", async (t) => {
   const h = host(t);
   const now = Date.parse("2026-10-04T12:00:00.000Z");

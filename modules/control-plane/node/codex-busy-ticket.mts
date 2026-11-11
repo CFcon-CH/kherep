@@ -2,8 +2,8 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { isSessionRef } from "../protocol-messages.mts";
+import { withBusyHintLock } from "./busy-hint-lock.mts";
 import { CODEX_ACTIVE_MS } from "./codex-sessions.mts";
-import { classifyExclusiveCreate } from "./lock-contention.mts";
 
 // Busy-hint storage for issue #374. Only an authorized original-owner
 // CP admission may publish. This module never reads, offers or confirms Inbox
@@ -97,22 +97,17 @@ function writeTicket(file: string, ticket: Ticket): void {
 }
 
 // A held lock, or a create failing with EPERM, EACCES or EBUSY (Windows delete
-// pending, issue #602), is busy at once: no wait, no stale handling; the next
-// attempt retries the same authorized generation. Directory errors are failed.
+// pending, issue #602), is busy at once, without waiting; the next attempt
+// retries the same authorized generation. A lock of a dead owner is recovered
+// (busy-hint-lock.mts, issue #877). Directory errors are failed.
 function locked<T>(directory: string, owner: string, body: (file: string) => T): T | Failure {
-  const file = path.join(directory, `${owner}.busy-hint.json`), lock = file + ".lock";
+  const file = path.join(directory, `${owner}.busy-hint.json`);
   try {
     fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
     const stat = fs.lstatSync(directory);
     if (!stat.isDirectory() || stat.isSymbolicLink()) return "failed";
   } catch { return "failed"; }
-  let fd: number;
-  try { fd = fs.openSync(lock, "wx", 0o600); }
-  catch (error) { return classifyExclusiveCreate(error) === "other" ? "failed" : "busy"; }
-  let result: T | Failure;
-  try { result = body(file); } catch { result = "failed"; }
-  try { fs.closeSync(fd); fs.unlinkSync(lock); } catch { return "failed"; }
-  return result;
+  return withBusyHintLock(file + ".lock", () => body(file));
 }
 
 function current(ticket: BusyHintAdmission, now: number): boolean {
