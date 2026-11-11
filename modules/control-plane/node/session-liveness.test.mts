@@ -108,6 +108,19 @@ test("five-minute pass coalesces overlap, cache preserves evidence age, stop dra
   release(); assert.equal((await pending).reasonCode, "aborted"); await stopped;
   assert.equal(calls, 2);
 });
+test("a per-source interval replaces the five-minute coalescing; the default stays five minutes (issue #706)", async () => {
+  let clock = now; let calls = 0;
+  const source = { observe: async () => { calls++; return obs([loaded(clock)], "native-app", clock); } };
+  const fast = createLivenessPass(source, () => clock, undefined, 50_000);
+  const slow = createLivenessPass(source, () => clock);
+  await fast.observe([target]); await slow.observe([target]);
+  clock += 50_000;
+  await fast.observe([target]); await slow.observe([target]);
+  assert.equal(calls, 3, "only the per-source pass observed again after 50 s");
+  clock += LIVENESS_INTERVAL_MS - 50_000;
+  await slow.observe([target]);
+  assert.equal(calls, 4);
+});
 test("partial and failed passes preserve truthful rows, terminal refs refuse under locked record check", async (t) => {
   const paths = fixture(t);
   let clock = now;

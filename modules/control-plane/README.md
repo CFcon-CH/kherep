@@ -52,9 +52,25 @@ identity UNKNOWN/capped. No new recovery command or permanent latch is added.
 
 The existing daemon lane coalesces injected metadata observations every five
 minutes and shares the publication generation with admission checks. Display
-evidence expires after 60 seconds without renewal by republishing. Default
-native capabilities are UNKNOWN: this source phase adds no native scanner or
-launch command, and does not establish installation or native acceptance.
+evidence expires after 60 seconds without renewal by republishing. Native
+capabilities are UNKNOWN by default.
+
+Phase 2 (#706) adds a Codex liveness source, active only with
+`wake.nativeQueue: true`; other nodes run no probe and behave as before. On
+macOS it runs `ps` and `lsof` once per 60-second listing tick (its interval is
+50 seconds) and finds which live `codex` process holds a thread's rollout file
+open. That holder counts as the loaded thread (decision D1), and the delivery
+hook's record bound to it gives the turn (decision D2): an ended `Stop` or a
+fresh `SessionStart` is idle unless the rollout was written more than 30 seconds
+later. A held, idle thread reads `idle-loaded` and opens the native Queue route.
+The rollout is stat'ed, never opened. Windows uses the Restart Manager through
+one `powershell.exe` run, limited to 16 recently seen threads; it is not yet
+measured on a Windows node. Linux stays UNKNOWN. Every failure is UNKNOWN,
+never a positive and never an absence. A message the Queue route refuses for
+lack of liveness shows `awaiting-user-turn` in `msg status`. The delivery hook
+also records `Interrupt` and `SessionEnd`, which make a held thread
+`reachable-probable`; the installer does not yet add those two hook groups.
+None of this establishes installation or native acceptance.
 See [liveness architecture](ARCHITECTURE.md#session-liveness-metadata-phase-1-706).
 The accepted 24-hour deadline is a later admission check before Kherep
 queue/launch/resume, with a known gap before native turn start; it is not wired
@@ -63,7 +79,7 @@ in Phase 1.
 ## Architecture
 
 ```
-injected metadata --> five-minute coalesced observation --> serialized liveness generation
+Codex holder probe (nativeQueue) --> coalesced observation (50 s; default 5 min) --> serialized liveness generation
 shared generation --> truthful directory / deny-only admission / lifecycle tombstones
 kherep-node --outbound WSS--> Worker kherep-control --> NodeSession Durable Object (one per node)
                                                    \--> Registry Durable Object (one per deployment)

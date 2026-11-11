@@ -111,7 +111,7 @@ test("the Codex session check counts recorded sessions by their last hook event,
   const h = host(t);
   const now = Date.parse("2026-10-04T12:00:00.000Z");
   assert.deepEqual((await runDoctor(h.deps)).checks.codexSessions, { ok: true, recorded: 0,
-    lastEvent: { SessionStart: 0, UserPromptSubmit: 0, PostToolUse: 0, Stop: 0, unknown: 0 } });
+    lastEvent: { SessionStart: 0, UserPromptSubmit: 0, PostToolUse: 0, Stop: 0, Interrupt: 0, SessionEnd: 0, unknown: 0 } });
   const ids = ["019a0000-0000-7000-8000-0000000000a1", "019a0000-0000-7000-8000-0000000000a2", "019a0000-0000-7000-8000-0000000000a3",
     "019a0000-0000-7000-8000-0000000000a4", "019a0000-0000-7000-8000-0000000000a5"];
   recordCodexSession(h.paths, ids[0], "/synthetic/work", now - 1_000, "default", "Stop");
@@ -122,7 +122,7 @@ test("the Codex session check counts recorded sessions by their last hook event,
   const before = fs.readdirSync(h.paths.codexSessions).sort();
   const report = await runDoctor(h.deps);
   assert.deepEqual(report.checks.codexSessions, { ok: true, recorded: 4,
-    lastEvent: { SessionStart: 0, UserPromptSubmit: 1, PostToolUse: 0, Stop: 2, unknown: 1 } });
+    lastEvent: { SessionStart: 0, UserPromptSubmit: 1, PostToolUse: 0, Stop: 2, Interrupt: 0, SessionEnd: 0, unknown: 1 } });
   assert.deepEqual(fs.readdirSync(h.paths.codexSessions).sort(), before, "doctor removes no record");
   for (const id of ids) assert.equal(JSON.stringify(report).includes(id), false);
 });

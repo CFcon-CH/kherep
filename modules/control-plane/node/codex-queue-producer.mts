@@ -15,6 +15,7 @@ import { reserveNativeOwner, releaseNativeOwner } from "./codex-native-pending.m
 import { reconcileNativeQueues } from "./codex-native-reconcile.mts";
 import { CODEX_ACTIVE_MS, listCodexSessions, readCodexSession } from "./codex-sessions.mts";
 import { ensureDir, readConfig } from "./config.mts";
+import { progressRecords } from "./delivery-progress.mts";
 import { getMessage, writeJsonAtomic } from "./inbox.mts";
 import { explicitlyListed, readPolicy, wakeAllowed, wakeBudget } from "./policy.mts";
 import type { RunnerDeps } from "./session-runner.mts";
@@ -71,7 +72,10 @@ export function scheduleNativeQueue(deps: RunnerDeps, owner: string, messageIds:
 function admitted(deps: RunnerDeps, owner: string, messageIds: string[], fingerprint: string, grant?: WakeGrant):
   { ids: string[]; budget: ReturnType<typeof wakeBudget> } | null {
   const now = deps.now?.() ?? Date.now();
-  if (livenessAdmission(deps.paths, { runtime: "codex", sessionId: owner }, "queue", now, undefined, deps.livenessAuthority) === null) return null;
+  if (livenessAdmission(deps.paths, { runtime: "codex", sessionId: owner }, "queue", now, undefined, deps.livenessAuthority) === null) {
+    awaitingTurn(deps, owner, messageIds, now);
+    return null;
+  }
   const policy = readPolicy(deps.paths.policy, true);
   const session = readCodexSession(deps.paths, owner);
   const seen = Date.parse(session?.lastSeen ?? "");
@@ -96,6 +100,17 @@ function admitted(deps: RunnerDeps, owner: string, messageIds: string[], fingerp
       && automaticReplyDecision(record).allowed;
   });
   return ids.length ? { ids: [...new Set(ids)], budget: wakeBudget(policy) } : null;
+}
+
+// Issue #706 (design F4): a liveness refusal is visible in `msg status` with
+// the existing code, as for the Codex task resume (codex-wake.mts). Observational:
+// a failed write changes no admission.
+function awaitingTurn(deps: RunnerDeps, owner: string, messageIds: string[], now: number): void {
+  const records = messageIds.flatMap((id) => {
+    const record = getMessage(deps.paths.inbox, id);
+    return record?.messageId === id && record.toSession === owner && record.state === "accepted" ? [record] : [];
+  });
+  try { progressRecords(deps.paths, records, "waiting", "awaiting-user-turn", now); } catch { /* observational only */ }
 }
 
 function absent(file: string): boolean {

@@ -42,7 +42,7 @@ function newestFirst(dir: string, pattern: RegExp): string[] {
 }
 
 // The rollout file of sessionId within the newest ROLLOUT_DAY_DIRS date directories.
-function findRollout(home: string, sessionId: string): string | null {
+export function findRollout(home: string, sessionId: string): string | null {
   const root = path.join(home, "sessions");
   const suffix = `-${sessionId}.jsonl`;
   let days = 0;

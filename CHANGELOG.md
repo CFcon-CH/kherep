@@ -11,6 +11,16 @@ increments the minor version; every other release increments the patch version.
 
 ### Added
 
+- The Control Plane daemon has a Codex liveness source (#706, Phase 2). With
+  `wake.nativeQueue: true` it finds, once per listing tick, which live `codex`
+  process holds a thread's rollout open (macOS `ps`/`lsof`; Windows Restart
+  Manager, not yet measured there) and binds the delivery hook's record to that
+  holder. A held, idle thread now reads `idle-loaded`, so the native `codex
+  queue` route admits messages again; a refusal shows `awaiting-user-turn`. Nodes
+  without `nativeQueue` run no probe. The delivery hook also records `Interrupt`
+  and `SessionEnd` and keeps the `SessionStart` source; the installer does not yet
+  add those two hook groups. Refs #706.
+
 - Claude prompt/tool hooks can show up to five fixed session rename data lines
   per output, with a byte-bounded overflow summary. A disposable owner snapshot
   remembers omitted changes; hints never retry or wake a session. Refs #828.
