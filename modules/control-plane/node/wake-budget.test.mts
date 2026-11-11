@@ -167,8 +167,11 @@ test("the listener wakes a 21st time in the hour with perHour 22, and honours pe
 
   const raised = setup(t, { wake: { ...WAKE, sessions:[SELF], budget: { perHour: 22, perDay: 100 } } }).paths;
   spend(raised, T0 - 50 * 60_000, 2 * TURN_SPACING_MS);
+  // Each woken turn delivers its message; one left accepted would be the next Stop listener's backlog (issue #706).
   assert.equal((await listenFor(raised, 1, T0)).code, 2, "the 21st wake");
+  markDelivered(raised.inbox, id(1));
   assert.equal((await listenFor(raised, 2, T0 + 60_000)).code, 2, "the 22nd wake");
+  markDelivered(raised.inbox, id(2));
   assert.deepEqual(await listenFor(raised, 3, T0 + 2 * 60_000), { code: 0 }, "the 23rd is over budget");
   assert.deepEqual(auditLines(raised).map((l) => l.action), ["wake", "wake", "budget", "listener-timeout"]);
 

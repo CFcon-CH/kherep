@@ -91,12 +91,16 @@ test("messages waiting at SessionStart wake the session once, after the grace pe
   assert.deepEqual(actions(paths), ["backlog", "rearm"]);
   assert.equal(getMessage(paths.inbox, id(1))?.state, "accepted", "left for the next prompt");
 
-  // A listener armed at UserPromptSubmit or Stop leaves them to its delivery hook.
-  for (const event of ["UserPromptSubmit", "Stop"]) {
-    const other = seen(t);
-    arrive(other, 1, T0 - 60_000);
-    assert.deepEqual(await listen(other, { event, maxWaitMs: 20_000 }), { code: 2, text: REARM_TEXT }, event);
-  }
+  // A listener armed at UserPromptSubmit leaves them to its delivery hook.
+  const prompt = seen(t);
+  arrive(prompt, 1, T0 - 60_000);
+  assert.deepEqual(await listen(prompt, { event: "UserPromptSubmit", maxWaitMs: 20_000 }), { code: 2, text: REARM_TEXT });
+  // At Stop the delivery hook has run: what it left wakes the session once, after the grace period (issue #706).
+  const stop = seen(t);
+  arrive(stop, 1, T0 - 60_000);
+  assert.deepEqual(await listen(stop, { event: "Stop", maxWaitMs: 20_000 }), { code: 2, text: wakeText(1) });
+  assert.deepEqual(auditLines(stop).map((l) => [l.action, l.messageIds, Date.parse(l.ts)]),
+    [["backlog", [id(1)], T0 + 2 * WAKE_POLL_MS + WAKE_SETTLE_MS]]);
 });
 
 test("a prompt within the grace period supersedes it, and a delivery hook's offer wakes nobody", async (t) => {

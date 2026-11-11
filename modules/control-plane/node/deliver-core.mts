@@ -50,7 +50,8 @@ export const RECORD_LOCK_BUDGET_MS = 1_000;
 // whose sessions the msg CLI cannot identify from the environment.
 // maxBytes: the context budget, MAX_CONTEXT_BYTES by default.
 // mayContinue: asked before a Stop keeps the turn going, which is an
-// autonomous turn (autonomy.mts); false leaves everything for the next prompt.
+// autonomous turn (autonomy.mts); false leaves everything for the next prompt
+// or the wake of the listener armed at that Stop (wake-pending.mts, issue #706).
 // reofferOffered: false when a caller can only introduce new accepted records
 // to an already-running turn; hooks leave it true by default.
 // notices: what the caller's own unnoticedNotices found, so the call reads

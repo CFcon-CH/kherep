@@ -10,7 +10,8 @@ import { getMessage, readJson, writeJsonAtomic, type InboxRecord } from "./inbox
 // Which inbox records a wake listener (wake-hook.mts) wakes its session for.
 
 // Arrivals this soon after arming are left to the delivery hook of the same
-// event, which runs in parallel with the listener.
+// event, which runs in parallel with the listener. At Stop that hook has run
+// once the period is over: what is still accepted then is backlog (issue #706).
 export const WAKE_GRACE_MS = 3_000;
 // A listener armed at SessionStart wakes for the backlog, records that were
 // already waiting when it started, only this long after it started, so a
@@ -55,10 +56,12 @@ export function claimWake(paths: NodePaths, sessionId: string, now: number): boo
   return typeof marker?.wokenAt === "number" && now - marker.wokenAt <= WAKE_CLAIM_MS;
 }
 
-// fresh: accepted records received after the grace period. backlog: at
-// SessionStart, accepted records received before it ended; no delivery hook
-// runs at a Claude Code SessionStart, so nothing else offers them before the
-// next prompt. stuck: records left offered by a turn that ended without Stop.
+// fresh: accepted records received after the grace period. backlog: accepted
+// records received before it ended. At SessionStart no delivery hook runs, so
+// nothing else offers them before the next prompt. At Stop the delivery hook
+// did not offer them: it read the inbox before they arrived, or the budget
+// refused its continuation (issue #706). A listener armed at UserPromptSubmit
+// has none. stuck: records left offered by a turn that ended without Stop.
 // With grants (a listener its listing does not cover: wake-reply.mts
 // unlistedGrants) only the records it grants count; only waiting records are
 // judged, so a reply grant reads no sent record for a final one.
@@ -69,8 +72,8 @@ export function pending(paths: NodePaths, refs: string[], sessionId: string, loc
   // A readdressed record reached this session at its handover, not at its arrival (#113).
   const late = (r: InboxRecord): boolean => Date.parse((r.closedTo && r.closedAttempt) || r.receivedAt) > lock.startedAt + WAKE_GRACE_MS;
   const accepted = mine.filter((r) => r.state === "accepted");
-  const backlog = lock.event === "SessionStart" && now >= lock.startedAt + WAKE_BACKLOG_AFTER_MS
-    ? accepted.filter((r) => !late(r) && !woken.includes(r.messageId)) : [];
+  const backlogAfter = lock.event === "SessionStart" ? WAKE_BACKLOG_AFTER_MS : lock.event === "Stop" ? WAKE_GRACE_MS : Infinity;
+  const backlog = now >= lock.startedAt + backlogAfter ? accepted.filter((r) => !late(r) && !woken.includes(r.messageId)) : [];
   const stuck = now < lock.startedAt + WAKE_GRACE_MS ? [] : mine.filter((r) => r.state === "offered" && offerEnded(r, now)
     && (r.offers ?? 0) < MAX_OFFERS && !atReplyLimit(r) && !woken.includes(r.messageId));
   return { fresh: accepted.filter(late), backlog, stuck: stuck.map((r) => r.messageId) };
