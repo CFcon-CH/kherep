@@ -8,6 +8,9 @@ import test from "node:test";
 import type { ChildRun } from "./child-run.mts";
 import { parseCodexProcesses, parseRolloutHolders, probeCodexHolders } from "./codex-holder-probe.mts";
 
+// The probe runs on macOS only; lsof names are POSIX paths, which Windows path rules reject.
+const posixOnly = { skip: process.platform === "win32" ? "macOS probe: lsof names are POSIX paths" : false };
+
 const A = "01a0db01-0000-7000-8000-0000000000b1";
 const B = "01a0db01-0000-7000-8000-0000000000b2";
 const PS = [
@@ -32,7 +35,7 @@ test("ps rows keep exactly the codex executables, with a pid:start identity", ()
   assert.throws(() => parseCodexProcesses("garbled row"), /unparsable/);
 });
 
-test("lsof names outside <home>/sessions, non-rollout names and unnormalized paths are ignored", (t) => {
+test("lsof names outside <home>/sessions, non-rollout names and unnormalized paths are ignored", posixOnly, (t) => {
   const { sessions } = home(t);
   const processes = parseCodexProcesses(PS);
   const text = ["p101", "f12", `n${sessions}/2026/11/11/rollout-2026-11-11T09-00-00-${A}.jsonl`,
@@ -47,7 +50,7 @@ test("lsof names outside <home>/sessions, non-rollout names and unnormalized pat
   assert.throws(() => parseRolloutHolders("p999\n", sessions, processes), /unexpected process/);
 });
 
-test("probe: no codex process skips lsof; a symlinked home matches lsof's real paths only", async (t) => {
+test("probe: no codex process skips lsof; a symlinked home matches lsof's real paths only", posixOnly, async (t) => {
   const { root, home: real, sessions } = home(t);
   const link = path.join(root, "link");
   fs.symlinkSync(real, link);
