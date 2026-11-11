@@ -50,3 +50,37 @@ for (const [label, value] of [
     assert.equal(readWakeSnapshot(paths, NOW + 1000).snapshot.status, "fresh", "eight entries stay inside the envelope limit");
   }
 });
+
+// Issue #834: a resumed id already listed with a runtime is found through that row.
+// A second row would share its id and make the whole population invalid.
+const LISTED = { sessionId: "resumed", name: "r", runtime: "claude-code", state: "idle-loaded" };
+
+test("a resume of a listed session leaves every reference on the node bound", t => {
+  const paths = home(t);
+  writeLocalSessions(paths, [ROW, LISTED], NOW);
+  addLocalSession(paths, RESUMED);
+  const results = readSelectedLocalReferences(paths, [{ role: "to", ref: "alpha" }, { role: "from", ref: "resumed" }]).results;
+  assert.deepEqual(results.map(r => r.code), ["BOUND", "BOUND"]);
+  const from = results[1];
+  assert.equal(from.code === "BOUND" && from.owner.runtime, "claude-code");
+});
+
+test("a resume of a listed session adds no second row for its id", t => {
+  const paths = home(t);
+  writeLocalSessions(paths, [ROW, LISTED], NOW);
+  const before = stored(paths).sessions;
+  addLocalSession(paths, RESUMED);
+  const after = stored(paths).sessions;
+  assert.deepEqual(after, before);
+  assert.equal(after.filter((s: { sessionId: string }) => s.sessionId === "resumed").length, 1);
+});
+
+test("a second resume of an unlisted session keeps one provisional row", t => {
+  const paths = home(t);
+  writeLocalSessions(paths, [ROW], NOW);
+  addLocalSession(paths, RESUMED);
+  addLocalSession(paths, RESUMED);
+  const rows = stored(paths).sessions.filter((s: { sessionId: string }) => s.sessionId === "resumed");
+  assert.equal(rows.length, 1);
+  assert.equal("runtime" in rows[0], false);
+});
