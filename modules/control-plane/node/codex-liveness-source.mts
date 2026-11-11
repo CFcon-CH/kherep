@@ -102,7 +102,7 @@ export function threadEvidence(paths: NodePaths, target: SessionTarget, scan: Ho
 function candidates(paths: NodePaths, threads: string[], now: number): string[] {
   return threads.flatMap(id => {
     const stored = record(paths, id);
-    const seen = stored && stored !== "malformed" ? Date.parse(stored.lastSeen) : NaN;
+    const seen = stored && stored !== "malformed" ? Date.parse(stored.lastSeen) : Number.NaN;
     return Number.isFinite(seen) && seen <= now && now - seen <= CODEX_ACTIVE_MS ? [{ id, seen }] : [];
   }).sort((a, b) => b.seen - a.seen).map(c => c.id);
 }
