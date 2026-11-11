@@ -75,6 +75,23 @@ test("two independent processes can claim each generation only once", async (t) 
   }
 });
 
+test("two processes racing for one orphaned lock yield exactly one owner (issue #877)", async (t) => {
+  const { directory, admission, file } = fixture(t);
+  for (let round = 0; round < 8; round++) {
+    admission.generation = crypto.randomUUID();
+    admission.admittedAt = NOW + round;
+    assert.equal(publishBusyHint(directory, admission, NOW + round), "published");
+    const lock = file + ".lock", then = new Date(Date.now() - 120_000);
+    fs.writeFileSync(lock, "");
+    fs.utimesSync(lock, then, then);
+    const results = await race(t, directory, NOW + round);
+    assert.equal(results.filter((reply) => typeof reply.result === "object" && reply.result.status === "hint").length, 1);
+    assert.equal(results.filter((reply) => reply.observed).length, 1, "exactly one process owns the recovered lock");
+    assert.equal(JSON.parse(fs.readFileSync(file, "utf8")).claimed, true);
+    assert.deepEqual(fs.readdirSync(directory), [path.basename(file)], "no lock, gate or tombstone stays");
+  }
+});
+
 test("publication racing a claim preserves a complete generation and its claim state", async (t) => {
   const { directory, admission, file } = fixture(t);
   for (let round = 0; round < 8; round++) {
