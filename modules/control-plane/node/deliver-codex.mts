@@ -55,7 +55,10 @@ export function deliverForCodex(input: unknown, deps: HookDeps): string {
   if (typeof input !== "object" || input === null) return "";
   const { hook_event_name: event, session_id: sessionId, cwd, stop_hook_active: continued, permission_mode: mode, source } = input as Record<string, unknown>;
   if (event === "PostToolUse") return consumeBusyHint(input, deps);
-  if (event === "Interrupt" || event === "SessionEnd") return turnBoundary(deps, sessionId, event);
+  if (event === "Interrupt" || event === "SessionEnd") {
+    turnBoundary(deps, sessionId, event);
+    return "";
+  }
   if (event !== "SessionStart" && event !== "UserPromptSubmit" && event !== "Stop") return "";
   if (!isCodexSessionId(sessionId) || !fs.existsSync(deps.paths.config)) return "";
   // The event is idle evidence (issue #408); a SessionStart keeps its source (issue #706).
@@ -91,14 +94,13 @@ export function deliverForCodex(input: unknown, deps: HookDeps): string {
 // existing record, for the liveness source; they never create a session, move
 // lastSeen or deliver anything. "Exit 0 with no output" is valid for both
 // (hooks.md). A failed write leaves the record as it was.
-function turnBoundary(deps: HookDeps, sessionId: unknown, event: "Interrupt" | "SessionEnd"): "" {
-  if (!isCodexSessionId(sessionId) || !fs.existsSync(deps.paths.config)) return "";
+function turnBoundary(deps: HookDeps, sessionId: unknown, event: "Interrupt" | "SessionEnd"): void {
+  if (!isCodexSessionId(sessionId) || !fs.existsSync(deps.paths.config)) return;
   try {
     refreshCodexEvent(deps.paths, sessionId, event, deps.now?.());
   } catch {
     // the record keeps its previous event
   }
-  return "";
 }
 
 // A Stop that returns no continuation ended its turn, the only idle evidence

@@ -23,7 +23,8 @@ export interface HolderScan { at: number; processes: HolderProcess[]; holders: M
 export type HolderProbe = (home: string, candidates: string[], signal: AbortSignal) => Promise<HolderScan>;
 
 export const HOLDER_PROBE_TIMEOUT_MS = 10_000;
-const PS_ROW = /^\s*(\d+)\s+([A-Z][a-z]{2}\s+[A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}\s+\d{4})\s+(.+?)\s*$/;
+// Matched against the trimmed row, so the command needs no lazy match or trailing-space group.
+const PS_ROW = /^(\d+)\s+([A-Z][a-z]{2}\s+[A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}\s+\d{4})\s+(\S.*)$/;
 
 // `ps -axo pid=,lstart=,comm=` in the C locale. Keeps rows whose executable
 // basename is exactly codex; an unparsable row fails the whole scan.
@@ -31,7 +32,7 @@ export function parseCodexProcesses(text: string): HolderProcess[] {
   const processes: HolderProcess[] = [];
   for (const line of text.split("\n")) {
     if (!line.trim()) continue;
-    const match = PS_ROW.exec(line);
+    const match = PS_ROW.exec(line.trim());
     if (!match) throw new Error("unparsable process row");
     if (path.posix.basename(match[3]) !== "codex") continue;
     const pid = Number(match[1]), startMs = Date.parse(match[2]);
