@@ -114,7 +114,7 @@ export function startDaemon(config: NodeConfig, paths: NodePaths, log: (line: st
   let backgroundDiscovery: { controller: AbortController; socket: WebSocket } | null = null;
   const rawSource = sessionSource ?? ((signal?: AbortSignal) => listSessions({ paths, codexHome: codexHome(), signal }));
   const livenessAuthority = createAdmissionAuthority(paths);
-  const liveness = createLivenessPass(livenessSource, Date.now, livenessAuthority, livenessSource?.intervalMs);
+  const liveness = createLivenessPass(livenessSource, Date.now, livenessAuthority);
   const source = (signal?: AbortSignal) => waitForServiceAdmission(paths, async () => {
     revokeAuthority(livenessAuthority);
     const rows = await rawSource(signal);

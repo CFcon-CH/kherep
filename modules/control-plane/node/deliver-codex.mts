@@ -59,7 +59,7 @@ export function deliverForCodex(input: unknown, deps: HookDeps): string {
   if (event !== "SessionStart" && event !== "UserPromptSubmit" && event !== "Stop") return "";
   if (!isCodexSessionId(sessionId) || !fs.existsSync(deps.paths.config)) return "";
   // The event is idle evidence (issue #408); a SessionStart keeps its source (issue #706).
-  recordCodexSession(deps.paths, sessionId, cwd, deps.now?.(), mode, event, event === "SessionStart" ? source : undefined);
+  recordCodexSession(deps.paths, sessionId, cwd, deps.now?.(), mode, event, source);
   // Only names no other live Codex session shares (issue #66).
   const refs = codexSessionRefs(deps.paths, sessionId, deps.now?.()).refs;
   if (event === "SessionStart" || event === "UserPromptSubmit") {

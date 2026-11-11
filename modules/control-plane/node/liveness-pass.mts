@@ -10,7 +10,7 @@ export const unsupportedLiveness: LivenessSource = { observe: async () => ({ sta
 // Called from the existing daemon discovery/serialized publication lanes.
 // No timer and no independent filesystem writer.
 export function createLivenessPass(source: LivenessSource = unsupportedLiveness, now: () => number = Date.now, authority?: AdmissionAuthority,
-  intervalMs: number = LIVENESS_INTERVAL_MS) {
+  intervalMs: number = source.intervalMs ?? LIVENESS_INTERVAL_MS) {
   let pending: Promise<Observation<SessionEvidence[]>> | null = null;
   let lastStarted = -Infinity;
   let cached: Observation<SessionEvidence[]> | null = null;
