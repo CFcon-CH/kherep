@@ -21,8 +21,12 @@ export const CODEX_ACTIVE_MS = 12 * 60 * 60_000;
 // Files of sessions not seen for this long are removed.
 export const CODEX_RETENTION_MS = 7 * 24 * 60 * 60_000;
 
-// The hook events a record keeps as idle evidence (issue #408).
-export const CODEX_HOOK_EVENTS = ["SessionStart", "UserPromptSubmit", "PostToolUse", "Stop"] as const;
+// The hook events a record keeps as idle evidence (issue #408); Interrupt and
+// SessionEnd only bound a turn for the liveness source (issue #706).
+export const CODEX_HOOK_EVENTS = ["SessionStart", "UserPromptSubmit", "PostToolUse", "Stop", "Interrupt", "SessionEnd"] as const;
+// The documented SessionStart sources a record keeps (issue #706).
+export const CODEX_START_SOURCES = ["startup", "resume", "clear", "compact", "fork"] as const;
+export type CodexStartSource = typeof CODEX_START_SOURCES[number];
 export type CodexHookEvent = typeof CODEX_HOOK_EVENTS[number];
 export const isCodexHookEvent = (value: unknown): value is CodexHookEvent => CODEX_HOOK_EVENTS.includes(value as CodexHookEvent);
 
@@ -34,9 +38,10 @@ export const isCodexHookEvent = (value: unknown): value is CodexHookEvent => COD
 // lastStopEnded: the last Stop ended its turn, written by markStopEnded on
 // every exit of the Stop hook that returns no blocking continuation. Every hook
 // event clears it, so a Stop starts without it; absent is unknown, never idle.
+// lastStartSource: the source of the last SessionStart; any other event clears it.
 export interface CodexSessionRecord {
   sessionId: string; cwd?: string; lastSeen: string; runtime: typeof CODEX_RUNTIME; permissionMode?: string;
-  lastEvent?: CodexHookEvent; lastEventAt?: string; lastStopAt?: string; lastStopEnded?: true;
+  lastEvent?: CodexHookEvent; lastEventAt?: string; lastStopAt?: string; lastStopEnded?: true; lastStartSource?: CodexStartSource;
 }
 
 // Idle evidence (issue #408): the last event is a Stop marked as ended, at
@@ -54,12 +59,12 @@ export function idleEvidence(record: CodexSessionRecord | null | undefined, now:
   return now - stoppedAt >= idleAfterMs && now - seenAt <= CODEX_ACTIVE_MS;
 }
 
-const EVENT_KEYS = ["lastEvent", "lastEventAt", "lastStopAt", "lastStopEnded"] as const;
+const EVENT_KEYS = ["lastEvent", "lastEventAt", "lastStopAt", "lastStopEnded", "lastStartSource"] as const;
 type EventFields = Pick<CodexSessionRecord, typeof EVENT_KEYS[number]>;
 
 // A hook event replaces the last event (a Stop also the stop time) and clears
 // lastStopEnded; anything else keeps the previous record's valid event fields.
-function eventFields(previous: CodexSessionRecord | null, event: unknown, now: number): EventFields {
+function eventFields(previous: CodexSessionRecord | null, event: unknown, now: number, startSource?: unknown): EventFields {
   const validTime = (value: unknown): string | undefined => (typeof value === "string" && Number.isFinite(Date.parse(value)) ? value : undefined);
   const at = new Date(now).toISOString();
   const keptEvent = isCodexHookEvent(previous?.lastEvent) ? previous.lastEvent : undefined;
@@ -67,8 +72,10 @@ function eventFields(previous: CodexSessionRecord | null, event: unknown, now: n
   const lastEventAt = isCodexHookEvent(event) ? at : validTime(previous?.lastEventAt);
   const lastStopAt = event === "Stop" ? at : validTime(previous?.lastStopAt);
   const ended = !isCodexHookEvent(event) && previous?.lastStopEnded === true;
+  const source = (value: unknown): CodexStartSource | undefined => (CODEX_START_SOURCES.includes(value as CodexStartSource) ? value as CodexStartSource : undefined);
+  const lastStartSource = event === "SessionStart" ? source(startSource) : isCodexHookEvent(event) ? undefined : source(previous?.lastStartSource);
   return { ...(lastEvent ? { lastEvent } : {}), ...(lastEventAt ? { lastEventAt } : {}), ...(lastStopAt ? { lastStopAt } : {}),
-    ...(ended ? { lastStopEnded: true } : {}) };
+    ...(ended ? { lastStopEnded: true } : {}), ...(lastStartSource ? { lastStartSource } : {}) };
 }
 
 // The previous record with its event fields replaced as a whole: a field that
@@ -143,9 +150,9 @@ export function codexSessionRefs(paths: NodePaths, sessionId: string, now: numbe
 const fileOf = (paths: NodePaths, sessionId: string): string => path.join(paths.codexSessions, `${sessionId}.json`);
 
 // Writes or refreshes the record of one Codex session. Throws for an id that
-// cannot name a file. event: the hook event (issue #408).
+// cannot name a file. event: the hook event (issue #408); startSource: a SessionStart's source (issue #706).
 export function recordCodexSession(paths: NodePaths, sessionId: string, cwd: unknown, now: number = Date.now(), permissionMode?: unknown,
-  event?: unknown): void {
+  event?: unknown, startSource?: unknown): void {
   if (!isCodexSessionId(sessionId)) throw new Error("codex session id is not a plain name");
   ensureDir(paths.codexSessions);
   let previous: CodexSessionRecord | null = null;
@@ -159,7 +166,7 @@ export function recordCodexSession(paths: NodePaths, sessionId: string, cwd: unk
   const record: CodexSessionRecord = {
     sessionId, ...(typeof cwd === "string" && isSessionRef(cwd) && cwd.length <= 512 ? { cwd } : {}),
     lastSeen: new Date(now).toISOString(), runtime: CODEX_RUNTIME, ...(mode ? { permissionMode: mode } : {}),
-    ...eventFields(previous, event, now),
+    ...eventFields(previous, event, now, startSource),
   };
   writeJsonAtomic(fileOf(paths, sessionId), record);
 }

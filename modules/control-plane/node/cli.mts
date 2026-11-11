@@ -6,6 +6,7 @@ import { parseArgs } from "node:util";
 
 import { ATTACH_USAGE, runAttach } from "./attach.mts";
 import { ATTRIBUTION_USAGE, runAttribution } from "./attribution-cli.mts";
+import { codexLivenessSource } from "./codex-liveness-source.mts";
 import { nodePaths, readConfig } from "./config.mts";
 import { startDaemon } from "./daemon.mts";
 import { runDoctor } from "./doctor.mts";
@@ -64,7 +65,7 @@ export async function main(argv: string[]): Promise<number> {
   if (group === "daemon") {
     const config = readConfig(paths.config);
     if (!config) throw new Error(`not enrolled (${paths.config}); run "kherep-node node onboard" first`);
-    const daemon = startDaemon(config, paths, timestamped());
+    const daemon = startDaemon(config, paths, timestamped(), undefined, undefined, undefined, undefined, undefined, codexLivenessSource({ paths }));
     stopOnSignals(daemon);
     await daemon.done;
     return 0;

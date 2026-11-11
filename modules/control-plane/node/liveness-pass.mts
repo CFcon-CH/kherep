@@ -3,12 +3,14 @@ import type { NodePaths } from "./config.mts";
 import { publishLiveness, type LivenessSnapshot } from "./session-lifecycle.mts";
 import { observationReason, targetKey, type Observation, type SessionEvidence, type SessionTarget } from "./session-liveness.mts";
 export const LIVENESS_INTERVAL_MS = 5 * 60_000;
-export interface LivenessSource { observe(targets: SessionTarget[], signal: AbortSignal): Observation<SessionEvidence[]> | Promise<Observation<SessionEvidence[]>> }
+// intervalMs: the source's own coalescing interval (issue #706), else LIVENESS_INTERVAL_MS.
+export interface LivenessSource { observe(targets: SessionTarget[], signal: AbortSignal): Observation<SessionEvidence[]> | Promise<Observation<SessionEvidence[]>>; intervalMs?: number }
 export const unsupportedLiveness: LivenessSource = { observe: async () => ({ status: "unknown", observedAt: 0,
   complete: false, source: "unsupported", reasonCode: "unsupported" }) };
 // Called from the existing daemon discovery/serialized publication lanes.
 // No timer and no independent filesystem writer.
-export function createLivenessPass(source: LivenessSource = unsupportedLiveness, now: () => number = Date.now, authority?: AdmissionAuthority) {
+export function createLivenessPass(source: LivenessSource = unsupportedLiveness, now: () => number = Date.now, authority?: AdmissionAuthority,
+  intervalMs: number = LIVENESS_INTERVAL_MS) {
   let pending: Promise<Observation<SessionEvidence[]>> | null = null;
   let lastStarted = -Infinity;
   let cached: Observation<SessionEvidence[]> | null = null;
@@ -17,7 +19,7 @@ export function createLivenessPass(source: LivenessSource = unsupportedLiveness,
     signal?.throwIfAborted();
     halt.signal.throwIfAborted();
     if (pending) return pending;
-    if (cached && now() - lastStarted < LIVENESS_INTERVAL_MS) return Promise.resolve(cached);
+    if (cached && now() - lastStarted < intervalMs) return Promise.resolve(cached);
     lastStarted = now();
     const controller = new AbortController();
     const abort = () => controller.abort();

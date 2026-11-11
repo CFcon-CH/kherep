@@ -4,6 +4,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 
+import { codexLivenessSource } from "./codex-liveness-source.mts";
 import { nodePaths, readConfig } from "./config.mts";
 import { startDaemon } from "./daemon.mts";
 import { serviceSelector, supportedServicePlatform } from "./service-platform.mts";
@@ -50,8 +51,9 @@ async function run(argv: string[]): Promise<void> {
   if (!config) throw new Error("managed daemon service is not enrolled");
   process.chdir(args.workspace);
   const platform = supportedServicePlatform();
+  // Issue #706: the Codex liveness source; it probes only with wake.nativeQueue.
   const daemon = startDaemon(config, paths, timestamped(), undefined, undefined,
-    { name: args.serviceName, platform, ...(args.taskPath ? { taskPath: args.taskPath } : {}) });
+    { name: args.serviceName, platform, ...(args.taskPath ? { taskPath: args.taskPath } : {}) }, undefined, undefined, codexLivenessSource({ paths }));
   stopOnSignals(daemon);
   await daemon.done;
 }

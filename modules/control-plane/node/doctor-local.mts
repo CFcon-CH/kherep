@@ -153,7 +153,7 @@ export function checkCodexSessions(paths: NodePaths, now: number): Check {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") return { ok: false, detail: "the Codex session directory is unreadable" };
     names = [];
   }
-  const lastEvent: Record<CodexHookEvent | "unknown", number> = { SessionStart: 0, UserPromptSubmit: 0, PostToolUse: 0, Stop: 0, unknown: 0 };
+  const lastEvent: Record<CodexHookEvent | "unknown", number> = { SessionStart: 0, UserPromptSubmit: 0, PostToolUse: 0, Stop: 0, Interrupt: 0, SessionEnd: 0, unknown: 0 };
   let recorded = 0;
   for (const name of names.filter((entry) => entry.endsWith(".json"))) {
     let record: CodexSessionRecord | null = null;

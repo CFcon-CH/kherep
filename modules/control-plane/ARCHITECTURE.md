@@ -53,7 +53,8 @@ fresh app-absence observation also needs exact holder absence to prove closed.
 An exact CLI holder can remain running while Desktop is absent.
 
 `liveness-pass.mts` coalesces metadata observation at most once per five minutes
-on existing daemon discovery ticks. It adds no timer or subprocess. The existing
+on existing daemon discovery ticks, or once per the source's own `intervalMs`.
+It adds no timer. The existing
 serialized publication lane writes `session-liveness.json` and `sessions.json`
 with one snapshot generation. `sessions.json` is the commit marker: admission
 requires matching generations and the published target state. A failed second
@@ -61,7 +62,25 @@ write rejects the listing, reports no active snapshot, and makes old local rows
 UNKNOWN until a successful publication. Evidence ages from its original observation, with
 a 60-second display lifetime; publication never renews it. The daemon aborts and
 drains observation at stop. Unsupported native capabilities default to UNKNOWN.
-Injected sources are an adapter seam, not a measured or installed native adapter.
+
+Phase 2: `codex-liveness-source.mts` is the one native source the daemon
+(`service-runner.mts`, `cli.mts daemon`) passes. Without `wake.nativeQueue: true`
+it answers UNKNOWN/unsupported and starts no subprocess. Otherwise its 50-second
+interval makes every 60-second listing tick observe once, so the receipt never
+lapses between ticks. `codex-holder-probe.mts` (macOS: `ps -axo pid=,lstart=,comm=`
+and `lsof -nP -Fpn -p <codex pids>`) and `codex-holder-probe-windows.mts`
+(Restart Manager per rollout, at most 16 candidates, a holder must be a live
+`codex.exe` with the same start time; unmeasured on Windows) return the codex
+processes and, per thread, the processes holding `<codex home>/sessions/**/rollout-*-<id>.jsonl`.
+The source maps that to `holder` (`<pid>:<start>`), `app`, `loaded` (true while
+held, decision D1) and `turn` from the hook record bound to the holder
+(decision D2: an event older than the holder's start is UNKNOWN; an ended Stop
+or a startup/resume/clear/fork SessionStart is idle unless the rollout's mtime
+is more than 30 seconds later; Interrupt, SessionEnd and compact are UNKNOWN).
+Two holders are a conflict; a probe throw, timeout or abort is an UNKNOWN
+envelope, never `present: false`. `judgeSession` is unchanged. When the native
+Queue producer refuses for liveness it marks the messages `waiting` /
+`awaiting-user-turn`.
 
 `session-lifecycle.mts` retains bounded authoritative archive/delete tombstones
 by runtime/full ID, even after directory exclusion. Hooks, names and scan misses

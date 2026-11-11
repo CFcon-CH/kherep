@@ -216,6 +216,27 @@ test("each delivery hook event records itself as the session's last event, Stop 
   assert.deepEqual([record()?.lastEvent, record()?.lastEventAt, record()?.lastStopAt], ["Stop", at(clock), at(clock)]);
 });
 
+test("SessionStart keeps its source; Interrupt and SessionEnd replace only an existing record's event, silently (issue #706)", (t) => {
+  const paths = setup(t);
+  const file = path.join(paths.codexSessions, `${SELF}.json`);
+  const record = () => readJson<Record<string, unknown>>(file);
+  assert.equal(hook(paths, "Interrupt"), "");
+  assert.equal(hook(paths, "SessionEnd", { reason: "other" }), "");
+  assert.equal(fs.existsSync(file), false, "no record is created by a turn boundary");
+  hook(paths, "SessionStart", { source: "resume" });
+  const seen = record()?.lastSeen;
+  assert.deepEqual([record()?.lastEvent, record()?.lastStartSource], ["SessionStart", "resume"]);
+  hook(paths, "SessionStart", { source: "synthetic-unknown" });
+  assert.equal(record()?.lastStartSource, undefined, "only documented sources are kept");
+  for (const event of ["Interrupt", "SessionEnd"]) {
+    clock += 1_000;
+    assert.equal(hook(paths, event), "");
+    assert.deepEqual([record()?.lastEvent, record()?.lastEventAt, record()?.lastSeen, record()?.lastStartSource],
+      [event, new Date(clock).toISOString(), seen, undefined]);
+  }
+  assert.equal(idleEvidence(readCodexSession(paths, SELF), clock + CODEX_IDLE_AFTER_MS), false);
+});
+
 // Fable review of PR 2, M1: only a Stop that returns no continuation is marked
 // as ended, in a write of its own after the Stop is recorded; a blocking Stop
 // and a failed mark leave the record a Stop that is never idle.

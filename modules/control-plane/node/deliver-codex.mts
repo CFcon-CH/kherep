@@ -2,7 +2,7 @@ import fs from "node:fs";
 
 import { mayContinue } from "./autonomy.mts";
 import { CODEX_FORK_ENV, consumeBusyHint } from "./codex-busy-consume.mts";
-import { codexSessionRefs, isCodexSessionId, markStopEnded, recordCodexSession } from "./codex-sessions.mts";
+import { codexSessionRefs, isCodexSessionId, markStopEnded, recordCodexSession, refreshCodexEvent } from "./codex-sessions.mts";
 import {
   contextOutput, deliveryContext, sessionInbox, type HookDeps,
 } from "./deliver-core.mts";
@@ -53,12 +53,13 @@ export const CODEX_ESCALATION_NOTE = "Run the msg command on its own, not in a p
 export function deliverForCodex(input: unknown, deps: HookDeps): string {
   if (process.env[CODEX_FORK_ENV] === "1") return "";
   if (typeof input !== "object" || input === null) return "";
-  const { hook_event_name: event, session_id: sessionId, cwd, stop_hook_active: continued, permission_mode: mode } = input as Record<string, unknown>;
+  const { hook_event_name: event, session_id: sessionId, cwd, stop_hook_active: continued, permission_mode: mode, source } = input as Record<string, unknown>;
   if (event === "PostToolUse") return consumeBusyHint(input, deps);
+  if (event === "Interrupt" || event === "SessionEnd") return turnBoundary(deps, sessionId, event);
   if (event !== "SessionStart" && event !== "UserPromptSubmit" && event !== "Stop") return "";
   if (!isCodexSessionId(sessionId) || !fs.existsSync(deps.paths.config)) return "";
-  // The event is idle evidence (issue #408).
-  recordCodexSession(deps.paths, sessionId, cwd, deps.now?.(), mode, event);
+  // The event is idle evidence (issue #408); a SessionStart keeps its source (issue #706).
+  recordCodexSession(deps.paths, sessionId, cwd, deps.now?.(), mode, event, event === "SessionStart" ? source : undefined);
   // Only names no other live Codex session shares (issue #66).
   const refs = codexSessionRefs(deps.paths, sessionId, deps.now?.()).refs;
   if (event === "SessionStart" || event === "UserPromptSubmit") {
@@ -84,6 +85,20 @@ export function deliverForCodex(input: unknown, deps: HookDeps): string {
   if (!allowed(arrived)) return stopEnded(deps, sessionId);
   // The turn goes on: the record stays a Stop not marked as ended, never idle (issue #408).
   return JSON.stringify({ decision: "block", reason: CODEX_STOP_REASON });
+}
+
+// Issue #706: Interrupt and SessionEnd only replace the last event of an
+// existing record, for the liveness source; they never create a session, move
+// lastSeen or deliver anything. "Exit 0 with no output" is valid for both
+// (hooks.md). A failed write leaves the record as it was.
+function turnBoundary(deps: HookDeps, sessionId: unknown, event: "Interrupt" | "SessionEnd"): "" {
+  if (!isCodexSessionId(sessionId) || !fs.existsSync(deps.paths.config)) return "";
+  try {
+    refreshCodexEvent(deps.paths, sessionId, event, deps.now?.());
+  } catch {
+    // the record keeps its previous event
+  }
+  return "";
 }
 
 // A Stop that returns no continuation ended its turn, the only idle evidence
