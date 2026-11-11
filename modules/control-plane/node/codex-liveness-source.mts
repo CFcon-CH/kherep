@@ -74,7 +74,9 @@ function mtime(file: string): number | undefined {
 function record(paths: NodePaths, threadId: string): CodexSessionRecord | null | "malformed" {
   try {
     const value = readCodexSession(paths, threadId);
-    return value === null ? null : value.sessionId === threadId && value.runtime === CODEX_RUNTIME ? value : "malformed";
+    if (value === null) return null;
+    if (value.sessionId !== threadId || value.runtime !== CODEX_RUNTIME) return "malformed";
+    return value;
   } catch {
     return "malformed";
   }
@@ -107,9 +109,16 @@ function candidates(paths: NodePaths, threads: string[], now: number): string[] 
 
 export interface CodexLivenessOptions { paths: NodePaths; home?: string; probe?: HolderProbe; now?: () => number; platform?: NodeJS.Platform }
 
+// The platform's holder probe; Linux and others have none (UNKNOWN/unsupported).
+function defaultProbe(platform: NodeJS.Platform): HolderProbe | undefined {
+  if (platform === "darwin") return probeCodexHolders;
+  if (platform === "win32") return probeCodexHoldersWindows;
+  return undefined;
+}
+
 export function codexLivenessSource(options: CodexLivenessOptions): LivenessSource & { intervalMs: number } {
   const { paths, now = Date.now, platform = process.platform } = options;
-  const probe = options.probe ?? (platform === "darwin" ? probeCodexHolders : platform === "win32" ? probeCodexHoldersWindows : undefined);
+  const probe = options.probe ?? defaultProbe(platform);
   return { intervalMs: CODEX_LIVENESS_INTERVAL_MS, observe: async (targets, signal) => {
     const t = now();
     // Nodes without the native Queue run no probe and behave as before.
@@ -124,6 +133,6 @@ export function codexLivenessSource(options: CodexLivenessOptions): LivenessSour
       return unknownAt(t, "native-holder", signal.aborted ? "aborted" : "failed");
     }
     const value = threads.flatMap(target => threadEvidence(paths, target, scan) ?? []);
-    return { status: "value", value, observedAt: scan.at, complete: true, source: "native-holder", reasonCode: "observed" };
+    return valueAt(scan.at, "native-holder", value);
   } };
 }

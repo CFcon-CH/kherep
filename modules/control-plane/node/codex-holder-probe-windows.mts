@@ -93,7 +93,7 @@ export function parseWindowsHolders(text: string, files: { file: string; threadI
       const index = Number(match[1]), { file, threadId } = files[index];
       if (seen.has(index)) throw new Error("unparsable holder row");
       seen.add(index);
-      const codex = (match[2] ?? "").split(",").filter(Boolean)
+      const codex = (match[2]?.split(",") ?? [])
         .flatMap(identity => processes.filter(p => p.identity === identity)).map(p => ({ ...p, file }));
       holders.set(threadId, codex);
     } else throw new Error("unparsable holder row");
