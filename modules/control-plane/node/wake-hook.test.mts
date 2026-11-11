@@ -66,20 +66,25 @@ test("wakes with the fixed text for a message that arrives after the grace perio
   assert.equal(fs.existsSync(lockFile(paths)), false);
 });
 
-test("ignores what arrived up to the grace period after arming, then re-arms itself before the timeout", async (t) => {
+test("wakes once for what arrived up to the grace period after arming, then re-arms itself before the timeout", async (t) => {
   const { paths } = setup(t);
   const before = arrive(paths, 1, T0 - 1_000);
   let during = "";
-  const result = await listen(paths, { maxWaitMs: 10_000, tick: (clock) => {
+  const woken = await listen(paths, { maxWaitMs: 10_000, tick: (clock) => {
     if (clock === T0 + WAKE_POLL_MS) during = arrive(paths, 2, T0 + WAKE_GRACE_MS);
   } });
+  // The Stop delivery hook offered neither: both wait once the grace period is over (issue #706).
+  assert.deepEqual(woken, { code: 2, text: wakeText(2) });
+  fs.rmSync(wokeFile(paths, SELF));
+  // That turn never ran: the next listener does not wake for them again.
+  const result = await listen(paths, { start: T0 + 60_000, maxWaitMs: 10_000 });
   // Claude Code kills a listener at its timeout without waking the session, so
   // the listener wakes it first; that turn starts the next listener.
   assert.deepEqual(result, { code: 2, text: REARM_TEXT });
   assert.equal(REARM_TEXT, "Kherep: message listener re-armed.");
   assert.equal(WAKE_MAX_WAIT_MS, (WAKE_TIMEOUT_S - 60) * 1000);
   assert.deepEqual([getMessage(paths.inbox, before)?.state, getMessage(paths.inbox, during)?.state], ["accepted", "accepted"]);
-  assert.deepEqual(auditLines(paths).map((l) => [l.action, l.messageIds]), [["rearm", []]]);
+  assert.deepEqual(auditLines(paths).map((l) => [l.action, l.messageIds]), [["backlog", [before, during]], ["rearm", []]]);
   assert.equal(fs.existsSync(lockFile(paths)), false, "the re-arming listener releases its lock");
   assert.equal(fs.existsSync(wokeFile(paths, SELF)), false, "a re-arm leaves no wake marker");
 });

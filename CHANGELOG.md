@@ -38,6 +38,19 @@ increments the minor version; every other release increments the patch version.
 
 ### Fixed
 
+- Control Plane node: a Claude session is woken for a message its `Stop` left
+  waiting. A wake listener armed at `Stop` ignored, for its whole lifetime, every
+  `accepted` message received before it armed or within its first 3 s, so such a
+  message waited for an unrelated newer message or a user prompt (measured: a
+  reply received 1.7 to 3.7 s after the listener armed waited 7.7 minutes). The
+  listener now wakes the session once per such message when the 3 s are over
+  (audit `backlog`). That includes a message the `Stop` could not offer because
+  the turn budget refused the continuation (`continue-budget`): it is woken for
+  when the spacing or the hourly window allows it, no longer only at the next
+  user prompt. A listener armed at `UserPromptSubmit` is unchanged. Budget
+  values, protocol, Worker, schema and policy are unchanged and there is no new
+  setting (#706); node upgrade, no Worker deployment.
+
 - Control Plane node: `msg status` names a Claude target's exhausted wake budget.
   An accepted message that a live listener covers reports `waiting/budget-exhausted`
   with the time the next slot frees while the session's hour or day window is full,

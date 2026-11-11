@@ -27,7 +27,8 @@ export type AutonomyAction = "listener-timeout" | "wake" | "stuck-offer" | "budg
   | "queue-failed" | "permission-mode-unknown" | "ambiguous-name" | "intercom" | "intercom-refused" | "intercom-failed" | "awaiting-user-turn"
   // codex-queue.mts: a Desktop-classified thread is a TUI on the shared app-server daemon (issue #268).
   | "tui-reachable"
-  // wake-hook.mts at SessionStart: messages that arrived while no listener ran (issue #101).
+  // wake-hook.mts at SessionStart: messages that arrived while no listener ran (issue #101);
+  // at Stop: messages its delivery hook left accepted (issue #706).
   | "backlog"
   // wake-hook.mts: the policy file turned unreadable; the listener keeps its last good policy (issue #213).
   | "policy-unreadable"

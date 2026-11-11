@@ -5,7 +5,7 @@ import test from "node:test";
 import { listenerScope, markListenerIdle, rememberMode, TURN_SPACING_MS, TURNS_PER_HOUR } from "./autonomy.mts";
 import { REOFFER_AFTER_MS } from "./deliver-core.mts";
 import type { RunMode } from "./headless-mode.mts";
-import { getMessage, markOffered, readJson } from "./inbox.mts";
+import { getMessage, markDelivered, markOffered, readJson } from "./inbox.mts";
 import { listenerDir, REARM_TEXT, STUCK_TEXT, WAKE_GRACE_MS, WAKE_POLL_MS, wakeMaxWaitMs, WAKE_MAX_WAIT_MS, wakeText } from "./wake-hook.mts";
 import { arrive, auditLines, id, listen, lockFile, SECRET, SELF, setup, T0, type ListenOptions } from "./wake-fixture.mts";
 
@@ -141,7 +141,11 @@ test("a run whose mode is undecided arms as before (fail open)", async (t) => {
 
 test(`wakes at most ${TURNS_PER_HOUR} times per rolling hour and waits out the spacing`, async (t) => {
   const { paths } = setup(t, {wake:{enabled:true,sessions:[SELF]}});
-  for (let n = 1; n <= TURNS_PER_HOUR; n++) assert.equal((await listenFor(paths, n, { start: T0 + n * 60_000 })).code, 2, `wake ${n}`);
+  // Each woken turn delivers its message; one left accepted would be the next Stop listener's backlog (issue #706).
+  for (let n = 1; n <= TURNS_PER_HOUR; n++) {
+    assert.equal((await listenFor(paths, n, { start: T0 + n * 60_000 })).code, 2, `wake ${n}`);
+    markDelivered(paths.inbox, id(n));
+  }
   const over = TURNS_PER_HOUR + 1;
   const late = T0 + over * 60_000;
   assert.deepEqual(await listenFor(paths, over, { start: late }), { code: 0 });
@@ -155,6 +159,7 @@ test(`wakes at most ${TURNS_PER_HOUR} times per rolling hour and waits out the s
   // Spacing: a message 10 s after a wake wakes once 30 s have passed.
   const spaced = setup(t, {wake:{enabled:true,sessions:[SELF]}}).paths;
   assert.equal((await listenFor(spaced, 1)).code, 2);
+  markDelivered(spaced.inbox, id(1));
   const start = T0 + 10_000;
   assert.deepEqual(await listenFor(spaced, 2, { start }), { code: 2, text: wakeText(1) });
   const [first, second] = auditLines(spaced).map((l) => Date.parse(l.ts));
