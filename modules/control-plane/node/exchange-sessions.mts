@@ -43,12 +43,16 @@ export function readLocalSessions(paths: NodePaths, now: number = Date.now()): L
 // its first turn finds it by name before the next listing replaces the file.
 // The row has no runtime on purpose: a row with one survives the next listing
 // (recordingSessions carries prior runtime rows), a provisional row must not.
+// An id already listed with a runtime is found through that row (issue #834):
+// a second row for the same id would make the population invalid for every
+// reference on the node. An earlier provisional row is replaced.
 export function addLocalSession(paths: NodePaths, session: { sessionId: string; name?: string }): void {
   const value = readJson<{ sessions?: unknown }>(paths.sessions);
   const sessions = (Array.isArray(value?.sessions) ? value.sessions : [])
     .filter((s): s is LocalSession => snapshotObject(s) && typeof s.sessionId === "string")
     .filter((s) => s.sessionId !== session.sessionId || s.runtime !== undefined);
-  writeJsonAtomic(paths.sessions, { ...value, generation: readLivenessSnapshot(paths)?.generation, sessions: [...sessions, { ...session, state: "unknown" }] });
+  const listed = sessions.some((s) => s.sessionId === session.sessionId);
+  writeJsonAtomic(paths.sessions, { ...value, generation: readLivenessSnapshot(paths)?.generation, sessions: listed ? sessions : [...sessions, { ...session, state: "unknown" }] });
 }
 
 // The name sessions.json records for a local session id, if any.

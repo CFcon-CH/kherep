@@ -38,6 +38,14 @@ increments the minor version; every other release increments the patch version.
 
 ### Fixed
 
+- Control Plane node: resuming a session that `sessions.json` already lists with
+  a runtime no longer adds a second, runtime-less row for the same id. The
+  duplicate made the node's message-reference population invalid, so every
+  reference on the node resolved as `INVALID` until the next listing (about
+  60 s). The listed row now stays the only row for that id; a resume of an
+  unlisted session still adds its provisional row. Reader, Worker, protocol and
+  policy are unchanged; node upgrade, no Worker deployment (#834).
+
 - Control Plane node: a Claude session is woken for a message its `Stop` left
   waiting. A wake listener armed at `Stop` ignored, for its whole lifetime, every
   `accepted` message received before it armed or within its first 3 s, so such a

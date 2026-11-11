@@ -1338,7 +1338,10 @@ Dotted display identities are accepted, but listener and ledger filenames
 still require the separate plain-token guard. Unsupported listener evidence
 is explicit. A provisional resume row carries no runtime and unknown state;
 the snapshot counts it as an incomplete row and reports partial completeness,
-and the next successful listing replaces it. `unseen` is written only by a
+and the next successful listing replaces it. A resume of a session already
+listed with a runtime adds no row: the listed row stays the only one for that
+id, since a second row would make the population invalid for message references
+(issue #834). `unseen` is written only by a
 listing. A listed row with a runtime and state `unknown` is different: it counts
 as a state fact, does not lower completeness and is never idle, so a complete
 listing can still hold rows whose idleness is unobserved.
