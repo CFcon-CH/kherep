@@ -73,7 +73,7 @@ function parseStopReport(stdout: string): StopScriptReport | undefined {
   let value: Record<string, unknown>;
   try { value = JSON.parse(stdout.trim()) as Record<string, unknown>; } catch { return undefined; }
   if (!value || typeof value !== "object" || Array.isArray(value)
-    || Object.keys(value).sort().join() !== "hresult,ok,phase,reason" || value.ok !== false
+    || Object.keys(value).sort((a, b) => a.localeCompare(b)).join() !== "hresult,ok,phase,reason" || value.ok !== false
     || !(STOP_PHASES as readonly unknown[]).includes(value.phase) || typeof value.reason !== "string" || !REASON.test(value.reason)
     || !Number.isSafeInteger(value.hresult)) return undefined;
   return { phase: value.phase as StopScriptReport["phase"], reason: value.reason, hresult: value.hresult as number };
