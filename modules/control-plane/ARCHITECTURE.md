@@ -164,8 +164,11 @@ timely admission; actual-native-start expiry is not guaranteed.
 
 ## Managed daemon service
 
-`node/service-cli.mts` dispatches `service install|upgrade|status|rollback`
-before the generic node CLI parser. A clean committed checkout is archived into
+`node/service-cli.mts` dispatches `service install|upgrade|status|rollback|recover`
+before the generic node CLI parser. `service recover` (`node/service-recover.mts`,
+issue #810) composes the transaction's existing lock, drain, preflight,
+proof-carrying stop, launch permit, health and settle steps to start the
+receipt's unchanged definition; it writes no definition or receipt. A clean committed checkout is archived into
 an immutable per-user source pin whose full file inventory, Git blob identities,
 paths and executable modes reproduce the checkout tree commitment. The service
 runner starts the daemon from that pin and `daemon.json` captures its verified

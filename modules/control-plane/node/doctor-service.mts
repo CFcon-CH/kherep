@@ -7,11 +7,11 @@ import { readServiceReceipt } from "./service-records.mts";
 import { serviceNodeState, type ServiceNodeState } from "./service-status.mts";
 
 // `kherep-node doctor` check managedService (#838 (c)): the node state `service status` reports, without a native
-// read: off, drain-blocked or running, with the recovery text. The last failure is shown, never judged: ok follows
+// read: off, drain-blocked or running, with the recovery text (#810: `service recover`). The last failure is shown, never judged: ok follows
 // the node state alone. Codes, states, times and a commit only: no path, pid, label or native output.
 const RECOVERY: Record<Exclude<ServiceNodeState, "running">, string> = {
-  off: "the managed service's daemon is not running; kherep-node service status shows why; kherep-node service upgrade --source <clean checkout> starts it again, see docs/INSTALLATION.md",
-  "drain-blocked": "a stale or unverifiable service drain blocks new session admissions; kherep-node service status shows why; kherep-node service upgrade --source <clean checkout> reclaims a stale drain, see docs/INSTALLATION.md",
+  off: "the managed service's daemon is not running; kherep-node service status shows why; kherep-node service recover prints whether the installed service can be started again and, with --confirm, starts it, see docs/INSTALLATION.md",
+  "drain-blocked": "a stale or unverifiable service drain blocks new session admissions; kherep-node service status shows why; kherep-node service recover --confirm reclaims a stale drain and restarts the installed service, see docs/INSTALLATION.md",
 };
 
 function shownLastFailure(paths: NodePaths): "invalid" | Record<string, unknown> | undefined {

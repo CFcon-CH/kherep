@@ -11,6 +11,21 @@ increments the minor version; every other release increments the patch version.
 
 ### Added
 
+- `kherep-node service recover` starts the installed managed service again
+  after a failed upgrade left the node off or a retained drain blocked it
+  (#810, stage B of #838). Without `--confirm` it prints evidence only
+  (`canRecover`, a fixed refusal `reason`, drain, definition against the
+  receipt, daemon, pin, plan and the display-only last failure) and writes,
+  stops or starts nothing. With `--confirm` it is a strict subset of `service
+  upgrade` to the installed commit: no new source, no definition or receipt
+  write; upgrade's stale-drain reclaim, admission wait, preflight and
+  proof-carrying stop, then start, health, settle and drain release. It refuses
+  definition drift (use `rollback`), a recorded candidate in place, an active
+  or unknown drain, a live daemon outside the stopped service, an unowned live
+  daemon and an unverifiable pin, and keeps the drain after any failure that
+  follows a native effect. Nothing releases a retained drain automatically.
+  The `managedService` doctor check now names `service recover`.
+
 - A failed Windows managed-service upgrade or rollback names the native call
   that failed (#838, stage A). Every PowerShell call of the Windows adapter has a
   fixed name; the CLI failure, also one raised before any mutation, carries a

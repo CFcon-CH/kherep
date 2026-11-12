@@ -30,6 +30,12 @@ test("the display paths keep the record out of every verdict they print", () => 
   assert.equal((status.match(/lastFailureReport\(/g) ?? []).length, 1, "one use, in the printed report");
   assert.match(status, /\.\.\.lastFailureReport\(paths\) \};\n {2}console\.log/);
   assert.equal((status.match(/readServiceLastFailure\(/g) ?? []).length, 1);
+  // #810: `service recover` prints the same display through the CLI, once, in its printed report only.
+  const cli = sources.find(file => file.name === "service-cli.mts")!.text;
+  assert.equal((cli.match(/lastFailureReport\(/g) ?? []).length, 1);
+  assert.match(cli, /console\.log\(JSON\.stringify\(\{ \.\.\.result\.view, \.\.\.lastFailureReport\(paths\) \}, null, 2\)\);/);
+  const recover = sources.find(file => file.name === "service-recover.mts")!.text;
+  assert.doesNotMatch(recover, /lastFailure|last-failure/i, "the recover decision never sees the record");
   const doctor = sources.find(file => file.name === "doctor-service.mts")!.text;
   assert.match(doctor, /return \{ ok: node === "running", managed: true, node, drain,/);
   assert.doesNotMatch(doctor, /serviceNodeState\([^)]*(record|lastFailure)/);

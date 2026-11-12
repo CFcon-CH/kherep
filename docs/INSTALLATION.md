@@ -631,8 +631,9 @@ drain, as before:
 - `STOP_NATIVE_REFUSED` for any other failure after the first effect and for a
   malformed or incomplete stop proof.
 
-The node can then stay off until the next `service upgrade`; `service status`
-(`node: off`) and `kherep-node doctor` show it.
+The node can then stay off until the next `service upgrade` or a confirmed
+`service recover` (below); `service status` (`node: off`) and `kherep-node
+doctor` show it.
 
 `service status` reports `node` first: `off` when no recorded daemon is alive,
 `drain-blocked` when the daemon runs but a stale or unverifiable drain blocks
@@ -662,6 +663,66 @@ blocks daemon start and no daemon runs, status adds
 `daemonStart: SERVICE_DRAIN_BLOCKED`. The supervisor writes that code once per
 wait to the service log. `running` continues to report the Scheduled Task,
 not the daemon.
+
+#### Recovering a node that stays off
+
+`kherep-node service recover` (issue #810) starts the installed service again
+without a checkout. Do not move or delete the drain file by hand: a drain is
+kept on purpose while a stopped daemon or its family may still run, and
+`recover` releases it only after it has proven what upgrade proves.
+
+Without `--confirm` it only reads and prints evidence as JSON, like `service
+status`: `canRecover` (`true` or `false`), on a refusal a fixed `reason` and
+`detail`, `node`, `drain`, `definition` (against the receipt), `running` (the
+LaunchAgent or Scheduled Task), `daemon` (`alive`, `dead`, `unrecorded`),
+`ownership` for a live daemon, `source` (the installed pin, `verified` or
+`unverified`), the `plan` it would run and the display-only `lastFailure`. It
+takes no lock and writes, stops or starts nothing; it exits 0 only when
+`canRecover` is `true`. The native preflights run only under `--confirm`, so
+`canRecover: true` means the evidence permits an attempt.
+
+`kherep-node service recover --confirm` is a strict subset of `service upgrade`
+to the installed commit: no new source, no definition write and no receipt
+change. Under the service transaction lock it reads the evidence again, then
+reclaims a stale drain by upgrade's rule, waits for admissions as upgrade does,
+re-reads the definition, and when the service runs stops it through the same
+proof-carrying stop upgrade uses, followed by the stopped-service absence
+check. It verifies the installed source pin again, issues the Windows launch
+permit, starts the receipt's exact definition, waits up to 180 seconds for an
+authenticated daemon of the installed source, re-reads the service as settled
+and only then releases the drain. On success it prints `done` (for example
+`reclaim-drain`, `stop`, `start`, `release-drain`) and `final` (`running`,
+`node`, `drain`). It never reads or changes `service/last-failure.json`.
+
+It refuses, with nothing written or started:
+
+| `reason` | State | Next step |
+|---|---|---|
+| `DRAIN_ACTIVE`, `DRAIN_UNKNOWN` | another transaction drains admissions, or the drain owner cannot be verified | wait, or inspect the `service/drain` owner file |
+| `DEFINITION_DRIFT` | the definition differs from the receipt (the #746 shape) | `service rollback`, on Windows `rollback --recover` |
+| `CANDIDATE_IN_PLACE` | a recorded failed candidate is in place | `service upgrade --source <clean checkout>` or `service rollback` |
+| `DEFINITION_MISSING`, `DEFINITION_UNATTESTED`, `DEFINITION_INVALID` | the definition is gone, unreadable or no longer the receipt's managed definition | `service status` |
+| `RUNNING_UNKNOWN` | the service state cannot be read | `service status` |
+| `DAEMON_OUTLIVED` | the service is stopped but its recorded daemon still runs | end that process by hand, as described above |
+| `DAEMON_UNRECORDED`, `DAEMON_MISMATCH`, `DAEMON_NOT_OWNED` | the running service has no recorded daemon, one of another source or binding, or a live daemon that is not connected or not proven its own | `service status`; `service upgrade --source <clean checkout>` |
+| `GENERATION_MISSING` | a Windows receipt without a supervisor generation | `service upgrade --source <clean checkout>` |
+| `SOURCE_UNVERIFIED` | the installed source pin no longer verifies | `service upgrade --source <clean checkout>` |
+| `NODE_RUNNING` | the daemon runs, owned and connected, and no drain blocks it | nothing to recover |
+
+A running service whose recorded daemon is dead (on Windows the supervisor
+waiting at a stale drain, issue #755) is recovered even when that record shows
+a closed connection: the stop then carries the recorded daemon's context, and on
+Windows the stop proof must show the supervisor gone, the recorded daemon absent
+and no child left before anything starts. A live daemon is stopped only when it
+is connected and owned by the service, as upgrade requires.
+
+A failure under `--confirm` before any native effect (an admission wait, a
+preflight, a stop refused before its first effect) is printed as its message
+and leaves the drain as it was found: a stale drain stays held, no drain stays
+none. A failure after a stop or start was issued prints `{"ok":false,"code":
+"SERVICE_RECOVER_FAILED","recovery":"unknown","stage":...}` with the stop code
+and native call where known, and keeps the drain; run `service recover` again
+to read the new state.
 
 ### Intercom command
 
