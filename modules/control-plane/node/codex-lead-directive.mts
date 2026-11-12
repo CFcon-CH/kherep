@@ -109,10 +109,22 @@ export function readLeadDirective(home: string, sessionId: string, turnId: strin
     if (!file || performance.now() > deadline) return null;
     const root = fs.realpathSync(home), canonical = fs.realpathSync(file);
     if (!canonical.startsWith(root + path.sep) || fs.lstatSync(file).isSymbolicLink()) return null;
+    const resolvedHome = path.resolve(home), relative = path.relative(resolvedHome, path.dirname(file)).split(path.sep);
+    if (relative.length !== 4 || relative[0] !== "sessions" || !/^\d{4}$/u.test(relative[1]!)
+      || !/^\d{2}$/u.test(relative[2]!) || !/^\d{2}$/u.test(relative[3]!)) return null;
+    // Keep the configured home's lookup semantics, including trailing / or /.
+    const parents = [home, ...relative.map((_part, i) => path.join(resolvedHome, ...relative.slice(0, i + 1)))];
+    const availableIdentity = (s: fs.BigIntStats) => typeof s.dev === "bigint" && typeof s.ino === "bigint" && s.ino > 0n;
+    const parentIdentity = () => parents.map(parent => {
+      const stat = fs.lstatSync(parent, { bigint: true });
+      if (!stat.isDirectory() || stat.isSymbolicLink() || !availableIdentity(stat)) throw new Error("invalid native directory identity");
+      return `${stat.dev}:${stat.ino}`;
+    }).join("|");
+    const beforeParents = parentIdentity();
     fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
     const before = fs.fstatSync(fd, { bigint: true }), named = fs.lstatSync(file, { bigint: true });
     const identity = (s: fs.BigIntStats) => `${s.dev}:${s.ino}:${s.size}:${s.mtimeNs}:${s.ctimeNs}`;
-    if (!before.isFile() || before.nlink !== 1n || identity(before) !== identity(named) || before.size > BigInt(Number.MAX_SAFE_INTEGER)) return null;
+    if (!before.isFile() || !availableIdentity(before) || before.nlink !== 1n || identity(before) !== identity(named) || before.size > BigInt(Number.MAX_SAFE_INTEGER)) return null;
     const size = Number(before.size), head = Buffer.alloc(Math.min(size, META_LINE_BYTES));
     if (fs.readSync(fd, head, 0, head.length, 0) !== head.length) return null;
     const newline = head.indexOf(10), decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false });
@@ -143,7 +155,7 @@ export function readLeadDirective(home: string, sessionId: string, turnId: strin
     const input = currentDirective(reverse.reverse(), turnId);
     if (!input || performance.now() > deadline || identity(fs.fstatSync(fd, { bigint: true })) !== identity(before)
       || identity(fs.lstatSync(file, { bigint: true })) !== identity(before) || fs.realpathSync(file) !== canonical
-      || findAssignmentRollout(home, sessionId) !== file) return null;
+      || findAssignmentRollout(home, sessionId) !== file || parentIdentity() !== beforeParents || performance.now() > deadline) return null;
     return createHash("sha256").update(`${before.dev}:${before.ino}:${turnId}:${input.order}:${input.text}`).digest("hex");
   } catch { return null; }
   finally { if (fd !== undefined) fs.closeSync(fd); }
