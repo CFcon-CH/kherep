@@ -116,7 +116,8 @@ async function rollbackLocked(options: { binding: ServiceBinding }, input: Lifec
       if (!writeAttempted && (cause as { code?: string }).code === "RECOVERY_RECORD_PERSISTENCE_FAILED") {
         drainSafeToRelease = !stopIssued;
         try { restoreCandidateBytes(input.paths, previousCandidate); } catch { drainSafeToRelease = false; }
-        throw serviceFailure("SERVICE_ROLLBACK_FAILED", cause, "unknown", stage, "RECOVERY_RECORD_PERSISTENCE_FAILED");
+        throw serviceFailure("SERVICE_ROLLBACK_FAILED", cause, "unknown", stage, "RECOVERY_RECORD_PERSISTENCE_FAILED", undefined,
+          { writeAttempted, drainRetained: !drainSafeToRelease });
       }
       previousSnapshot ??= failedWriteSnapshot(cause);
       if (stopNotIssued(stage, cause)) stopIssued = false;
@@ -143,6 +144,7 @@ async function rollbackLocked(options: { binding: ServiceBinding }, input: Lifec
         }
       }
       if (recovery === "unknown" && (writeAttempted || familyUnproven || (stopIssued && deps.alive(state?.pid)))) drainSafeToRelease = false;
-      throw serviceFailure("SERVICE_ROLLBACK_FAILED", cause, recovery, stage, blocker, stageStopCode(stage, cause));
+      throw serviceFailure("SERVICE_ROLLBACK_FAILED", cause, recovery, stage, blocker, stageStopCode(stage, cause),
+        { writeAttempted, drainRetained: !drainSafeToRelease });
     } finally { clearLaunchPermit(); if (drainSafeToRelease) endDrain(); }
 }

@@ -1,4 +1,3 @@
-import { spawnSync } from "node:child_process";
 import path from "node:path";
 
 import {
@@ -10,20 +9,14 @@ import {
   waitForWindowsQuiescence, windowsProcessObservation, windowsProvenanceState, windowsStopObservation,
   type WindowsProvenance, type WindowsQuiescenceObservation,
 } from "./service-windows-quiescence.mts";
+import { invokeNative, invokeNativeJson, nativeOutputFailure, type NativeCall } from "./service-windows-invoke.mts";
+import { classifyWindowsStop } from "./service-windows-stop-code.mts";
 import {
   FAILED_WRITE_SNAPSHOT, type FailedServiceWrite, type NativeServiceSnapshot, type ServiceAction, type ServiceAdapter, type ServiceBinding,
   type ServiceStopContext, type ServiceStopProof, type WindowsServiceSummary,
 } from "./service-types.mts";
 
-const PRELUDE = "$ErrorActionPreference='Stop';$payload=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($env:KHEREP_SERVICE_PAYLOAD))|ConvertFrom-Json;";
-const STDIN_BOOTSTRAP = "$script=[Console]::In.ReadToEnd();&([ScriptBlock]::Create($script))";
-
-export function powerShellInvocation(script: string, payload: unknown): {
-  executable: string; args: string[]; env: NodeJS.ProcessEnv; input: string;
-} {
-  return { executable: "powershell.exe", args: ["-NoProfile", "-NonInteractive", "-Command", STDIN_BOOTSTRAP], input: PRELUDE + script,
-    env: { ...process.env, KHEREP_SERVICE_PAYLOAD: Buffer.from(JSON.stringify(payload)).toString("base64") } };
-}
+export { powerShellInvocation } from "./service-windows-invoke.mts";
 
 export const decodePowerShellScript = (encoded: string): string => Buffer.from(encoded, "base64").toString("utf16le");
 const xml = (value: string): string => value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -57,17 +50,12 @@ export function windowsFreshXml(binding: ServiceBinding, user: string): Buffer {
 </Task>`, "utf16le");
 }
 
-function invoke(script: string, payload: unknown, timeout = 30_000): string {
-  const call = powerShellInvocation(script, payload);
-  const result = spawnSync(call.executable, call.args, { input: call.input, encoding: "utf8", env: call.env, windowsHide: true, timeout,
-    stdio: ["pipe", "pipe", "pipe"] });
-  if (result.status !== 0) throw new Error("Scheduled Task operation failed for the selected task");
-  return result.stdout.trim();
-}
+// #838 A1: the seam of the stop script call; the first argument names it (task-stop or task-stop-check).
+export type WindowsStopInvoke = (call: NativeCall, script: string, payload: unknown, timeout?: number) => string;
 
 export function windowsPrincipalSid(identity: string): string {
-  const output = invoke(`try{$id=[string]$payload.identity;if($id-match'^S-\\d+(?:-\\d+)+$'){$sid=New-Object Security.Principal.SecurityIdentifier($id)}else{$sid=(New-Object Security.Principal.NTAccount($id)).Translate([Security.Principal.SecurityIdentifier])};[void]$sid.Translate([Security.Principal.NTAccount]);@{ok=$true;sid=$sid.Value}|ConvertTo-Json -Compress}catch{@{ok=$false}|ConvertTo-Json -Compress}`, { identity });
-  const value = JSON.parse(output) as { ok?: boolean; sid?: string };
+  const value = invokeNativeJson<{ ok?: boolean; sid?: string }>("principal-sid", `try{$id=[string]$payload.identity;if($id-match'^S-\\d+(?:-\\d+)+$'){$sid=New-Object Security.Principal.SecurityIdentifier($id)}else{$sid=(New-Object Security.Principal.NTAccount($id)).Translate([Security.Principal.SecurityIdentifier])};[void]$sid.Translate([Security.Principal.NTAccount]);@{ok=$true;sid=$sid.Value}|ConvertTo-Json -Compress}catch{@{ok=$false}|ConvertTo-Json -Compress}`, { identity },
+    "Scheduled Task principal identity is unresolved");
   if (value.ok !== true || !value.sid || !/^S-\d+(?:-\d+)+$/.test(value.sid)) {
     throw new Error("Scheduled Task principal identity is unresolved");
   }
@@ -98,11 +86,8 @@ async function actionEvidence(adapter: WindowsServiceAdapter, binding: ServiceBi
 async function processEvidence(adapter: WindowsServiceAdapter, binding: ServiceBinding, pid: number,
   startedAt: string, sourceRoot: string): Promise<WindowsQuiescenceObservation | null> {
   const evidence = await actionEvidence(adapter, binding, sourceRoot, true);
-  const output = invoke(WINDOWS_PROCESS_PROVENANCE_SCRIPT,
-    { pid, ...selector(binding), action: evidence.action, wrapper: evidence.wrapper });
-  let process: Parameters<typeof windowsProcessObservation>[1];
-  try { process = JSON.parse(output) as typeof process; }
-  catch { throw new Error("Scheduled Task process provenance is incomplete"); }
+  const process = invokeNativeJson<Parameters<typeof windowsProcessObservation>[1]>("process-provenance", WINDOWS_PROCESS_PROVENANCE_SCRIPT,
+    { pid, ...selector(binding), action: evidence.action, wrapper: evidence.wrapper }, "Scheduled Task process provenance is incomplete");
   return windowsProcessObservation(evidence.snapshot, process, binding, pid, startedAt, sourceRoot);
 }
 
@@ -112,7 +97,7 @@ async function stopEvidence(adapter: WindowsServiceAdapter, binding: ServiceBind
   const evidence = await actionEvidence(adapter, binding, sourceRoot, true);
   const daemon = { executable: binding.nodeExecutable, argv: [binding.nodeExecutable,
     ...(evidence.wrapper.kind === "managed" ? managedArguments(binding) : legacyDaemonArguments(binding, sourceRoot))] };
-  const output = invoke(WINDOWS_STOP_SCRIPT, { ...selector(binding), action: evidence.action, wrapper: evidence.wrapper,
+  const output = invokeNative("task-stop-check", WINDOWS_STOP_SCRIPT, { ...selector(binding), action: evidence.action, wrapper: evidence.wrapper,
     checkOnly: true, daemon,
     expected: { pid: expected.pid, startedAt: expected.startedAt } });
   return windowsStopObservation(evidence.snapshot, output);
@@ -125,9 +110,9 @@ export const WINDOWS_WRITE_SCRIPT = "Import-Module ScheduledTasks;$xml=[Text.Enc
 export class WindowsServiceAdapter implements ServiceAdapter {
   readonly platform = "win32" as const;
   #user?: Promise<string>;
-  #stopInvoke: typeof invoke;
+  #stopInvoke: WindowsStopInvoke;
   #stopped?: string;
-  constructor(stopInvoke: typeof invoke = invoke) { this.#stopInvoke = stopInvoke; }
+  constructor(stopInvoke: WindowsStopInvoke = invokeNative) { this.#stopInvoke = stopInvoke; }
   #proofKey(binding: ServiceBinding, expected: ServiceStopContext): string {
     return JSON.stringify([binding.platform, binding.serviceName, binding.taskPath, binding.workspace, binding.configRoot,
       binding.nodeExecutable, binding.logFile, binding.source.root, binding.source.commit, binding.source.digest, binding.source.kind, binding.source.verified,
@@ -141,21 +126,23 @@ export class WindowsServiceAdapter implements ServiceAdapter {
   }
   async currentUser(): Promise<string> {
     this.#user ??= Promise.resolve().then(() => {
-      const sid = invoke("[Security.Principal.WindowsIdentity]::GetCurrent().User.Value", {});
+      const sid = invokeNative("current-user", "[Security.Principal.WindowsIdentity]::GetCurrent().User.Value", {});
       if (!/^S-\d+(?:-\d+)+$/.test(sid)) throw new Error("Scheduled Task current-user identity is unresolved");
       return sid;
     });
     return this.#user;
   }
   async read(binding: ServiceBinding): Promise<NativeServiceSnapshot | null> {
-    const value = JSON.parse(invoke(WINDOWS_READ_SCRIPT, selector(binding))) as { missing: boolean; definition?: string; security?: string; running?: boolean | "unknown"; summary?: WindowsServiceSummary };
+    const value = invokeNativeJson<{ missing: boolean; definition?: string; security?: string; running?: boolean | "unknown"; summary?: WindowsServiceSummary }>(
+      "task-read", WINDOWS_READ_SCRIPT, selector(binding), "Scheduled Task readback is incomplete");
     if (value.missing) return null;
     if (!value.definition || !value.security || !value.summary) throw new Error("Scheduled Task readback is incomplete");
     return { definition: Buffer.from(value.definition, "base64"), security: Buffer.from(value.security, "base64"),
       running: value.running === true ? true : value.running === false ? false : "unknown", windows: value.summary };
   }
   async fresh(binding: ServiceBinding): Promise<Buffer> {
-    const environment = JSON.parse(invoke("$v=@{};foreach($k in @('NODE_OPTIONS','NODE_PATH')){foreach($scope in @('User','Machine')){$x=[Environment]::GetEnvironmentVariable($k,$scope);if($x){$v[$k]=$x}}};$v|ConvertTo-Json -Compress", {})) as Record<string, string>;
+    const environment = invokeNativeJson<Record<string, string>>("environment-read", "$v=@{};foreach($k in @('NODE_OPTIONS','NODE_PATH')){foreach($scope in @('User','Machine')){$x=[Environment]::GetEnvironmentVariable($k,$scope);if($x){$v[$k]=$x}}};$v|ConvertTo-Json -Compress", {},
+      "host Node environment is unreadable");
     if (Object.keys(environment).length) throw new Error("host has execution-affecting Node environment variables");
     return windowsFreshXml(binding, await this.currentUser());
   }
@@ -168,8 +155,8 @@ export class WindowsServiceAdapter implements ServiceAdapter {
       if (index >= 0 && args[index + 1] && (path.win32.isAbsolute(args[index + 1]) || path.isAbsolute(args[index + 1]))) return args[index + 1];
     }
     if (pid) {
-      const output = invoke(`$p=Get-CimInstance Win32_Process -Filter ('ProcessId='+[int]$payload.pid);if($null -eq $p){'{"missing":true}'}else{@{missing=$false;executable=$p.ExecutablePath}|ConvertTo-Json -Compress}`, { pid });
-      const process = JSON.parse(output) as { missing: boolean; executable?: string };
+      const process = invokeNativeJson<{ missing: boolean; executable?: string }>("process-executable", `$p=Get-CimInstance Win32_Process -Filter ('ProcessId='+[int]$payload.pid);if($null -eq $p){'{"missing":true}'}else{@{missing=$false;executable=$p.ExecutablePath}|ConvertTo-Json -Compress}`, { pid },
+        "Scheduled Task Node executable is unavailable");
       if (!process.missing && process.executable && path.win32.isAbsolute(process.executable)) return process.executable;
     }
     throw new Error("Scheduled Task Node executable is unavailable");
@@ -196,14 +183,14 @@ export class WindowsServiceAdapter implements ServiceAdapter {
     if (!snapshot.windows) throw new Error("Scheduled Task summary is missing");
     validateWindowsAdoption(snapshot.windows, binding, await this.currentUser(), priorSourceRoot);
     const action = windowsManagedAction(binding);
-    const result = invoke(MUTATE, { definition: snapshot.definition.toString("base64"), command: action.executable,
+    const result = invokeNative("definition-mutate", MUTATE, { definition: snapshot.definition.toString("base64"), command: action.executable,
       arguments: action.arguments, workingDirectory: action.workingDirectory });
     return Buffer.from(result, "base64");
   }
   async retargeted(snapshot: NativeServiceSnapshot, binding: ServiceBinding): Promise<Buffer> {
     // Persisted backups retain definition bytes, not live summaries; callers validate task authority separately.
     const action = windowsManagedAction(binding);
-    const result = invoke(MUTATE, { definition: snapshot.definition.toString("base64"), command: action.executable,
+    const result = invokeNative("definition-mutate", MUTATE, { definition: snapshot.definition.toString("base64"), command: action.executable,
       arguments: action.arguments, workingDirectory: action.workingDirectory });
     return Buffer.from(result, "base64");
   }
@@ -227,11 +214,9 @@ export class WindowsServiceAdapter implements ServiceAdapter {
     await this.#stop(binding, expected, true);
   }
   async write(binding: ServiceBinding, definition: Buffer, security: Buffer): Promise<void> {
-    const output = invoke(WINDOWS_WRITE_SCRIPT,
-      { ...selector(binding), definition: definition.toString("base64"), security: security.toString("base64") });
-    let value: { ok?: boolean; definition?: string; security?: string; running?: boolean };
-    try { value = JSON.parse(output) as typeof value; }
-    catch { throw new Error("Scheduled Task write readback is incomplete"); }
+    const value = invokeNativeJson<{ ok?: boolean; definition?: string; security?: string; running?: boolean }>("task-write", WINDOWS_WRITE_SCRIPT,
+      { ...selector(binding), definition: definition.toString("base64"), security: security.toString("base64") },
+      "Scheduled Task write readback is incomplete");
     if (value.ok === true) return;
     if (value.ok !== false || !value.definition || !value.security || typeof value.running !== "boolean") {
       throw new Error("Scheduled Task write readback is incomplete");
@@ -243,14 +228,18 @@ export class WindowsServiceAdapter implements ServiceAdapter {
     Object.defineProperty(error, FAILED_WRITE_SNAPSHOT, { value: candidate });
     throw error;
   }
-  async remove(binding: ServiceBinding): Promise<void> { invoke("Import-Module ScheduledTasks;Unregister-ScheduledTask -TaskName $payload.serviceName -TaskPath $payload.taskPath -Confirm:$false", selector(binding)); }
+  async remove(binding: ServiceBinding): Promise<void> { invokeNative("task-remove", "Import-Module ScheduledTasks;Unregister-ScheduledTask -TaskName $payload.serviceName -TaskPath $payload.taskPath -Confirm:$false", selector(binding)); }
   async stop(binding: ServiceBinding, expected: ServiceStopContext | undefined): Promise<void> {
     this.#stopped = undefined;
-    try { await this.#stop(binding, expected, false); }
-    catch (error) { throw Object.assign(error instanceof Error ? error : new Error("Windows stop proof is unavailable"),
-      { code: "STOP_UNKNOWN_DESCENDANTS", familyUnproven: true }); }
+    const progress = { spawned: false };
+    try { await this.#stop(binding, expected, false, progress); }
+    catch (error) {
+      // #838 A3: the code says where the stop failed; notIssued marks positive pre-effect evidence (#472).
+      throw Object.assign(error instanceof Error ? error : new Error("Windows stop proof is unavailable"), classifyWindowsStop(error, progress.spawned));
+    }
   }
-  async #stop(binding: ServiceBinding, expected: ServiceStopContext | undefined, checkOnly: boolean): Promise<void> {
+  async #stop(binding: ServiceBinding, expected: ServiceStopContext | undefined, checkOnly: boolean,
+    progress: { spawned: boolean } = { spawned: false }): Promise<void> {
     if (checkOnly && expected) {
       await waitForWindowsQuiescence(() => stopEvidence(this, binding, expected));
       return;
@@ -259,19 +248,23 @@ export class WindowsServiceAdapter implements ServiceAdapter {
     const evidence = await actionEvidence(this, binding, sourceRoot, expected !== undefined);
     const daemon = { executable: binding.nodeExecutable, argv: [binding.nodeExecutable,
       ...(evidence.wrapper.kind === "managed" ? managedArguments(binding) : legacyDaemonArguments(binding, sourceRoot))] };
-    const output = this.#stopInvoke(WINDOWS_STOP_SCRIPT, { ...selector(binding), action: evidence.action, wrapper: evidence.wrapper, checkOnly, daemon,
+    const timeout = checkOnly ? 30_000 : 65_000, started = Date.now();
+    progress.spawned = true;
+    const output = this.#stopInvoke(checkOnly ? "task-stop-check" : "task-stop", WINDOWS_STOP_SCRIPT, { ...selector(binding), action: evidence.action,
+      wrapper: evidence.wrapper, checkOnly, daemon,
       definition: evidence.snapshot.definition.toString("base64"), security: evidence.snapshot.security.toString("base64"),
-      expected: expected ? { pid: expected.pid, startedAt: expected.startedAt } : null }, checkOnly ? 30_000 : 65_000);
+      expected: expected ? { pid: expected.pid, startedAt: expected.startedAt } : null }, timeout);
     if (!checkOnly && expected) {
       let proof: { version?: number; stopped?: boolean; daemonExited?: boolean; supervisorExited?: boolean;
         familyAbsent?: boolean; expected?: ServiceStopContext };
-      try { proof = JSON.parse(output) as typeof proof; } catch { throw new Error("Windows stop proof is malformed"); }
+      try { proof = JSON.parse(output) as typeof proof; }
+      catch { throw nativeOutputFailure("task-stop", "Windows stop proof is malformed", Date.now() - started, timeout); }
       if (proof?.version !== 1 || proof.stopped !== true || proof.daemonExited !== true || proof.supervisorExited !== true
         || proof.familyAbsent !== true || proof.expected?.pid !== expected.pid || proof.expected.startedAt !== expected.startedAt) {
-        throw new Error("Windows stop proof is incomplete");
+        throw nativeOutputFailure("task-stop", "Windows stop proof is incomplete", Date.now() - started, timeout);
       }
       this.#stopped = this.#proofKey(binding, expected);
     }
   }
-  async start(binding: ServiceBinding): Promise<void> { invoke("Import-Module ScheduledTasks;Start-ScheduledTask -TaskName $payload.serviceName -TaskPath $payload.taskPath", selector(binding)); }
+  async start(binding: ServiceBinding): Promise<void> { invokeNative("task-start", "Import-Module ScheduledTasks;Start-ScheduledTask -TaskName $payload.serviceName -TaskPath $payload.taskPath", selector(binding)); }
 }

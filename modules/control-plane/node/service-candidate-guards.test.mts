@@ -79,7 +79,7 @@ const MAPPED: Array<[string, string, string]> = [
   ["STOP_BLOCKED_NATIVE_DESCENDANTS", "STOP_BLOCKED_NATIVE_DESCENDANTS", "service-windows-quiescence.mts"],
   ["STOP_UNKNOWN_DESCENDANTS", "STOP_UNKNOWN_DESCENDANTS", "service-platform-mac.mts"],
   ["launchctl could not prove the selected service stopped", "STOP_NATIVE_REFUSED", "service-platform-mac.mts"],
-  ["Scheduled Task operation failed for the selected task", "STOP_NATIVE_REFUSED", "service-platform-windows.mts"],
+  ["Scheduled Task operation failed for the selected task", "STOP_NATIVE_REFUSED", "service-windows-invoke.mts"],
   ["managed service verification timed out", "STOP_UNPROVEN_TIMEOUT", "service-lifecycle.mts"],
   ["selected LaunchAgent process is unavailable", "STOP_PROCESS_UNAVAILABLE", "service-platform-mac-stop.mts"],
   ["LaunchAgent loaded pid does not match selected process", "STOP_IDENTITY_MISMATCH", "service-platform-mac-native.mts"],

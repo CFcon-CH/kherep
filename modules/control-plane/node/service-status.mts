@@ -7,6 +7,7 @@ import { readServiceCandidate, serviceRoot, snapshotDigests, type ServiceCandida
 import { candidateInPlace, recordedPriorBackup, sameBinding, SERVICE_STAGES } from "./service-transaction-support.mts";
 import { configuredDefinitionDigest } from "./service-configured-digest.mts";
 import type { NativeServiceSnapshot, ServiceBinding } from "./service-types.mts";
+import { readServiceLastFailure } from "./service-last-failure.mts";
 
 // `service status`, managed and unmanaged. Moved from service-cli.mts for the 250-line budget (#582).
 type Paths = NodePaths;
@@ -19,6 +20,16 @@ export interface StatusDependencies {
   configuredDigest?: (binding: ServiceBinding) => string | null;
 }
 const SERVICE_STAGE_SET = new Set<string>(SERVICE_STAGES);
+// #838 (c): the node at a glance. off: no live recorded daemon; drain-blocked: the daemon lives but a stale or
+// unverifiable service drain blocks new session admissions; running otherwise. Shared with doctor's managedService.
+export type ServiceNodeState = "running" | "off" | "drain-blocked";
+export const serviceNodeState = (daemonAlive: boolean, drain: ReturnType<typeof describeServiceDrain>): ServiceNodeState =>
+  !daemonAlive ? "off" : drain === "stale" || drain === "unknown" ? "drain-blocked" : "running";
+// #838 A4: display only; an unreadable record is "invalid" and changes nothing else in the report.
+const lastFailureReport = (paths: Paths) => {
+  const record = readServiceLastFailure(paths);
+  return record ? { lastFailure: record === "invalid" ? "invalid" : (({ version: _version, ...shown }) => shown)(record) } : {};
+};
 type Configured = "receipt" | "candidate" | "unknown";
 function classifyConfigured(receipt: ServiceReceipt, pending: ServiceCandidate | null, digest: string | null): Configured {
   if (digest === null) return "unknown";
@@ -120,13 +131,13 @@ export async function reportServiceStatus(paths: Paths, receipt: ServiceReceipt,
   const daemonStart = receipt.binding.platform === "win32" && native?.running === true && staleDrain && (!state || !alive(state.pid))
     ? SERVICE_DRAIN_BLOCKED : undefined;
   const report = { ok: attested && definitionMatch === true && source.status === "match" && runtimeMatch && !staleDrain && !record, managed: true,
-    serviceName: receipt.binding.serviceName, platform: receipt.binding.platform,
+    node: serviceNodeState(Boolean(state && alive(state.pid)), drain), serviceName: receipt.binding.serviceName, platform: receipt.binding.platform,
     ...(receipt.binding.taskPath ? { taskPath: receipt.binding.taskPath } : {}), running: attested ? (native?.running ?? "unknown") : "unknown",
     definition: !attested ? "unattested" : native ? (definitionMatch ? "match" : "mismatch") : "missing",
     ...(attested || receipt.binding.platform !== "darwin" ? {} : { configured }), source: source.status,
     authentication: authenticated ? "connected" : state?.disconnectedAt ? "disconnected" : "unknown",
     ownership: ownership ? "match" : "unknown", drain, ...(daemonStart ? { daemonStart } : {}),
-    ...(candidate ? { candidate } : {}), ...(recovery ? { recovery } : {}) };
+    ...(candidate ? { candidate } : {}), ...(recovery ? { recovery } : {}), ...lastFailureReport(paths) };
   console.log(JSON.stringify(report, null, 2));
   return report.ok ? 0 : 1;
 }

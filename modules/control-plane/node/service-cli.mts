@@ -12,6 +12,8 @@ import { activateManagedService, rollbackManagedService } from "./service-transa
 import { reportServiceStatus, reportUnmanagedStatus, type StatusDependencies } from "./service-status.mts";
 import { SERVICE_STAGES, type ServiceStage } from "./service-transaction-support.mts";
 import { isStopCode, type ServiceBinding, type StopCode } from "./service-types.mts";
+import { lastFailureOf, removeServiceLastFailure, writeServiceLastFailure, type ServiceLastFailure } from "./service-last-failure.mts";
+import { nativeFailure, type NativeFailure } from "./service-windows-invoke.mts";
 
 export const SERVICE_USAGE = `  kherep-node service install --workspace <absolute> [--source <clean checkout>] [--service-name <name>] [--task-path <path>] [--adopt]
   kherep-node service upgrade [--source <clean checkout>]
@@ -36,7 +38,13 @@ interface ServiceCliDependencies extends StatusDependencies {
 
 const SERVICE_FAILURE_CODES = new Set(["SERVICE_ACTIVATION_FAILED", "SERVICE_ROLLBACK_FAILED"]);
 const SERVICE_STAGE_SET = new Set<string>(SERVICE_STAGES);
-interface SafeServiceFailure { ok: false; code: string; recovery: "restored" | "unknown"; stage?: ServiceStage; blocker?: string; stopCode?: StopCode }
+interface SafeServiceFailure { ok: false; code: string; recovery: "restored" | "unknown"; stage?: ServiceStage; blocker?: string; stopCode?: StopCode;
+  native?: NativeFailure }
+// #838 A4: the failed native call, validated field by field (service-windows-invoke.mts); anything else is dropped.
+const native = (error: unknown): { native?: NativeFailure } => {
+  const detail = nativeFailure(error);
+  return detail ? { native: detail } : {};
+};
 // Only fixed fields leave the process; the error message may carry native output and is never printed.
 export function safeServiceFailure(error: unknown): SafeServiceFailure | null {
   if (!error || typeof error !== "object") return null;
@@ -46,7 +54,28 @@ export function safeServiceFailure(error: unknown): SafeServiceFailure | null {
   return { ok: false, code: value.code, recovery: value.recovery,
     ...(typeof value.stage === "string" && SERVICE_STAGE_SET.has(value.stage) ? { stage: value.stage as ServiceStage } : {}),
     ...(typeof value.blocker === "string" && /^RECOVERY_[A-Z_]{1,40}$/.test(value.blocker) ? { blocker: value.blocker } : {}),
-    ...(isStopCode(value.stopCode) ? { stopCode: value.stopCode } : {}) };
+    ...(isStopCode(value.stopCode) ? { stopCode: value.stopCode } : {}), ...native(error) };
+}
+
+// The CLI's stderr line: a service failure as its fixed JSON; any other error as its message, plus the validated
+// native call when a pre-mutation step failed in one (#838 A4).
+export function serviceErrorLine(error: unknown): string {
+  const failure = safeServiceFailure(error);
+  if (failure) return JSON.stringify(failure);
+  const detail = native(error);
+  return `kherep-node: ${(error as Error)?.message ?? String(error)}${detail.native ? ` ${JSON.stringify(detail)}` : ""}`;
+}
+
+// #838 A4: display-only record; a failure to write or remove it never changes the command's result.
+async function recorded<T>(paths: ReturnType<typeof nodePaths>, command: ServiceLastFailure["command"], commit: () => string | undefined,
+  run: () => Promise<T>): Promise<T> {
+  let result: T;
+  try { result = await run(); } catch (error) {
+    try { writeServiceLastFailure(paths, lastFailureOf(command, error, new Date(), commit())); } catch { /* display only */ }
+    throw error;
+  }
+  try { removeServiceLastFailure(paths); } catch { /* display only */ }
+  return result;
 }
 
 export function parseServiceCommand(argv: string[]): ServiceCommand {
@@ -150,13 +179,17 @@ export async function runService(argv: string[], dependencies: ServiceCliDepende
   if (!receipt) throw new Error("managed service receipt is missing; install or adopt first");
   const adapter = (dependencies.adapterFor ?? servicePlatform)(serviceRoot(paths), receipt.binding.platform);
   if (command.action === "upgrade") {
-    const sourceRoot = command.source ?? runtimeSourceRoot();
-    const checkout = captureSourceIdentity(sourceRoot);
-    const binding = { ...receipt.binding, source: checkout };
-    const result = await activateManagedService({ mode: "upgrade", binding, sourceRoot }, { ...dependencies.lifecycle, paths, adapter });
+    let commit: string | undefined;
+    const result = await recorded(paths, "upgrade", () => commit, async () => {
+      const sourceRoot = command.source ?? runtimeSourceRoot();
+      const checkout = captureSourceIdentity(sourceRoot);
+      commit = checkout.commit;
+      const binding = { ...receipt.binding, source: checkout };
+      return activateManagedService({ mode: "upgrade", binding, sourceRoot }, { ...dependencies.lifecycle, paths, adapter });
+    });
     return report(result, "upgrade");
   }
-  const result = await rollbackManagedService({ binding: receipt.binding,
-    ...(command.recover ? { recover: { backup: command.backup!, source: command.source! } } : {}) }, { ...dependencies.lifecycle, paths, adapter });
+  const result = await recorded(paths, "rollback", () => receipt.binding.source.commit, () => rollbackManagedService({ binding: receipt.binding,
+    ...(command.recover ? { recover: { backup: command.backup!, source: command.source! } } : {}) }, { ...dependencies.lifecycle, paths, adapter }));
   return report(result, "rollback");
 }

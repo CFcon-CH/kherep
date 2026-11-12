@@ -9,7 +9,7 @@ import type { ServiceStopContext } from "./service-types.mts";
 
 function adapterFor(t: test.TestContext, output: (expected: ServiceStopContext) => unknown) {
   const h = setup(t), expected = { pid: 41, startedAt: h.adapter.state!.startedAt };
-  const call = (_script: string, payload: any) => JSON.stringify(output(payload.expected));
+  const call = (_call: string, _script: string, payload: any) => JSON.stringify(output(payload.expected));
   const adapter = new WindowsServiceAdapter(call);
   adapter.read = async () => ({ ...h.adapter.snapshot!, windows: { actions: [windowsManagedAction(h.old)] } as any });
   adapter.validateManaged = async () => {};
