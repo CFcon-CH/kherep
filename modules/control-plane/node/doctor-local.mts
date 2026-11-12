@@ -113,6 +113,8 @@ export function checkPolicy(file: string): { check: Check; policy: NodePolicy | 
   const wakeSource = wakeWritten ? "file" : "default";
   let messagingSource = "default";
   if (raw) messagingSource = raw.messaging !== undefined ? "file" : "absent";
+  // Issue #889: a written messaging.resumeClosed is read but has no effect; reported, never a failure.
+  const resumeClosedWritten = typeof raw?.messaging === "object" && raw.messaging !== null && Object.hasOwn(raw.messaging, "resumeClosed");
   // enabled false is the operator's explicit opt-out, not a rejected section.
   const optedOut = (raw?.wake as { enabled?: unknown } | null | undefined)?.enabled === false;
   const wakeRejected = wakeWritten && !policy.wake && !optedOut;
@@ -126,7 +128,7 @@ export function checkPolicy(file: string): { check: Check; policy: NodePolicy | 
   if (wakeRejected) detail = "the wake section is malformed and waking is off";
   else if (forkRejected) detail = "the wake.codexFork section is malformed and the Codex fork reply is off";
   return { check: { ok: !wakeRejected && !forkRejected, source: raw ? "file" : "default", allowedCommands: policy.allowedCommands.length,
-    messagingRules: policy.messaging?.accept.length ?? 0, messagingSource, wake, wakeSource, wakeBudget: budgetReport(policy),
+    messagingRules: policy.messaging?.accept.length ?? 0, messagingSource, ...(resumeClosedWritten ? { resumeClosed: "retired" } : {}), wake, wakeSource, wakeBudget: budgetReport(policy),
     sessions: policy.sessions?.enabled ? { enabled: true, runtimes: policy.sessions.runtimes } : { enabled: false },
     remoteMcp: policy.remoteMcp?.enabled === true, ...(detail ? { detail } : {}) }, policy };
 }

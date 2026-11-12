@@ -16,11 +16,13 @@ import { loadPolicy } from "./policy.mts";
 import type { ProbeResult } from "./runtime-probe.mts";
 import { CLAUDE_RUNTIME } from "./sessions.mts";
 
-// Issue #463: closed-session delivery (messaging.resumeClosed) follows a fresh
-// policy read at each session check, not the policy the daemon read at start.
-// The real client with a synthetic authentication, the production snapshot
-// path with an empty session listing, a probe that never answers. The message
-// comes from the operator, so a delivery attempt is refused before any start.
+// Issue #889 (retirement step R2): the daemon no longer runs closed-session
+// delivery, whatever messaging.resumeClosed says, also after a fresh policy
+// read at a later session check (issue #463 tested that read). The real client
+// with a synthetic authentication, the production snapshot path with an empty
+// session listing, a probe that never answers. The message comes from the
+// operator, so a delivery attempt would be refused before any start and leave
+// an audit line; none appears, and the message stays accepted and unattempted.
 
 const CLOSED = "01a0db74-0000-7000-8000-0000000000d1";
 const MSG = "46300003-0000-4000-8000-000000000001";
@@ -123,16 +125,22 @@ async function fixture(t: test.TestContext) {
     ? fs.readFileSync(wakeAudit(paths), "utf8").trim().split("\n").map((line) => JSON.parse(line) as
       { action: string; outcome: string; reason?: string; messageIds: string[] }).filter((line) => line.action === "closed-session")
       .map(({ outcome, reason, messageIds }) => ({ outcome, reason, messageIds })) : []);
-  return { check, writePolicy, closedLines };
+  const record = (): { state: string; closedAttempt?: string } =>
+    JSON.parse(fs.readFileSync(path.join(paths.inbox, `${MSG}.json`), "utf8")) as { state: string; closedAttempt?: string };
+  const tasks = (): string[] => (fs.existsSync(paths.tasks) ? fs.readdirSync(paths.tasks) : []);
+  return { check, writePolicy, closedLines, record, tasks };
 }
 
-test("messaging.resumeClosed set after start reaches closed-session delivery at the next session check", async (t) => {
+test("messaging.resumeClosed starts no closed-session delivery from the daemon (issue #889)", async (t) => {
   const f = await fixture(t);
   await f.check();
   assert.deepEqual(f.closedLines(), [], "resumeClosed off: no delivery attempt");
   f.writePolicy(true);
   await f.check();
-  await until(() => f.closedLines().length > 0, "the delivery attempt was audited");
-  assert.deepEqual(f.closedLines(), [{ outcome: "refused", reason: "an operator message goes to no intercom session", messageIds: [MSG] }],
-    "one attempt under the policy as written");
+  await f.check();
+  assert.deepEqual(f.closedLines(), [], "resumeClosed on: still no delivery attempt");
+  const record = f.record();
+  assert.equal(record.state, "accepted", "the message keeps waiting on the normal path");
+  assert.equal(record.closedAttempt, undefined, "no closed-session attempt is marked");
+  assert.deepEqual(f.tasks(), [], "no intercom task record is written");
 });

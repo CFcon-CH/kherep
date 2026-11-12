@@ -169,6 +169,21 @@ increments the minor version; every other release increments the patch version.
 
 ### Changed
 
+- Control plane messaging: a message for a closed session is no longer resumed,
+  handed over or started in an intercom session of its sender (#889, retirement
+  step R2, operator decision of 2026-11-12). The daemon stops calling the
+  closed-session fallback after each session listing, whatever
+  `messaging.resumeClosed` says. Such a message, also one for a slot whose
+  occupant is closed, stays `accepted` and is refused as undeliverable by the
+  existing listing rule (early with archive or delete metadata, otherwise after
+  60 minutes with positive closure metadata). The key is
+  still read without error and has no effect; `kherep-node doctor` reports a
+  written key as `"resumeClosed": "retired"` in the policy check without
+  failing. Intercom sessions and runs started earlier are not stopped, no stored
+  state is deleted, and `known-sessions.json` is still written. The unused
+  `node/codex-app-delivery.mts` and its test are removed; `closed-delivery.mts`
+  stays until its deletion step.
+
 - The Control Plane README states the cross-node delivery matrix measured for
   issue #706: running and idle Claude Code and Codex sessions get messages
   without operator input in both directions, while a session after a restart

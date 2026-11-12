@@ -14,7 +14,6 @@ import { isClaudeSlotSelection, parseEnvelope, PING_FRAME, PONG_FRAME, type Clau
 import { isTaskRuntime, type TaskRuntime } from "../protocol-tasks.mts";
 import { reconnectDelay } from "./backoff.mts";
 import { NodeClient, type CommandHandlers } from "./client.mts";
-import { deliverToClosed } from "./closed-delivery.mts";
 import { codexHome } from "./codex-app.mts";
 import { forgetCodexSession } from "./codex-sessions.mts";
 import { recoverForkAttemptsAtStart } from "./codex-fork-attempts.mts";
@@ -367,9 +366,10 @@ export function startDaemon(config: NodeConfig, paths: NodePaths, log: (line: st
             if (!generation.current() || ws.readyState !== WebSocket.OPEN) return;
             if (listed && !controller.signal.aborted) await recordAndPublishSessions(client, paths, listed, send, log, controller.signal, () => inbox.records(), livenessAuthority, discovery);
             if (!generation.current()) return;
+            // Issue #889: no closed-session fallback runs here any more, whatever
+            // messaging.resumeClosed says; a message for a closed target waits on the
+            // normal path and is refused by refuseUndeliverable (inbox.mts).
             await watchTasks(runner, log);
-            if (!generation.current()) return;
-            await deliverToClosed(live(), log);
           })).catch((error: unknown) => log(`kherep-node: session snapshot failed: ${String(error)}`));
           return chain;
         }).finally(() => {
