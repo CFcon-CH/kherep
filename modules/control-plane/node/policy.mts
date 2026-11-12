@@ -42,9 +42,10 @@ export interface WakePolicy {
 }
 // codexFork (issue #408): the idle reply proxy (codex-fork-admission.mts), off unless present and valid.
 export interface CodexForkPolicy { enabled: true; sessions: string[]; platforms: string[]; idleAfterSeconds: number; maxAnswerBytes: number }
-// resumeClosed (issue #102): a message for a known session of this node that
-// is no longer running resumes it, or starts an intercom session instead
-// (closed-delivery.mts). Only the boolean true enables it.
+// resumeClosed (issue #102): read as before, but retired since issue #889: the
+// daemon no longer runs closed-delivery.mts, so the key has no effect on
+// delivery. Kept parseable so existing policy files stay valid; doctor reports
+// a written key as retired.
 export interface NodePolicy {
   version: 1;
   allowedCommands: Phase1Command[];

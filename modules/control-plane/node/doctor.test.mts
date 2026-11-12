@@ -179,3 +179,22 @@ test("the policy check prints a written codexFork section and fails a rejected o
   policy = await check({ enabled: false });
   assert.deepEqual([policy.ok, (policy.wake as Record<string, unknown>).codexFork], [true, { enabled: false }]);
 });
+
+// Issue #889: messaging.resumeClosed is still read without error but no longer
+// acts. A written key is reported as retired, never as a failure; a policy
+// without it reports as before.
+test("the policy check reports a written messaging.resumeClosed as retired, not as a failure", async (t) => {
+  const h = host(t);
+  const check = async (messaging: Record<string, unknown>) => {
+    fs.writeFileSync(h.paths.policy, JSON.stringify({ version: 1, allowedCommands: [], messaging }));
+    return (await runDoctor(h.deps)).checks.policy;
+  };
+  const accept = [{ session: "*", from: ["*"] }];
+  let policy = await check({ accept, resumeClosed: true });
+  assert.deepEqual([policy.ok, policy.messagingRules, policy.resumeClosed], [true, 1, "retired"]);
+  assert.equal(policy.detail, undefined, "a retired key is no failure detail");
+  policy = await check({ accept, resumeClosed: "yes" });
+  assert.deepEqual([policy.ok, policy.resumeClosed], [true, "retired"]);
+  policy = await check({ accept });
+  assert.deepEqual([policy.ok, Object.hasOwn(policy, "resumeClosed")], [true, false]);
+});
