@@ -13,15 +13,17 @@ const IDENTITY_REASONS = new Set(["supervisor-provenance", "supervisor-owner", "
 // The process table or the family could not be read: kept unproven in any phase.
 const UNKNOWN_FAMILY_REASONS = new Set(["provenance-unknown", "family-unproven"]);
 
+function preEffectCode(reason: string): StopCode {
+  if (DESCENDANT_REASONS.has(reason)) return "STOP_BLOCKED_NATIVE_DESCENDANTS";
+  if (IDENTITY_REASONS.has(reason)) return "STOP_IDENTITY_MISMATCH";
+  return "STOP_NATIVE_REFUSED";
+}
+
 export function classifyWindowsStop(error: unknown, spawned: boolean): WindowsStopClassification {
   if (!spawned) return { code: "STOP_NATIVE_REFUSED", familyUnproven: false, notIssued: true };
   if (nativeFailure(error)?.outcome === "timeout") return { code: "STOP_UNPROVEN_TIMEOUT", familyUnproven: true, notIssued: false };
   const report = stopScriptReport(error);
   if (report && UNKNOWN_FAMILY_REASONS.has(report.reason)) return { code: "STOP_UNKNOWN_DESCENDANTS", familyUnproven: true, notIssued: false };
-  if (report?.phase === "pre-effect") {
-    const code: StopCode = DESCENDANT_REASONS.has(report.reason) ? "STOP_BLOCKED_NATIVE_DESCENDANTS"
-      : IDENTITY_REASONS.has(report.reason) ? "STOP_IDENTITY_MISMATCH" : "STOP_NATIVE_REFUSED";
-    return { code, familyUnproven: false, notIssued: true };
-  }
+  if (report?.phase === "pre-effect") return { code: preEffectCode(report.reason), familyUnproven: false, notIssued: true };
   return { code: "STOP_NATIVE_REFUSED", familyUnproven: true, notIssued: false };
 }
