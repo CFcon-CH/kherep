@@ -25,6 +25,12 @@ import { intercomFor, isActive, listTasks, readTask, writeTask, type TaskRecord 
 import { resolveCwd } from "./task-prompt.mts";
 import { killSwitch } from "./wake-hook.mts";
 
+// Retired from the delivery path (issue #889, operator decision 2026-11-12):
+// the daemon no longer calls deliverToClosed, whatever messaging.resumeClosed
+// says, so a message for a closed session waits and is refused as
+// undeliverable (inbox.mts refuseUndeliverable). The module stays until its
+// deletion step; the description below is the behaviour it had.
+//
 // Delivery to a session that is no longer running (issue #102, operator
 // decision 2026-09-27; issue #105). Opt-in per node with
 // messaging.resumeClosed. Run by the daemon after each session listing: an
