@@ -14,6 +14,15 @@ const RECOVERY: Record<Exclude<ServiceNodeState, "running">, string> = {
   "drain-blocked": "a stale or unverifiable service drain blocks new session admissions; kherep-node service status shows why; kherep-node service upgrade --source <clean checkout> reclaims a stale drain, see docs/INSTALLATION.md",
 };
 
+function shownLastFailure(paths: NodePaths): "invalid" | Record<string, unknown> | undefined {
+  const record = readServiceLastFailure(paths);
+  if (record === null) return undefined;
+  if (record === "invalid") return "invalid";
+  return { command: record.command, failedAt: record.failedAt, ...(record.stage ? { stage: record.stage } : {}),
+    ...(record.stopCode ? { stopCode: record.stopCode } : {}), ...(record.recovery ? { recovery: record.recovery } : {}),
+    ...(record.native ? { call: record.native.call, outcome: record.native.outcome } : {}) };
+}
+
 export function checkManagedService(paths: NodePaths, alive: (pid: unknown) => boolean, probe?: ServiceOwnerProbe): Check {
   let managed: boolean;
   try { managed = readServiceReceipt(paths) !== null; }
@@ -23,11 +32,7 @@ export function checkManagedService(paths: NodePaths, alive: (pid: unknown) => b
   try { const state = readDaemonState(paths); daemonAlive = Boolean(state && alive(state.pid)); } catch { daemonAlive = false; }
   const drain = describeServiceDrain(paths, probe);
   const node = serviceNodeState(daemonAlive, drain);
-  const record = readServiceLastFailure(paths);
-  const lastFailure = record === "invalid" ? "invalid"
-    : record ? { command: record.command, failedAt: record.failedAt, ...(record.stage ? { stage: record.stage } : {}),
-      ...(record.stopCode ? { stopCode: record.stopCode } : {}), ...(record.recovery ? { recovery: record.recovery } : {}),
-      ...(record.native ? { call: record.native.call, outcome: record.native.outcome } : {}) } : undefined;
+  const lastFailure = shownLastFailure(paths);
   return { ok: node === "running", managed: true, node, drain, ...(lastFailure ? { lastFailure } : {}),
     ...(node === "running" ? {} : { detail: RECOVERY[node] }) };
 }

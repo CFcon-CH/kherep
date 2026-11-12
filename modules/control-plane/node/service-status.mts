@@ -28,7 +28,10 @@ export const serviceNodeState = (daemonAlive: boolean, drain: ReturnType<typeof 
 // #838 A4: display only; an unreadable record is "invalid" and changes nothing else in the report.
 const lastFailureReport = (paths: Paths) => {
   const record = readServiceLastFailure(paths);
-  return record ? { lastFailure: record === "invalid" ? "invalid" : (({ version: _version, ...shown }) => shown)(record) } : {};
+  if (record === null) return {};
+  if (record === "invalid") return { lastFailure: "invalid" };
+  const { version: _version, ...shown } = record;
+  return { lastFailure: shown };
 };
 type Configured = "receipt" | "candidate" | "unknown";
 function classifyConfigured(receipt: ServiceReceipt, pending: ServiceCandidate | null, digest: string | null): Configured {
