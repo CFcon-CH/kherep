@@ -1,4 +1,4 @@
-import { MESSAGING_DIAGNOSTICS_CAPABILITY } from "../../protocol-diagnostics.mts";
+import { MESSAGING_DIAGNOSTICS_CAPABILITY, MESSAGING_DIAGNOSTICS_V3_CAPABILITY } from "../../protocol-diagnostics.mts";
 import { MESSAGING_LOOP_BRAKE_CAPABILITY } from "../../protocol-loop-brake.mts";
 import { MAX_FRAME_BYTES } from "../../protocol.mts";
 import type { DirectoryNodeIntake } from "../../protocol-intake.mts";
@@ -42,7 +42,7 @@ export function directoryBody(nodeRows: Record<string, SqlStorageValue>[],
   const listed = new Set(nodes.map((n) => n.nodeId));
   const kept = interleaveByNode(sessions.filter((s) => listed.has(s.nodeId)).map(({ startedAt: _s, updatedAt: _u, ...session }) => session));
   const body: DirectoryBody = { nodes, sessions: kept.slice(0, MAX_DIRECTORY_SESSIONS), fetchedAt: new Date(now).toISOString(),
-    worker: { capabilities: [MESSAGING_PROXY_CAPABILITY, MESSAGING_LOOP_BRAKE_CAPABILITY, MESSAGING_DIAGNOSTICS_CAPABILITY] } };
+    worker: { capabilities: [MESSAGING_PROXY_CAPABILITY, MESSAGING_LOOP_BRAKE_CAPABILITY, MESSAGING_DIAGNOSTICS_CAPABILITY, MESSAGING_DIAGNOSTICS_V3_CAPABILITY] } };
   if (body.sessions.length < kept.length || nodes.length < nodeRows.length) body.truncated = true;
   const encoder = new TextEncoder();
   const fits = () => encoder.encode(JSON.stringify(body)).length <= maxBodyBytes;

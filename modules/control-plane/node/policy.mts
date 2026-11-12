@@ -1,4 +1,4 @@
-import { MESSAGING_DIAGNOSTICS_CAPABILITY, MESSAGING_DIAGNOSTICS_V2_CAPABILITY } from "../protocol-diagnostics.mts";
+import { MESSAGING_DIAGNOSTICS_CAPABILITY, MESSAGING_DIAGNOSTICS_V2_CAPABILITY, MESSAGING_DIAGNOSTICS_V3_CAPABILITY } from "../protocol-diagnostics.mts";
 import { MESSAGING_LOOP_BRAKE_CAPABILITY } from "../protocol-loop-brake.mts";
 import fs from "node:fs";
 
@@ -147,7 +147,7 @@ export function mcpRuntimeEnabled(policy: NodePolicy, runtime: unknown): runtime
 export function advertisedCapabilities(policy: NodePolicy, ready: readonly TaskRuntime[] = []): string[] {
   const s = policy.sessions;
   return [...policy.allowedCommands, ...(messagingEnabled(policy) ? [MESSAGING_CAPABILITY] : []), MESSAGING_ACK_CAPABILITY,
-    MESSAGING_PROGRESS_V2_CAPABILITY, MESSAGING_LOOP_BRAKE_CAPABILITY, MESSAGING_DIAGNOSTICS_CAPABILITY, MESSAGING_DIAGNOSTICS_V2_CAPABILITY, ...(s?.enabled ? [SESSIONS_CAPABILITY] : []), ...(s?.delegate.accept ? [DELEGATE_ACCEPT_CAPABILITY] : []),
+    MESSAGING_PROGRESS_V2_CAPABILITY, MESSAGING_LOOP_BRAKE_CAPABILITY, MESSAGING_DIAGNOSTICS_CAPABILITY, MESSAGING_DIAGNOSTICS_V2_CAPABILITY, MESSAGING_DIAGNOSTICS_V3_CAPABILITY, ...(s?.enabled ? [SESSIONS_CAPABILITY] : []), ...(s?.delegate.accept ? [DELEGATE_ACCEPT_CAPABILITY] : []),
     ...(s?.delegate.request ? [DELEGATE_REQUEST_CAPABILITY] : []),
     ...(s?.ownTaskControl && s.runtimes.length > 0 ? [TASK_CONTROL_CAPABILITY, TASK_CONTROL_REPORT_CAPABILITY] : []),
     ...(mcpRuntimeEnabled(policy, "codex") ? [REMOTE_MCP_CAPABILITY] : []),

@@ -329,8 +329,8 @@ test("records every successful session listing in sessions.json and keeps it on 
   }, () => {});
   await list();
   assert.deepEqual(readLocalSessions(paths), [
-    { sessionId: "s-1", name: "review", runtime: "claude-code", state: "unknown" },
-    { sessionId: "s-2", runtime: "claude-code", state: "unknown" },
+    { sessionId: "s-1", name: "review", runtime: "claude-code", state: "unknown", listed: true },
+    { sessionId: "s-2", runtime: "claude-code", state: "unknown", listed: true },
   ]);
   fail = true;
   await assert.rejects(list());

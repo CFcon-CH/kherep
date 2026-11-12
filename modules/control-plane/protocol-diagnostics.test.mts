@@ -64,18 +64,19 @@ test("the six resolution codes render their own fixed words", async () => {
 });
 
 test("a v1 peer gets the six resolution codes as resolution-unavailable, a v2 peer keeps them, a peer with neither loses the detail", async () => {
-  const { BLOCKER_CODES, blockerDiagnostic, compatibleDiagnostic, MESSAGING_DIAGNOSTICS_CAPABILITY: V1, MESSAGING_DIAGNOSTICS_V2_CAPABILITY: V2 } = await import("./protocol-diagnostics.mts");
+  const { BLOCKER_CODES, blockerDiagnostic, compatibleDiagnostic, MESSAGING_DIAGNOSTICS_CAPABILITY: V1, MESSAGING_DIAGNOSTICS_V2_CAPABILITY: V2,
+    MESSAGING_DIAGNOSTICS_V3_CAPABILITY: V3 } = await import("./protocol-diagnostics.mts");
   const archived = await import("./test/fixtures/diagnostics-pre-v2.mts");
   assert.equal(typeof V2, "string");
   assert.notEqual(V1, V2);
   for (const code of BLOCKER_CODES) {
     const detail = blockerDiagnostic(code, 0, "send-admission"), body = { messageId, state: "refused", diagnostic: detail };
-    const gated = GATED_CODES.includes(code);
+    const gated = GATED_CODES.includes(code), notLoaded = code === "target-not-loaded";
     const old = compatibleDiagnostic(body, [V1]);
     assert.equal(archived.isMessageDiagnostic(old.diagnostic), true, code);
-    assert.deepEqual(old.diagnostic, gated ? { ...detail, code: "resolution-unavailable" } : detail);
-    assert.equal(archived.isMessageDiagnostic(detail), !gated, `${code}: only gated codes are invalid at a previous node`);
-    assert.deepEqual(compatibleDiagnostic(body, [V1, V2]), body);
+    assert.deepEqual(old.diagnostic, gated ? { ...detail, code: "resolution-unavailable" } : notLoaded ? { ...detail, code: "target-not-idle" } : detail);
+    assert.equal(archived.isMessageDiagnostic(detail), !gated && !notLoaded, `${code}: only gated codes are invalid at a previous node`);
+    assert.deepEqual(compatibleDiagnostic(body, [V1, V2, V3]), body);
     assert.deepEqual(compatibleDiagnostic(old, [V1]), old, "a second pass changes nothing");
     assert.deepEqual(compatibleDiagnostic(body, null), { messageId, state: "refused" });
     assert.deepEqual(compatibleDiagnostic(body, []), { messageId, state: "refused" });
@@ -87,5 +88,38 @@ test("a v1 peer gets the six resolution codes as resolution-unavailable, a v2 pe
 test("every blocker code added after the archived list is gated, so no new code can reach a previous node", async () => {
   const { BLOCKER_CODES } = await import("./protocol-diagnostics.mts");
   const archived = await import("./test/fixtures/diagnostics-pre-v2.mts");
-  assert.deepEqual(BLOCKER_CODES.filter(code => !(archived.BLOCKER_CODES as readonly string[]).includes(code)), GATED_CODES);
+  const preV3 = await import("./test/fixtures/diagnostics-pre-v3.mts");
+  assert.deepEqual(BLOCKER_CODES.filter(code => !(archived.BLOCKER_CODES as readonly string[]).includes(code)), [...GATED_CODES, "target-not-loaded"]);
+  assert.deepEqual(BLOCKER_CODES.filter(code => !(preV3.BLOCKER_CODES as readonly string[]).includes(code)), ["target-not-loaded"]);
+});
+
+// Issue #883: a Claude session without a running process.
+test("target-not-loaded is valid, renders its own words and keeps the observed state", async () => {
+  const { blockerDiagnostic, isMessageDiagnostic, renderMessageDiagnostic } = await import("./protocol-diagnostics.mts");
+  const detail = blockerDiagnostic("target-not-loaded", 0, "target-progress", "unknown");
+  assert.equal(isMessageDiagnostic(detail), true);
+  assert.equal(isMessageStatusBody({ messageId, state: "accepted", progress: { phase: "waiting", code: "target-busy", observedAt: detail.observedAt }, diagnostic: detail }), true);
+  const line = renderMessageDiagnostic(detail, "accepted");
+  assert.match(line, /^Waiting: the target session has no running Claude Code process; the message is delivered once the session is opened in the desktop app or resumed/);
+  assert.match(line, /allowed only through "\*" needs a typed prompt, selecting it is not enough\. Observed 1970-01-01T00:00:00.000Z; stage target-progress\.$/);
+  assert.doesNotMatch(line, /idle-loaded|Target state is unknown/);
+});
+
+test("a peer without messaging.diagnostics.v3 gets target-not-idle, which a pre-v3 peer validates", async () => {
+  const { blockerDiagnostic, compatibleDiagnostic, renderMessageDiagnostic, MESSAGING_DIAGNOSTICS_CAPABILITY: V1, MESSAGING_DIAGNOSTICS_V2_CAPABILITY: V2,
+    MESSAGING_DIAGNOSTICS_V3_CAPABILITY: V3 } = await import("./protocol-diagnostics.mts");
+  const preV3 = await import("./test/fixtures/diagnostics-pre-v3.mts");
+  assert.equal(V3, "messaging.diagnostics.v3");
+  const detail = blockerDiagnostic("target-not-loaded", 0, "target-progress", "unknown"), body = { messageId, state: "accepted", diagnostic: detail };
+  assert.equal(preV3.isMessageDiagnostic(detail), false, "the cliff the downgrade avoids");
+  for (const caps of [[V1], [V1, V2], [V1, V3.replace("v3", "v4")]]) {
+    const old = compatibleDiagnostic(body, caps);
+    assert.deepEqual(old.diagnostic, { ...detail, code: "target-not-idle" }, caps.join(","));
+    assert.equal(preV3.isMessageDiagnostic(old.diagnostic), true);
+    assert.match(renderMessageDiagnostic(old.diagnostic, "accepted"), /Target state is unknown; idle-loaded was not established/, "what a sender saw before");
+    assert.deepEqual(compatibleDiagnostic(old, caps), old, "a second pass changes nothing");
+  }
+  assert.deepEqual(compatibleDiagnostic(body, [V1, V3]), body, "v3 alone suffices, without v2");
+  assert.deepEqual(compatibleDiagnostic(body, [V3]), { messageId, state: "accepted" }, "without v1 the detail is dropped as before");
+  assert.deepEqual(compatibleDiagnostic(body, null), { messageId, state: "accepted" });
 });
