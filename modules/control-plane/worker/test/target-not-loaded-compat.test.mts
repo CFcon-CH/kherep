@@ -35,7 +35,11 @@ for (const modern of [false, true]) it(`a target-not-loaded report, v3 sender=${
   socket.send(makeEnvelope("register", { facts: FACTS, runtimes: [], capabilities: caps }, 1, 0));
   await vi.waitFor(async () => { expect((await session(source).loopCapabilityEvidence()).registered).toBe(true); });
   await session(source).pushFrame("message.status", { messageId, state: "accepted", progress, diagnostic });
-  const pushed = (await until(socket, "message.status", { messageId, state: "accepted" }, 32)).at(-1)!.body as Diagnosed;
+  // The status replay at authentication runs before register, so it carries no diagnostic; skip it to reach the push.
+  let pushed: Diagnosed = {};
+  for (let attempt = 0; pushed.diagnostic === undefined && attempt < 4; attempt++) {
+    pushed = (await until(socket, "message.status", { messageId, state: "accepted" }, 32)).at(-1)!.body as Diagnosed;
+  }
   expect(pushed.diagnostic?.code).toBe(expected);
   if (!modern) for (const body of [routed, pushed]) expect(preV3Accepts(body.diagnostic)).toBe(true);
   socket.ws.close();
