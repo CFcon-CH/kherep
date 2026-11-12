@@ -40,26 +40,57 @@ test("Lead identity snapshots preserve Mac trailing home aliases", { skip: proce
   assert.equal(readLeadDirective(alias + path.sep + ".", ID, TURN), witness);
 });
 
-for (const level of ["sessions", "year", "home"] as const) test(`Lead reader refuses ${level} directory exchange with surviving file identity`, t => {
-  const { home, file, read } = syntheticHome(t), originalRead = fs.readSync;
+function directoryExchange(t: TestContext, level: "sessions" | "year" | "home", phase: "before-open" | "after-read") {
+  const { home, file, read } = syntheticHome(t), originalOpen = fs.openSync, originalRead = fs.readSync;
+  assert.ok(read(), "fixture starts with a valid witness");
   const parent = level === "home" ? home : path.join(home, "sessions", ...(level === "year" ? ["2026"] : []));
   const child = level === "home" ? "sessions" : level === "sessions" ? "2026" : "11";
+  const canonical = fs.realpathSync(file);
   const beforeFile = fs.statSync(file, { bigint: true }), beforeParent = fs.statSync(parent, { bigint: true });
-  let exchanged = false;
-  t.mock.method(fs, "readSync", (...args: any[]) => {
-    const result = (originalRead as (...args: any[]) => number)(...args);
-    if (!exchanged) {
-      exchanged = true;fs.renameSync(parent, parent + ".saved");fs.mkdirSync(parent);
+  let attempts = 0, completed = false, stage = "rename-parent";
+  let fixtureError: { stage: string; code: string | null; syscall: string | null } | null = null;
+  const exchange = () => {
+    if (attempts > 0) return;
+    attempts++;
+    try {
+      fs.renameSync(parent, parent + ".saved");
+      stage = "mkdir-parent";fs.mkdirSync(parent);
+      stage = "move-child";
       fs.renameSync(path.join(parent + ".saved", child), path.join(parent, child));
+      completed = true;
+    } catch (error) {
+      const failure = error as NodeJS.ErrnoException;
+      fixtureError = { stage, code: typeof failure.code === "string" ? failure.code : null,
+        syscall: typeof failure.syscall === "string" ? failure.syscall : null };
+      throw error;
     }
+  };
+  if (phase === "before-open") t.mock.method(fs, "openSync", (...args: any[]) => {
+    if (args[0] === file) exchange();
+    return (originalOpen as (...args: any[]) => number)(...args);
+  });
+  else t.mock.method(fs, "readSync", (...args: any[]) => {
+    const result = (originalRead as (...args: any[]) => number)(...args);
+    exchange();
     return result;
   });
-  const result = read();assert.equal(exchanged, true);
+  const result = read();t.mock.restoreAll();
+  // The reader catches filesystem exceptions, so fixture failures must surface here.
+  assert.deepEqual(fixtureError, null, "directory exchange fixture failed (stage/code/syscall)");
+  assert.equal(attempts, 1);assert.equal(completed, true);
   const afterFile = fs.statSync(file, { bigint: true }), afterParent = fs.statSync(parent, { bigint: true });
-  assert.deepEqual([afterFile.dev, afterFile.ino], [beforeFile.dev, beforeFile.ino]);
+  const identity = (stat: fs.BigIntStats) => [stat.dev, stat.ino, stat.size, stat.mtimeNs, stat.ctimeNs, stat.nlink];
+  assert.deepEqual(identity(afterFile), identity(beforeFile));assert.equal(afterFile.nlink, 1n);
   assert.notDeepEqual([afterParent.dev, afterParent.ino], [beforeParent.dev, beforeParent.ino]);
-  assert.equal(result, null);
-});
+  assert.equal(fs.realpathSync(file), canonical);assert.equal(findAssignmentRollout(home, ID), file);
+  assert.equal(result, null, "reader must refuse the completed directory exchange");
+}
+
+for (const level of ["sessions", "year", "home"] as const) {
+  test(`Lead reader refuses ${level} directory exchange with surviving file identity`, t => directoryExchange(t, level, "before-open"));
+  test(`Lead reader refuses Mac ${level} directory exchange while the file is open`,
+    { skip: process.platform !== "darwin" ? "Mac read-while-open semantics only" : false }, t => directoryExchange(t, level, "after-read"));
+}
 
 const invalidIdentities = [
   { label: "missing inode", fields: { ino: undefined } },
