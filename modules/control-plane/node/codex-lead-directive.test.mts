@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import test from "node:test";
+import test, { type TestContext } from "node:test";
 import { readLeadDirective, isLeadAppointment } from "./codex-lead-directive.mts";
 import { findAssignmentRollout } from "./codex-app.mts";
 
@@ -14,6 +14,110 @@ const start = () => ({ type: "event_msg", payload: { type: "task_started", turn_
 const user = (text = command, order = 1) => ({ type: "response_item", metadata: { user_input_order: order },
   payload: { type: "message", role: "user", content: [{ type: "input_text", text }],
     internal_chat_message_metadata_passthrough: { turn_id: TURN, content_item_kinds: ["user.text"], content_item_metadata: [{ provenance: { type: "user" } }] } } });
+
+function syntheticHome(t: TestContext) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "kherep-lead-identity-")), home = path.join(root, "home");
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const dir = path.join(home, "sessions", "2026", "11", "08");fs.mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, `rollout-synthetic-${ID}.jsonl`);
+  fs.writeFileSync(file, [header, start(), user()].map(row => JSON.stringify(row)).join("\n") + "\n");
+  return { root, home, file, read: () => readLeadDirective(home, ID, TURN) };
+}
+
+test("Lead identity snapshots preserve stable witnesses and accepted home aliases", t => {
+  const { root, home, read } = syntheticHome(t), witness = read();assert.ok(witness);assert.equal(read(), witness);
+  const alias = path.join(root, "alias");fs.symlinkSync(home, alias, "dir");
+  assert.equal(readLeadDirective(alias, ID, TURN), null, "plain final home symlink already refuses");
+  const ancestor = path.join(root, "ancestor");fs.symlinkSync(root, ancestor, "dir");
+  assert.equal(readLeadDirective(path.join(ancestor, "home"), ID, TURN), witness);
+});
+
+// Trailing-separator lstat alias semantics are measured only for the Mac route.
+test("Lead identity snapshots preserve Mac trailing home aliases", { skip: process.platform !== "darwin" ? "Mac alias semantics only" : false }, t => {
+  const { root, home, read } = syntheticHome(t), witness = read();assert.ok(witness);
+  const alias = path.join(root, "alias");fs.symlinkSync(home, alias, "dir");
+  assert.equal(readLeadDirective(alias + path.sep, ID, TURN), witness);
+  assert.equal(readLeadDirective(alias + path.sep + ".", ID, TURN), witness);
+});
+
+for (const level of ["sessions", "year", "home"] as const) test(`Lead reader refuses ${level} directory exchange with surviving file identity`, t => {
+  const { home, file, read } = syntheticHome(t), originalRead = fs.readSync;
+  const parent = level === "home" ? home : path.join(home, "sessions", ...(level === "year" ? ["2026"] : []));
+  const child = level === "home" ? "sessions" : level === "sessions" ? "2026" : "11";
+  const beforeFile = fs.statSync(file, { bigint: true }), beforeParent = fs.statSync(parent, { bigint: true });
+  let exchanged = false;
+  t.mock.method(fs, "readSync", (...args: any[]) => {
+    const result = (originalRead as (...args: any[]) => number)(...args);
+    if (!exchanged) {
+      exchanged = true;fs.renameSync(parent, parent + ".saved");fs.mkdirSync(parent);
+      fs.renameSync(path.join(parent + ".saved", child), path.join(parent, child));
+    }
+    return result;
+  });
+  const result = read();assert.equal(exchanged, true);
+  const afterFile = fs.statSync(file, { bigint: true }), afterParent = fs.statSync(parent, { bigint: true });
+  assert.deepEqual([afterFile.dev, afterFile.ino], [beforeFile.dev, beforeFile.ino]);
+  assert.notDeepEqual([afterParent.dev, afterParent.ino], [beforeParent.dev, beforeParent.ino]);
+  assert.equal(result, null);
+});
+
+const invalidIdentities = [
+  { label: "missing inode", fields: { ino: undefined } },
+  { label: "zero inode", fields: { ino: 0n } },
+  { label: "negative inode", fields: { ino: -1n } },
+  { label: "non-bigint inode", fields: { ino: 1 } },
+  { label: "missing device", fields: { dev: undefined } },
+  { label: "non-bigint device", fields: { dev: 1 } },
+];
+for (const phase of ["initial", "final"] as const) for (const fault of invalidIdentities)
+  test(`Lead reader refuses ${phase} parent ${fault.label}`, t => {
+    const { home, read } = syntheticHome(t), originalLstat = fs.lstatSync;
+    let snapshots = 0;
+    t.mock.method(fs, "lstatSync", (...args: any[]) => {
+      const stat = (originalLstat as (...args: any[]) => any)(...args);
+      if (args[0] === path.join(home, "sessions") && args[1]?.bigint) {
+        snapshots++;
+        if (phase === "initial" || snapshots > 1) return Object.assign(Object.create(stat), fault.fields);
+      }
+      return stat;
+    });
+    assert.equal(read(), null);assert.ok(snapshots > 0);
+  });
+
+test("Lead reader refuses a parent identity change observed only at the final snapshot", t => {
+  const { home, read } = syntheticHome(t), originalLstat = fs.lstatSync;
+  let snapshots = 0;
+  t.mock.method(fs, "lstatSync", (...args: any[]) => {
+    const stat = (originalLstat as (...args: any[]) => any)(...args);
+    if (args[0] === path.join(home, "sessions") && args[1]?.bigint && ++snapshots > 1)
+      return Object.assign(Object.create(stat), { ino: stat.ino + 1n });
+    return stat;
+  });
+  assert.equal(read(), null);assert.equal(snapshots, 2);
+});
+
+for (const fault of invalidIdentities) test(`Lead reader refuses matching file stats with ${fault.label}`, t => {
+  const { file, read } = syntheticHome(t), originalFstat = fs.fstatSync, originalLstat = fs.lstatSync;
+  t.mock.method(fs, "fstatSync", (...args: any[]) => {
+    const stat = (originalFstat as (...args: any[]) => any)(...args);
+    return args[1]?.bigint ? Object.assign(Object.create(stat), fault.fields) : stat;
+  });
+  t.mock.method(fs, "lstatSync", (...args: any[]) => {
+    const stat = (originalLstat as (...args: any[]) => any)(...args);
+    return args[0] === file && args[1]?.bigint ? Object.assign(Object.create(stat), fault.fields) : stat;
+  });
+  assert.equal(read(), null);
+});
+
+test("Lead reader accepts device zero with available positive inode identities", t => {
+  const { read } = syntheticHome(t), originalFstat = fs.fstatSync, originalLstat = fs.lstatSync;
+  for (const [method, original] of [["fstatSync", originalFstat], ["lstatSync", originalLstat]] as const)
+    t.mock.method(fs, method, (...args: any[]) => {
+      const stat = (original as (...args: any[]) => any)(...args);
+      return args[1]?.bigint ? Object.assign(Object.create(stat), { dev: 0n }) : stat;
+    });
+  assert.ok(read());
+});
 
 for (const scenario of [
   { days: 62, duplicate: false, allowed: true },

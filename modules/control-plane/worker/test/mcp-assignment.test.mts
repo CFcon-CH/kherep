@@ -83,25 +83,33 @@ async function source(sessionId = SESSION, title = "Synthetic original A") {
 describe("native self-assignment transaction", () => {
   const pending = (requestId: string) => runInDurableObject(registry(), (_instance, state) =>
     state.storage.sql.exec("SELECT claimed_at,outcome,assignment_result FROM mcp_intents WHERE request_id=?", requestId).one());
+  const messageCount = () => runInDurableObject(registry(), (_instance, state) =>
+    state.storage.sql.exec("SELECT COUNT(*) AS n FROM messages").one().n);
+  // The current Worker has no heartbeat subsystem. Inspect metadata only,
+  // rather than pretending an absent legacy table provides an attempt count.
+  const heartbeatTables = () => runInDurableObject(registry(), (_instance, state) =>
+    state.storage.sql.exec("SELECT name FROM sqlite_master WHERE type='table' AND name='intercom_heartbeat_attempts'").toArray());
   // Native producer attestation is synthetic, otherwise this is the complete
   // registered original/current credential path, including the real RPC/SDK.
   it("Codex Lead policy refuses an eligible RPC caller before confirmation or mutations", async () => {
     const a = await source(), request = await a.intent("kherep-lead");
     const before = await registry().listIntercomSlots(), row = await pending(request.requestId);
-    const messages = await runInDurableObject(registry(), (_instance, state) => state.storage.sql.exec("SELECT COUNT(*) AS n FROM messages").one().n);
+    const messages = await messageCount();expect(await heartbeatTables()).toEqual([]);
     try {
       expect(await registry().assignMcpSlot(request, "kherep-lead")).toEqual({ ok: false, error: "Codex cannot self-assign kherep-lead" });
       expect(a.challenges()).toBe(0);
       expect(await registry().listIntercomSlots()).toEqual(before);
       expect(await pending(request.requestId)).toEqual(row);
       expect(await pending(request.requestId)).toEqual({ claimed_at: null, outcome: null, assignment_result: null });
-      expect(await runInDurableObject(registry(), (_instance, state) => state.storage.sql.exec("SELECT COUNT(*) AS n FROM messages").one().n)).toBe(messages);
+      expect(await messageCount()).toBe(messages);
+      expect(await heartbeatTables()).toEqual([]);
     } finally { a.close(); }
   });
 
   it("Codex Lead policy refuses the actual HTTP SDK and retry with no successful receipt", async () => {
     const a = await source(), request = await a.intent("kherep-lead"), client = await sdk(a.credential.token);
     const before = await registry().listIntercomSlots(), row = await pending(request.requestId);
+    const messages = await messageCount();expect(await heartbeatTables()).toEqual([]);
     try {
       const args = { slot: "kherep-lead", requestId: request.requestId };
       const meta = { sessionId: a.sessionId, threadId: a.sessionId, callId: request.callId };
@@ -109,10 +117,14 @@ describe("native self-assignment transaction", () => {
         const result = await client.callTool({ name: "assign_self", arguments: args, _meta: meta });
         expect(result.isError).toBe(true);
         expect(JSON.stringify(result)).toContain("Codex cannot self-assign kherep-lead");
-        expect(result.structuredContent).not.toMatchObject({ ok: true });
+        expect(result.structuredContent).toEqual({ ok: false, error: "Codex cannot self-assign kherep-lead" });
+        expect(result._meta?.["kherep.dev/heartbeatJoin"]).toBeUndefined();
         expect(a.challenges()).toBe(0);
         expect(await pending(request.requestId)).toEqual(row);
+        expect(await pending(request.requestId)).toEqual({ claimed_at: null, outcome: null, assignment_result: null });
         expect(await registry().listIntercomSlots()).toEqual(before);
+        expect(await messageCount()).toBe(messages);
+        expect(await heartbeatTables()).toEqual([]);
       }
     } finally { await client.close(); a.close(); }
   });
