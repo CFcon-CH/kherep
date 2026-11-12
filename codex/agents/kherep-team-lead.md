@@ -57,8 +57,7 @@ loop. Handle an incoming message in your next turn; a busy worker is no reason t
 
 Reply in the package thread with the launcher command of the Intercom section of the managed
 `AGENTS.md` block (`<intercom>` below), `--reply-to` the last message of the thread, and
-`--from <your full session id>` when the SessionStart context names it; at depth 5 start a new
-thread that names the old id:
+`--from <your full session id>` when the SessionStart context names it:
 
 ```text
 <intercom> msg send --reply-to <messageId> --from <your session id> -- "REPORT: <id>
@@ -67,6 +66,9 @@ EVIDENCE: <command -> excerpt; revision <name>@<sha>; PR and CI state>
 BLOCKER: none | <what, who can lift it>
 NEXT: <milestone> by <YYYY-MM-DD HH:MM> <zone>"
 ```
+
+Stay in that thread. If the Control Plane reports a held or limited exchange, stop and tell the
+operator; a new thread does not release it.
 
 Report at every state change, at every NEXT deadline, and before any deadline you will miss
 (`at-risk`, with the new NEXT). A failing required check is reported in the turn you learn of it, as

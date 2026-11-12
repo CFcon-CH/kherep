@@ -169,6 +169,13 @@ increments the minor version; every other release increments the patch version.
 
 ### Changed
 
+- The team-lead profiles and both ROUTING team models no longer tell a team
+  lead to work around the reply limit by opening a replacement thread (#888,
+  retirement step R1). A REPORT stays in the package thread with
+  `--reply-to`; when the Control Plane reports a held or limited exchange, the
+  session stops and tells the operator, because a new thread does not release
+  it.
+
 - The Control Plane README states the cross-node delivery matrix measured for
   issue #706: running and idle Claude Code and Codex sessions get messages
   without operator input in both directions, while a session after a restart
