@@ -14,7 +14,7 @@ import { MSG_USAGE, runMsg } from "./msg-cli.mts";
 import { nodeStatus, onboard, unenroll } from "./onboard.mts";
 import { parseTaskArgs, runTaskArgs, TASK_USAGE } from "./task-cli.mts";
 import { runTaskControlArgs, TASK_CONTROL_USAGE } from "./task-control-cli.mts";
-import { runService, safeServiceFailure, SERVICE_USAGE } from "./service-cli.mts";
+import { runService, serviceErrorLine, SERVICE_USAGE } from "./service-cli.mts";
 import { stopOnSignals, timestamped } from "./service-runner.mts";
 
 // kherep-node: node side of the Kherep Control Plane, Phase 1.
@@ -121,8 +121,7 @@ function isMainModule(): boolean {
 
 if (isMainModule()) {
   main(process.argv.slice(2)).then((code) => { process.exitCode = code; }, (error: unknown) => {
-    const serviceFailure = safeServiceFailure(error);
-    console.error(serviceFailure ? JSON.stringify(serviceFailure) : `kherep-node: ${(error as Error).message ?? String(error)}`);
+    console.error(serviceErrorLine(error));
     process.exitCode = 1;
   });
 }

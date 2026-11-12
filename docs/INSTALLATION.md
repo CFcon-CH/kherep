@@ -463,6 +463,31 @@ the candidate record uses, for example `STOP_UNPROVEN_TIMEOUT` when the stop
 proof ran out of time, also when no `service/candidate.json` is written
 (issue #677).
 
+A failure in a Windows native call also carries `native` (issue #838): the
+fixed name of the call (`task-read`, `task-write`, `task-start`, `task-remove`,
+`task-stop`, `task-stop-check`, `process-provenance`, `current-user`,
+`principal-sid`, `environment-read`, `definition-mutate` or
+`process-executable`), its `outcome` (`timeout`, `exit`, `spawn` or `output`
+for unreadable output), `exitStatus` when the process exited, `elapsedMs`,
+`timeoutMs` and, for a stop script report or a spawn error, a fixed `reason`
+code. It never carries native output, a path, pid, task name or SID. A failure
+before any mutation (a precondition, the admission wait or a stop preflight) is
+printed as its message, followed by the same `native` object when a native call
+failed. The read-only calls `task-read`, `process-provenance`,
+`task-stop-check` and `current-user` run once more after a timeout, never
+after a non-zero exit; every other call, the mutating stop included, runs once
+with its limit unchanged (65 seconds for the stop, 30 seconds for the others).
+
+Every failed `upgrade` or `rollback` writes `service/last-failure.json`, mode
+0600: the command, `failedAt`, the source commit (the candidate's for an
+upgrade, the installed one for a rollback) and, where known, `stage`,
+`blocker`, `stopCode`, `recovery`, `native`, `writeAttempted` and
+`drainRetained`. A failure before any mutation has no `stage` and no
+`recovery`. The next successful upgrade or rollback removes it. `service
+status` shows it as `lastFailure` (`invalid` for a record that does not
+validate). The record is display-only: no upgrade, rollback, drain, admission
+or recovery decision reads it, and removing it by hand changes nothing else.
+
 A rollback keeps a running node running: it starts the restored definition
 when the current service or the backed-up one was running, also when the backup
 was taken from a stopped service. Upgrade and rollback report success only after
@@ -584,9 +609,37 @@ validate. While the receipt matches the loaded definition the next successful
 upgrade removes it; otherwise remove the file by hand and run `service status`
 again.
 
-On Windows a stop refused by the native script is reported as
-`STOP_NATIVE_REFUSED`; `STOP_BLOCKED_NATIVE_DESCENDANTS` is reported for the
-read-only descendant wait and on macOS.
+On Windows the stop code says where the mutating stop failed (issue #838).
+These count as a stop that was not issued, so the running service stays
+untouched, the failure reports `restored` and the drain is released:
+
+- `STOP_NATIVE_REFUSED` for a failure before the stop script starts (the task
+  read or its validation);
+- for a refusal the completed script itself reports before its first effect
+  (`Stop-ScheduledTask`): `STOP_BLOCKED_NATIVE_DESCENDANTS` when the read-only
+  descendant wait ran out, `STOP_IDENTITY_MISMATCH` when task, supervisor or
+  daemon provenance differs, `STOP_NATIVE_REFUSED` for any other refusal.
+
+These keep the stopped daemon's family unproven, so recovery writes and starts
+nothing, reports `unknown` with `RECOVERY_ABSENCE_UNPROVEN` and keeps the
+drain, as before:
+
+- `STOP_UNPROVEN_TIMEOUT` when the stop script ran out of its 65 seconds; a
+  killed script never counts as before its first effect;
+- `STOP_UNKNOWN_DESCENDANTS` when the process table or the family's absence
+  could not be read;
+- `STOP_NATIVE_REFUSED` for any other failure after the first effect and for a
+  malformed or incomplete stop proof.
+
+The node can then stay off until the next `service upgrade`; `service status`
+(`node: off`) and `kherep-node doctor` show it.
+
+`service status` reports `node` first: `off` when no recorded daemon is alive,
+`drain-blocked` when the daemon runs but a stale or unverifiable drain blocks
+new session admissions, `running` otherwise. The `managedService` check of
+`kherep-node doctor` reports the same state without a native read, fails
+unless the node is `running`, and names the recovery and the last failure's
+codes (issue #838).
 
 `service status` also reports `drain`: `none`, `active`, `stale` or `unknown`.
 A stale or unverifiable drain, left by a controller that exited during a

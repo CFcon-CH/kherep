@@ -6,6 +6,8 @@ import type { NodePaths } from "./config.mts";
 import { pidAlive } from "./daemon-state.mts";
 import { checkRuntimes, checkWorker, findRuntime, runtimeVersion, type VersionOf } from "./doctor-host.mts";
 import { checkQueueDrain } from "./doctor-drain.mts";
+import { checkManagedService } from "./doctor-service.mts";
+import type { ServiceOwnerProbe } from "./service-drain.mts";
 import { checkHooks } from "./doctor-hooks.mts";
 import { checkIntakeLatency } from "./doctor-intake.mts";
 import { checkIntercom } from "./doctor-intercom.mts";
@@ -33,6 +35,7 @@ export interface DoctorDeps {
   versionOf?: VersionOf;
   pidAlive?: (pid: unknown) => boolean;
   now?: () => number;
+  serviceOwnerProbe?: ServiceOwnerProbe;
 }
 
 export interface DoctorReport { ok: boolean; version: string | null; checks: Record<string, Check> }
@@ -85,6 +88,8 @@ export async function runDoctor(deps: DoctorDeps): Promise<DoctorReport> {
     codexForkAttempts: checkCodexForkAttempts(deps.paths),
     // Issue #441: the control plane's queue for this node, as of the last directory.
     queueDrain: checkQueueDrain(deps.paths, now),
+    // Issue #838: the managed service node state, as `service status` reports it.
+    managedService: checkManagedService(deps.paths, alive, deps.serviceOwnerProbe),
   };
   return { ok: Object.values(checks).every((check) => check.ok), version: checkoutVersion(repoRoot), checks };
 }

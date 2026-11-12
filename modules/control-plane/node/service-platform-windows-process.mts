@@ -46,7 +46,7 @@ export const WINDOWS_FINAL_STOP_PROOF_SCRIPT = String.raw`function Complete-Kher
 
 export const WINDOWS_PROCESS_PROVENANCE_SCRIPT = ARGUMENTS + NATIVE + String.raw`$p=$all|Where-Object{[int]$_.ProcessId-eq[int]$payload.pid}|Select-Object -First 1;if($null-eq$p){'{"missing":true}';exit};$owner=Invoke-CimMethod -InputObject $p -MethodName GetOwnerSid -ErrorAction Stop;if($owner.ReturnValue-ne0){throw 'process owner is unresolved'};$supervisorOwner=if($null-ne$wrapper){Test-KherepOwner $wrapper $current}else{$false};$descendants=@(Get-KherepDescendants ([int]$p.ProcessId) $all);@{missing=$false;executable=$p.ExecutablePath;commandLine=$p.CommandLine;created=$p.CreationDate.ToUniversalTime().ToString('o');supervisorCreated=if($null-ne$wrapper){$wrapper.CreationDate.ToUniversalTime().ToString('o')}else{$null};ownerSid=[string]$owner.Sid;currentSid=$current;selectedInstances=$selected.Count;enginePid=$engine;engineInAncestry=(Test-KherepAncestor ([int]$p.ProcessId) $engine $parents);matchingEngineTasks=$sameEngine.Count;supervisorPid=$supervisorPid;supervisorOwner=$supervisorOwner;daemonDirectChild=([int]$p.ParentProcessId -eq $supervisorPid);supervisorChildren=$supervisorChildren.Count;daemonDescendants=$descendants.Count}|ConvertTo-Json -Compress`;
 
-export const WINDOWS_STOP_SCRIPT = ARGUMENTS + NATIVE + WINDOWS_FINAL_STOP_WAIT_SCRIPT + WINDOWS_FINAL_STOP_PROOF_SCRIPT + String.raw`
+const STOP_BODY = ARGUMENTS + NATIVE + WINDOWS_FINAL_STOP_WAIT_SCRIPT + WINDOWS_FINAL_STOP_PROOF_SCRIPT + String.raw`
 $supervisorRetained=$null;$daemonRetained=$null;
 try{
   if($null-eq$payload.expected -and $selected.Count-eq0){
@@ -99,6 +99,7 @@ try{
     if(@($freshAll|Where-Object{[int]$_.ParentProcessId-eq$supervisorPid}).Count-ne0 -or @($freshAll|Where-Object{[int]$_.ProcessId-eq[int]$payload.expected.pid}).Count-ne0){throw 'expected daemon absence changed during final stop'}
     return 'clear'
   } 30000 100
+  $kherepStopPhase='effects-possible'
   Stop-ScheduledTask -TaskName $payload.serviceName -TaskPath $payload.taskPath
   if(-not$supervisorRetained.HasExited){$supervisorRetained.Kill();if(-not$supervisorRetained.WaitForExit(10000)){throw 'expected supervisor did not exit'}}
   $after=@(Get-CimInstance Win32_Process|Where-Object{[int]$_.ParentProcessId-eq$supervisorPid});$allowed=if($null-ne$daemonRetained){[int]$payload.expected.pid}else{0}
@@ -114,3 +115,38 @@ try{
   return 'clear'
   } $payload.expected
 }finally{if($null-ne$daemonRetained){$daemonRetained.Dispose()};if($null-ne$supervisorRetained){$supervisorRetained.Dispose()}}`;
+
+// #838 A2: each literal throw of the stop script maps to one fixed reason code; any other exception is native-error.
+// The adapter (service-windows-stop-code.mts) classifies by reason and phase only, never by the message.
+export const STOP_SCRIPT_REASONS: ReadonlyArray<readonly [string, string]> = [
+  ["expected stopped task process absence differs", "stopped-absence-differs"],
+  ["expected supervisor task provenance differs", "supervisor-provenance"],
+  ["expected supervisor handle is unavailable", "supervisor-handle"],
+  ["expected supervisor start provenance differs", "supervisor-provenance"],
+  ["expected supervisor owner differs", "supervisor-owner"],
+  ["expected daemon handle is unavailable", "daemon-handle"],
+  ["expected daemon start provenance differs", "daemon-provenance"],
+  ["expected daemon provenance differs", "daemon-provenance"],
+  ["expected daemon is unavailable while the supervisor has another child", "supervisor-child"],
+  ["STOP_BLOCKED_NATIVE_DESCENDANTS", "descendants-busy"],
+  ["Windows final stop provenance is unknown", "provenance-unknown"],
+  ["Scheduled Task definition changed during final stop", "definition-changed"],
+  ["Scheduled Task instance changed during final stop", "instance-changed"],
+  ["expected supervisor task provenance changed during final stop", "supervisor-provenance"],
+  ["expected supervisor identity changed during final stop", "supervisor-identity"],
+  ["expected daemon identity changed during final stop", "daemon-identity"],
+  ["expected daemon absence changed during final stop", "daemon-identity"],
+  ["expected supervisor did not exit", "supervisor-exit"],
+  ["replacement daemon appeared while stopping the supervisor", "replacement-daemon"],
+  ["expected daemon did not exit", "daemon-exit"],
+  ["expected supervisor child absence is unknown", "family-unproven"],
+  ["retained service instance exit is unproven", "instance-exit"],
+  ["selected task family absence is unproven", "family-unproven"],
+  ["selected task final absence is unproven", "task-absence"],
+];
+export const STOP_SCRIPT_REPORT_STATUS = 70;
+const REASON_TABLE = STOP_SCRIPT_REASONS.map(([message, reason]) => `@('${message}','${reason}')`).join(",");
+// The phase turns to effects-possible on the line before Stop-ScheduledTask. A caught failure prints one fixed
+// report and exits with the dedicated status; a killed or timed-out script prints nothing parseable.
+const STOP_REPORT = String.raw`}catch{$kherepMessage=[string]$_.Exception.Message;$kherepReason='native-error';foreach($kherepPair in $kherepReasons){if($kherepMessage-ceq$kherepPair[0]){$kherepReason=$kherepPair[1];break}};@{ok=$false;phase=$kherepStopPhase;reason=$kherepReason;hresult=[int]$_.Exception.HResult}|ConvertTo-Json -Compress;exit ${STOP_SCRIPT_REPORT_STATUS}}`;
+export const WINDOWS_STOP_SCRIPT = `$kherepReasons=@(${REASON_TABLE});$kherepStopPhase='pre-effect';try{` + STOP_BODY + STOP_REPORT;

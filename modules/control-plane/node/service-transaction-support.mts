@@ -6,6 +6,7 @@ import { readServiceBackup, snapshotDigests, type ServiceBackup, type ServiceCan
 import {
   FAILED_WRITE_SNAPSHOT, STOP_NOT_ISSUED, isStopCode, stopCode, type FailedServiceWrite, type NativeServiceSnapshot, type ServiceBinding, type StopCode,
 } from "./service-types.mts";
+import { nativeFailure, withNativeFailure } from "./service-windows-invoke.mts";
 
 export const SERVICE_STAGES = ["stop", "prove-stopped", "write", "verify", "start", "health", "settle", "receipt"] as const;
 export type ServiceStage = typeof SERVICE_STAGES[number];
@@ -51,15 +52,22 @@ export async function assertSettled(input: LifecycleDependencies, binding: Servi
 }
 
 // #472: a stop counts as issued unless the adapter tagged its failure as raised before any native effect.
-export const stopNotIssued = (stage: ServiceStage, cause: unknown): boolean =>
-  stage === "stop" && (cause as { code?: unknown } | null)?.code === STOP_NOT_ISSUED;
+// #838 A3: an allowlisted stop code carries the same tag as notIssued, never together with an unproven family.
+export function stopNotIssued(stage: ServiceStage, cause: unknown): boolean {
+  if (stage !== "stop" || typeof cause !== "object" || cause === null) return false;
+  const value = cause as { code?: unknown; notIssued?: unknown; familyUnproven?: unknown };
+  return value.code === STOP_NOT_ISSUED || (isStopCode(value.code) && value.notIssued === true && value.familyUnproven !== true);
+}
 
 export function recoveryBlocker(error: unknown): string {
   const code = (error as { code?: unknown } | null)?.code;
   return typeof code === "string" && code.startsWith("RECOVERY_") ? code : "RECOVERY_STEP_FAILED";
 }
 
-type ServiceFailure<C extends string> = Error & { code: C; recovery: string; stage: ServiceStage; blocker?: string; stopCode?: StopCode };
+type ServiceFailure<C extends string> = Error & { code: C; recovery: string; stage: ServiceStage; blocker?: string; stopCode?: StopCode;
+  writeAttempted?: boolean; drainRetained?: boolean };
+// #838 A4: display facts of a failed transaction for service/last-failure.json; nothing decides on them.
+export interface ServiceFailureFacts { writeAttempted: boolean; drainRetained: boolean }
 
 // #677: the stop reason of a failed stop or stop proof travels on the failure itself, also when no candidate record is written.
 export const stageStopCode = (stage: ServiceStage, cause: unknown): StopCode | undefined =>
@@ -72,7 +80,7 @@ export function stopFamilyUnproven(cause: unknown): boolean {
 }
 
 export function serviceFailure<C extends string>(code: C, cause: unknown, recovery: string, stage: ServiceStage,
-  blocker?: string, failedStop?: StopCode): ServiceFailure<C> {
+  blocker?: string, failedStop?: StopCode, facts?: ServiceFailureFacts): ServiceFailure<C> {
   const fallback = code === "SERVICE_ROLLBACK_FAILED" ? "managed service rollback failed" : "managed service activation failed";
   const error = new Error(cause instanceof Error ? cause.message : fallback) as ServiceFailure<C>;
   error.code = code;
@@ -80,7 +88,10 @@ export function serviceFailure<C extends string>(code: C, cause: unknown, recove
   error.stage = stage;
   if (blocker) error.blocker = blocker;
   if (failedStop) error.stopCode = failedStop;
-  return error;
+  if (facts) { error.writeAttempted = facts.writeAttempted; error.drainRetained = facts.drainRetained; }
+  // #838 A4: the failed native call travels with the failure, validated and non-enumerable, as on the cause.
+  const native = nativeFailure(cause);
+  return native ? withNativeFailure(error, native) : error;
 }
 
 // #582: a candidate record is used only while the definition in place is exactly the recorded one, under the same binding.

@@ -11,6 +11,18 @@ increments the minor version; every other release increments the patch version.
 
 ### Added
 
+- A failed Windows managed-service upgrade or rollback names the native call
+  that failed (#838, stage A). Every PowerShell call of the Windows adapter has a
+  fixed name; the CLI failure, also one raised before any mutation, carries a
+  validated `native` object (call, outcome `timeout|exit|spawn|output`, exit
+  status, elapsed time, limit, fixed reason code) and never native output, paths,
+  pids, task names or SIDs. Every failed upgrade or rollback writes the
+  display-only `service/last-failure.json` (codes, times and a commit, mode
+  0600), removed by the next success and shown by `service status` as
+  `lastFailure`. `service status` also reports `node: running|off|drain-blocked`,
+  and the new `managedService` doctor check reports the same state with the
+  recovery text. No decision path reads the record.
+
 - The Control Plane daemon has a Codex liveness source (#706, Phase 2). With
   `wake.nativeQueue: true` it finds, once per listing tick, which live `codex`
   process holds a thread's rollout open (macOS `ps`/`lsof`; Windows Restart
@@ -37,6 +49,18 @@ increments the minor version; every other release increments the patch version.
   joins the CONTRIBUTING.md table (#833).
 
 ### Fixed
+
+- A Windows service stop no longer maps every failure to
+  `STOP_UNKNOWN_DESCENDANTS` with an unproven family (#838). The stop script
+  reports whether it failed before its first effect; such a failure, or one
+  before the script starts, now reports `STOP_BLOCKED_NATIVE_DESCENDANTS`,
+  `STOP_IDENTITY_MISMATCH` or `STOP_NATIVE_REFUSED`, counts as a stop that was not
+  issued and ends `restored` with the drain released instead of a stale drain
+  blocking admissions. A timeout (`STOP_UNPROVEN_TIMEOUT`) or a failure after the
+  first effect keeps the family unproven, recovery `unknown` and the drain, as
+  before (#472, #677). Only the read-only calls `task-read`,
+  `process-provenance`, `task-stop-check` and `current-user` now run once more
+  after a timeout; mutating calls and their limits are unchanged.
 
 - Control Plane: a message for a Claude Code session that has no running
   process (for example after a restart of the Claude desktop app) now carries

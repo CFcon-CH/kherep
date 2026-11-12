@@ -180,7 +180,8 @@ export async function activateManagedService(options: ActivateOptions, input: De
       if (!writeAttempted && (cause as { code?: string }).code === "RECOVERY_RECORD_PERSISTENCE_FAILED") {
         drainSafeToRelease = !stopIssued;
         try { restoreCandidateBytes(input.paths, previousCandidate); } catch { drainSafeToRelease = false; }
-        throw serviceFailure("SERVICE_ACTIVATION_FAILED", cause, "unknown", stage, "RECOVERY_RECORD_PERSISTENCE_FAILED");
+        throw serviceFailure("SERVICE_ACTIVATION_FAILED", cause, "unknown", stage, "RECOVERY_RECORD_PERSISTENCE_FAILED", undefined,
+          { writeAttempted, drainRetained: !drainSafeToRelease });
       }
       candidateSnapshot ??= failedWriteSnapshot(cause);
       if (stopNotIssued(stage, cause)) stopIssued = false;
@@ -208,7 +209,8 @@ export async function activateManagedService(options: ActivateOptions, input: De
       }
       // #472: keep the drain once a write was attempted or while a daemon told to stop is still alive (#677: or its family).
       if (recovery === "unknown" && (writeAttempted || familyUnproven || (stopIssued && deps.alive(oldState?.pid)))) drainSafeToRelease = false;
-      throw serviceFailure("SERVICE_ACTIVATION_FAILED", cause, recovery, stage, blocker, stageStopCode(stage, cause));
+      throw serviceFailure("SERVICE_ACTIVATION_FAILED", cause, recovery, stage, blocker, stageStopCode(stage, cause),
+        { writeAttempted, drainRetained: !drainSafeToRelease });
     } finally { clearLaunchPermit(); if (drainSafeToRelease) endDrain(); }
   } finally { release(); }
 }

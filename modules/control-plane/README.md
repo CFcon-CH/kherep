@@ -993,6 +993,21 @@ cannot stop stays loaded and is recorded in `service/candidate.json`, and the
 next upgrade, rollback or repeated install stops it through the proven path
 (issue #582). It does not modify Claude Code or Codex hooks.
 
+Every Windows native call has a fixed name; a failed call reports it with its
+outcome (`timeout`, `exit`, `spawn`, `output`), exit status, elapsed time,
+limit and a fixed reason code as `native` in the CLI failure, never native
+output, paths, pids, task names or SIDs. Only the read-only calls `task-read`,
+`process-provenance`, `task-stop-check` and `current-user` run once more after
+a timeout. The Windows stop script reports whether it failed before its first
+effect; only such a failure, or one before the script starts, counts as a stop
+that was not issued and ends `restored` with the drain released. A timeout or a
+failure after the first effect keeps the family unproven and the drain, as
+before. Every failed upgrade or rollback writes the display-only
+`service/last-failure.json`, which `service status` shows as `lastFailure`;
+status also reports `node` (`running`, `off` or `drain-blocked`), and the
+`managedService` doctor check reports the same state (issue #838). See
+[installation and rollback](../../docs/INSTALLATION.md) for the stop codes.
+
 `service install`, `upgrade` and `rollback` also write the stable command to
 `bin/` under the config directory (issue #436): `kherep-node.mjs`, a POSIX shim
 `kherep-node` and, on Windows, `kherep-node.cmd` and `kherep-node.ps1`. Agents
@@ -1047,7 +1062,7 @@ The config directory is `KHEREP_CONFIG_DIR` when set, otherwise `%APPDATA%\khere
 | `node.json` | Non-secret config: control URL, `nodeId`, name, public key, key and policy paths |
 | `node-ed25519.pem` | The private key, mode `0600` |
 | `daemon.json` | The daemon's `pid`, `startedAt`, immutable startup `source`, optional managed `service`, the time of its last authenticated connection `connectedAt` and, while that connection is lost, `disconnectedAt`, and per runtime the last readiness probe as `readiness.<runtime>` with `ready`, the fixed `cause` code when not ready and `probedAt`, never the probe's output. `interruptedProbe` (`runtime`, the previous daemon's `pid`, the probe start `at`, `noticedAt`) records a Claude probe that the previous daemon's stop interrupted, until the next ready Claude verdict (issue #420). Written by the daemon for [Doctor](#doctor); on Windows a replace of the file is retried up to 8 times, with at most 1.27 s of pauses between attempts, while another process holds it open, after which the write fails, is logged and the daemon runs on (issue #540) |
-| `service/` | Managed service receipt, the `candidate.json` record of a failed candidate recovery could not stop, retained raw native backups, verified source pins, transaction lock and short-lived admission drain state; mode `0700`, records mode `0600` |
+| `service/` | Managed service receipt, the `candidate.json` record of a failed candidate recovery could not stop, the display-only `last-failure.json` of the last failed upgrade or rollback (issue #838), retained raw native backups, verified source pins, transaction lock and short-lived admission drain state; mode `0700`, records mode `0600` |
 | `policy.json` | Local command allowlist and messaging policy, see below |
 | `inbox/` | Accepted messages, one `<messageId>.json` per message; daemon progress sidecars under `progress/` and persistence receipts under `receipts/`; directory mode `0700`, files `0600` |
 | `outbox/` | Messages written by `msg send`, one `<messageId>.json` each, until the daemon has an answer from the Worker. Created by `node onboard` and at daemon start, because a sandboxed session may write into it but not create it |
@@ -1083,6 +1098,7 @@ The config directory is `KHEREP_CONFIG_DIR` when set, otherwise `%APPDATA%\khere
 | `codexForkAttempts` | always; the `codex-fork-attempts/` directory is unreadable, or an owner's store cannot be read completely | `states`, the Codex fork reply attempts per state, and `unreadableOwners` (issue #408); counts only, no ids, answers or reasons |
 | `codexSessions` | always; the `codex-sessions/` directory is unreadable otherwise | `recorded`, the Codex session records seen within 12 hours, and `lastEvent`, their count per last hook event (`SessionStart`, `UserPromptSubmit`, `PostToolUse`, `Stop`, and `unknown` for a record of an older hook), the [idle evidence](#codex-sessions) of issue #408; counts only, no session ids, and no record is removed |
 | `queueDrain` | the last fetched `directory.json` shows this node's queue at the control plane empty (also with no intake recorded yet) or waiting (oldest queued message at most 5 minutes old) | `state` (`empty`, `waiting`, `stalled`, `unknown`), `measured`, `fetchedAt`, `directoryAgeSeconds`, `truncated`, `queued`, `oldestQueuedAgeSeconds`, `lastAcceptedAgeSeconds`, `connection` (the directory status, a separate fact) and `peers` (`listed`, `stalled`, `waiting`, `empty`, `unknown`, over the listed peers only) (issue #441); counts, states and times only, no names, ids, paths or text |
+| `managedService` | the node is not managed (`managed: false`), or its recorded daemon is alive and no stale or unverifiable service drain blocks admissions; no native read | `managed`, `node` (`running`, `off`, `drain-blocked`, as `service status` reports it), `drain`, `lastFailure` (`command`, `failedAt`, `stage`, `stopCode`, `recovery`, native `call` and `outcome`, or `invalid`; shown, never judged) and a recovery `detail` (issue #838); codes, states and times only |
 | `intercom` | a managed service receipt is valid, the launcher and shims under `<configRoot>/bin/` hold the bytes the current renderer writes for the receipt's platform and Node executable, the launcher resolves the receipt's source pin, which holds `cli.mts` and its manifest and verifies in full against the receipt's commit and digest, the receipt's Node executable exists, and each of the five instruction files names the command | `managed`, `receipt` (`valid`, `missing`, `invalid`), `launcher` (`path`, `status`), `shims` (`posix`, and on Windows `cmd` and `ps1`), each `current`, `stale`, `missing` or `unreadable`, `resolves` (`match`, `missing-pin`, `missing-cli`, `mismatch`), `node` (`present`, `missing`), `instructions` per file (below) `present`, `stale`, `missing` or `unreadable` |
 
 `ready` in the runtimes check is the running daemon's last [readiness probe](#tasks) of that runtime, read from `daemon.json` (issue #222); doctor never probes. It is `true`, or `false` with `cause` (`sign-in`, `timeout` or `error`), each with `probedAt` and `aged`, or `"unknown"` when the daemon is not running, has not probed that runtime (it probes only the runtimes the sessions policy enables) or the record is malformed. `aged` is true once the probe is older than the daemon's own revalidation bound (10 minutes ready, 2 minutes not ready). An aged verdict is still reported: the daemon keeps advertising and acting on it until its next probe, and it probes a ready runtime again only when a run needs it, so an idle node shows an aged `true`. Only `sign-in` fails the check, because only a sign-in failure makes the node refuse a task; a timed-out or failed probe blocks nothing. `runtimes.claude.lastStopInterruptedProbeAt` names the start of a Claude probe that the last daemon stop interrupted, while `daemon.json` records it; it never fails the check (issue #420). The daemon check needs a daemon of this version, since older daemons do not write `daemon.json`.
