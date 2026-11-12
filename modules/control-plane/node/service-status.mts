@@ -26,7 +26,7 @@ export type ServiceNodeState = "running" | "off" | "drain-blocked";
 export const serviceNodeState = (daemonAlive: boolean, drain: ReturnType<typeof describeServiceDrain>): ServiceNodeState =>
   !daemonAlive ? "off" : drain === "stale" || drain === "unknown" ? "drain-blocked" : "running";
 // #838 A4: display only; an unreadable record is "invalid" and changes nothing else in the report.
-const lastFailureReport = (paths: Paths) => {
+export const lastFailureReport = (paths: Paths) => {
   const record = readServiceLastFailure(paths);
   if (record === null) return {};
   if (record === "invalid") return { lastFailure: "invalid" };

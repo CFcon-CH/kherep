@@ -961,7 +961,7 @@ node modules/control-plane/node/cli.mts daemon
 node modules/control-plane/node/cli.mts doctor
 ```
 
-After enrollment, `kherep-node service install|upgrade|status|rollback` manages
+After enrollment, `kherep-node service install|upgrade|status|rollback|recover` manages
 the daemon as a per-user macOS LaunchAgent or Windows Scheduled Task. The
 service runs the product runner from a verified source pin, records that source
 once at daemon startup and retains exported Windows task definitions or configured
@@ -1007,6 +1007,18 @@ before. Every failed upgrade or rollback writes the display-only
 status also reports `node` (`running`, `off` or `drain-blocked`), and the
 `managedService` doctor check reports the same state (issue #838). See
 [installation and rollback](../../docs/INSTALLATION.md) for the stop codes.
+
+`service recover` (issue #810) starts the installed service again after a
+failed upgrade left the node off or drain-blocked. Without `--confirm` it only
+prints evidence (`canRecover` and a fixed refusal `reason`) and writes nothing.
+With `--confirm` it is a strict subset of `service upgrade` to the installed
+commit: upgrade's drain reclaim, admission wait, preflight and proof-carrying
+stop, then the receipt's exact definition is started with a launch permit,
+health-checked for up to 180 seconds and settled before the drain is released.
+It writes no definition and no receipt, refuses a definition that differs from
+the receipt, a recorded candidate in place, an active or unknown drain, a live
+daemon outside the stopped service, an unowned live daemon and an unverifiable
+pin, and keeps the drain after any failure that follows a native effect.
 
 `service install`, `upgrade` and `rollback` also write the stable command to
 `bin/` under the config directory (issue #436): `kherep-node.mjs`, a POSIX shim

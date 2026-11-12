@@ -9,7 +9,8 @@ import type { LifecycleDependencies } from "./service-lifecycle.mts";
 import { servicePlatform, serviceSelector, supportedServicePlatform } from "./service-platform.mts";
 import { readServiceReceipt, serviceRoot, type ServiceReceipt } from "./service-records.mts";
 import { activateManagedService, rollbackManagedService } from "./service-transaction.mts";
-import { reportServiceStatus, reportUnmanagedStatus, type StatusDependencies } from "./service-status.mts";
+import { lastFailureReport, reportServiceStatus, reportUnmanagedStatus, type StatusDependencies } from "./service-status.mts";
+import { recoverEvidence, recoverManagedService } from "./service-recover.mts";
 import { SERVICE_STAGES, type ServiceStage } from "./service-transaction-support.mts";
 import { isStopCode, type ServiceBinding, type StopCode } from "./service-types.mts";
 import { lastFailureOf, removeServiceLastFailure, writeServiceLastFailure, type ServiceLastFailure } from "./service-last-failure.mts";
@@ -20,11 +21,12 @@ export const SERVICE_USAGE = `  kherep-node service install --workspace <absolut
   kherep-node service status
   kherep-node service rollback
   kherep-node service rollback --recover --backup <backup-id> --source <candidate-clean-checkout>
+  kherep-node service recover [--confirm]
   macOS --adopt uses the configured on-disk plist, not a complete snapshot of the loaded launchd cache.`;
 
 export type ServiceCommand = { action: "install"; workspace: string; source?: string; serviceName?: string; taskPath?: string;
   adopt: boolean; explicitServiceName: boolean } | { action: "upgrade"; source?: string }
-  | { action: "status" } | { action: "rollback"; recover?: true; backup?: string; source?: string };
+  | { action: "status" } | { action: "rollback"; recover?: true; backup?: string; source?: string } | { action: "recover"; confirm: boolean };
 
 export function defaultServiceName(platform: ServiceBinding["platform"]): string {
   return platform === "win32" ? "KherepNode" : "org.kherep.node";
@@ -36,7 +38,7 @@ interface ServiceCliDependencies extends StatusDependencies {
   lifecycle?: Omit<LifecycleDependencies, "paths" | "adapter">;
 }
 
-const SERVICE_FAILURE_CODES = new Set(["SERVICE_ACTIVATION_FAILED", "SERVICE_ROLLBACK_FAILED"]);
+const SERVICE_FAILURE_CODES = new Set(["SERVICE_ACTIVATION_FAILED", "SERVICE_ROLLBACK_FAILED", "SERVICE_RECOVER_FAILED"]);
 const SERVICE_STAGE_SET = new Set<string>(SERVICE_STAGES);
 interface SafeServiceFailure { ok: false; code: string; recovery: "restored" | "unknown"; stage?: ServiceStage; blocker?: string; stopCode?: StopCode;
   native?: NativeFailure }
@@ -80,7 +82,7 @@ async function recorded<T>(paths: ReturnType<typeof nodePaths>, command: Service
 
 export function parseServiceCommand(argv: string[]): ServiceCommand {
   const rawAction = argv[0];
-  if (!(rawAction === "install" || rawAction === "upgrade" || rawAction === "status" || rawAction === "rollback")) {
+  if (!(rawAction === "install" || rawAction === "upgrade" || rawAction === "status" || rawAction === "rollback" || rawAction === "recover")) {
     throw new Error(`usage:\n${SERVICE_USAGE}`);
   }
   const action = rawAction;
@@ -88,12 +90,18 @@ export function parseServiceCommand(argv: string[]): ServiceCommand {
   try {
     parsed = parseArgs({ args: argv.slice(1), strict: true, options: { workspace: { type: "string" }, source: { type: "string" },
       "service-name": { type: "string" }, "task-path": { type: "string" }, adopt: { type: "boolean" },
-      recover: { type: "boolean" }, backup: { type: "string" } } });
+      recover: { type: "boolean" }, backup: { type: "string" }, confirm: { type: "boolean" } } });
   } catch { throw new Error(`usage:\n${SERVICE_USAGE}`); }
   const stringOption = (value: unknown): string | undefined => {
     if (value === undefined || typeof value === "string") return value;
     throw new Error(`usage:\n${SERVICE_USAGE}`);
   };
+  // #810: recover takes --confirm and nothing else; no other action takes --confirm.
+  if (action === "recover") {
+    if (argv.length > 2 || (argv.length === 2 && argv[1] !== "--confirm")) throw new Error(`usage:\n${SERVICE_USAGE}`);
+    return { action, confirm: argv.length === 2 };
+  }
+  if (parsed.values.confirm !== undefined) throw new Error(`usage:\n${SERVICE_USAGE}`);
   const workspace = stringOption(parsed.values.workspace);
   const source = stringOption(parsed.values.source);
   const serviceName = stringOption(parsed.values["service-name"]);
@@ -178,6 +186,14 @@ export async function runService(argv: string[], dependencies: ServiceCliDepende
   }
   if (!receipt) throw new Error("managed service receipt is missing; install or adopt first");
   const adapter = (dependencies.adapterFor ?? servicePlatform)(serviceRoot(paths), receipt.binding.platform);
+  if (command.action === "recover") {
+    // #810: evidence without --confirm (read-only, no lock); with it, the strict subset of upgrade. The last failure is shown only.
+    const input = { ...dependencies.lifecycle, paths, adapter };
+    const result = command.confirm ? await recoverManagedService(input)
+      : await recoverEvidence(input, receipt).then(evidence => ({ recovered: evidence.canRecover, view: evidence.view }));
+    console.log(JSON.stringify({ ...result.view, ...lastFailureReport(paths) }, null, 2));
+    return result.recovered ? 0 : 1;
+  }
   if (command.action === "upgrade") {
     let commit: string | undefined;
     const result = await recorded(paths, "upgrade", () => commit, async () => {
