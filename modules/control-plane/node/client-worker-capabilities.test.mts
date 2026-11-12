@@ -79,3 +79,22 @@ test("diagnostics follow live Worker negotiation, and capability loss strips the
   assert.equal(isNodeMessageStatusBody(report()), true);
   assert.equal(report().diagnostic, undefined);
 });
+
+// Issue #883: the target node sends target-not-loaded only to a Worker that advertised messaging.diagnostics.v3. The deployed
+// Worker without it would refuse the whole message.status, so it gets target-not-idle, the code a sender saw before.
+test("target-not-loaded reaches only a v3 Worker; any other Worker gets target-not-idle", async () => {
+  const { blockerDiagnostic, MESSAGING_DIAGNOSTICS_CAPABILITY: V1, MESSAGING_DIAGNOSTICS_V3_CAPABILITY: V3 } = await import("../protocol-diagnostics.mts");
+  const preV3 = await import("../test/fixtures/diagnostics-pre-v3.mts");
+  const { c } = client();
+  const id = "00000000-0000-4000-8000-000000000883";
+  const detail = blockerDiagnostic("target-not-loaded", 0, "target-progress", "unknown");
+  const progress = { phase: "waiting", code: "target-busy", observedAt: detail.observedAt } as const;
+  await c.onFrame(challenge); await c.onFrame(authOk);
+  const report = () => JSON.parse(c.reportStatus(id, "accepted", undefined, progress, detail)[0]).body;
+  await c.onFrame(directory([MESSAGING_PROXY_CAPABILITY, "messaging.loop-brake.v1", V1]));
+  assert.deepEqual(report().diagnostic, { ...detail, code: "target-not-idle" }, "the deployed Worker's list");
+  assert.equal(preV3.isMessageDiagnostic(report().diagnostic), true);
+  assert.deepEqual(report().progress, progress);
+  await c.onFrame(directory([MESSAGING_PROXY_CAPABILITY, "messaging.loop-brake.v1", V1, V3]));
+  assert.deepEqual(report().diagnostic, detail);
+});

@@ -3,12 +3,15 @@ export const MESSAGING_DIAGNOSTICS_CAPABILITY = "messaging.diagnostics.v1";
 // Issue #706: a node that validates RESOLUTION_DETAIL_CODES advertises this next to v1. A v1 node drops a whole
 // message.status frame with an unknown code, so the Worker hands it resolution-unavailable. The row keeps the code.
 export const MESSAGING_DIAGNOSTICS_V2_CAPABILITY = "messaging.diagnostics.v2";
+// Issue #883: a peer that validates target-not-loaded advertises this. Any other peer gets target-not-idle, the code it knew
+// for the same wait: a previous node drops the whole frame and a previous Worker refuses the whole message.status.
+export const MESSAGING_DIAGNOSTICS_V3_CAPABILITY = "messaging.diagnostics.v3";
 export const DIAGNOSTIC_STAGES = ["target-progress", "upstream-egress", "send-admission", "duplicate", "mcp-claim"] as const;
 const RESOLUTION_DETAIL_CODES = ["resolution-missing", "resolution-ambiguous", "resolution-stale", "resolution-invalid", "resolution-unreadable", "resolution-clock"] as const;
 export const BLOCKER_CODES = ["task-concurrency", "task-starts-daily", "runtime-pending", "turn-spacing", "budget-lock-unavailable",
   "hint-capture-failed", "hint-invalidated", "hint-lock-busy", "hint-storage-failed", "target-not-idle", "task-active", "process-still-running",
   "node-offline", "registration-pending", "binding-capability-missing", "stored-binding-missing", "resolution-unavailable", "resolution-timeout",
-  "resolution-capacity", "identity-changed", "acceptance-unconfirmed", ...RESOLUTION_DETAIL_CODES] as const;
+  "resolution-capacity", "identity-changed", "acceptance-unconfirmed", ...RESOLUTION_DETAIL_CODES, "target-not-loaded"] as const;
 export const IDENTITY_DIMENSIONS = ["owner", "reference-match", "runtime", "lifecycle", "proof-kind", "eligibility", "capability", "connection", "lineage", "selected-proof"] as const;
 export type BlockerCode = typeof BLOCKER_CODES[number];
 export type IdentityDimension = typeof IDENTITY_DIMENSIONS[number];
@@ -39,6 +42,9 @@ export function compatibleDiagnostic<T extends { diagnostic?: MessageDiagnostic 
     const { diagnostic: _diagnostic, ...legacy } = body;
     return legacy as T;
   }
+  if (diagnostic.kind === "blocker" && diagnostic.code === "target-not-loaded" && !capabilities.includes(MESSAGING_DIAGNOSTICS_V3_CAPABILITY)) {
+    return { ...body, diagnostic: { ...diagnostic, code: "target-not-idle" } };
+  }
   return diagnostic.kind === "blocker" && (RESOLUTION_DETAIL_CODES as readonly BlockerCode[]).includes(diagnostic.code) && !capabilities.includes(MESSAGING_DIAGNOSTICS_V2_CAPABILITY)
     ? { ...body, diagnostic: { ...diagnostic, code: "resolution-unavailable" } } : body;
 }
@@ -55,6 +61,8 @@ const WORDS: Record<BlockerCode, string> = {
   "resolution-missing": "target node does not list the session", "resolution-ambiguous": "target session reference matches several sessions",
   "resolution-stale": "target node answered that the resolution window has passed", "resolution-invalid": "target node session list failed validation",
   "resolution-unreadable": "target node session list is unreadable", "resolution-clock": "control-plane clocks disagree beyond the resolution window",
+  "target-not-loaded": "the target session has no running Claude Code process; the message is delivered once the session is opened in the desktop app"
+    + " or resumed, and a session allowed only through \"*\" needs a typed prompt, selecting it is not enough",
 };
 export function renderMessageDiagnostic(diagnostic: MessageDiagnostic | null | undefined, state: string): string {
   if (!isMessageDiagnostic(diagnostic)) return "Waiting; detailed cause unavailable.";

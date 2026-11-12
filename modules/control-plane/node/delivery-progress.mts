@@ -35,7 +35,10 @@ function observeAccepted(deps: RunnerDeps, session: LocalSession, accepted: Inbo
   requests: () => RequestIndex): void {
   if (accepted.length === 0) return;
   if (session.state !== "idle-loaded") {
-    progressRecords(deps.paths, accepted, "waiting", "target-busy", now, undefined, blockerDiagnostic("target-not-idle", now, "target-progress", session.state as MessageDiagnostic["observedState"]));
+    // Issue #883: absent from a complete, fresh Claude listing and no fresh hook (that would read reachable-probable)
+    // means no running process. The progress code stays target-busy: a new one would make an older Worker refuse the status.
+    const code = session.runtime === "claude-code" && session.listed === false && session.state === "unknown" ? "target-not-loaded" : "target-not-idle";
+    progressRecords(deps.paths, accepted, "waiting", "target-busy", now, undefined, blockerDiagnostic(code, now, "target-progress", session.state as MessageDiagnostic["observedState"]));
     return;
   }
   const refs = refsOf(session);

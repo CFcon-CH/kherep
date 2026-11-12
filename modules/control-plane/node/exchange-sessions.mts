@@ -19,12 +19,17 @@ import { snapshotObject } from "./wake-snapshot.mts";
 // sessions.json, the node's sessions from the last successful listing, and the
 // listing wrapper that records it (moved here from exchange.mts, issue #487).
 
-export interface LocalSession { sessionId: string; name?: string; runtime?: string; state?: string }
+// listed (issue #883), Claude rows only: whether the row was in a complete `claude agents` listing. Absent when that
+// listing was incomplete, or when the file is older than LISTED_FRESH_MS: a failed listing writes nothing.
+export interface LocalSession { sessionId: string; name?: string; runtime?: string; state?: string; listed?: boolean }
+const LISTED_FRESH_MS = 3 * 60_000; // As closed-delivery.mts LISTING_FRESH_MS.
 
-export function writeLocalSessions(paths: NodePaths, sessions: SessionInfo[], now: number = Date.now(), generation = readLivenessSnapshot(paths)?.generation): void {
+// claudeListed: the Claude session ids of a complete Claude listing; without it no row says listed.
+export function writeLocalSessions(paths: NodePaths, sessions: SessionInfo[], now: number = Date.now(), generation = readLivenessSnapshot(paths)?.generation,
+  claudeListed?: ReadonlySet<string>): void {
   ensureDir(paths.dir);
   const local: LocalSession[] = sessions.map((s) => ({ sessionId: s.sessionId, ...(s.name ? { name: s.name } : {}),
-    runtime: s.runtime, state: s.state }));
+    runtime: s.runtime, state: s.state, ...(claudeListed && s.runtime === "claude-code" ? { listed: claudeListed.has(s.sessionId) } : {}) }));
   let witness:unknown;
   try { witness=readJson<{labelBindingEpoch?:unknown}>(paths.sessions)?.labelBindingEpoch; }
   catch { witness="history-unavailable"; }
@@ -32,11 +37,13 @@ export function writeLocalSessions(paths: NodePaths, sessions: SessionInfo[], no
 }
 
 export function readLocalSessions(paths: NodePaths, now: number = Date.now()): LocalSession[] {
-  const value = readJson<{ sessions?: unknown; generation?: unknown }>(paths.sessions);
+  const value = readJson<{ sessions?: unknown; generation?: unknown; updatedAt?: unknown }>(paths.sessions);
   const snapshot = readLivenessSnapshot(paths);
   if (!Array.isArray(value?.sessions)) return [];
-  return (value.sessions as LocalSession[]).map(s => ({ ...s, state: snapshot && snapshot.generation === value.generation
-    ? sessionVerdict(paths, { runtime: s.runtime ?? "unknown", sessionId: s.sessionId }, now).state : "unknown" }));
+  const fresh = now - Date.parse(String(value.updatedAt)) <= LISTED_FRESH_MS;
+  return (value.sessions as LocalSession[]).map(({ listed, ...s }) => ({ ...s, ...(fresh && typeof listed === "boolean" ? { listed } : {}),
+    state: snapshot && snapshot.generation === value.generation
+      ? sessionVerdict(paths, { runtime: s.runtime ?? "unknown", sessionId: s.sessionId }, now).state : "unknown" }));
 }
 
 // Adds a session this node just resumed (issue #102), so the delivery hook of
@@ -161,7 +168,7 @@ export function recordingSessions(paths: NodePaths, list: (signal?: AbortSignal)
     // Carry prior identities into classification. Visibility is decided only
     // after the lifecycle ledger has accepted/rejected the supplied events.
     const listedRows = rows.length;
-    for (const s of prior) if (s.runtime && !rows.some(r => targetKey(r) === targetKey({ runtime: s.runtime!, sessionId: s.sessionId }))) {
+    for (const { listed: _listed, ...s } of prior) if (s.runtime && !rows.some(r => targetKey(r) === targetKey({ runtime: s.runtime!, sessionId: s.sessionId }))) {
       rows.push({ ...s, runtime: s.runtime, state: "unknown" });
     }
     rows.push(...boundedCarry(paths, rows.splice(listedRows), records, log));
@@ -205,7 +212,8 @@ export function recordingSessions(paths: NodePaths, list: (signal?: AbortSignal)
     markUnseen(sessions, snapshot.capped ? [...new Set([...unlistedRuntimes(listed), "*"])] : unlistedRuntimes(listed));
       const claudeListingComplete = !snapshot.capped && !unseen.includes("*") && !unseen.includes("claude-code");
       recordLocalLabels(paths, sessions, observedAt, claudeListingComplete, stamp, snapshot.generation, {snapshot,listed,evidence:safeEvidence});
-      writeLocalSessions(paths, sessions, observedAt, snapshot.generation);
+      writeLocalSessions(paths, sessions, observedAt, snapshot.generation, claudeListingComplete
+        ? new Set(listed.filter(r => r.runtime === "claude-code").map(r => r.sessionId)) : undefined);
       signal?.throwIfAborted();
       commitAuthority(authority, paths, observation, snapshot, observedAt);
       attachIdentitySnapshot(sessions, snapshot.generation);

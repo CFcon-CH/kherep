@@ -38,6 +38,19 @@ increments the minor version; every other release increments the patch version.
 
 ### Fixed
 
+- Control Plane: a message for a Claude Code session that has no running
+  process (for example after a restart of the Claude desktop app) now carries
+  the diagnostic `target-not-loaded` instead of `target-not-idle`. `msg status`
+  says the session must be opened in the desktop app or resumed, and that a
+  session allowed only through `"*"` needs a typed prompt. The node decides this
+  from absence in a complete `claude agents --json --all` listing no older than
+  three minutes, without a fresh hook observation; an incomplete or failed
+  listing keeps `target-not-idle`. The progress code stays `waiting/target-busy`.
+  No session is woken or started. The code travels only to a peer advertising
+  the new `messaging.diagnostics.v3`; any other gets `target-not-idle`. Nodes
+  and the Worker advertise it, so a sender sees the new text only after both the
+  target node and the Worker are upgraded. Closes #883.
+
 - Control Plane node: a Codex busy-hint lock left behind by a dead owner no
   longer blocks the busy-hint path for good (`target hint lock is busy`). The
   lock now records its owner's pid, start time and a token. A lock whose owner

@@ -68,7 +68,7 @@ test("828 C default unsupported liveness initializes labels from a complete Clau
         [{ sessionId: S, runtime: "claude-code", state: "unknown" }]);
     assert.deepEqual(unlistedRuntimes(published), []);
     const projection = readJson<Projection>(paths.sessions)!;
-    assert.deepEqual(projection.sessions, [{ sessionId: S, name: "review", runtime: "claude-code", state: "unknown" }]);
+    assert.deepEqual(projection.sessions, [{ sessionId: S, name: "review", runtime: "claude-code", state: "unknown", listed: true }]);
     assert.deepEqual(projection.unseen, []);
 
     assert.equal(fs.existsSync(labelsFile(paths)), true, "complete Claude listing must persist label state with a name-to-ID binding");
