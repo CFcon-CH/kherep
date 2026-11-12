@@ -899,6 +899,18 @@ producer and run before admission; their refusal codes (`fork-producer`,
 
 ## Codex fork reply: producer and helper
 
+**Retired by issue #890 (retirement step R3).** `codex-queue.mts` no longer
+calls `scheduleForkReply` or the relay sweep `relayPending`, and
+`daemon-round.mts` passes no proxy send gate to `pollExchange`, so whatever
+`wake.codexFork` says no fork starts, no proxy record is written and a
+`proxyOf` record left in the outbox is held. Only `relayBookkeeping`
+(`codex-fork-relay-pass.mts`) still runs in every poll, reconciling relays a
+node made before the upgrade (owner-first withdrawal, the 24 hour cleanup)
+without a send. The policy key is still parsed; doctor reports it as
+`"codexFork": "retired"`. The modules stay until the deletion step; their
+tests drive them through the test-only `codex-fork-legacy-poll.mts`. The rest
+of this section and the relay sections below describe the retired wiring.
+
 Issue #408, third increment, darwin only, behind `wake.codexFork`. With the
 section absent `scheduleForkReply` returns at its first check: no file is read,
 no process starts and nothing is written. The daemon hands every exchange round

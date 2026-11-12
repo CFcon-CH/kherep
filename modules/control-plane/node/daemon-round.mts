@@ -1,12 +1,11 @@
 import type { FrameArrival, IntakeDiagnostics } from "./intake-diagnostics.mts";
 import type { NodeClient } from "./client.mts";
-import { relaySendGate } from "./codex-fork-relay.mts";
 import { codexIntakeWindow, type CodexIntakeWindow } from "./codex-intake-window.mts";
 import { pollCodexQueue } from "./codex-queue.mts";
 import { pollCodexInbound } from "./codex-wake.mts";
 import type { NodePaths } from "./config.mts";
 import { observeClaudeDeliveryProgress, observeCodexTaskProgress } from "./delivery-progress.mts";
-import { pollExchange, type ExchangeCounts, type ProxySend } from "./exchange.mts";
+import { pollExchange, type ExchangeCounts } from "./exchange.mts";
 import type { InboxRecord } from "./inbox.mts";
 import type { InboxIndex } from "./inbox-index.mts";
 import { pollMcpIntents } from "./mcp-local.mts";
@@ -51,11 +50,12 @@ export async function exchangeRound(ctx: RoundContext): Promise<void> {
   const { client, paths, runner, log } = ctx;
   const current = loadPolicy(ctx.policyFile);
   let applied = current;
-  // Issue #444: the gate's presence check follows the round's policy, as the queue does; the relay guards read the file.
-  const proxySend = (): ProxySend => relaySendGate({ ...runner, policy: applied }, log);
+  // Issue #890 (retirement R3): no proxy send gate, so the exchange holds every
+  // Codex fork proxy answer whatever wake.codexFork says; the Codex queue's relay
+  // bookkeeping cleans a held record up after its bound.
   const counts: ExchangeCounts = { status: 0, outbox: 0 };
   const exchange = (records?: InboxRecord[]): void => pollExchange(client, paths, ctx.inflight, ctx.send, Date.now(), Math.random,
-    proxySend(), { unreported: (now) => ctx.inbox.unreported(now, records), counts });
+    undefined, { unreported: (now) => ctx.inbox.unreported(now, records), counts });
   const refreshed = await client.refreshPolicy(applied);
   if (!ctx.live()) return;
   let published = ctx.publishRegistration(refreshed);

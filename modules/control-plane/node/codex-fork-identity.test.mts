@@ -7,7 +7,8 @@ import { FEATURES_STDERR_WARNING, FEATURES_STDOUT_MEASURED_ROWS, FORK_OWNER, for
 import { forkTestTimeouts, resetForkFeatureCache } from "./codex-fork-reply.mts";
 import { FAST } from "./codex-fork-run-fixture.mts";
 import { resetMcpCache } from "./codex-mcp.mts";
-import { codexQueueIdle, pollCodexQueue } from "./codex-queue.mts";
+import { legacyForkPoll } from "./codex-fork-legacy-poll.mts";
+import { codexQueueIdle } from "./codex-queue.mts";
 
 // Issue #408, PR 3, maintainer requirement of 2026-10-16: the measured
 // versions are measurement points, not pins. What counts is the binary's
@@ -23,7 +24,7 @@ const featureRuns = (f: ReturnType<typeof forkNode>): number => f.calls.filter((
 test("(a, c) a replaced binary with the same protocol keeps working, and its features are listed again", async (t) => {
   const f = forkNode(t);
   const logs: string[] = [];
-  const poll = async (): Promise<void> => { pollCodexQueue(f.deps(), (line) => { logs.push(line); }); await codexQueueIdle(); };
+  const poll = async (): Promise<void> => { legacyForkPoll(f.deps(), (line) => { logs.push(line); }); await codexQueueIdle(); };
   f.add();
   await poll();
   f.tick(60_000);
@@ -58,7 +59,7 @@ test("(b) a binary without a required capability fails closed with a visible rea
     resetForkFeatureCache();
     const f = forkNode(t, scenario);
     f.add();
-    pollCodexQueue(f.deps());
+    legacyForkPoll(f.deps());
     await codexQueueIdle();
     const [attempt] = forkAttempts(f.paths, FORK_OWNER);
     assert.deepEqual({ state: attempt?.state, reason: attempt?.reason, ...(attempt?.detail ? { detail: attempt.detail } : {}) }, expected, name);
@@ -68,7 +69,7 @@ test("(b) a binary without a required capability fails closed with a visible rea
   f.add();
   const logs: string[] = [];
   for (let round = 0; round < 2; round++) {
-    pollCodexQueue(f.deps(), (line) => { logs.push(line); });
+    legacyForkPoll(f.deps(), (line) => { logs.push(line); });
     await codexQueueIdle();
   }
   assert.deepEqual(logs.filter((line) => /refused/.test(line)), ["kherep-node: Codex fork reply refused before admission: fork-features-unknown"],
@@ -81,7 +82,7 @@ test("a features list with the measured rows and a stderr WARNING lets the attem
   f.features(FEATURES_STDOUT_MEASURED_ROWS, 0, FEATURES_STDERR_WARNING);
   f.add();
   const logs: string[] = [];
-  pollCodexQueue(f.deps(), (line) => { logs.push(line); });
+  legacyForkPoll(f.deps(), (line) => { logs.push(line); });
   await codexQueueIdle();
   assert.deepEqual(forkAttempts(f.paths, FORK_OWNER).map((a) => a.state), ["completed"]);
   assert.deepEqual(logs.filter((line) => /refused/.test(line)), []);

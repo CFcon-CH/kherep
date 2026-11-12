@@ -10,7 +10,8 @@ import { FORK_OWNER, forkNode } from "./codex-fork-fixture.mts";
 import { forkTestTimeouts, resetForkFeatureCache } from "./codex-fork-reply.mts";
 import { FAST } from "./codex-fork-run-fixture.mts";
 import { resetMcpCache } from "./codex-mcp.mts";
-import { codexQueueIdle, pollCodexQueue } from "./codex-queue.mts";
+import { legacyForkPoll } from "./codex-fork-legacy-poll.mts";
+import { codexQueueIdle } from "./codex-queue.mts";
 import { markStopEnded, recordCodexSession } from "./codex-sessions.mts";
 import { markOffered } from "./inbox.mts";
 import { readdress } from "./_deprecated/session-handover.mts";
@@ -26,7 +27,7 @@ test.after(() => { forkTestTimeouts.value = undefined; });
 
 type Node = ReturnType<typeof forkNode>;
 const poll = async (f: Node, extra: Parameters<Node["deps"]>[0] = {}): Promise<void> => {
-  pollCodexQueue(f.deps(extra));
+  legacyForkPoll(f.deps(extra));
   await codexQueueIdle();
 };
 const forkAudit = (f: Node): { action: string; messageIds: string[]; sessionId: string }[] => (fs.existsSync(wakeAudit(f.paths))

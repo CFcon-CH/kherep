@@ -20,8 +20,7 @@ import type { RunnerDeps } from "./session-runner.mts";
 import { listTasks } from "./task-records.mts";
 import { killSwitch } from "./wake-hook.mts";
 import { nativeQueueIdle, scheduleNativeQueue, scheduleNativeReconciliation } from "./codex-queue-producer.mts";
-import { forkReplyIdle, scheduleForkReply } from "./codex-fork-reply.mts";
-import { relayPending } from "./codex-fork-relay.mts";
+import { forkReplyIdle } from "./codex-fork-reply.mts";
 import { relayBookkeeping } from "./codex-fork-relay-pass.mts";
 
 // Admit a compact CP hint for the authorized original Codex owner. The
@@ -52,6 +51,7 @@ export function pollCodexQueue(deps: RunnerDeps, log: (line: string) => void = (
   const now = deps.now?.() ?? Date.now();
   pruneNoted(deps.paths);
   // Issue #408, PR 4 (WX443-1, WX443-2): relay bookkeeping before, and independent of, the candidates and the flag.
+  // Issue #890 (retirement R3): it only reconciles stored attempts; no poll starts a fork or writes a proxy answer.
   try { relayBookkeeping(deps, log); } catch (error) {
     log(`kherep-node: Codex fork relay bookkeeping failed: ${String((error as Error).message ?? error)}`);
   }
@@ -92,8 +92,6 @@ export function pollCodexQueue(deps: RunnerDeps, log: (line: string) => void = (
   for (const sessionId of candidates) {
     try {
       scheduleNativeReconciliation(deps, sessionId, log);
-      // Issue #408, PR 4: before the inbox filter, so a withdrawal runs when nothing waits.
-      relayPending(deps, sessionId, log);
       queueFor(deps, sessionId, live, selectInbox, now, log, appSession, home, reachable);
     } catch (error) {
       log(`kherep-node: could not wake Codex session ${sessionId}: ${String((error as Error).message ?? error)}`);
@@ -171,9 +169,6 @@ function queueFor(deps: RunnerDeps, sessionId: string, live: string[], selectInb
   }
   scheduleNativeQueue(deps, sessionId, due.filter((record) => record.toSession === sessionId)
     .map((record) => record.messageId), grant, log);
-  // Issue #408: off unless wake.codexFork is present; it needs the same wake
-  // authorization and, on top, the owner's full id in codexFork.sessions.
-  scheduleForkReply(deps, sessionId, due.filter((record) => record.toSession === sessionId).map((record) => record.messageId), log);
   const valid = previous && !previous.invalidated && previous.ticket.admittedAt <= now && now < previous.ticket.expiresAt
     && previous.ticket.policyFingerprint === busyPolicyFingerprint(policy);
   const recovery = new Map((previous?.recovery ?? (previous?.publishedAt === undefined ? [] : previous.messageIds.map(messageId =>

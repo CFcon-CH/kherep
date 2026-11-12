@@ -191,6 +191,20 @@ increments the minor version; every other release increments the patch version.
   `node/codex-app-delivery.mts` and its test are removed; `closed-delivery.mts`
   stays until its deletion step.
 
+- Control plane Codex delivery: the Codex fork reply proxy starts no new
+  attempts (#890, retirement step R3, operator decision of 2026-11-12). Whatever
+  `wake.codexFork` says, the Codex queue poll no longer schedules a fork reply
+  or runs the relay sweep, and the exchange round has no proxy send gate, so no
+  `thread/fork` starts and no proxy answer is written or sent, also after a
+  daemon restart. The relay bookkeeping still runs in every poll and reconciles
+  relays a node made before the upgrade (withdrawn when the owner reads, cleaned
+  up after 24 hours) without a send; stored attempts are kept. The key is still
+  read without error; `kherep-node doctor` reports a written section, valid or
+  not, as `"codexFork": "retired"` in the policy check and no longer fails on a
+  malformed one. The native Queue producer and CP hints are unchanged. The fork
+  modules stay until their deletion step; their tests drive them through the
+  test-only `node/codex-fork-legacy-poll.mts`.
+
 - The Control Plane README states the cross-node delivery matrix measured for
   issue #706: running and idle Claude Code and Codex sessions get messages
   without operator input in both directions, while a session after a restart
