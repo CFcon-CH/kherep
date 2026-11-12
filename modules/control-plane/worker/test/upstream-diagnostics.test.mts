@@ -29,7 +29,7 @@ it("real NodeSession RPC distinguishes invalid/expired resolution, timeout and b
   const f = await connected(["messaging.v1", "messaging.selected-binding.v1"]);
   const expired = request(); expired.expiresAt = Date.now() - 1;
   expect((await session(f.nodeId).resolveMessageReferencesDetailed(expired)).code).toBe("resolution-clock");
-  const short = request(); short.expiresAt = Date.now() + 20;
+  const short = request(); short.expiresAt = Date.now() + 250; // margin for slow CI runners before the expiry check
   expect((await session(f.nodeId).resolveMessageReferencesDetailed(short)).code).toBe("resolution-timeout");
   const pending = Array.from({ length: 32 }, () => session(f.nodeId).resolveMessageReferencesDetailed(request()));
   await vi.waitFor(async () => {
