@@ -117,6 +117,11 @@ increments the minor version; every other release increments the patch version.
 
 ### Changed
 
+- The Control Plane README states the cross-node delivery matrix measured for
+  issue #706: running and idle Claude Code and Codex sessions get messages
+  without operator input in both directions, while a session after a restart
+  of the Claude desktop app must be opened once until issue #883 is resolved.
+
 - Keep a wake name attached to its Claude session through a rename: a name in
   `wake.sessions` binds to the session whose full id is listed with it, then
   follows that id. Damaged binding history refuses the name instead of guessing.

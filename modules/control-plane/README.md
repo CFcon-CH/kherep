@@ -233,6 +233,20 @@ A threaded reply queued by the session still confirms local delivery, preventing
 
 Upgrade the Worker before the nodes. A node relays a Codex fork's proxy answer (issue #408) only while its current connection has seen `messaging.proxy.v1` in a `directory` frame; against an older Worker it refuses every fork before admission (`fork-relay-unsupported`). Old nodes remain compatible but do not gain persistence receipts until upgraded; new nodes connected to an old Worker keep retrying reports because that Worker cannot acknowledge them. The protocol version and existing message states are unchanged. The same holds for `waiting/cwd-refused` (issue #396): a Worker before it answers such a report with `invalid message.status body`, so the target node keeps retrying it and the sender sees no newer progress for that message until the Worker is upgraded or the message reaches a final state.
 
+#### Cross-node delivery without operator input
+
+Measured for issue #706 on 2026-11-12 between a macOS node and a Windows node, on revision `e9b44858` or `11607c9e` (the later one changes only how a Codex lead directive is read), with the Worker at `22dbfa55`. Each cell is one real message sent from the other node, with nobody typing into the target session. "Pass" means a turn in the target session processed the message within 5 minutes. Both nodes run the default wake section plus `wake.nativeQueue: true`, `wake.codexApp: true` and `wake.replies: true`.
+
+| Target session | Claude Code | Codex |
+| --- | --- | --- |
+| Turn running | pass, both directions: offered at the next tool boundary (`PostToolUse`), 9 s and 29 s | pass, both directions: CP hint at the next tool boundary in the same turn, 10 s and 30 s |
+| Idle for 30 minutes or more | pass, both directions: the wake listener started a turn after 3 s | pass, both directions: the native Queue pointer started a turn within 43 s and 73 s |
+| After a restart of the Claude desktop app | **manual**: fails on both hosts, see below | not measured |
+
+After a restart of the Claude desktop app, a listed session is not woken until someone opens it. The sender reads `waiting/target-busy` ("idle-loaded was not established") for as long as nobody opens the session. Messages wait and are not lost. Once the session is opened, by selecting it in the app or by typing into it, the listener armed at `SessionStart` delivers the backlog. Until issue #883 is resolved, open each session that should receive messages once after an app restart. The operator decided on 2026-11-12 that this step stays manual.
+
+Idle Codex delivery depends on `wake.nativeQueue: true`, which is off by default. Without it, an idle Codex owner keeps the message as `waiting/awaiting-user-turn` until its next turn starts. The CP hint for a running turn does not depend on it. The figures above come from one measurement per cell and do not bound latency.
+
 #### CLI
 
 On a host with a managed service, sessions run the stable command of the config directory (issue #436, see [Node](#node)); without one, `node modules/control-plane/node/cli.mts` of a checkout takes the same arguments. Task prompts and the delivery hooks name whichever of the two the host has (see [Tasks](#tasks)).
