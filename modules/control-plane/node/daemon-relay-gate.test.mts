@@ -5,23 +5,26 @@ import test from "node:test";
 
 import { parseEnvelope } from "../protocol.mts";
 import { NodeClient } from "./client.mts";
+import { forkAttempts } from "./codex-fork-attempts.mts";
 import { FORK_OWNER, PEER } from "./codex-fork-fixture.mts";
 import { relayNode } from "./codex-fork-relay-fixture.mts";
 import { codexQueueIdle } from "./codex-queue.mts";
 import type { NodeConfig } from "./config.mts";
-import { startDaemon } from "./daemon.mts";
+import { startDaemon, type DaemonHandle } from "./daemon.mts";
 import { EXCHANGE_INTERVAL_MS } from "./exchange.mts";
 import { generateIdentity, writePrivateKey } from "./identity.mts";
-import { storeMessage } from "./inbox.mts";
+import { getMessage, storeMessage } from "./inbox.mts";
 import type { ProbeResult } from "./runtime-probe.mts";
 
-// Issue #444: the exchange's proxy send gate follows the policy of each round,
-// as the queue does since #453. A daemon started while wake.codexFork is absent
-// must consult the relay guards once the section is written, without a restart,
-// and log the hold. Synthetic home, fake socket, captured timers; no real Codex.
+// Issue #890 (retirement R3), replacing the #444 gate test: the daemon wires no
+// proxy send gate and its poll starts no fork. With wake.codexFork set, an idle
+// wake-listed owner, an eligible message and a relay record a node left before
+// the upgrade, no round sends a proxy answer, claims an attempt or consults the
+// relay guards, also after a daemon restart. Synthetic home, fake socket,
+// captured timers; no real Codex.
 
-const OTHER = "01a0db74-0000-7000-8000-0000000000e9";
 const MSG = "44400002-0000-4000-8000-000000000001";
+const NEXT = "44400003-0000-4000-8000-000000000001";
 
 const flush = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
 const until = async (done: () => boolean, what: string): Promise<void> => {
@@ -29,7 +32,7 @@ const until = async (done: () => boolean, what: string): Promise<void> => {
   assert.ok(done(), what);
 };
 
-test("a wake.codexFork opt-in written after start reaches the exchange's send gate at the next round (issue #444)", async (t) => {
+test("with wake.codexFork set the daemon sends no proxy answer and starts no fork, also after a restart (issue #890)", async (t) => {
   const n = relayNode(t);
   // At the daemon's real clock: the start purges inbox records older than 7 days, and the
   // relay pass cleans up a record past RELAY_MAX_AGE_MS.
@@ -37,10 +40,12 @@ test("a wake.codexFork opt-in written after start reaches the exchange's send ga
     createdAt: new Date().toISOString() });
   n.seed(MSG, { attemptedAt: Date.now() });
   n.sweep();
-  assert.equal(n.outbox().length, 1, "a relay record waits in the outbox");
-  let codexFork: unknown;
-  // No codexFork at start, and wake lists another id, so no real Codex producer runs (cf. #453).
-  n.policy((p) => { codexFork = p.wake.codexFork; delete p.wake.codexFork; p.wake.sessions = [OTHER]; });
+  const relay = n.outbox();
+  assert.equal(relay.length, 1, "a relay record waits in the outbox");
+  storeMessage(n.paths.inbox, { messageId: NEXT, from: PEER, toSession: FORK_OWNER, text: "another synthetic question",
+    createdAt: new Date().toISOString() });
+  n.session({ lastSeen: new Date().toISOString() });
+  assert.deepEqual(n.deps().policy.wake?.codexFork?.sessions, [FORK_OWNER], "the owner is wake-listed and opted in");
 
   const identity = generateIdentity();
   writePrivateKey(n.paths.privateKey, identity);
@@ -69,9 +74,13 @@ test("a wake.codexFork opt-in written after start reaches the exchange's send ga
   NodeClient.prototype.refreshPolicy = async () => { refreshes++; return []; };
   NodeClient.prototype.onFrame = async () => [];
   const logs: string[] = [];
-  const handle = startDaemon(config, n.paths, (line) => { logs.push(line); }, async () => [], () => new Promise<ProbeResult>(() => {}));
+  let handle: DaemonHandle | undefined;
+  const start = (): void => {
+    handle = startDaemon(config, n.paths, (line) => { logs.push(line); }, async () => [], () => new Promise<ProbeResult>(() => {}));
+    listeners.get("open")?.({});
+  };
   t.after(async () => {
-    handle.stop();
+    handle?.stop();
     await codexQueueIdle();
     Object.defineProperty(globalThis, "WebSocket", { configurable: true, writable: true, value: original.socket });
     globalThis.setInterval = original.interval;
@@ -82,10 +91,9 @@ test("a wake.codexFork opt-in written after start reaches the exchange's send ga
     else process.env.CODEX_HOME = original.codexHome;
     assert.ok(path.resolve(n.root).startsWith(path.resolve(os.tmpdir()) + path.sep));
   });
-  listeners.get("open")?.({});
-  const tick = timers.get(EXCHANGE_INTERVAL_MS);
-  assert.ok(tick);
   const round = async (): Promise<void> => {
+    const tick = timers.get(EXCHANGE_INTERVAL_MS);
+    assert.ok(tick);
     const before = refreshes;
     tick();
     // A tick during a running round is coalesced; tick again until this round starts.
@@ -99,15 +107,25 @@ test("a wake.codexFork opt-in written after start reaches the exchange's send ga
     await flush();
   };
   const sends = (): number => frames.map((frame) => parseEnvelope(frame)).filter((p) => p.ok && p.envelope.type === "message.send").length;
-  const held = (): string[] => logs.filter((line) => line.includes("relay send held:"));
+  const relayLogs = (): string[] => logs.filter((line) => line.includes("Codex fork relay"));
+  const check = (when: string): void => {
+    assert.equal(sends(), 0, `${when}: no proxy answer left the node`);
+    assert.deepEqual(relayLogs(), [], `${when}: the relay guards were never consulted`);
+    assert.deepEqual(n.outbox(), relay, `${when}: the held record waits for its bound`);
+    assert.deepEqual([n.app.runs.length, n.turns(), n.audit()], [0, [], []], `${when}: no fork, turn or fork audit`);
+    assert.deepEqual(n.attempt(MSG).state, "completed", `${when}: the stored attempt is kept`);
+    assert.equal(forkAttempts(n.paths, FORK_OWNER).length, 1, `${when}: no new attempt`);
+    assert.equal(getMessage(n.paths.inbox, NEXT)?.state, "accepted", `${when}: the eligible message waits for its owner`);
+  };
 
+  start();
   await round();
-  assert.deepEqual(held(), [], "with the section absent the gate stays silent");
-  assert.equal(sends(), 0);
-  n.policy((p) => { p.wake.codexFork = codexFork; });
   await round();
-  // The guard code depends on the platform and the synthetic clock; the fresh guards ran.
-  assert.equal(held().length, 1, logs.join("\n"));
-  assert.match(held()[0]!, /^kherep-node: Codex fork relay send held: [a-z-]+$/);
-  assert.equal(sends(), 0, "no proxy answer left the node");
+  check("first daemon");
+  handle!.stop();
+  await codexQueueIdle();
+  start();
+  await round();
+  await round();
+  check("after a restart");
 });

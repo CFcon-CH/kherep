@@ -9,6 +9,7 @@ import { NodeClient } from "./client.mts";
 import { busyPolicyFingerprint } from "./codex-busy-policy.mts";
 import { advanceForkAttempt, claimForkAttempt, forkAttempts, type ForkAttempt } from "./codex-fork-attempts.mts";
 import { FORK_ID, FORK_OWNER, forkNode, LAST_TURN } from "./codex-fork-fixture.mts";
+import { legacyForkPoll } from "./codex-fork-legacy-poll.mts";
 import { relayPending, relaySendGate, resetRelayState } from "./codex-fork-relay.mts";
 import type { CodexDeps } from "./codex-process.mts";
 import { codexQueueIdle, pollCodexQueue } from "./codex-queue.mts";
@@ -75,8 +76,10 @@ export function relayNode(t: test.TestContext, options: { capability?: boolean }
     capabilityFrom: (source: () => readonly string[] | null) => { capabilities = source; },
     // The sweep alone, as the poll loop calls it.
     sweep: (extra: CodexDeps = {}) => relayPending(deps(extra), FORK_OWNER, log),
-    // The real poll and lane: sweep, then the fork producer for messages without an attempt.
+    // The real poll and lane: since issue #890 only the relay bookkeeping, no sweep and no fork producer.
     poll: async (extra: CodexDeps = {}) => { pollCodexQueue(deps(extra), log); await codexQueueIdle(); },
+    // The poll as it was before issue #890: the sweep, then the fork producer (codex-fork-legacy-poll.mts).
+    legacyPoll: async (extra: CodexDeps = {}) => { legacyForkPoll(deps(extra), log); await codexQueueIdle(); },
     // One exchange round with the gate; the message.send bodies that went out.
     exchange: async (extra: CodexDeps = {}, gate = relaySendGate(deps(extra), log)): Promise<MessageSendBody[]> => {
       await authenticated;

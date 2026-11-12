@@ -13,14 +13,15 @@ import { relayNode } from "./codex-fork-relay-fixture.mts";
 import { forkTestTimeouts, resetForkFeatureCache } from "./codex-fork-reply.mts";
 import { FAST, runFork } from "./codex-fork-run-fixture.mts";
 import { resetMcpCache } from "./codex-mcp.mts";
-import { codexQueueIdle, pollCodexQueue } from "./codex-queue.mts";
+import { legacyForkPoll } from "./codex-fork-legacy-poll.mts";
+import { codexQueueIdle } from "./codex-queue.mts";
 import { getMessage, storeMessage } from "./inbox.mts";
 import { readPolicy } from "./policy.mts";
 import { serviceAdmissionsIdle } from "./service-drain.mts";
 import { testServiceOwner, T0 } from "./task-fixture.mts";
 
 type Node = ReturnType<typeof forkNode>;
-const poll = async (n: Node, deps = n.deps()): Promise<void> => { pollCodexQueue(deps); await codexQueueIdle(); };
+const poll = async (n: Node, deps = n.deps()): Promise<void> => { legacyForkPoll(deps); await codexQueueIdle(); };
 const outbox = (n: Node): string[] => fs.existsSync(n.paths.outbox) ? fs.readdirSync(n.paths.outbox) : [];
 const budgetFile = (n: Node): string => path.join(listenerDir(n.paths), `${FORK_OWNER}.turns.json`);
 const policyText = (n: Pick<Node, "paths">): string => fs.readFileSync(n.paths.policy, "utf8");
@@ -222,7 +223,7 @@ for (const boundary of ["mcpList", "featuresList"] as const) test(`S18: pre-admi
   const deps = n.deps({ [boundary]: async (args: string[]) => {
     entered.resolve(); await resume.promise; return n.codex[boundary]!(args);
   } });
-  pollCodexQueue(deps);
+  legacyForkPoll(deps);
   await entered.promise;
   assert.deepEqual(n.app.runs, []); assert.deepEqual(forkAttempts(n.paths, FORK_OWNER), []);
   assert.equal(fs.existsSync(budgetFile(n)), false);

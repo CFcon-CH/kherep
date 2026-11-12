@@ -158,26 +158,29 @@ test("the policy check names the source of the wake and messaging sections", asy
   assert.deepEqual([policy.wake, policy.messagingRules], [{ enabled: false }, 0]);
 });
 
-// Issue #408: a written wake.codexFork section is printed with its effective
-// values and a count of opted-in sessions, never their ids; a rejected one
-// fails the check, while wake itself stays as written.
-test("the policy check prints a written codexFork section and fails a rejected one", async (t) => {
+// Issue #890 (retirement R3): wake.codexFork is still read without error but
+// starts no fork. A written section, valid, malformed or an opt-out, is
+// reported as retired and never fails the check; session ids stay out of the
+// report, and a policy without it reports as before.
+test("the policy check reports a written codexFork section as retired, not as a failure", async (t) => {
   const h = host(t);
   const owner = "01a0db74-0000-7000-8000-000000000001";
-  const check = async (codexFork: unknown) => {
-    fs.writeFileSync(h.paths.policy, JSON.stringify({ version: 1, allowedCommands: [], wake: { enabled: true, sessions: ["build"], codexFork } }));
+  const check = async (wake: Record<string, unknown>) => {
+    fs.writeFileSync(h.paths.policy, JSON.stringify({ version: 1, allowedCommands: [], wake }));
     return (await runDoctor(h.deps)).checks.policy;
   };
-  let policy = await check({ enabled: true, sessions: [owner] });
-  assert.deepEqual([policy.ok, (policy.wake as Record<string, unknown>).codexFork],
-    [true, { enabled: true, sessions: 1, platforms: ["darwin"], idleAfterSeconds: 90, maxAnswerBytes: 4096 }]);
-  assert.equal(JSON.stringify(policy).includes(owner), false, "session ids stay out of the report");
-  policy = await check({ enabled: true, sessions: ["*"] });
-  assert.deepEqual([policy.ok, (policy.wake as Record<string, unknown>).enabled, (policy.wake as Record<string, unknown>).codexFork],
-    [false, true, { enabled: false, rejected: true }]);
-  assert.match(String(policy.detail), /codexFork/);
-  policy = await check({ enabled: false });
-  assert.deepEqual([policy.ok, (policy.wake as Record<string, unknown>).codexFork], [true, { enabled: false }]);
+  const fork = (codexFork: unknown) => check({ enabled: true, sessions: ["build"], codexFork });
+  for (const codexFork of [{ enabled: true, sessions: [owner] }, { enabled: true, sessions: ["*"] }, { enabled: false }, "yes"]) {
+    const policy = await fork(codexFork);
+    assert.deepEqual([policy.ok, policy.wake], [true, { enabled: true, sessions: ["build"], codexApp: false, replies: false,
+      nativeQueue: false, codexFork: "retired" }], JSON.stringify(codexFork));
+    assert.equal(policy.detail, undefined, "a retired section is no failure detail");
+    assert.equal(JSON.stringify(policy).includes(owner), false, "session ids stay out of the report");
+  }
+  let policy = await check({ enabled: false, codexFork: { enabled: true, sessions: [owner] } });
+  assert.deepEqual([policy.ok, policy.wake], [true, { enabled: false, codexFork: "retired" }]);
+  policy = await check({ enabled: true, sessions: ["build"] });
+  assert.deepEqual([policy.ok, Object.hasOwn(policy.wake as object, "codexFork")], [true, false]);
 });
 
 // Issue #889: messaging.resumeClosed is still read without error but no longer

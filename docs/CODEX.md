@@ -305,7 +305,7 @@ The original owner's `PostToolUse` refreshes the event of an existing record
 only; a subagent's call writes nothing. A session counts as idle only when its
 last event is a `Stop` that ended its turn at least 90 seconds ago and it was
 seen within 12 hours.
-This is evidence, not proof. Only the opt-in Codex fork reply below acts on it;
+This is evidence, not proof. Since the Codex fork reply below is retired, nothing acts on it;
 `msg sessions` shows the last event of this node's Codex sessions and
 `kherep-node doctor` counts them per event. A turn ended by native
 `turn/interrupt` fires no `Stop` (measured on Codex 0.162.0-alpha.17.2 and
@@ -319,12 +319,16 @@ every exit that returns no blocking continuation; every hook event clears the
 mark. A `Stop` that blocked, or whose mark could not be written, does not count
 as idle.
 
-Codex fork reply (issue #408, in progress). Nothing changes while
-`wake.codexFork` is absent, except that relays made while it was present are
-still withdrawn when the owner reads and cleaned up after 24 hours; nothing is
-sent, forked or audited. With it present only `darwin` is accepted, and the
-answer is relayed to the peer as one labelled proxy answer while the owner stays
-idle (below). Upgrade the Worker before the nodes. The section names the Codex chats whose
+Codex fork reply (issue #408): retired by issue #890 (retirement step R3).
+Whatever `wake.codexFork` says, the daemon starts no fork, writes no proxy
+answer and sends none: its poll no longer schedules the producer or runs the
+relay sweep, and the exchange has no proxy send gate, so a `proxyOf` record
+left in the outbox is held. The key is still parsed without error, and
+`kherep-node doctor` reports a written section as `"codexFork": "retired"`,
+never as a failure. Relays a node made before the upgrade are still withdrawn
+when the owner reads and cleaned up after 24 hours, without a send; stored
+attempts are kept. The modules stay until a later deletion step. The rest of
+this section describes the retired behaviour. The section names the Codex chats whose
 history an ephemeral read-only fork may use to answer an idle owner's peer
 message:
 

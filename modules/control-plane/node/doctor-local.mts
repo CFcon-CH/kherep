@@ -118,30 +118,18 @@ export function checkPolicy(file: string): { check: Check; policy: NodePolicy | 
   // enabled false is the operator's explicit opt-out, not a rejected section.
   const optedOut = (raw?.wake as { enabled?: unknown } | null | undefined)?.enabled === false;
   const wakeRejected = wakeWritten && !policy.wake && !optedOut;
-  const fork = codexForkReport(policy, (raw?.wake as { codexFork?: unknown } | null | undefined)?.codexFork);
-  const forkRejected = fork?.rejected === true;
+  // Issue #890: a written wake.codexFork, valid or not, is read but starts no fork; reported, never a failure.
+  const forkWritten = typeof raw?.wake === "object" && raw.wake !== null && Object.hasOwn(raw.wake, "codexFork");
+  const retiredFork = forkWritten ? { codexFork: "retired" } : {};
   const wake = policy.wake
     ? { enabled: true, sessions: policy.wake.sessions, codexApp: policy.wake.codexApp === true, replies: policy.wake.replies === true,
-      nativeQueue: policy.wake.nativeQueue === true, ...(fork ? { codexFork: fork } : {}) }
-    : { enabled: false, ...(wakeRejected ? { rejected: true } : {}) };
-  let detail: string | undefined;
-  if (wakeRejected) detail = "the wake section is malformed and waking is off";
-  else if (forkRejected) detail = "the wake.codexFork section is malformed and the Codex fork reply is off";
-  return { check: { ok: !wakeRejected && !forkRejected, source: raw ? "file" : "default", allowedCommands: policy.allowedCommands.length,
+      nativeQueue: policy.wake.nativeQueue === true, ...retiredFork }
+    : { enabled: false, ...(wakeRejected ? { rejected: true } : {}), ...retiredFork };
+  const detail = wakeRejected ? "the wake section is malformed and waking is off" : undefined;
+  return { check: { ok: !wakeRejected, source: raw ? "file" : "default", allowedCommands: policy.allowedCommands.length,
     messagingRules: policy.messaging?.accept.length ?? 0, messagingSource, ...(resumeClosedWritten ? { resumeClosed: "retired" } : {}), wake, wakeSource, wakeBudget: budgetReport(policy),
     sessions: policy.sessions?.enabled ? { enabled: true, runtimes: policy.sessions.runtimes } : { enabled: false },
     remoteMcp: policy.remoteMcp?.enabled === true, ...(detail ? { detail } : {}) }, policy };
-}
-
-// Issue #408: a written wake.codexFork section with its effective values and
-// the number of opted-in sessions (ids stay out of the report); null when not
-// written, so a policy without it reports as before. enabled false is an opt-out.
-function codexForkReport(policy: NodePolicy, written: unknown): Record<string, unknown> | null {
-  if (written === undefined || !policy.wake) return null;
-  const fork = policy.wake.codexFork;
-  if (fork) return { enabled: true, sessions: fork.sessions.length, platforms: fork.platforms, idleAfterSeconds: fork.idleAfterSeconds,
-    maxAnswerBytes: fork.maxAnswerBytes };
-  return (written as { enabled?: unknown } | null)?.enabled === false ? { enabled: false } : { enabled: false, rejected: true };
 }
 
 // Issue #408: the Codex sessions recorded within CODEX_ACTIVE_MS, counted by

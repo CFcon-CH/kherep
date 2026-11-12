@@ -40,7 +40,9 @@ export interface WakePolicy {
   enabled: true; sessions: string[]; codexApp?: boolean; replies?: boolean; nativeQueue?: boolean; budget?: WakeBudget;
   codexFork?: CodexForkPolicy;
 }
-// codexFork (issue #408): the idle reply proxy (codex-fork-admission.mts), off unless present and valid.
+// codexFork (issue #408): the idle reply proxy (codex-fork-admission.mts). Still
+// parsed, but retired since issue #890: the daemon starts no fork and sends no
+// proxy answer whatever it says; doctor reports a written section as retired.
 export interface CodexForkPolicy { enabled: true; sessions: string[]; platforms: string[]; idleAfterSeconds: number; maxAnswerBytes: number }
 // resumeClosed (issue #102): read as before, but retired since issue #889: the
 // daemon no longer runs closed-delivery.mts, so the key has no effect on

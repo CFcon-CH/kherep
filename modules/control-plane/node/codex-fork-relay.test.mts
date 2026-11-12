@@ -39,9 +39,9 @@ test("a completed fork is relayed by the next sweep and sent by the gate once; r
   const file = path.join(n.paths.inbox, `${id}.json`);
   writeJsonAtomic(file, { ...JSON.parse(fs.readFileSync(file, "utf8")), depth: 2 });
   const record = getMessage(n.paths.inbox, id)!;
-  await n.poll();
+  await n.legacyPoll();
   assert.deepEqual([only(n).state, n.outbox()], ["completed", []], "the fork's own poll only marks the relay due");
-  await n.poll();
+  await n.legacyPoll();
   const attempt = only(n);
   assert.ok(isMessageId(attempt.relayMessageId));
   assert.equal(attempt.relayedAt, undefined, "relayedAt means the Worker answered (D18)");
@@ -57,10 +57,10 @@ test("a completed fork is relayed by the next sweep and sent by the gate once; r
   assert.deepEqual(sent, [{ messageId: relay, fromSession: FORK_OWNER, to: record.from, text: written.text, proxyOf: id }]);
   await n.status(relay, "queued");
   assert.equal(getSent(n.paths, relay)?.state, "queued");
-  await n.poll();
+  await n.legacyPoll();
   assert.equal(typeof only(n).relayedAt, "number");
   assert.deepEqual(n.audit(), ["fork", "fork-relayed"]);
-  await n.poll();
+  await n.legacyPoll();
   assert.deepEqual([n.outbox(), n.audit(), n.app.runs.length], [[], ["fork", "fork-relayed"], 1], "idempotent");
 });
 
@@ -127,9 +127,9 @@ for (const [name, code, arrange] of BLOCKED) {
     const id = n.add();
     n.seed(id);
     arrange(n);
-    await n.poll();
+    await n.legacyPoll();
     markRelayDue(FORK_OWNER);
-    await n.poll();
+    await n.legacyPoll();
     assert.deepEqual([n.outbox(), getProxied(n.paths.inbox, id), n.app.runs.length, n.turns()], [[], null, 0, []]);
     assert.equal(held(n, code).length, 1, n.logs.join("\n"));
     assert.equal(only(n).state, "completed");
@@ -148,8 +148,8 @@ test("an old completed attempt with every guard passing is relayed once: no help
   const n = relayNode(t);
   const id = n.add();
   n.seed(id);
-  await n.poll();
-  await n.poll();
+  await n.legacyPoll();
+  await n.legacyPoll();
   assert.deepEqual([n.outbox().length, n.app.runs.length, n.turns()], [1, 0, []]);
   assert.equal((await n.exchange()).length, 1);
 });
@@ -169,8 +169,8 @@ test("guard 13 before admission: without proof on the current connection no clai
   const n = relayNode(t);
   n.add();
   n.capability(null);
-  await n.poll();
-  await n.poll();
+  await n.legacyPoll();
+  await n.legacyPoll();
   assert.deepEqual([forkAttempts(n.paths, FORK_OWNER).length, n.app.runs.length, n.turns(), n.outbox()], [0, 0, [], []]);
   assert.deepEqual(n.logs.filter((line) => line.includes("before admission: fork-relay-unsupported")).length, 1);
 });

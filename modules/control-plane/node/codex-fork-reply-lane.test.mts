@@ -11,7 +11,8 @@ import { FORK_OWNER, forkNode } from "./codex-fork-fixture.mts";
 import { forkTestTimeouts, resetForkFeatureCache } from "./codex-fork-reply.mts";
 import { FAST } from "./codex-fork-run-fixture.mts";
 import { resetMcpCache } from "./codex-mcp.mts";
-import { codexQueueIdle, pollCodexQueue } from "./codex-queue.mts";
+import { legacyForkPoll } from "./codex-fork-legacy-poll.mts";
+import { codexQueueIdle } from "./codex-queue.mts";
 import { deliverForCodex } from "./deliver-codex.mts";
 import { runCodexHook } from "./deliver-hook.mts";
 import { getMessageProgress, markOffered } from "./inbox.mts";
@@ -33,7 +34,7 @@ test("the owner reads the message between claim and fork: superseded, and no thr
   let id = "";
   f = forkNode(t, { onRequest: (method) => { if (method === "thread/goal/get") markOffered(f.paths.inbox, id); } });
   id = f.add();
-  pollCodexQueue(f.deps());
+  legacyForkPoll(f.deps());
   await codexQueueIdle();
   assert.deepEqual(forkAttempts(f.paths, FORK_OWNER).map((a) => a.state), ["superseded"]);
   assert.ok(!f.app.runs[0]!.requests.some((m) => m.method === "thread/fork"));
@@ -43,7 +44,7 @@ test("the owner reads the message between claim and fork: superseded, and no thr
 test("a policy edited between schedule and admission refuses: no helper and no claim", async (t) => {
   const f = forkNode(t);
   f.add();
-  pollCodexQueue(f.deps());
+  legacyForkPoll(f.deps());
   const policy = JSON.parse(fs.readFileSync(f.paths.policy, "utf8"));
   policy.wake.codexFork.idleAfterSeconds = 120;
   fs.writeFileSync(f.paths.policy, JSON.stringify(policy));
@@ -56,7 +57,7 @@ test("a service drain holds the helper until it ends", async (t) => {
   const f = forkNode(t);
   f.add();
   const end = beginServiceDrain(f.paths, testServiceOwner);
-  pollCodexQueue(f.deps());
+  legacyForkPoll(f.deps());
   const idle = codexQueueIdle();
   await new Promise((resolve) => { setTimeout(resolve, 150); });
   assert.equal(f.app.runs.length, 0, "no helper while the drain runs");
@@ -75,7 +76,7 @@ test("two owners: one helper at a time on the node, both complete", async (t) =>
   f.idle(OTHER);
   f.add();
   f.add(OTHER);
-  pollCodexQueue(f.deps());
+  legacyForkPoll(f.deps());
   await codexQueueIdle();
   assert.equal(f.app.runs.length, 2);
   const [first, second] = f.app.runs;
@@ -90,7 +91,7 @@ test("the CP hint path is unchanged while a fork runs", async (t) => {
     resetForkFeatureCache();
     const f = forkNode(t, {}, { fork });
     const id = f.add();
-    pollCodexQueue(f.deps());
+    legacyForkPoll(f.deps());
     await codexQueueIdle();
     const admission = readBusyAdmission(f.paths, FORK_OWNER);
     results.push([admission?.messageIds.length, admission?.publishedAt !== undefined, getMessageProgress(f.paths.inbox, id)?.code,
@@ -139,7 +140,7 @@ test("the owner reads the message between admission and claim: superseded withou
   const f = forkNode(t);
   const id = f.add();
   // resolveCwd runs inside admission, after the message was read.
-  pollCodexQueue({ ...f.deps(), realpath: (file: string) => { markOffered(f.paths.inbox, id); return fs.realpathSync.native(file); } });
+  legacyForkPoll({ ...f.deps(), realpath: (file: string) => { markOffered(f.paths.inbox, id); return fs.realpathSync.native(file); } });
   await codexQueueIdle();
   assert.deepEqual(forkAttempts(f.paths, FORK_OWNER).map((a) => a.state), ["superseded"]);
   assert.equal(f.app.runs.length, 0);

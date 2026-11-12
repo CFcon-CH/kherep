@@ -10,7 +10,8 @@ import { ANSWER, FORK_ID, FORK_OWNER, forkNode, LAST_TURN, PEER } from "./codex-
 import { forkTestTimeouts, resetForkFeatureCache } from "./codex-fork-reply.mts";
 import { FAST } from "./codex-fork-run-fixture.mts";
 import { resetMcpCache } from "./codex-mcp.mts";
-import { codexQueueIdle, pollCodexQueue } from "./codex-queue.mts";
+import { legacyForkPoll } from "./codex-fork-legacy-poll.mts";
+import { codexQueueIdle } from "./codex-queue.mts";
 import { recordCodexSession } from "./codex-sessions.mts";
 import { getMessage, storeMessage } from "./inbox.mts";
 import { T0 } from "./task-fixture.mts";
@@ -23,7 +24,7 @@ test.after(() => { forkTestTimeouts.value = undefined; });
 
 type Node = ReturnType<typeof forkNode>;
 const poll = async (f: Node, platform?: string): Promise<void> => {
-  pollCodexQueue({ ...f.deps(), ...(platform ? { platform: platform as NodeJS.Platform } : {}) });
+  legacyForkPoll({ ...f.deps(), ...(platform ? { platform: platform as NodeJS.Platform } : {}) });
   await codexQueueIdle();
 };
 const forkAudit = (f: Node): { action: string; messageIds: string[] }[] => (fs.existsSync(wakeAudit(f.paths))
@@ -73,7 +74,7 @@ test("with wake.codexFork absent nothing is read, started, written or audited (d
   const policy = JSON.parse(fs.readFileSync(f.paths.policy, "utf8"));
   policy.wake.codexFork = { enabled: true, sessions: [FORK_OWNER] };
   fs.writeFileSync(f.paths.policy, JSON.stringify(policy));
-  pollCodexQueue(deps);
+  legacyForkPoll(deps);
   await codexQueueIdle();
   assert.deepEqual(f.app.runs, []);
   assert.deepEqual(f.calls, [], "no codex features list or mcp list");
@@ -186,7 +187,7 @@ test("a thread/fork RPC error fails closed: fork-rejected, no text kept, no turn
   const id = f.add();
   const logs: string[] = [];
   for (let round = 0; round < 2; round++) {
-    pollCodexQueue(f.deps(), (line) => { logs.push(line); });
+    legacyForkPoll(f.deps(), (line) => { logs.push(line); });
     await codexQueueIdle();
   }
   const [attempt] = forkAttempts(f.paths, FORK_OWNER);
@@ -242,7 +243,7 @@ test("guards 10 to 12 refuse before admission: no helper, no claim, no spent tur
     const f = forkNode(t);
     f.add();
     const extra = setup(f);
-    pollCodexQueue(f.deps(extra));
+    legacyForkPoll(f.deps(extra));
     await codexQueueIdle();
     assert.deepEqual([f.app.runs.length, forkAttempts(f.paths, FORK_OWNER).length, turns(f)], [0, 0, []], name);
   }
