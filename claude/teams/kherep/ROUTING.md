@@ -70,7 +70,7 @@ Today the operator names the lead in chat: in the lead's session, with the sessi
 
 The operator alone approves deployment, publication, deletion, permission changes, installation on a shared host and merges to a protected branch. A package's AUTHORITY never grants these, and the lead never passes such an approval on.
 
-Messages are line-oriented: the first line names the kind, one field per line in the fixed order, no empty values. Deadlines read `<YYYY-MM-DD HH:MM> <zone>` in the operator's time zone. The lead sends `PACKAGE:` (one new intercom thread per package), `PACKAGE-CLOSED: <id> accepted | rejected <which ACCEPT line failed>` and `ANSWER: <id> ...`. A team lead sends `REPORT:`, `--reply-to` the package thread (a new thread naming the old id at depth 5), and `QUESTION: <id> ...` with one decision and its options named. A former lead sends `HANDOVER:` to the new lead.
+Messages are line-oriented: the first line names the kind, one field per line in the fixed order, no empty values. Deadlines read `<YYYY-MM-DD HH:MM> <zone>` in the operator's time zone. The lead sends `PACKAGE:` (one new intercom thread per package), `PACKAGE-CLOSED: <id> accepted | rejected <which ACCEPT line failed>` and `ANSWER: <id> ...`. A team lead sends `REPORT:`, `--reply-to` in the package thread and stays in it (if the Control Plane reports a held or limited exchange, it stops and tells the operator; a new thread does not release it), and `QUESTION: <id> ...` with one decision and its options named. A former lead sends `HANDOVER:` to the new lead.
 
 ```text
 PACKAGE: <id> <title>
