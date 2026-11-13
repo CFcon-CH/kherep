@@ -19,6 +19,21 @@ increments the minor version; every other release increments the patch version.
   required; an npm copy that nothing uses can be removed with
   `npm uninstall -g @openai/codex` once another `codex` is on `PATH`.
 
+### Fixed
+
+- Regular expressions with super-linear backtracking (#906): the 49 sites
+  SonarQube flags with `typescript:S8786`, among them the secret-output and
+  clq-accept guards, the hook inventory, the Codex hook-integrity and
+  research parsers, the Confluence brokers and the node's service probes,
+  now run in linear time. Results are unchanged, pinned by new tests recorded
+  from the previous code; one unobservable case changes in `capability-check`
+  (a `name:` followed only by whitespace yields `""` instead of one blank).
+  Inputs that took the old forms seconds, for example a 3 002-character line
+  in `doctor-hooks` at 7.3 s, now take milliseconds.
+- `RunLock.release()` in the integrity heartbeat returns nothing instead of
+  an always-empty string, and the gap-recording `node --check` test asserts
+  its run (#906).
+
 ## [0.5.0] - 2026-11-13
 
 Messages now reach running and idle Claude Code and Codex sessions without
