@@ -1,7 +1,7 @@
 import { isClaudeSlotSelection, isFixedSlot, isNodeId, type ClaudeSlotSelection, type ClaudeSlotResult, type FixedSlot } from "../../protocol.mts";
-import { commitSlotChange, withEffects } from "./slot-notice.mts";
+import { commitSlotChange, withEffects, type SlotChange } from "./slot-notice.mts";
 import type { SlotAddressResult } from "../../protocol-messages.mts";
-import { readIntercomSlots, type IntercomSlotView } from "./intercom-slots.mts";
+import { readIntercomSlots, type IntercomSlot, type IntercomSlotView, type SlotOccupant } from "./intercom-slots.mts";
 import { identityDiagnostic } from "./message-identity-diagnostics.mts";
 import { type MessageDiagnostic } from "../../protocol-diagnostics.mts";
 import { bindingContext, prepareMessageBinding } from "./message-binding.mts";
@@ -99,7 +99,7 @@ export class Registry extends DurableObject<Env> {
       return row ? String(row.runtime) : null;
     }, request => sessionStub(this.env, request.nodeId).requestLeadConfirmation(request),
     run => this.messageTx("assignMcpSlot", run),
-    (slot, expectedRevision, occupant, now) => commitSlotChange(this.sql, this.messages, (...args) => this.audit(...args), slot, expectedRevision, occupant, now));
+    (...args) => this.commitSlot(...args));
   }
 
   audit(actor: string, action: string, target: string | null, detail: unknown = null): void {
@@ -382,6 +382,10 @@ export class Registry extends DurableObject<Env> {
     return { kind: "slot-selection", requestId: request.requestId, slot: request.slot,
       outcome: receipt.digest === digest ? receipt.outcome : "denied", revision: receipt.digest === digest ? receipt.revision : null };
   }
+  // Issue #761: the slot CAS with its lead-change notices; run inside the caller's message transaction.
+  private commitSlot(slot: IntercomSlot, expectedRevision: number, occupant: SlotOccupant | null, now: number): SlotChange {
+    return commitSlotChange(this.sql, this.messages, (...args) => this.audit(...args), slot, expectedRevision, occupant, now);
+  }
   // A message transaction (issue #761): a lead change queues notices, so the
   // queue heads go and the alarm covers their expiry. effects: routed by the
   // caller after it answered.
@@ -399,8 +403,8 @@ export class Registry extends DurableObject<Env> {
       if (node.identity_generation !== generation || !actor || actor.runtime !== "claude-code"
         || !["running", "idle-loaded", "reachable-probable"].includes(String(actor.state))
         || actor.kind !== null && !["interactive", "session", "fork"].includes(String(actor.kind))) return denied;
-      const { revision, effects } = commitSlotChange(this.sql, this.messages, (...args) => this.audit(...args), request.slot,
-        prepared.expectedRevision, { nodeId, runtime: "claude-code", sessionId: request.sessionId, chatName: null }, now);
+      const { revision, effects } = this.commitSlot(request.slot, prepared.expectedRevision,
+        { nodeId, runtime: "claude-code", sessionId: request.sessionId, chatName: null }, now);
       const actual = revision ?? this.listIntercomSlots().find(s => s.slot === request.slot)!.revision;
       const outcome = revision === null ? "conflict" : "assigned";
       // Permanent existing audit, unique event key. A write failure rolls back CAS and notices.

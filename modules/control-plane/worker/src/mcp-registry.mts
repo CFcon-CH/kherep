@@ -68,7 +68,9 @@ export class McpRegistry {
     this.sql = sql;
     this.capabilitiesOf = capabilitiesOf;
     this.sessionRuntime = sessionRuntime;
-    this.confirmLead = confirmLead;this.atomicAssignment = atomicAssignment;this.commitSlot = commitSlot;
+    this.confirmLead = confirmLead;
+    this.atomicAssignment = atomicAssignment;
+    this.commitSlot = commitSlot;
     this.sql.exec(SCHEMA);
     const columns = new Set(this.sql.exec<{ name: string }>("PRAGMA table_info(mcp_intents)").toArray().map(row => row.name));
     for (const [name, type] of [["assignment_slot", "TEXT"], ["assignment_title", "TEXT"], ["assignment_turn_id", "TEXT"],
