@@ -118,17 +118,19 @@ const REASON_CHARS = 200;
 // (measured, Node 26) has no stderr property: its message is
 // "Command failed: <cmd>\n<stderr>", and <cmd> carries the script with its
 // base64 rollout paths, so that prefix is dropped first. PowerShell text is localised.
+// A whitespace-free token that looks like a path; matched per token, so no backtracking.
+const PATH_MARK = /rollout-|[A-Za-z]:\\|\\\\|\//;
 export function probeFailureReason(error: unknown): string {
   const { message, cmd, code } = (error ?? {}) as { message?: unknown; cmd?: unknown; code?: unknown };
   let text = typeof message === "string" ? message : String(error);
   const command = typeof cmd === "string" ? `Command failed: ${cmd}` : undefined;
   if (command && text.startsWith(command)) text = text.slice(command.length);
   const line = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean).at(-1) ?? (code === undefined ? "no reason" : `exit ${String(code)}`);
-  return line.replace(/\S*(?:rollout-|[A-Za-z]:\\|\\\\|\/)\S*/g, "<path>").slice(0, REASON_CHARS);
+  return line.split(/(\s+)/).map(token => PATH_MARK.test(token) ? "<path>" : token).join("").slice(0, REASON_CHARS);
 }
 
 // Thread ids have one fixed length, so sorting the rows sorts by thread.
-const scanProblem = (scan: HolderScan): string => [...scan.failed ?? []].map(([id, reason]) => `${id}: ${reason}`).sort().join("; ");
+const scanProblem = (scan: HolderScan): string => [...scan.failed ?? []].map(([id, reason]) => `${id}: ${reason}`).sort((a, b) => a.localeCompare(b)).join("; ");
 
 // The platform's holder probe; Linux and others have none (UNKNOWN/unsupported).
 function defaultProbe(platform: NodeJS.Platform): HolderProbe | undefined {
