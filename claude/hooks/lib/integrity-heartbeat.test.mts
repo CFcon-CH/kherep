@@ -147,7 +147,8 @@ test("T4.2 the holder's death releases the lock; nothing is taken over, moved or
   const b = await takeWithin(h, 1000);
   assert.equal(typeof b, "object", `still ${String(b)} ${Date.now() - begin} ms after the holder was killed`);
   assert.equal(fs.statSync(runLockFile(h)).ino, ino, "the same database file, not a replacement");
-  assert.equal((b as RunLock).release(), "");
+  (b as RunLock).release();
+  assert.equal((b as RunLock).holding(), false);
 });
 
 test("T4.3 a pause before A publishes its heartbeat: B and C are busy, the heartbeat is A's, then C's", { timeout: 30_000 }, async () => {
@@ -162,12 +163,12 @@ test("T4.3 a pause before A publishes its heartbeat: B and C are busy, the heart
   assert.deepEqual(during, [BUSY, BUSY], "B and C are busy while A is about to publish");
   assert.equal(pidOfBeat(h), process.pid, "the heartbeat is A's");
   assert.equal(a.holding(), true);
-  assert.equal(a.release(), "");
+  a.release();
   assert.equal(a.holding(), false);
   const c = await hold(h, true);
   try {
     assert.equal(pidOfBeat(h), c.pid, "the heartbeat is the current owner's");
-    assert.equal(a.release(), "", "A's late second release does nothing");
+    a.release(); // A's late second release does nothing
     assert.equal(tryOnce(h).result, BUSY, "C still holds: D is busy");
   } finally {
     await c.release();
@@ -179,10 +180,11 @@ test("T4.4 a pause between A's possession check and its release: B busy, C owns 
   const a = takeRunLock(h) as RunLock;
   assert.equal(a.holding(), true);
   assert.equal(tryOnce(h).result, BUSY, "B");
-  assert.equal(a.release(), "");
+  a.release();
+  assert.equal(a.holding(), false);
   const c = await hold(h);
   try {
-    assert.equal(a.release(), "");
+    a.release();
     assert.equal(tryOnce(h).result, BUSY, "C still holds: D is busy");
   } finally {
     await c.release();
@@ -223,7 +225,8 @@ test("T4.7 a holder killed mid-transaction leaves a hot journal; the next owner 
   assert.ok(fs.existsSync(journal) && fs.statSync(journal).size > 0, "a hot journal is left");
   const b = await takeWithin(h, 1000);
   assert.equal(typeof b, "object", String(b));
-  assert.equal((b as RunLock).release(), "");
+  (b as RunLock).release();
+  assert.equal((b as RunLock).holding(), false);
   assert.ok(!fs.existsSync(journal) || fs.statSync(journal).size === 0, "the journal is gone or empty");
   const db = new DatabaseSync(runLockFile(h));
   const objects = (db.prepare("SELECT count(*) AS n FROM sqlite_schema").get() as { n: number }).n;

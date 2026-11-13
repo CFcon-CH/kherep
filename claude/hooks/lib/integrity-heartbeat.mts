@@ -113,7 +113,7 @@ export function invalidateHeartbeat(home: string): string {
   }
 }
 
-export interface RunLock { holding(): boolean; release(): string }
+export interface RunLock { holding(): boolean; release(): void }
 // Test seams only: a replacement for node:sqlite (undefined means "not available"), a
 // call right before each BEGIN EXCLUSIVE, and the pause between busy retries. Production passes none.
 export interface LockSeams { sqlite?: () => typeof import("node:sqlite") | undefined; beforeBegin?: () => void; pause?: (ms: number) => void }
@@ -196,11 +196,10 @@ export function takeRunLock(home: string, seams: LockSeams = {}): RunLock | stri
   return {
     holding: () => held,
     release: () => {
-      if (!held) return "";
+      if (!held) return;
       held = false;
       try { conn.exec("ROLLBACK"); } catch { /* no transaction, or SQLite rolled it back itself */ }
       try { conn.close(); } catch { /* the OS releases the lock with the handle */ }
-      return "";
     },
   };
 }
