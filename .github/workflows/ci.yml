@@ -93,9 +93,6 @@ jobs:
             node "$t" || status=1
           done
           exit $status
-      - name: Shared Teamwork Graph tests
-        shell: bash
-        run: ${{ matrix.os == 'ubuntu-latest' && format('NODE_V8_COVERAGE="{0}/kherep-coverage/unit/raw" node --test modules/twg/*.test.mts', runner.temp) || 'node --test modules/twg/*.test.mts' }}
       - name: Bootstrap suites (TypeScript on Node, no build)
         run: ${{ matrix.os == 'ubuntu-latest' && format('NODE_V8_COVERAGE="{0}/kherep-coverage/unit/raw" npm run test:bootstrap', runner.temp) || 'npm run test:bootstrap' }}
       - name: Install dependencies for native Control Plane tests
@@ -159,10 +156,6 @@ jobs:
             node "$t" || status=1
           done
           exit $status
-      - name: Shared Teamwork Graph tests
-        if: matrix.suite == 'hooks'
-        shell: bash
-        run: node --test modules/twg/*.test.mts
       - name: Windows ACL decision against real descriptors (Windows PowerShell)
         if: matrix.suite == 'hooks'
         timeout-minutes: 10
@@ -246,9 +239,6 @@ jobs:
             node "$t" || status=1
           done
           exit $status
-      - name: Shared Teamwork Graph tests
-        shell: bash
-        run: node --test modules/twg/*.test.mts
       - name: Bootstrap suites (TypeScript on Node, no build)
         run: npm run test:bootstrap
       - run: npm ci --ignore-scripts

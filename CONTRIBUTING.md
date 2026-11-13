@@ -20,7 +20,6 @@ Read [AGENTS.md](AGENTS.md) and the instructions in the component you change. Ne
 | Codex adapters | `npm run test:codex` |
 | Shared modules | `npm run test:modules` |
 | Jira and Confluence brokers | `npm run test:brokers` |
-| Teamwork Graph | `node --test modules/twg/*.test.mts` |
 | Control Plane node and protocol | `npm run test:control-plane` |
 | Control Plane Worker | In `modules/control-plane/worker`: `npm ci`, `npm run typecheck`, `npm test`, `npm run check:bundle` |
 
@@ -152,7 +151,7 @@ Give every issue and every pull request at least one module label when you open 
 | `bootstrap` | Installers, drift check, manifests, transactions |
 | `atlassian-brokers` | Jira and Confluence brokers, the evidence verb, brain drainage |
 | `github-broker` | GitHub issue broker |
-| `local-inference`, `mcp-auth-bridge`, `twg` | The module of the same name |
+| `local-inference`, `mcp-auth-bridge` | The module of the same name |
 
 Add `flaky-test` to an intermittent or load-dependent test failure, and `documentation` to a change that touches only documentation. When you work on an existing issue without a module label, add one.
 

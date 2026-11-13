@@ -232,6 +232,29 @@ test_retire() {
     fail "the created graveyard was not journalled"
   [[ -f "$backup/five/ROLLED-BACK" ]] || fail "the rollback after a failed retirement was not clean"
   [[ ! -e "$TMP/retire/fresh/tools/x/_deprecated" ]] || fail "rollback left the empty graveyard it created"
+
+  # #897. An entry may name a directory (skills/kherep-twg, kherep/twg). It is
+  # parked whole, backed up whole and restored whole by a rollback. A sibling
+  # symlink with a similar name (a vendor skills/twg-jira) is left untouched.
+  local dir="$TMP/retire/dir" vendor="$TMP/retire/vendor/twg-jira"
+  mkdir -p "$dir/skills/kherep-twg/references" "$vendor"
+  printf wrapper-skill > "$dir/skills/kherep-twg/SKILL.md"; printf ref > "$dir/skills/kherep-twg/references/a.md"
+  printf vendor-skill > "$vendor/SKILL.md"
+  make_dir_symlink "$vendor" "$dir/skills/twg-jira"
+  transaction_begin "$backup/six" "$dir"
+  transaction_retire_path skills/kherep-twg "$dir/skills/kherep-twg" "$backup/six/retired/skills/kherep-twg" > /dev/null
+  [[ ! -e "$dir/skills/kherep-twg" ]] || fail "a retired directory stayed at its live path"
+  [[ "$(cat "$dir/skills/_deprecated/kherep-twg/SKILL.md")" = "wrapper-skill" ]] &&
+    [[ "$(cat "$dir/skills/_deprecated/kherep-twg/references/a.md")" = "ref" ]] || fail "a retired directory was not parked whole"
+  [[ "$(cat "$backup/six/retired/skills/kherep-twg/SKILL.md")" = "wrapper-skill" ]] &&
+    [[ "$(cat "$backup/six/retired/skills/kherep-twg/references/a.md")" = "ref" ]] || fail "a retired directory was not backed up whole"
+  [[ -L "$dir/skills/twg-jira" ]] && [[ "$(cat "$dir/skills/twg-jira/SKILL.md")" = "vendor-skill" ]] ||
+    fail "retiring a directory touched a sibling symlink"
+  transaction_rollback test > /dev/null
+  [[ "$(cat "$dir/skills/kherep-twg/SKILL.md")" = "wrapper-skill" ]] &&
+    [[ "$(cat "$dir/skills/kherep-twg/references/a.md")" = "ref" ]] || fail "rollback did not restore the retired directory"
+  [[ -L "$dir/skills/twg-jira" ]] && [[ "$(cat "$vendor/SKILL.md")" = "vendor-skill" ]] ||
+    fail "the rollback of a directory retirement touched a sibling symlink"
 }
 
 # #33, #45. retired.txt also names workspace files with the project/ prefix. The
@@ -648,6 +671,49 @@ test_upgrade_retires_js_hooks() {
     { cat "$ROOT/drift.log"; fail "a retired .js hook is still live after the upgrade"; }
 }
 
+# Issue #897. The kherep-twg wrapper is retired in favour of the vendor TWG
+# skills. An upgrade parks the runtime directory kherep/twg and the skill
+# directory skills/kherep-twg in their _deprecated/ siblings, with their exact
+# bytes in the install backup. The vendor's skills stay byte-identical: a real
+# skills/twg directory and a skills/twg-jira symlink into a vendor directory.
+# No installer calls twg: a twg on PATH that records any call stays silent.
+test_upgrade_retires_twg_wrapper() {
+  local rc b vendor fake userprofile
+  fixture twgwrap
+  vendor="$ROOT/vendor-skills"; fake="$ROOT/fake-bin"
+  mkdir -p "$C/kherep/twg" "$C/skills/kherep-twg" "$C/skills/twg" "$vendor/twg-jira" "$fake" "$ROOT/before"
+  printf old-wrapper-cli > "$C/kherep/twg/cli.mts"
+  printf old-wrapper-skill > "$C/skills/kherep-twg/SKILL.md"
+  printf vendor-twg > "$C/skills/twg/SKILL.md"; cp "$C/skills/twg/SKILL.md" "$ROOT/before/twg.md"
+  printf vendor-twg-jira > "$vendor/twg-jira/SKILL.md"; cp "$vendor/twg-jira/SKILL.md" "$ROOT/before/twg-jira.md"
+  make_dir_symlink "$vendor/twg-jira" "$C/skills/twg-jira"
+  printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >> "%s"\n' "$ROOT/twg-called" > "$fake/twg"; chmod +x "$fake/twg"
+  userprofile="$H"; ! command -v cygpath >/dev/null 2>&1 || userprofile="$(cygpath -w "$H")"
+  set +e
+  PATH="$fake:$PATH" HOME="$H" USERPROFILE="$userprofile" CLAUDE_HOME="$C" KHEREP_PROFILE=win KHEREP_WORKSPACE="$W" \
+    KHEREP_CREDENTIALS_ROOT="$R" KHEREP_INSTALL_SKIP_GITCONFIG=1 KHEREP_INSTALL_SKIP_KNOWLEDGE_SPACE=1 \
+    KHEREP_INSTALL_SKIP_ATL_CREDENTIAL=1 SKIP_SECRETS=1 SKIP_DEPS=1 bash "$HERE/install.sh" > "$ROOT/log" 2>&1
+  rc=$?
+  set -e
+  [[ "$rc" -eq 0 ]] || { cat "$ROOT/log"; fail "upgrade install over the kherep-twg wrapper failed (rc=$rc)"; }
+  b="$(latest "$H")"
+  [[ ! -e "$C/kherep/twg" ]] && [[ ! -e "$C/skills/kherep-twg" ]] || fail "a retired wrapper directory stayed at its live path"
+  [[ "$(cat "$C/kherep/_deprecated/twg/cli.mts")" = "old-wrapper-cli" ]] || fail "kherep/twg was not parked in kherep/_deprecated"
+  [[ "$(cat "$C/skills/_deprecated/kherep-twg/SKILL.md")" = "old-wrapper-skill" ]] || fail "skills/kherep-twg was not parked in skills/_deprecated"
+  [[ "$(cat "$b/retired/kherep/twg/cli.mts")" = "old-wrapper-cli" ]] &&
+    [[ "$(cat "$b/retired/skills/kherep-twg/SKILL.md")" = "old-wrapper-skill" ]] || fail "the retired wrapper was not backed up by the transaction"
+  same "$C/skills/twg/SKILL.md" "$ROOT/before/twg.md"
+  [[ -L "$C/skills/twg-jira" ]] || fail "the vendor skills/twg-jira symlink was replaced"
+  same "$C/skills/twg-jira/SKILL.md" "$ROOT/before/twg-jira.md"
+  [[ ! -e "$C/skills/_deprecated/twg" ]] && [[ ! -e "$C/skills/_deprecated/twg-jira" ]] || fail "a vendor TWG skill was parked"
+  [[ ! -e "$ROOT/twg-called" ]] || { cat "$ROOT/twg-called"; fail "the installer called twg"; }
+  HOME="$H" CLAUDE_HOME="$C" KHEREP_PROFILE=win KHEREP_WORKSPACE="$W" KHEREP_CREDENTIALS_ROOT="$R" \
+    bash "$HERE/drift-check.sh" > "$ROOT/drift.log" 2>&1 ||
+    { cat "$ROOT/drift.log"; fail "drift-check failed after retiring the kherep-twg wrapper"; }
+  ! grep -qE 'RETIRED-LIVE  (kherep/twg|skills/kherep-twg)' "$ROOT/drift.log" ||
+    { cat "$ROOT/drift.log"; fail "a retired wrapper path is still live after the upgrade"; }
+}
+
 # Issue #252. A host can carry a second, legacy wiring of its hooks in groups of
 # their own (`node ~/.claude/hooks/<name>.js`). The upgrade unwires every one
 # that runs a retired script, drops the groups that held nothing else, reports
@@ -1004,7 +1070,7 @@ JS
 # like a hang. Name each test on stderr as it starts.
 for tx_test in test_library test_retire test_retire_declared test_lock test_preflights test_path_guards \
   test_partial test_term test_commit_signal test_secrets test_deps_term_releases_probe_lock test_deps_failure test_default_confluence_brokers \
-  test_model_policy test_upgrade_retires_mpac test_upgrade_retires_js_hooks test_upgrade_unwires_legacy_hooks \
+  test_model_policy test_upgrade_retires_mpac test_upgrade_retires_js_hooks test_upgrade_retires_twg_wrapper test_upgrade_unwires_legacy_hooks \
   test_upgrade_moves_clq_to_stop test_upgrade_retires_guard_js_hooks; do
   echo "transaction test: $tx_test (${SECONDS}s)" >&2
   "$tx_test"

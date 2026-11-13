@@ -368,6 +368,19 @@ increments the minor version; every other release increments the patch version.
 
 ### Removed
 
+- The Teamwork Graph wrapper `kherep-twg` (issue #897): the `modules/twg/`
+  runtime, the `kherep-twg` skill, their installer, drift and smoke entries and
+  the `twg` module label. Teamwork Graph is used through the vendor `twg` CLI
+  and its own skills, which the operator installs and signs in; no Kherep
+  installer calls `twg`. An upgrade parks `kherep/twg` and `skills/kherep-twg`
+  in the Claude home through `retired.txt` (now also used for directory
+  entries); the Codex installer removes `kherep/twg` and the projected
+  `kherep-twg` skill with their backups. Vendor skills under `skills/twg*` and
+  `~/.agents/skills` are not touched. The `research-stop` hook no longer counts
+  the wrapper CLI or the `kherep-twg` skill as a Central Brain lookup; `twg rovo
+  search` still counts, and a vendor TWG skill counts only when the operator
+  lists it in `research-sources.json`. The GitHub label `twg` stays for history.
+
 - The Claude Code plugin `codex@openai-codex` and its managed marketplace
   (#797). Codex remains available through `codex exec` and the Control Plane
   intercom; the global npm `@openai/codex` stays. Existing hosts need a
