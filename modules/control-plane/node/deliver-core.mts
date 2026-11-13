@@ -1,4 +1,5 @@
 import { messageOwnerMatches } from "./message-owner.mts";
+import { controlNoticeBlock, isControlPlaneNotice } from "./control-notice.mts";
 import type { SelectedOwner } from "../protocol-message-binding.mts";
 import { automaticReplyDecision } from "./reply-admission.mts";
 import { codexAckInstruction, prepareCodexOffers } from "./codex-inbox-ack.mts";
@@ -79,6 +80,7 @@ const bytes = (text: string): number => Buffer.byteLength(text, "utf8");
 // proxied: the relay state of a proxy answer a fork of this session prepared (issue #408).
 function block(record: InboxRecord, text: string, directory: DirectoryBody | null, tag: string, reply: string | null,
   proxied: RelayState | null = null): string {
+  if (isControlPlaneNotice(record.from)) return controlNoticeBlock(record, text, tag);
   const id = record.messageId;
   const admission = automaticReplyDecision(record);
   return [

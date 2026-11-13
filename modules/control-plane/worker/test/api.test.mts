@@ -169,6 +169,18 @@ describe("operator API", () => {
     expect(String(audit[0].detail)).not.toContain("operator secret");
   });
 
+  // Issue #761: only the Worker writes as operator/control-plane.
+  it("refuses the reserved control-plane actor before any message is written", async () => {
+    const jwt = await token({ email: "control-plane" }), nodeId = await enroll(await newKey(), "synthetic-reserved-target");
+    await registry().updateRegistration(nodeId, FACTS, [], ["messaging.v1"]);
+    const count = () => runInDurableObject(registry(), (_i, state) => state.storage.sql.exec("SELECT COUNT(*) AS n FROM messages").one().n);
+    const before = await count();
+    const response = await api(`/api/nodes/${nodeId}/messages`, { method: "POST", body: JSON.stringify({ session: "s", text: "x" }) }, jwt);
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ error: "reserved actor" });
+    expect(await count()).toBe(before);
+  });
+
   it("refuses operator messages to unknown or revoked nodes like the commands endpoint", async () => {
     const jwt = await token();
     const post = (id: string) => api(`/api/nodes/${id}/messages`, { method: "POST", body: JSON.stringify({ session: "s", text: "x" }) }, jwt);

@@ -439,9 +439,9 @@ describe("v2b committed selection and permanent historical receipts", () => {
   it("audit storage failure rolls back CAS and adds no fabricated receipt", async () => {
     const { nodeId, token } = await selectionFixture(); const request = selection(); const prep = await registry().prepareClaudeSelection(nodeId, request, token);
     await registry().replaceSessions(nodeId, [actorRow(request)], { version: 1, generation: 1 }, token);
-    await runInDurableObject(registry(), (instance, state) => {
+    await runInDurableObject(registry(), async (instance, state) => {
       state.storage.sql.exec("CREATE TRIGGER fail_selection_receipt BEFORE INSERT ON audit WHEN NEW.action='intercom.claude-selection' BEGIN SELECT RAISE(ABORT, 'synthetic storage full'); END");
-      try { expect(() => instance.finishClaudeSelection(nodeId, request, token, 1, prep.prepared!)).toThrow("synthetic storage full"); }
+      try { await expect(instance.finishClaudeSelection(nodeId, request, token, 1, prep.prepared!)).rejects.toThrow("synthetic storage full"); }
       finally { state.storage.sql.exec("DROP TRIGGER fail_selection_receipt"); }
       expect(instance.listIntercomSlots().find(row => row.slot === request.slot)?.revision).toBe(0);
       expect(state.storage.sql.exec("SELECT 1 FROM audit WHERE action='intercom.claude-selection'").toArray()).toHaveLength(0);

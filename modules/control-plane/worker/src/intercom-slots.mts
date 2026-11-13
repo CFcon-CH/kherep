@@ -32,6 +32,13 @@ export function readIntercomSlots(sql: SqlStorage): IntercomSlotView[] {
   });
 }
 
+// The occupant stored at exactly `revision`; undefined when the slot is at another
+// revision (the CAS at that revision then fails). Read in the CAS transaction.
+export function slotOccupantAt(sql: SqlStorage, slot: IntercomSlot, revision: number): SlotOccupant | null | undefined {
+  const view = readIntercomSlots(sql).find(s => s.slot === slot);
+  return view?.revision === revision ? view.occupant : undefined;
+}
+
 export function replaceIntercomSlot(sql: SqlStorage, slot: IntercomSlot, expectedRevision: number, occupant: SlotOccupant | null): number | null {
   if (!(INTERCOM_SLOTS as readonly unknown[]).includes(slot)) throw new TypeError("invalid Intercom slot");
   if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0 || expectedRevision >= Number.MAX_SAFE_INTEGER) {

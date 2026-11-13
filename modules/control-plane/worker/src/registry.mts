@@ -1,5 +1,5 @@
 import { isClaudeSlotSelection, isFixedSlot, isNodeId, type ClaudeSlotSelection, type ClaudeSlotResult, type FixedSlot } from "../../protocol.mts";
-import { replaceIntercomSlot } from "./intercom-slots.mts";
+import { commitSlotChange, withEffects } from "./slot-notice.mts";
 import type { SlotAddressResult } from "../../protocol-messages.mts";
 import { readIntercomSlots, type IntercomSlotView } from "./intercom-slots.mts";
 import { identityDiagnostic } from "./message-identity-diagnostics.mts";
@@ -98,7 +98,8 @@ export class Registry extends DurableObject<Env> {
       const row = this.sql.exec("SELECT runtime FROM sessions WHERE node_id = ? AND session_id = ? AND state NOT IN ('unknown', 'closed', 'archived', 'deleted')", nodeId, sessionId).toArray()[0];
       return row ? String(row.runtime) : null;
     }, request => sessionStub(this.env, request.nodeId).requestLeadConfirmation(request),
-    run => this.tx("assignMcpSlot", run));
+    run => this.messageTx("assignMcpSlot", run),
+    (slot, expectedRevision, occupant, now) => commitSlotChange(this.sql, this.messages, (...args) => this.audit(...args), slot, expectedRevision, occupant, now));
   }
 
   audit(actor: string, action: string, target: string | null, detail: unknown = null): void {
@@ -381,10 +382,13 @@ export class Registry extends DurableObject<Env> {
     return { kind: "slot-selection", requestId: request.requestId, slot: request.slot,
       outcome: receipt.digest === digest ? receipt.outcome : "denied", revision: receipt.digest === digest ? receipt.revision : null };
   }
+  // A message transaction (issue #761): a lead change queues notices, so the
+  // queue heads go and the alarm covers their expiry. effects: routed by the
+  // caller after it answered.
   finishClaudeSelection(nodeId: string, request: ClaudeSlotSelection, token: string, generation: number,
-    prepared: { eventKey: string; digest: string; expectedRevision: number; context: string }): ClaudeSlotResult {
+    prepared: { eventKey: string; digest: string; expectedRevision: number; context: string }): Promise<ClaudeSlotResult & { effects?: MessageEffects }> {
     const denied: ClaudeSlotResult = { kind: "slot-selection", requestId: request.requestId, slot: request.slot, outcome: "denied", revision: null };
-    return this.tx("finishClaudeSelection", () => {
+    return this.messageTx("finishClaudeSelection", () => {
       if (!isClaudeSlotSelection(request) || this.claudeContext(nodeId, token, request.slot) !== prepared.context) return denied;
       const replay = this.claudeSelectionReceipt(prepared.eventKey, prepared.digest, request);
       if (replay) return replay;
@@ -395,13 +399,13 @@ export class Registry extends DurableObject<Env> {
       if (node.identity_generation !== generation || !actor || actor.runtime !== "claude-code"
         || !["running", "idle-loaded", "reachable-probable"].includes(String(actor.state))
         || actor.kind !== null && !["interactive", "session", "fork"].includes(String(actor.kind))) return denied;
-      const revision = replaceIntercomSlot(this.sql, request.slot, prepared.expectedRevision,
-        { nodeId, runtime: "claude-code", sessionId: request.sessionId, chatName: null });
+      const { revision, effects } = commitSlotChange(this.sql, this.messages, (...args) => this.audit(...args), request.slot,
+        prepared.expectedRevision, { nodeId, runtime: "claude-code", sessionId: request.sessionId, chatName: null }, now);
       const actual = revision ?? this.listIntercomSlots().find(s => s.slot === request.slot)!.revision;
       const outcome = revision === null ? "conflict" : "assigned";
-      // Permanent existing audit, unique event key. A write failure rolls back CAS.
+      // Permanent existing audit, unique event key. A write failure rolls back CAS and notices.
       this.audit(`node:${nodeId}`, "intercom.claude-selection", prepared.eventKey, { digest: prepared.digest, outcome, revision: actual });
-      return { kind: "slot-selection", requestId: request.requestId, slot: request.slot, outcome, revision: actual };
+      return withEffects<ClaudeSlotResult>({ kind: "slot-selection", requestId: request.requestId, slot: request.slot, outcome, revision: actual }, effects);
     });
   }
   slotAddress(nodeId: string, token: string, slot: FixedSlot, requestId: string): SlotAddressResult {

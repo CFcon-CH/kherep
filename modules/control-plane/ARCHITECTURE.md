@@ -42,6 +42,42 @@ A future deployment of this schema would create five empty revision-zero rows
 on the next Registry initialization, preserving existing slot rows and revisions
 on subsequent initialization. This source change does not deploy the Worker.
 
+## Lead-change notice (#761)
+
+Both slot-changing paths, the Claude selection (`Registry.finishClaudeSelection`)
+and the MCP assignment (`McpRegistry.finishAssignment`, through an injected
+callback), go through `worker/src/slot-notice.mts` `commitSlotChange`. It reads
+the occupant at the expected revision, runs the unchanged CAS and, only on success
+for a slot in `NOTIFY_SLOTS` (`kherep-lead` only, `protocol-slot-notice.mts`)
+whose occupant changes to another session, writes the notices with
+`MessageStore.send` in the same `transactionSync`: `ROLE CHANGED: lead -> team-lead`
+with `NEW-LEAD:` to the previous lead and `ROLE CHANGED: team-lead -> lead` with
+`PREVIOUS-LEAD:` to the new one, plus one `intercom.slot-notice` audit row. A
+first assignment from empty, the same session again, a conflict, a denial, a
+replay and the runtime slots write none. A storage failure rolls back CAS,
+receipt and notices together; a notice the target cannot take (revoked node, full
+queue) is stored as refused while the slot change commits. Both paths run as a
+message transaction, so the queue heads are re-read and the alarm covers the
+notice's expiry. The frames come back to the caller as `effects` (only when there
+are any): `node-session.mts` sends its slot-selection answer first and routes them
+after it; `mcp-http.mts` routes them after the committed assignment, before its
+tool result, and a routing failure leaves the notice queued for the target's next
+authentication. No API or MCP entry can create a notice.
+
+The sender is `operator` / `control-plane` (`CONTROL_PLANE_SESSION`). Peers cannot
+send as `operator` (NodeSession sets the sender node from the authenticated
+socket), and the operator API refuses the Access actor `control-plane` with `403`.
+The operator sender never acknowledges, so a notice row is retired by the existing
+fallback: a final state (delivered, refused, expired; a queued notice expires
+after 24 h) sets `delete_after` 24 h later and the alarm sweep deletes it, leaving
+a 24 h tombstone. Nothing new goes on the wire: an older node accepts the sender
+and shows the notice as a peer-style block whose reply fails cleanly. A current
+node frames it as `=== Kherep control plane notice ... ===` without a reply line
+(`node/control-notice.mts`) and `msg inbox` names the sender `control plane
+(slot change)`. Codex-as-lead stays refused, so today only a Claude selection
+can produce a notice. Whether an idle previous lead is woken follows the existing
+wake policy for accepted messages; this change does not alter it.
+
 ## Session liveness metadata (Phase 1, #706)
 
 `session-liveness.mts` judges exact runtime/full-ID metadata as `running`,

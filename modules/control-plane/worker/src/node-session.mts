@@ -30,6 +30,7 @@ import { registryStub, type Env } from "./env.mts";
 import { checkAuth, CLOSE, type Attachment } from "./handshake.mts";
 import { isProxyDelivery, routeEffects, type LocalNode } from "./message-routing.mts";
 import { SessionStore, type CommandRecord } from "./session-store.mts";
+import type { MessageEffects } from "./message-store.mts";
 
 // Offline detection (issue #5 decision 2): while a node is online an alarm
 // fires every 5 minutes; after 3 intervals without activity it is offline.
@@ -386,11 +387,14 @@ export class NodeSession extends DurableObject<Env> {
           const result = await registry.replaceSessions(nodeId, body.sessions, body.identitySnapshot, token);
           if (!request) { if (!result.ok) this.sendControl(ws, "error", { error: result.code }); return; }
           let answer: ClaudeSlotResult = { kind: "slot-selection", requestId: request.requestId, slot: request.slot, outcome: "denied", revision: null };
+          let notices: MessageEffects | undefined;
           if (result.ok && preparation?.prepared && isIdentitySnapshot(body.identitySnapshot) && this.authedSocket() === ws) {
-            try { answer = await registry.finishClaudeSelection(nodeId, request, token, body.identitySnapshot.generation, preparation.prepared); }
+            try { ({ effects: notices, ...answer } = await registry.finishClaudeSelection(nodeId, request, token, body.identitySnapshot.generation, preparation.prepared)); }
             catch { /* Storage failure is unconfirmed; CAS transaction rolled back. */ }
           }
           if (this.authedSocket() === ws) this.sendControl(ws, "event", { ...answer });
+          // Issue #761: lead-change notices go out after the committed answer.
+          if (notices) await routeEffects(this.env, notices, this.local(ws, nodeId));
         }
         return;
       case "command.ack":

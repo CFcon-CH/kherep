@@ -11,6 +11,23 @@ increments the minor version; every other release increments the patch version.
 
 ### Added
 
+- The Control Plane tells the previous lead when the operator moves the
+  `kherep-lead` slot to another session (#761). In the slot-change transaction
+  the Worker writes `ROLE CHANGED: lead -> team-lead` with `NEW-LEAD:` to the
+  previous lead and `ROLE CHANGED: team-lead -> lead` with `PREVIOUS-LEAD:` to
+  the new one, each with the slot revision and the UTC time, from the sender
+  `operator` / `control-plane`, and audits them once as `intercom.slot-notice`.
+  A conflict, a denial, a replay, a first assignment, the same session again and
+  the runtime slots write none; a storage failure rolls the slot change back with
+  the notices. The slot-selection answer goes out first, the notices after it.
+  The operator API refuses the Access actor `control-plane`. A current node frames
+  the notice as a Control Plane notice without a reply line, and `msg inbox`
+  names the sender `control plane (slot change)`; an older node shows a
+  peer-style block. Notice rows retire through the existing 24 h fallback
+  deletion. The lead and team-lead role texts and both ROUTING copies name the
+  delivered notice instead of the unbuilt role line. Takes effect after a
+  Worker deploy and a node upgrade.
+
 - `kherep-node service recover` starts the installed managed service again
   after a failed upgrade left the node off or a retained drain blocked it
   (#810, stage B of #838). Without `--confirm` it prints evidence only
