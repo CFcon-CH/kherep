@@ -52,8 +52,9 @@ async function run(argv: string[]): Promise<void> {
   process.chdir(args.workspace);
   const platform = supportedServicePlatform();
   // Issue #706: the Codex liveness source; it probes only with wake.nativeQueue.
-  const daemon = startDaemon(config, paths, timestamped(), undefined, undefined,
-    { name: args.serviceName, platform, ...(args.taskPath ? { taskPath: args.taskPath } : {}) }, undefined, undefined, codexLivenessSource({ paths }));
+  const log = timestamped();
+  const daemon = startDaemon(config, paths, log, undefined, undefined,
+    { name: args.serviceName, platform, ...(args.taskPath ? { taskPath: args.taskPath } : {}) }, undefined, undefined, codexLivenessSource({ paths, log }));
   stopOnSignals(daemon);
   await daemon.done;
 }

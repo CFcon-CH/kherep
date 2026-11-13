@@ -89,6 +89,8 @@ export function threadEvidence(paths: NodePaths, target: SessionTarget, scan: Ho
   const at = scan.at, held = scan.holders.get(target.sessionId) ?? [];
   const evidence: SessionEvidence = { runtime: target.runtime, sessionId: target.sessionId,
     app: valueAt(at, "native-app", scan.processes.length > 0 ? "present" : "absent") };
+  // Issue #899: the thread's own query failed; never an absence.
+  if (scan.failed?.has(target.sessionId)) return { ...evidence, holder: unknownAt(at, "native-holder", "failed") };
   if (held.length > 1) return { ...evidence, holder: unknownAt(at, "native-holder", "conflict") };
   if (held.length === 0) return { ...evidence, holder: valueAt(at, "native-holder", { present: false }) };
   const holder = held[0];
@@ -107,7 +109,26 @@ function candidates(paths: NodePaths, threads: string[], now: number): string[] 
   }).sort((a, b) => b.seen - a.seen).map(c => c.id);
 }
 
-export interface CodexLivenessOptions { paths: NodePaths; home?: string; probe?: HolderProbe; now?: () => number; platform?: NodeJS.Platform }
+// log: the daemon log; a probe problem is written only when it changes (issue #899).
+export interface CodexLivenessOptions { paths: NodePaths; home?: string; probe?: HolderProbe; now?: () => number; platform?: NodeJS.Platform;
+  log?: (line: string) => void }
+
+const REASON_CHARS = 200;
+// The last non-empty line of the failure, without paths. An execFile rejection
+// (measured, Node 26) has no stderr property: its message is
+// "Command failed: <cmd>\n<stderr>", and <cmd> carries the script with its
+// base64 rollout paths, so that prefix is dropped first. PowerShell text is localised.
+export function probeFailureReason(error: unknown): string {
+  const { message, cmd, code } = (error ?? {}) as { message?: unknown; cmd?: unknown; code?: unknown };
+  let text = typeof message === "string" ? message : String(error);
+  const command = typeof cmd === "string" ? `Command failed: ${cmd}` : undefined;
+  if (command && text.startsWith(command)) text = text.slice(command.length);
+  const line = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean).at(-1) ?? (code === undefined ? "no reason" : `exit ${String(code)}`);
+  return line.replace(/\S*(?:rollout-|[A-Za-z]:\\|\\\\|\/)\S*/g, "<path>").slice(0, REASON_CHARS);
+}
+
+// Thread ids have one fixed length, so sorting the rows sorts by thread.
+const scanProblem = (scan: HolderScan): string => [...scan.failed ?? []].map(([id, reason]) => `${id}: ${reason}`).sort().join("; ");
 
 // The platform's holder probe; Linux and others have none (UNKNOWN/unsupported).
 function defaultProbe(platform: NodeJS.Platform): HolderProbe | undefined {
@@ -119,6 +140,12 @@ function defaultProbe(platform: NodeJS.Platform): HolderProbe | undefined {
 export function codexLivenessSource(options: CodexLivenessOptions): LivenessSource & { intervalMs: number } {
   const { paths, now = Date.now, platform = process.platform } = options;
   const probe = options.probe ?? defaultProbe(platform);
+  let problem = "";
+  const report = (next: string) => {
+    if (next === problem) return;
+    problem = next;
+    options.log?.(next ? `kherep-node: codex holder probe failed: ${next}` : "kherep-node: codex holder probe recovered");
+  };
   return { intervalMs: CODEX_LIVENESS_INTERVAL_MS, observe: async (targets, signal) => {
     const t = now();
     // Nodes without the native Queue run no probe and behave as before.
@@ -129,9 +156,12 @@ export function codexLivenessSource(options: CodexLivenessOptions): LivenessSour
       scan = await probe(options.home ?? codexHome(), candidates(paths, [...new Set(threads.map(x => x.sessionId))], t), signal);
       signal.throwIfAborted();
       if (!Number.isFinite(scan.at) || scan.at < t || scan.at > now()) throw new Error("holder scan time out of range");
-    } catch {
-      return unknownAt(t, "native-holder", signal.aborted ? "aborted" : "failed");
+    } catch (error) {
+      if (signal.aborted) return unknownAt(t, "native-holder", "aborted");
+      report(`scan: ${probeFailureReason(error)}`);
+      return unknownAt(t, "native-holder", "failed");
     }
+    report(scanProblem(scan));
     const value = threads.flatMap(target => threadEvidence(paths, target, scan) ?? []);
     return valueAt(scan.at, "native-holder", value);
   } };

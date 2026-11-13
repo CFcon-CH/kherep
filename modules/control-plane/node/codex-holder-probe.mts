@@ -18,8 +18,9 @@ export interface HolderProcess { pid: number; startMs: number; identity: string 
 export interface Holder extends HolderProcess { file: string }
 // processes: every live codex process; holders: thread id to the processes
 // holding its rollout; probed: the thread ids the scan covered, undefined when
-// it covered every rollout under <home>/sessions.
-export interface HolderScan { at: number; processes: HolderProcess[]; holders: Map<string, Holder[]>; probed?: Set<string> }
+// it covered every rollout under <home>/sessions; failed: probed thread ids
+// whose own query failed (Windows, issue #899), to a fixed reason "<stage> <code>".
+export interface HolderScan { at: number; processes: HolderProcess[]; holders: Map<string, Holder[]>; probed?: Set<string>; failed?: Map<string, string> }
 export type HolderProbe = (home: string, candidates: string[], signal: AbortSignal) => Promise<HolderScan>;
 
 export const HOLDER_PROBE_TIMEOUT_MS = 10_000;

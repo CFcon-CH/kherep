@@ -69,12 +69,15 @@ hook's record bound to it gives the turn (decision D2): an ended `Stop` or a
 fresh `SessionStart` is idle unless the rollout was written more than 30 seconds
 later. A held, idle thread reads `idle-loaded` and opens the native Queue route.
 The rollout is stat'ed, never opened. Windows uses the Restart Manager through
-one `powershell.exe` run, limited to 16 recently seen threads; it is not yet
-measured on a Windows node. Linux stays UNKNOWN. Every failure is UNKNOWN,
-never a positive and never an absence. A message the Queue route refuses for
-lack of liveness shows `awaiting-user-turn` in `msg status`. The delivery hook
-also records `Interrupt` and `SessionEnd`, which make a held thread
-`reachable-probable`; the installer does not yet add those two hook groups.
+one `powershell.exe` run, limited to 16 recently seen threads; a thread whose
+Restart Manager call fails stays UNKNOWN without affecting the others (issue
+#899). A probe problem is logged once when it changes, and once when it
+recovers. It is not yet measured on a Windows node. Linux stays UNKNOWN. Every
+failure is UNKNOWN, never a positive and never an absence. A message the Queue
+route refuses for lack of liveness shows `awaiting-user-turn` in `msg status`.
+The delivery hook also records `Interrupt` and `SessionEnd`, which make a held
+thread `reachable-probable`; the installer does not yet add those two hook
+groups.
 None of this establishes installation or native acceptance.
 See [liveness architecture](ARCHITECTURE.md#session-liveness-metadata-phase-1-706).
 The accepted 24-hour deadline is a later admission check before Kherep
