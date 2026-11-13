@@ -224,8 +224,7 @@ async function main(): Promise<void> {
         ...(PLAIN ? ["heartbeat not written (config.toml unreadable)"] : [])];
     } else lines = await check(lock, payload, home, parts);
   } finally {
-    const why = lock && typeof lock !== "string" ? lock.release() : "";
-    if (why) lines.push(why);
+    if (lock && typeof lock !== "string") lock.release();
   }
   emit(lines);
 }

@@ -174,12 +174,13 @@ test("the CLI prints the verdict and exits 0, 1 or 2", () => {
   assert.match(missing.stdout, /^UNGEPRUEFT unreadable/);
 });
 
-// Records, never asserts, whether Node still has the gap: it documents the day a
-// Node release teaches `node --check` about .mts without turning the suite red.
+// Records whether Node still has the gap; the only assertion is that the run ended,
+// so a Node release that closes the gap never turns the suite red.
 test("records whether node --check still passes an ESM syntax error in .mts", () => {
   const file = path.join(TMP, "gap.mts");
   fs.writeFileSync(file, "export const x = ;\n");
   const status = spawnSync(process.execPath, ["--check", file]).status;
+  assert.ok(status === null || Number.isInteger(status), `node --check ended with ${String(status)}`);
   console.log(`MEASURED | node ${process.version} --check on "export const x = ;" (.mts) exits ${status}`);
 });
 

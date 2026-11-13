@@ -42,7 +42,8 @@ test("T4.9 busy at the first attempt, the holder leaves during the first pause: 
   assert.equal(typeof lock, "object", String(lock));
   assert.deepEqual(pauses.map(inPauseRange), [true], `one pause of 2-11 ms, got ${pauses.join(", ")}`);
   assert.equal((lock as RunLock).holding(), true);
-  assert.equal((lock as RunLock).release(), "");
+  (lock as RunLock).release();
+  assert.equal((lock as RunLock).holding(), false);
 });
 
 test("T4.10 a reader that stays: busy at BEGIN EXCLUSIVE four times on one connection, three pauses, then closed", () => {
