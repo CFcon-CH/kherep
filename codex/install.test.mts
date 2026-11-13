@@ -19,7 +19,6 @@ import {
   setMarkedBlock,
 } from "./install.mts";
 import { adaptSkillText } from "./lib/component-render.mts";
-import { componentHash } from "./lib/component-hash.mts";
 import { fixtureModelOptions } from "./lib/model-policy.fixture.mts";
 import type { Capabilities } from "./lib/contracts.mts";
 import { legacyForm } from "./lib/legacy-control-plane-form.mts";
@@ -739,13 +738,6 @@ test("installs the Mac-compatible projection without replacing user state", asyn
     fs.readFileSync(path.join(here, "..", "modules", "mcp-auth-bridge", "supergateway-secret-wrapper.mts"), "utf8"),
   );
   assert.ok(fs.existsSync(path.join(result.targets.localInference, "runner.mts")));
-  assert.ok(fs.existsSync(path.join(result.targets.twg, "cli.mts")));
-  const twgSkill = fs.readFileSync(path.join(codexHome, "skills", "kherep-twg", "SKILL.md"), "utf8");
-  assert.doesNotMatch(twgSkill, /~\/\.claude\/kherep\/twg/);
-  assert.deepEqual(result.receipt.twg, {
-    status: "installed",
-    componentSha256: componentHash(path.join(here, "..", "modules", "twg", "runtime")),
-  });
   for (const name of [
     "atl-jira.mts",
     "atl-jira-ccoder.mts",
@@ -1248,7 +1240,6 @@ test("is idempotent and backs up the previously managed projection", (t) => {
     path.join("orchestra", "ROUTING.md"),
     path.join("orchestra", "registry-http-bridge.mts"),
     path.join("orchestra", "supergateway-secret-wrapper.mts"),
-    path.join("kherep", "twg"),
   ]) {
     assert.ok(fs.existsSync(path.join(second.backupRoot, relative)));
   }
@@ -1332,7 +1323,6 @@ test("rolls every managed target back when installation fails", (t) => {
   assert.equal(fs.existsSync(path.join(codexHome, "orchestra", "ROUTING.md")), false);
   assert.equal(fs.existsSync(path.join(codexHome, "orchestra", "registry-http-bridge.mts")), false);
   assert.equal(fs.existsSync(path.join(codexHome, "orchestra", "supergateway-secret-wrapper.mts")), false);
-  assert.equal(fs.existsSync(path.join(codexHome, "kherep", "twg")), false);
   for (const name of brokerNames) {
     assert.equal(
       fs.readFileSync(path.join(workspace, "tools", `${name}.mts`), "utf8"),
@@ -1782,6 +1772,44 @@ test("removes projection files that the TypeScript migration renamed", (t) => {
     assert.equal(fs.existsSync(file), false, file);
     assert.ok(fs.existsSync(path.join(result.backupRoot, path.relative(codexHome, file))), file);
   }
+});
+
+// Issue #897. The kherep-twg wrapper is retired in favour of the vendor TWG
+// skills. An upgrade removes the projected skill (by the prior receipt) and the
+// runtime copy (RETIRED_TARGETS), both with their exact bytes in the backup and
+// without a _deprecated/ park, which Codex would read as a personal skill. The
+// vendor's own skills, a personal skills/twg and ~/.agents/skills, stay intact.
+test("an upgrade removes the retired kherep-twg wrapper with backups and leaves vendor TWG skills alone", (t) => {
+  const { root, codexHome, installOptions } = fixture();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const first = install(installOptions);
+  const write = (file: string, text: string): void => {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, text, "utf8");
+  };
+  write(path.join(codexHome, "kherep", "twg", "cli.mts"), "old wrapper cli\n");
+  write(path.join(codexHome, "skills", "kherep-twg", "SKILL.md"), "old wrapper skill\n");
+  const priorReceipt = JSON.parse(fs.readFileSync(first.targets.receipt, "utf8"));
+  priorReceipt.projection.skills.push({ name: "kherep-twg", source: "kherep", status: "projected" });
+  fs.writeFileSync(first.targets.receipt, `${JSON.stringify(priorReceipt, null, 2)}\n`);
+  const vendor = [
+    path.join(codexHome, "skills", "twg", "SKILL.md"),
+    path.join(path.dirname(codexHome), ".agents", "skills", "twg", "SKILL.md"),
+    path.join(path.dirname(codexHome), ".agents", "skills", "twg-jira", "SKILL.md"),
+  ];
+  for (const file of vendor) write(file, `vendor ${path.basename(path.dirname(file))}\n`);
+  const before = vendor.map((file) => fs.readFileSync(file));
+
+  const second = install(installOptions);
+  assert.equal(fs.existsSync(path.join(codexHome, "kherep", "twg")), false);
+  assert.equal(fs.existsSync(path.join(codexHome, "skills", "kherep-twg")), false);
+  assert.equal(fs.readFileSync(path.join(second.backupRoot, "kherep", "twg", "cli.mts"), "utf8"), "old wrapper cli\n");
+  assert.equal(fs.readFileSync(path.join(second.backupRoot, "skills", "kherep-twg", "SKILL.md"), "utf8"), "old wrapper skill\n");
+  assert.deepEqual(second.receipt.projection.removed?.skills, ["kherep-twg"]);
+  assert.equal(fs.existsSync(path.join(codexHome, "skills", "_deprecated")), false);
+  assert.equal(fs.existsSync(path.join(codexHome, "kherep", "_deprecated")), false);
+  vendor.forEach((file, index) => assert.deepEqual(fs.readFileSync(file), before[index], file));
+  assert.equal(second.receipt.projection.skills.some((entry) => entry.name === "kherep-twg"), false);
 });
 
 // #44. The Codex installer retires workspace files through the same declaration

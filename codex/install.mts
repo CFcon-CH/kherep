@@ -20,7 +20,6 @@ import {
 import { copyGithubBroker } from "../lib/github-broker-projection.mts";
 import { copyObservationBroker, renderObservationHook } from "./lib/observation-projection.mts";
 import { copyObservationSnapshot } from "./lib/observation-source.mts";
-import { componentHash } from "./lib/component-hash.mts";
 import { prepareManagedConfig } from "./lib/config-preservation.mts";
 import { atlassianDestructiveGuard, command } from "./lib/parity-config.mts";
 import type { Capabilities, McpCompatibilityOptions, PluginMcpServer, RunCodex } from "./lib/contracts.mts";
@@ -79,6 +78,9 @@ const RETIRED_TARGETS = [
   path.join("orchestra", "registry-http-bridge.js"),
   path.join("orchestra", "supergateway-secret-wrapper.js"),
   path.join("kherep", "local-inference", "runner.js"),
+  // Issue #897. The Teamwork Graph wrapper is retired in favour of the vendor
+  // TWG skills; its runtime copy is removed with its backup like any other.
+  path.join("kherep", "twg"),
 ];
 
 export { renderObservationHook };
@@ -272,7 +274,6 @@ export function install(options: InstallOptions = {}) {
     localInferenceRunner: path.join(repoRoot, "modules", "local-inference", "runner.mts"),
     localInferenceLib: path.join(repoRoot, "modules", "local-inference", "lib"),
     localInferenceConfig: path.join(repoRoot, "bootstrap", "manifest", "local-inference.json"),
-    twg: path.join(repoRoot, "modules", "twg", "runtime"),
     atlassianCredentials: path.join(repoRoot, "modules", "atl-jira-brokers", "atlassian-credentials.mts"),
     atlassianCliArgs: path.join(repoRoot, "modules", "atl-jira-brokers", "atlassian-cli-args.mts"),
     jiraAdfRenderer: path.join(repoRoot, "modules", "atl-jira-brokers", "jira-adf.mts"),
@@ -333,7 +334,6 @@ export function install(options: InstallOptions = {}) {
     registryBridge,
     registryRuntime,
     localInference: path.join(codexHome, "kherep", "local-inference"),
-    twg: path.join(codexHome, "kherep", "twg"),
     memoryNotifyHook: path.join(codexHome, "hooks", "kherep-maestro", "codex-memory-notify.js"),
     atlassianCredentials: path.join(workspace, "tools", "atlassian-credentials.mts"),
     atlassianCliArgs: path.join(workspace, "tools", "atlassian-cli-args.mts"),
@@ -567,7 +567,6 @@ export function install(options: InstallOptions = {}) {
       platform === "darwin" ? "mac" : "win", sourceInference, existingInference,
     );
     transaction.writeFile(localInferenceTarget, `${JSON.stringify(renderedInference, null, 2)}\n`);
-    transaction.installDir(sources.twg, targets.twg);
     transaction.installDir(path.join(sources.claudeHooks, "lib"), path.join(targets.hookDir, "lib"));
     for (const name of SHARED_HOOKS) {
       transaction.copyFile(path.join(sources.claudeHooks, name), path.join(targets.hookDir, name));
@@ -724,10 +723,6 @@ export function install(options: InstallOptions = {}) {
       messagingClient: { status: messagingClient.enabled ? "configured" : "disabled" },
       // Issue #212: the top-level model_reasoning_effort the installer kept or set.
       reasoningEffort: preparedConfig.reasoningEffort,
-      twg: {
-        status: "installed",
-        componentSha256: componentHash(sources.twg),
-      },
       // The three literals are legacy entries without a manifest counterpart.
       // Everything else is DERIVED from capabilities.json: any entry declaring
       // status "missing" lands here automatically. Before OP-651 this list was

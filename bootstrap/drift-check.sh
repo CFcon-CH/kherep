@@ -206,8 +206,6 @@ if [[ "$DRIFT_SCOPE" = "all" ]]; then
     "$HERE/../modules/local-inference/lib" "$CLAUDE_HOME/kherep/local-inference/lib"
   cmp_file "runtime/local-inference/config.json" \
     "$EXPECTED_DIR/local-inference.json" "$CLAUDE_HOME/kherep/local-inference/config.json"
-  cmp_tree "runtime/twg" \
-    "$HERE/../modules/twg/runtime" "$CLAUDE_HOME/kherep/twg"
   cmp_file "kherep/githooks/commit-policy" \
     "$EXPECTED_DIR/commit-policy" "$CLAUDE_HOME/kherep/githooks/commit-policy"
 fi

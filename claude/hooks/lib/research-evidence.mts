@@ -51,11 +51,10 @@ export function brainSearchCommand(workspace: string, configPath?: string): stri
 const SHELL_TOOLS = new Set(["Bash", "PowerShell"]);
 const WRITE_TOOLS = new Set(["Edit", "MultiEdit", "NotebookEdit", "Write"]);
 const BROKER_LOOKUP = /atl-confluence-ccoder\.mts["']?\s+(?:search|related|get)\b/;
-const TWG_LOOKUP = [
-  /(?:^|[\s"'/\\])twg(?:\.exe)?["']?\s+rovo\s+search\b/i,
-  /twg[/\\](?:runtime[/\\])?cli\.mts["']?\s+confluence-search\b/i,
-];
-const TWG_SKILL = /(?:^|:)kherep-twg$/;
+// Issue #897. Only the vendor CLI's own search counts. The retired kherep-twg
+// wrapper and its skill no longer do, and a vendor TWG skill counts only when
+// the operator lists it in research-sources.json.
+const TWG_LOOKUP = /(?:^|[\s"'/\\])twg(?:\.exe)?["']?\s+rovo\s+search\b/i;
 const AGENT_TOOLS = new Set(["Agent", "Task"]);
 const BROKER_AGENT = "atlassian-broker";
 // Read verbs and search intent in the dispatch prompt. \bsearch keeps
@@ -85,18 +84,18 @@ function toolUses(turn: TranscriptEntry[]): ContentBlock[] {
   return out;
 }
 
-// extraSkills: operator-listed lookup skills, matched by exact name, in
-// addition to the built-in kherep-twg.
+// extraSkills: operator-listed lookup skills, matched by exact name. No skill
+// counts without that list.
 export function isBrainLookup(block: ContentBlock, extraSkills: ReadonlySet<string> = new Set()): boolean {
   const name = String(block.name);
   const input = block.input || {};
   if (SHELL_TOOLS.has(name)) {
     const command = typeof input.command === "string" ? input.command : "";
-    return BROKER_LOOKUP.test(command) || TWG_LOOKUP.some((pattern) => pattern.test(command));
+    return BROKER_LOOKUP.test(command) || TWG_LOOKUP.test(command);
   }
   if (name === "Skill") {
     const skill = typeof input.skill === "string" ? input.skill.trim() : "";
-    return TWG_SKILL.test(skill) || extraSkills.has(skill);
+    return extraSkills.has(skill);
   }
   if (AGENT_TOOLS.has(name)) {
     return input.subagent_type === BROKER_AGENT

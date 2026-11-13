@@ -52,7 +52,6 @@ export function fixedPairs(home: string, workspace: string): ManagedPair[] {
       source: "bootstrap/manifest/local-inference.json",
       rendered: true,
     },
-    { live: joinPathLike(home, "kherep/twg"), source: "modules/twg/runtime" },
     // Issue #592. The source the stable control-plane entry point runs, rendered by install.sh.
     { live: joinPathLike(home, "kherep/control-plane/source.json"), source: "bootstrap/control-plane-pointer.mts", rendered: true },
     // OP-1426. Rendered from the install-time KHEREP_WORK_ITEM_* values.

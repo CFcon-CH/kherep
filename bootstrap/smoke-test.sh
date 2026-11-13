@@ -191,11 +191,11 @@ check_profile() {
     hooks/lib/workspace-scope.mts hooks/lib/workspace-scope.test.mts
     hooks/lib/hook-inventory.mts hooks/lib/hook-syntax.mts hooks/lib/restore-write.mts
     hooks/cbm-code-discovery-gate hooks/cbm-session-reminder hooks/cbm-subagent-reminder
-    skills/codebase-memory skills/kherep-twg skills/brain-drainage agents/kherep-builder.md
+    skills/codebase-memory skills/brain-drainage agents/kherep-builder.md
     teams/kherep/ROUTING.md teams/kherep/config.json
     session-kickoff/protocol.md settings.json CLAUDE.md
     statusline-command.sh kherep/local-inference/runner.mts
-    kherep/local-inference/lib/profile.mts kherep/local-inference/lib/transport.mts kherep/local-inference/config.json kherep/twg/cli.mts
+    kherep/local-inference/lib/profile.mts kherep/local-inference/lib/transport.mts kherep/local-inference/config.json
     kherep/githooks/commit-msg kherep/githooks/post-checkout
     kherep/githooks/pre-push kherep/githooks/attribution-record.mts
     hooks/main-checkout-guard.mts hooks/lib/main-checkout.mts hooks/lib/command-walk.mts
@@ -286,8 +286,8 @@ check_profile() {
 
   # Deprecated source content must not leak into a clean profile. Pre-existing
   # Mac baseline extras are the explicit compatibility exception.
-  local must_absent=( skills/intake hooks/em-dash-watch.js hooks/memo-retro-reminder.js )
-  [[ "$profile" = "mac" ]] && must_absent=( skills/intake hooks/em-dash-watch.js hooks/memo-retro-reminder.js )
+  local must_absent=( skills/intake hooks/em-dash-watch.js hooks/memo-retro-reminder.js skills/kherep-twg kherep/twg )
+  [[ "$profile" = "mac" ]] && must_absent=( skills/intake hooks/em-dash-watch.js hooks/memo-retro-reminder.js skills/kherep-twg kherep/twg )
   for file in "${must_absent[@]}"; do
     [[ -e "$CLAUDE_HOME/$file" ]] && { note_fail "LEAKED deprecated [$profile] $file"; }
   done

@@ -119,7 +119,6 @@ flowchart LR
 | Bootstrap | `bootstrap/` | Host profiles, managed installation, backups, drift checks and the commit policy |
 | Atlassian brokers | `modules/atl-jira-brokers/` | Jira and Confluence operations under a service account, including the Central Brain space |
 | GitHub App broker | `modules/github-broker/` | Fixed runtime issue operations, constrained App authentication, durable receipts; disabled until authorized configuration |
-| Teamwork Graph | `modules/twg/` | Bounded, read-only Teamwork Graph lookups |
 | Local inference | `modules/local-inference/` | Runner for a configured local model server, reached locally or over SSH |
 | MCP auth bridge | `modules/mcp-auth-bridge/` | Authenticated transport wrappers for configured MCP servers |
 | Control Plane | `modules/control-plane/` | Cloudflare Worker, node daemon and shared protocol for enrollment, session messaging and tasks |
@@ -160,7 +159,7 @@ Each integration is optional unless a component's guide says otherwise, and each
 | Confluence | Central Brain knowledge space, written through service-account brokers | [Atlassian brokers](modules/atl-jira-brokers/README.md) |
 | Jira | Optional service-account helpers | [Atlassian brokers](modules/atl-jira-brokers/README.md) |
 | Atlassian MCP server | Optional v2 remote server, reached as each runtime's own service account; destructive operations need the operator | [Atlassian MCP server](docs/INSTALLATION.md#atlassian-mcp-server) |
-| Atlassian Teamwork Graph | Read-only lookups | [Teamwork Graph](modules/twg/README.md) |
+| Atlassian Teamwork Graph | Lookups through the vendor `twg` CLI and its skills, installed and signed in by the operator; Kherep ships no wrapper | [Installation](docs/INSTALLATION.md) |
 | MCP servers | Transport and authentication adapters for servers you configure | [Codex adapter architecture](codex/ARCHITECTURE.md#mcp-projection) |
 | Local model server | Local inference, including the private-input route | [Installation](docs/INSTALLATION.md#5-configure-integrations) |
 | Cloudflare Workers and Access | Control Plane Worker and its Access-protected operator API | [Control Plane](modules/control-plane/README.md#setup) |
@@ -213,7 +212,6 @@ To report a vulnerability, follow the [security policy](.github/SECURITY.md).
 | [Atlassian brokers](modules/atl-jira-brokers/README.md) | Jira and Confluence service-account operations, including the Central Brain space |
 | [Reading the Central Brain](docs/CENTRAL-BRAIN-READING.md) | How any client, through a broker or the Atlassian MCP server, reads evidence status, absence, truncation and page versions faithfully |
 | [Control Plane](modules/control-plane/README.md) | Cloudflare Worker and node daemon for node enrollment, liveness, session messaging and task sessions |
-| [Teamwork Graph](modules/twg/README.md) | Runtime contract and installation of the Teamwork Graph integration |
 | [Public release review](docs/PUBLIC-RELEASE.md) | Review steps before pushing and before tagging a release |
 | [Changelog](CHANGELOG.md) | Notable changes per release |
 | [Security policy](.github/SECURITY.md) | Private vulnerability reporting |
@@ -230,7 +228,6 @@ To report a vulnerability, follow the [security policy](.github/SECURITY.md).
 | `modules/local-inference/` | Local processing runner and configuration |
 | `modules/mcp-auth-bridge/` | Authenticated MCP transport adapters |
 | `modules/atl-jira-brokers/` | Operator-configured Jira and Confluence service-account operations |
-| `modules/twg/` | Bounded Teamwork Graph reads |
 | `modules/control-plane/` | Control Plane Worker, node daemon and their shared protocol |
 | `lib/` | Shared helpers for `KHEREP_*` environment lookup and Windows workspace paths |
 | `docs/` | Installation, Codex and release guides, and design plans |

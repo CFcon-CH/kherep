@@ -187,7 +187,6 @@ skills/kherep-content-humanizer
 skills/kherep-deploy-workflow
 skills/kherep-linkedin-draft
 skills/kherep
-skills/kherep-twg
 skills/brain-drainage
 skills/local-inference
 skills/forge-bulk-op-pattern

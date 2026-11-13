@@ -99,8 +99,6 @@ test("every accepted Brain lookup form passes, a foreign search tool does not", 
     bash("node C:/Kherep/tools/atl-confluence-ccoder.mts related --space KB --title \"x\""),
     bash("node \"C:/Kherep/tools/atl-confluence-ccoder.mts\" get --id 5001"),
     bash("twg rovo search --app confluence -- \"hook order\""),
-    bash("node C:/Users/x/.claude/kherep/twg/cli.mts confluence-search hooks"),
-    tool("Skill", { skill: "kherep-twg" }),
     tool("mcp__rovo__search", { query: "x" }),
     tool("mcp__0000-aaaa__searchConfluenceUsingCql", { cql: "text ~ x" }),
     tool("mcp__atlassian__searchConfluence", { query: "x" }),
@@ -111,6 +109,10 @@ test("every accepted Brain lookup form passes, a foreign search tool does not", 
   ];
   for (const form of forms) assert.equal(decide([user("q"), WORK, form]), null, JSON.stringify(form));
   for (const form of [tool("mcp__bexio__search", {}), bash("node C:/Kherep/tools/atl-confluence-ccoder.mts create --space KB"),
+    // Issue #897. The retired wrapper and its skill no longer count, nor does a
+    // vendor TWG skill the operator has not listed.
+    bash("node C:/Users/x/.claude/kherep/twg/cli.mts confluence-search hooks"),
+    tool("Skill", { skill: "kherep-twg" }), tool("Skill", { skill: "twg" }), tool("Skill", { skill: "twg-confluence" }),
     tool("mcp__atlassian__executeRead", { name: "searchJiraIssuesUsingJql", cloudId: "x", inputs: {} }),
     tool("mcp__atlassian__executeRead", {}),
     tool("mcp__atlassian__executeWrite", { name: "searchConfluence", cloudId: "x", inputs: {} })]) {
@@ -142,7 +144,10 @@ test("a skill named in the operator research-sources file counts as a Brain look
   assert.ok(decide([user("q"), WORK, skill]), "unknown without the file");
   const sources = sourcesFile(JSON.stringify({ brainSkills: ["acme-wiki-search", 7, ""] }));
   assert.equal(decide([user("q"), WORK, skill], {}, sources), null);
-  assert.equal(decide([user("q"), WORK, tool("Skill", { skill: "kherep-twg" })], {}, sources), null, "the built-in stays");
+  assert.ok(decide([user("q"), WORK, tool("Skill", { skill: "kherep-twg" })], {}, sources), "the retired wrapper skill is no built-in");
+  const vendor = sourcesFile(JSON.stringify({ brainSkills: ["twg-agentic-search"] }));
+  assert.equal(decide([user("q"), WORK, tool("Skill", { skill: "twg-agentic-search" })], {}, vendor), null, "a listed vendor TWG skill counts");
+  assert.ok(decide([user("q"), WORK, tool("Skill", { skill: "twg" })], {}, vendor), "only the listed vendor skill counts");
   assert.ok(decide([user("q"), WORK, tool("Skill", { skill: "other-skill" })], {}, sources));
 });
 
@@ -152,7 +157,7 @@ test("a malformed or unreadable research-sources file leaves only the built-ins 
   for (const content of bad) {
     const sources = sourcesFile(content);
     assert.ok(decide([user("q"), WORK, skill], {}, sources), JSON.stringify(content));
-    assert.equal(decide([user("q"), WORK, tool("Skill", { skill: "kherep-twg" })], {}, sources), null);
+    assert.equal(decide([user("q"), WORK, BRAIN], {}, sources), null);
   }
   assert.ok(decide([user("q"), WORK, skill], {}, TMP), "a directory is unreadable as a file");
 });

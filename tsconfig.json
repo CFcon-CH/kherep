@@ -23,7 +23,6 @@
     "modules/control-plane/*.mts",
     "modules/control-plane/node/**/*.mts",
     "modules/local-inference/**/*.mts",
-    "modules/mcp-auth-bridge/**/*.mts",
-    "modules/twg/**/*.mts"
+    "modules/mcp-auth-bridge/**/*.mts"
   ]
 }

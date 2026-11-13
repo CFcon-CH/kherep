@@ -103,8 +103,7 @@ for required in \
   "$CLAUDE_SRC/CLAUDE.user.md" "$CLAUDE_SRC/CLAUDE.project.md" "$CLAUDE_SRC/AGENTS.project.md" \
   "$CLAUDE_SRC/settings.user.json" "$CLAUDE_SRC/settings.project.json" \
   "$REPO_ROOT/modules/local-inference/runner.mts" \
-  "$REPO_ROOT/modules/local-inference/lib" "$REPO_ROOT/bootstrap/manifest/local-inference.json" \
-  "$REPO_ROOT/modules/twg/runtime"; do
+  "$REPO_ROOT/modules/local-inference/lib" "$REPO_ROOT/bootstrap/manifest/local-inference.json"; do
   [[ -e "$required" ]] || { echo "FATAL: managed source missing: $required"; exit 1; }
 done
 # OP-1432. The Confluence brokers and exactly the modules they import ship with
@@ -148,7 +147,6 @@ done
 transaction_validate_path_under_root "local-inference runner" "$CLAUDE_HOME/kherep/local-inference/runner.mts" "$CLAUDE_HOME" 0 || exit $?
 transaction_validate_path_under_root "local-inference lib" "$CLAUDE_HOME/kherep/local-inference/lib" "$CLAUDE_HOME" 0 || exit $?
 transaction_validate_path_under_root "local-inference config" "$CLAUDE_HOME/kherep/local-inference/config.json" "$CLAUDE_HOME" 0 || exit $?
-transaction_validate_path_under_root "TWG runtime" "$CLAUDE_HOME/kherep/twg" "$CLAUDE_HOME" 0 || exit $?
 transaction_validate_path_under_root "commit policy" "$CLAUDE_HOME/kherep/githooks/commit-policy" "$CLAUDE_HOME" 0 || exit $?
 transaction_validate_path_under_root "Confluence configuration" "$CLAUDE_HOME/kherep/confluence.json" "$CLAUDE_HOME" 0 || exit $?
 transaction_validate_path_under_root "control-plane pointer" "$CLAUDE_HOME/kherep/control-plane/source.json" "$CLAUDE_HOME" 0 || exit $?
@@ -347,9 +345,6 @@ install_path "runtime/local-inference/runner.mts" \
 install_entry "lib" "$REPO_ROOT/modules/local-inference" "$CLAUDE_HOME/kherep/local-inference" "$INSTALL_BACKUP/runtime/local-inference"
 install_path "runtime/local-inference/config.json" "$PREFLIGHT_DIR/local-inference.json" \
   "$CLAUDE_HOME/kherep/local-inference/config.json" "$INSTALL_BACKUP/runtime/local-inference/config.json"
-# Bounded read-only Teamwork Graph wrapper. Vendor binary and OAuth stay host-managed.
-install_path "runtime/twg" "$REPO_ROOT/modules/twg/runtime" \
-  "$CLAUDE_HOME/kherep/twg" "$INSTALL_BACKUP/runtime/twg"
 # Secret-safe stdio bridge for remote MCPs that still require scoped TLS compatibility.
 install_entry "mcp-auth-bridge" "$REPO_ROOT/modules" "$CLAUDE_HOME/kherep" "$INSTALL_BACKUP/runtime"
 # A file the repo stopped managing does not disappear on its own: install.sh

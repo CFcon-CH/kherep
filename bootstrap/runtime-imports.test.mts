@@ -29,9 +29,6 @@ test("projected runtime artifacts import from their installed layouts", async (t
 
   copyGithubBroker(repo, root, { copyFile(source, target) { fs.mkdirSync(path.dirname(target), {recursive:true}); fs.copyFileSync(source,target); return target; } });
 
-  const twg = path.join(root, "twg");
-  fs.cpSync(path.join(repo, "modules", "twg", "runtime"), twg, { recursive: true });
-
   for (const file of [
     path.join(localInference, "runner.mts"),
     path.join(bridge, "registry-http-wrapper.mts"),
@@ -46,7 +43,6 @@ test("projected runtime artifacts import from their installed layouts", async (t
     // what proves that, rather than the checkout happening to work.
     path.join(brokers, "atl-confluence.mts"),
     path.join(brokers, "atl-confluence-ccoder.mts"),
-    path.join(twg, "resolve-binary.mts"),
     path.join(root, "tools", "github-broker", "github-claude.mts"),
     path.join(root, "tools", "github-broker", "github-codex.mts"),
   ]) {

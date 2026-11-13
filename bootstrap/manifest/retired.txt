@@ -3,6 +3,7 @@
 # A project/ entry lists, after one space, the SHA-256 of every version the installer placed there,
 # hashed with CRLF folded to LF: `project/<path> sha256:<hex>[,<hex>...]` (lowercase hex). Only
 # matching content is parked; anything else is kept and reported as KEEP. Claude-home entries take no hashes.
+# An entry may name a directory, which is parked whole.
 # An entry that is absent on the host is skipped. drift-check.sh reports one that is still live, as information.
 hooks/clq-accept-gate.js
 hooks/clq-accept-gate.test.js
@@ -50,6 +51,7 @@ hooks/umlaut-translit-watch.js
 hooks/usage-watch.mts
 hooks/usage-watch.test.mts
 kherep/central-brain/selection.json
+kherep/twg
 mods/usage-band/.claude-plugin/plugin.json
 mods/usage-band/hooks/hooks.json
 mods/usage-band/hooks/lib/usage-window.mts
@@ -65,3 +67,4 @@ project/tools/jira-links.mjs sha256:575df0cf2565fb4e2dfdcc4e49d8abbd0fe1608ae327
 project/tools/jira-transition-guard.mjs sha256:a612522c7d1f28743e45ac4363d936fe9ca0ecdfb1a82e6a99d9aba971fceb20
 project/tools/mpac/README.md sha256:b8654f6bf0d3d2e705cc6b5b0eda09c99d98dd3cc9ff86eb2d260d6d097101ad
 project/tools/mpac/mpac.ps1 sha256:d90bde73ea773340f6947a27100ec1cd93f71c0239355823b125510e640bf914
+skills/kherep-twg
