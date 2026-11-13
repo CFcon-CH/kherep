@@ -157,6 +157,30 @@ caseRun("macOS workspace blocks bad build receipt",
   console.log(`${ok ? "PASS" : "FAIL"} | malformed stdin | expected ALLOW, got ${blocked ? "BLOCK" : "ALLOW"}`);
 })();
 
+// Issue #906: Dispatched: and Evidence: count at a line start after horizontal
+// blanks only. None of these texts names a build marker, so a block is the Evidence gate.
+caseRun("receipt after blank lines and indentation", "\n\n   Dispatched: 1 agents\nOutcomes: x\nNext: y", {}, true);
+caseRun("receipt after NBSP and tab", "text\n\u00a0\tDispatched: 1 agents\nOutcomes: x", {}, true);
+caseRun("mid-line Dispatched without a count is no receipt", "we Dispatched: nothing", {}, false);
+caseRun("indented Evidence after a blank line", "Dispatched: 1 agents\n\n \tEvidence: npm test 14/14", {}, false);
+caseRun("Evidence value on a later line", "Dispatched: 1 agents\nEvidence:\n\n  src/a.js:14", {}, false);
+for (const line of ["Evidence: none", "Evidence: N/A", "evidence: na", "Evidence: unknown", "Evidence: x", "See Evidence: file"]) {
+  caseRun(`placeholder, one character or mid-line: ${line}`, `Dispatched: 1 agents\n${line}`, {}, true);
+}
+(function linearReceiptScan() {
+  for (const [name, text] of [
+    ["100 000 line feeds before the receipt", `${"\n".repeat(100_000)}Dispatched: 1 agents\nOutcomes: x`],
+    ["50 000 line feeds around a placeholder", `Dispatched: 1\n${"\n".repeat(50_000)}Evidence:${"\n".repeat(50_000)}none`],
+  ]) {
+    const started = Date.now();
+    caseRun(name, text, {}, true);
+    const elapsed = Date.now() - started;
+    const ok = elapsed < 2000;
+    ok ? pass++ : fail++;
+    console.log(`${ok ? "PASS" : "FAIL"} | ${name} within 2 s | ${elapsed} ms`);
+  }
+})();
+
 console.log(`\n=== ${pass} pass, ${fail} fail ===`);
 try { fs.rmSync(TMP, { recursive: true, force: true }); } catch {}
 process.exit(fail === 0 ? 0 : 1);

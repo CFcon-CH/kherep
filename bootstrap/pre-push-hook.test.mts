@@ -158,7 +158,13 @@ test("the hook's config-root rule equals configRoot in config.mts on win32, darw
 
 test("the hook's repo slug and marker key equal the node module's", () => {
   for (const url of ["https://user:secret@git.example.test/example/repo.git", "git@git.example.test:example/repo.git",
-    "/synthetic/example/repo.git", "C:\\synthetic\\example\\repo", ""]) assert.equal(record.repoSlug(url), repoSlug(url), url);
+    "/synthetic/example/repo.git", "C:\\synthetic\\example\\repo", "",
+    // Issue #906: userinfo ends at its first "@"; both copies drop the same prefix.
+    "git@github.example:o/r.git", "a@b@host:o/r", "@@host:o/r", "@host:o/r", "https://tok@host/o/r.git",
+    `a${"@".repeat(50_000)}`]) assert.equal(record.repoSlug(url), repoSlug(url), url.slice(0, 80));
+  const started = performance.now();
+  assert.equal(record.repoSlug(`a${"@".repeat(50_000)}`), null);
+  assert.ok(performance.now() - started < 200, "the hook's copy is linear on a run of @");
   const paths = nodePaths(path.join(root, "keys"));
   writePendingMarker(paths, "C:/Synthetic/Repo", "synthetic-codex-4", "codex", Date.now());
   const [file] = fs.readdirSync(paths.attributionPending);

@@ -23,8 +23,34 @@ export const CODEX_NOTHING_TO_FILE =
   "If nothing is worth filing, say so in one relayed: line; an empty result is valid.";
 
 const MARKER = /^[ \t]*(?:(?:[-*]|\d+[.)])[ \t]*)?(measured|relayed):/gm;
-// A CommonMark code span: a run of backticks, content, the same run again.
-const CODE_SPAN = /(`+)(?!`)([\s\S]*?[^`])\1(?!`)/;
+
+interface CodeSpan { start: number; end: number; content: string }
+
+// A CommonMark code span: a run of backticks, content, the same run again. The
+// first span in reading order; an opening run may be used from any of its
+// backticks, so the longest usable part of the earliest run wins.
+function codeSpan(text: string): CodeSpan | null {
+  const runs: { at: number; length: number }[] = [];
+  for (let i = 0; i < text.length; i += 1) {
+    if (text[i] !== "`") continue;
+    const at = i;
+    while (text[i + 1] === "`") i += 1;
+    runs.push({ at, length: i - at + 1 });
+  }
+  const nearest = new Map<number, number>(); // run length -> the nearest run of that length to the right
+  let found: CodeSpan | null = null;
+  for (let i = runs.length - 1; i >= 0; i -= 1) {
+    const open = runs[i];
+    for (let length = open.length; length >= 1; length -= 1) {
+      const close = nearest.get(length);
+      if (close === undefined) continue;
+      found = { start: open.at + open.length - length, end: runs[close].at + length, content: text.slice(open.at + open.length, runs[close].at) };
+      break;
+    }
+    nearest.set(open.length, i);
+  }
+  return found;
+}
 
 interface Finding {
   kind: string;
@@ -40,9 +66,9 @@ function findings(brief: string): Finding[] {
 }
 
 function measuredIssue(text: string): string | null {
-  const span = CODE_SPAN.exec(text);
-  if (!span || !span[2].trim()) return "has no command in an inline code span";
-  const rest = text.slice(span.index + span[0].length);
+  const span = codeSpan(text);
+  if (!span || !span.content.trim()) return "has no command in an inline code span";
+  const rest = text.slice(span.end);
   const arrow = rest.indexOf("->");
   if (arrow < 0) return "has no -> after the command";
   return rest.slice(arrow + 2).trim() ? null : "has no deciding output excerpt after ->";
@@ -116,7 +142,7 @@ function tokenProblem(token: string): string | null {
 // finding declares `code` and its binding (not the excerpt, not the preamble).
 // A well-formed measured: finding always has the span (measuredIssue).
 function prefixWords(text: string): string[] {
-  return text.slice(0, CODE_SPAN.exec(text)?.index ?? 0).split(/\s+/).filter(Boolean);
+  return text.slice(0, codeSpan(text)?.start ?? 0).split(/\s+/).filter(Boolean);
 }
 
 function pathListOk(paths: string[]): boolean {

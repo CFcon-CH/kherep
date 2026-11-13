@@ -15,7 +15,7 @@
 export type ObsStatus = "wrote" | "empty" | "failed";
 export type ObsCheck = { status: ObsStatus } | { problem: string };
 
-const STATUS_LINE = /^OBS-RESULT:[ \t]+(wrote|empty|failed)(?:[ \t]+(.*))?$/;
+const STATUS_LINE = /^OBS-RESULT:[ \t]+(wrote|empty|failed)(?:[ \t]+([^ \t\n\r\u2028\u2029].*)?)?$/;
 const STATUS_WORDS = new Set(["wrote", "empty", "failed"]);
 
 function wroteProblem(rest: string): string | null {

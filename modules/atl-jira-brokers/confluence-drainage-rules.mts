@@ -36,7 +36,7 @@ export function drainageRules(pages: Snapshot[], graphComplete: boolean): Candid
     const text = plain(p.body);
     // Only the author's claim decides code-boundness; the run of measurement blocks decide appended before the footer is metadata (#650, #666).
     const claim = plain(claimBody(p.body));
-    const codeBound = /(?:^|\n)\s*(?:Code|Repository|Repo|Revision|Commit|Code[- ]bound)\s*:/im.test(claimViews(claimBody(p.body)).join('\n'))
+    const codeBound = /^[^\S\n\r\u2028\u2029]*(?:Code|Repository|Repo|Revision|Commit|Code[- ]bound)\s*:/im.test(claimViews(claimBody(p.body)).join('\n'))
       || /\b[\w/-]+\.(?:mts|ts|tsx|js|py|java|go|rs)\b/.test(claim);
     // Revision lines are read without base-form blocks, positional or not, tail optional, as on d5c15f4 (#650 T8, #666).
     if (p.labels.includes('type-observation') && codeBound && !revisionsValid(revisionBody(p.body),p.labels)) {

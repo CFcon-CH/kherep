@@ -48,20 +48,35 @@ export interface TomlDocument {
 }
 
 const BARE = /^[A-Za-z0-9_-]+$/;
+const HEADER_KEY = /^(?:"([^"\\]*)"|'([^']*)'|([A-Za-z0-9_-]+))/;
+
+// The keys of a dotted header path, or null when the text is not exactly such a path.
+function headerKeys(text: string): string[] | null {
+  const keys: string[] = [];
+  let rest = text;
+  while (rest) {
+    const key = HEADER_KEY.exec(rest.trimStart());
+    if (!key) return null;
+    rest = rest.trimStart().slice(key[0].length).trimStart();
+    if (rest.startsWith(".")) rest = rest.slice(1);
+    else if (rest) return null;
+    keys.push(key[1] ?? key[2] ?? key[3]);
+  }
+  return keys;
+}
 
 // The table a header line opens, by instance address: each prefix seen as
 // `[[…]]` takes the ordinal of its latest element under the current parent.
 function headerAddress(line: string, latest: Map<string, number>): { address: string; array: boolean } {
   const match = /^(\[\[?)(.*?)(\]\]?)$/.exec(line);
   if (!match || match[1].length !== match[3].length) throw new Error(`Not a fixture header: ${line}`);
-  const parts = [...match[2].matchAll(/\s*(?:"([^"\\]*)"|'([^']*)'|([A-Za-z0-9_-]+))\s*(?:\.|$)/g)];
-  if (parts.map(([part]) => part).join("") !== match[2]) throw new Error(`Not a fixture header: ${line}`);
+  const keys = headerKeys(match[2]);
+  if (!keys) throw new Error(`Not a fixture header: ${line}`);
   const array = match[1] === "[[";
   let address = "";
-  parts.forEach((part, index) => {
-    const key = part[1] ?? part[2] ?? part[3];
+  keys.forEach((key, index) => {
     address += (index ? "." : "") + (BARE.test(key) ? key : JSON.stringify(key));
-    if (array && index === parts.length - 1) {
+    if (array && index === keys.length - 1) {
       latest.set(address, (latest.get(address) ?? -1) + 1);
       address += `[${latest.get(address)}]`;
     } else if (latest.has(address)) address += `[${latest.get(address)}]`;

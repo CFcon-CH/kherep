@@ -93,7 +93,7 @@ export function hookCommandParts(config: string): string[] {
   let inHook = false;
   for (const line of config.split(/\r?\n/)) {
     if (/^\s*\[/.test(line)) inHook = /^\s*\[\[\s*hooks\.[^\]]+\.hooks\s*\]\]/.test(line);
-    const value = inHook ? /^\s*command\s*=\s*(.*)$/.exec(line)?.[1] : undefined;
+    const value = inHook ? /^\s*command\s*=\s*(\S.*)?$/.exec(line)?.[1] : undefined;
     if (!value) continue;
     let text = /^'([^']*)'/.exec(value)?.[1] || "";
     const basic = /^"((?:[^"\\]|\\.)*)"/.exec(value)?.[1];

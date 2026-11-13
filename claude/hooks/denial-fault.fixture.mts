@@ -26,6 +26,21 @@ import { pathToFileURL } from "node:url";
 export type DenialFault = "journal-hang" | "journal-enospc" | "enospc-all" | "all-fail" | "all-hang" | "marker-slow" | "marker-stuck";
 export const MARKER_SLOW_MS = 700;
 const SELF_URL = pathToFileURL(import.meta.filename).href;
+const DIGITS = /^\d+$/;
+
+// file, line and column at the end of a stack frame: `…/name:12:3)`.
+function frameSite(frame: string): [string, string, string] | null {
+  let text = frame.trimEnd();
+  if (text.endsWith(")")) text = text.slice(0, -1);
+  const colAt = text.lastIndexOf(":");
+  const lineAt = colAt > 0 ? text.lastIndexOf(":", colAt - 1) : -1;
+  const name = lineAt > 0
+    ? text.slice(Math.max(text.lastIndexOf("/", lineAt - 1), text.lastIndexOf("\\", lineAt - 1)) + 1, lineAt)
+    : "";
+  const line = text.slice(lineAt + 1, colAt);
+  const col = text.slice(colAt + 1);
+  return name && DIGITS.test(line) && DIGITS.test(col) ? [name, line, col] : null;
+}
 
 // The environment of one spawn: base plus the fault, NODE_OPTIONS appended, never replaced.
 // receipt (issue #652): a file the faulted process writes at exit, see readFaultReceipt.
@@ -111,8 +126,8 @@ if ((fault || stallAt) && process.argv[1] && path.basename(process.argv[1]) === 
   // Only with a receipt: the first caller of Date.now() after this preload, the first frame outside this file.
   const callerOf = (stack = ""): string => {
     for (const frame of stack.split("\n").slice(1)) {
-      const m = /([^/\\]+):(\d+):(\d+)\)?\s*$/.exec(frame);
-      if (m && m[1] !== path.basename(import.meta.filename)) return `${m[1]}:${m[2]}:${m[3]}`;
+      const site = frameSite(frame);
+      if (site && site[0] !== path.basename(import.meta.filename)) return site.join(":");
     }
     return "";
   };

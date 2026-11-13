@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { removeExactUnmanagedMcp, removeMcpTables } from "./managed-config.mts";
+import { mcpTableRange, removeExactUnmanagedMcp, removeMcpTables } from "./managed-config.mts";
 
 const CONFIG_START = "# >>> Kherep Codex Maestro >>>";
 const CONFIG_END = "# <<< Kherep Codex Maestro <<<";
@@ -127,4 +127,20 @@ test("does not migrate a table inside the managed Orchestra block", () => {
     ),
     { config, removed: false },
   );
+});
+
+// Issue #906: config lines are split in one pass. Text up to a U+2028 or U+2029
+// belongs to no line, as before, so the offsets after it stay as they were.
+test("MCP table ranges keep their offsets across CRLF, lone CR, U+2028 and a missing final line end", () => {
+  assert.deepEqual(mcpTableRange("a = 1\r\n[mcp_servers.x]\r\ncommand = 'y'\r\n[other]\r\nz = 2\r\n", "x"),
+    { start: 7, end: 39, text: "[mcp_servers.x]\r\ncommand = 'y'\r\n" });
+  assert.deepEqual(mcpTableRange("a = 1\r[mcp_servers.x]\rcommand = 'y'\r[other]\rz = 2\r", "x"),
+    { start: 6, end: 36, text: "[mcp_servers.x]\rcommand = 'y'\r" });
+  assert.deepEqual(mcpTableRange("a = 1\n[mcp_servers.x]\ncommand = 'y'", "x"), { start: 6, end: 35, text: "[mcp_servers.x]\ncommand = 'y'" });
+  assert.deepEqual(mcpTableRange("a\u2028b = 1\n[mcp_servers.x]\ncommand = 'y'\n[t]\n", "x"),
+    { start: 6, end: 36, text: "1\n[mcp_servers.x]\ncommand = 'y" });
+  const config = `${"a".repeat(100_000)}\u2028[mcp_servers.x]\ncommand = 'y'\n`;
+  const started = performance.now();
+  assert.deepEqual(mcpTableRange(config, "x"), { start: 0, end: config.length, text: config });
+  assert.ok(performance.now() - started < 200, "linear before a U+2028");
 });

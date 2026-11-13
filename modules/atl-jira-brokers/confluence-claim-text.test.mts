@@ -73,3 +73,24 @@ test('a line valid before #693 is classified identically', () => {
   }
   assert.deepEqual(revisionLines(p(CORE) + p(CORE)).bound, [CORE, CORE], 'duplicate unscoped lines keep their old count');
 });
+
+// Issue #906: tags are replaced in one pass, and a Revision label counts at a line
+// start after horizontal whitespace only; the value may still sit on the next line.
+const within200 = (run: () => void): void => { const started = performance.now(); run(); assert.ok(performance.now() - started < 200); };
+test('claim text of tags, entities, pre blocks and comments is unchanged', () => {
+  const cases: [string, string][] = [['<p>a</p><p>b &amp; c</p>', 'a\n b c'], [p(`r@${SHA}`), `Revision: r@${SHA}`],
+    ['<div>x<br/>y</div>', 'x y'], ['a < b', 'a < b'], ['<pre>k</pre><!-- c -->t', 'k t']];
+  for (const [body, expected] of cases) assert.equal(claimViews(body)[0], expected, body);
+  within200(() => claimViews('<'.repeat(50_000)));
+});
+test('Revision lines start a line after horizontal blanks', () => {
+  const core = `kherep@${'0123456789abcdef'.repeat(2)}01234567`, none = { bound: [], unbound: [], malformed: [], paths: {} };
+  assert.deepEqual(revisionLines(`Revision: ${core}`), { ...none, bound: [core] });
+  assert.deepEqual(revisionLines(`x\n\n  \t revision :   ${core}  \nREVISION:none (no exact binding: dirty tree)`),
+    { ...none, bound: [core], unbound: ['none (no exact binding: dirty tree)'] });
+  assert.deepEqual(revisionLines(`Revision:\n  ${core}`), { ...none, bound: [core] });
+  assert.deepEqual(revisionLines(`Revision:   \nRevision: ${core}`), { ...none, malformed: [`Revision: ${core}`] });
+  assert.deepEqual(revisionLines('a Revision: x'), none);
+  assert.deepEqual(revisionLines('Revision:'), { ...none, malformed: [''] });
+  for (const body of ['\n'.repeat(50_000), `Revision${' \n'.repeat(25_000)}`]) within200(() => revisionLines(body));
+});

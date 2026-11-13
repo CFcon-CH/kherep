@@ -129,6 +129,17 @@ test("Windows adoption accepts native defaults and one bounded legacy wrapper, t
   assert.throws(() => validateWindowsAdoption(conhost, b, summary.owner), /external wrapper chain/);
   fs.writeFileSync(external, "& C:\\foreign\\next.ps1\n");
   assert.throws(() => validateWindowsAdoption(conhost, b, summary.owner), /external wrapper chain/);
+  // Issue #906: a chain starts a line after horizontal blanks; & or . inside a line is no chain.
+  for (const chain of ["\n\n  \t. .\\next.ps1\n", "$x = 1\r\n& '\\\\host\\share\\a.ps1'\r\n"]) {
+    fs.writeFileSync(external, chain);
+    assert.throws(() => validateWindowsAdoption(conhost, b, summary.owner), /external wrapper chain/, chain);
+  }
+  for (const text of ["$a = $b & C:\\x\n", "Write-Host .\n", "\n".repeat(50_000)]) {
+    fs.writeFileSync(external, text);
+    const started = performance.now();
+    assert.doesNotThrow(() => validateWindowsAdoption(conhost, b, summary.owner), text.slice(0, 20));
+    assert.ok(performance.now() - started < 200, "linear on a run of line ends");
+  }
 });
 
 test("Windows managed validation requires an enabled task with one logon trigger", () => {

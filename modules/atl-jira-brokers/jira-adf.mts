@@ -44,9 +44,9 @@ export interface AdfDocument {
 const FENCE = /^```(.*)$/;
 // Greedy 1-6 hashes followed by whitespace. Seven hashes cannot match at any
 // backtrack position, so "####### x" stays prose - ADF has no level 7.
-const HEADING = /^(#{1,6})\s+(.*)$/;
-const BULLET = /^[-*]\s+(.*)$/;
-const ORDERED = /^(\d+)[.)]\s+(.*)$/;
+const HEADING = /^(#{1,6})\s+((?:\S.*)?)$/;
+const BULLET = /^[-*]\s+((?:\S.*)?)$/;
+const ORDERED = /^(\d+)[.)]\s+((?:\S.*)?)$/;
 
 // A backtick pair, non-greedy and never spanning a backtick, so an unpaired tick
 // cannot swallow the rest of the line. The pair must enclose something: ADF

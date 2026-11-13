@@ -36,7 +36,7 @@ export const isSessionId = isCodexSessionId;
 // owner/name from a remote URL, a scp-like address or a path. Scheme, userinfo
 // and host are dropped before anything is kept, so a token never survives.
 export function repoSlug(url: string): string | null {
-  const rest = url.replace(/^[A-Za-z][A-Za-z0-9+.-]*:\/\/[^/]*/, "").replace(/^[^/\\:]+@[^:/]+:/, "");
+  const rest = url.replace(/^[A-Za-z][A-Za-z0-9+.-]*:\/\/[^/]*/, "").replace(/^[^/\\:][^/\\:@]*@[^:/]+:/, "");
   const parts = rest.split(/[\\/:]+/).filter(Boolean);
   if (parts.length < 2) return null;
   return `${parts.at(-2)}/${parts.at(-1)!.replace(/\.git$/, "")}`;
