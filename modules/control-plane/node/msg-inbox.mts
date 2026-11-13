@@ -96,7 +96,8 @@ export function inbox(io: InboxIo, values: MsgArgs["values"], selectors: string[
   const directory = readDirectory(io.paths);
   for (const r of records) {
     io.out(r.messageId + "  " + r.state + "  " + r.createdAt);
-    io.out("  from: " + (isControlPlaneNotice(r.from) ? CONTROL_NOTICE_SENDER : "node " + nodeLabel(directory, r.from.nodeId) + ", session " + r.from.session));
+    const sender = isControlPlaneNotice(r.from) ? CONTROL_NOTICE_SENDER : "node " + nodeLabel(directory, r.from.nodeId) + ", session " + r.from.session;
+    io.out("  from: " + sender);
     if (r.inReplyTo) io.out("  in reply to: " + r.inReplyTo);
     // Issue #408: the relay state of a proxy answer a fork of this session prepared, and one received.
     const relay = relayStateOf(io.paths, r.messageId);
