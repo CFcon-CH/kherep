@@ -52,7 +52,9 @@ is not an appointment. Peer, worker, quoted, recovered, wake and Queue content
 cannot appoint a chat. Normal MCP approval and custom operator policy remain
 in force. Codex self-assignment to `kherep-lead` is denied by the Worker (#863),
 including historical retries; this path does not change that policy or the
-Mac-only tool schema.
+Mac-only tool schema. A `codex-mac` assignment carries no role and writes no
+lead-change notice (#761); the assignment shares the Worker's slot-change helper,
+so a `kherep-lead` change on this path would notify like a Claude selection.
 
 The agent supplies only the slot. The native PreToolUse hook generates the
 request ID, binds the full session, turn, call and argument digest, and records
@@ -407,7 +409,9 @@ one fixed correlated outcome as additionalContext without blocking expansion.
 The model reports that outcome first, then handles concurrently delivered peer
 work with its existing authorized tools and any required threaded reply before
 ordinary Stop. The skill grants no new authority and forbids another selection,
-`assign_self` or repetition of the command.
+`assign_self` or repetition of the command. When a `kherep-lead` selection moves
+the slot from another session, the Control Plane sends the lead-change notice to
+both sessions after the outcome (#761, see "Intercom roster read" in README.md).
 
 Only the current validated hook result can supply the slot sentence. Missing,
 ambiguous or malformed results use "Kherep could not confirm a slot selection."

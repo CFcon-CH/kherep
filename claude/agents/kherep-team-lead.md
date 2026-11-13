@@ -79,7 +79,8 @@ PACKAGE. Never send a message that only acknowledges: the delivery receipt is th
 
 ## Lead change
 
-When the operator names another lead (here, or through a `LEAD CHANGED:` notice on the role line),
-address the next REPORT to the new lead as a new thread naming the old thread id; the former lead
-sends its open packages to the new lead as `HANDOVER:`. When the operator names this session lead,
-read `~/.claude/agents/kherep-lead.md`, follow it from then on, and request the HANDOVER.
+When the operator names another lead (here), address the next REPORT to the new lead as a new
+thread naming the old thread id; the former lead sends its open packages to the new lead as
+`HANDOVER:`. When the operator names this session lead (here, or through the Kherep control plane
+notice `ROLE CHANGED: team-lead -> lead` that names the `PREVIOUS-LEAD:`), read
+`~/.claude/agents/kherep-lead.md`, follow it from then on, and request the HANDOVER.

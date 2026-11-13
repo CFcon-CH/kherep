@@ -5,7 +5,9 @@ import {
   type McpAssignmentResult, type SelfAssignmentSlot,
   type McpLeadConfirmRequest, MCP_LEAD_CONFIRM_MS,
 } from "../../protocol-mcp.mts";
-import { replaceIntercomSlot } from "./intercom-slots.mts";
+import type { IntercomSlot, SlotOccupant } from "./intercom-slots.mts";
+import type { MessageEffects } from "./message-store.mts";
+import { withEffects, withoutEffects, type SlotChange } from "./slot-notice.mts";
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS mcp_credentials (
@@ -42,11 +44,15 @@ type Claim = { ok: true; disposition: "new" | "recovery"; sessionId: string; eff
 type AssignmentInspection = { ok: true; row: Record<string, SqlStorageValue>; sessionId: string } | Failure;
 type LeadPreparation = { ok: true; result: McpAssignmentResult } | { ok: true; found: Extract<AssignmentInspection, { ok: true }>; stamp: string } | Failure;
 export type McpOutcome = "succeeded" | "uncertain" | "failed";
+// The assignment result, with the notice frames the caller routes (issue #761).
+export type McpAssignment = McpAssignmentResult & { effects?: MessageEffects };
+type CommitSlot = (slot: IntercomSlot, expectedRevision: number, occupant: SlotOccupant, now: number) => SlotChange;
 
 export class McpRegistry {
   private readonly confirmLead: (request: McpLeadConfirmRequest) => Promise<boolean>;
-  private readonly atomicAssignment: <T>(run: () => T) => T;
-  private readonly pendingLead = new Map<string, Promise<McpAssignmentResult>>();
+  private readonly atomicAssignment: <T>(run: () => T) => Promise<T>;
+  private readonly commitSlot: CommitSlot;
+  private readonly pendingLead = new Map<string, Promise<McpAssignment>>();
   private readonly sql: SqlStorage;
   private readonly capabilitiesOf: (nodeId: string) => string[] | null;
   private readonly sessionRuntime: (nodeId: string, sessionId: string) => string | null;
@@ -56,12 +62,13 @@ export class McpRegistry {
     capabilitiesOf: (nodeId: string) => string[] | null,
     sessionRuntime: (nodeId: string, sessionId: string) => string | null,
     confirmLead: (request: McpLeadConfirmRequest) => Promise<boolean>,
-    atomicAssignment: <T>(run: () => T) => T,
+    atomicAssignment: <T>(run: () => T) => Promise<T>,
+    commitSlot: CommitSlot,
   ) {
     this.sql = sql;
     this.capabilitiesOf = capabilitiesOf;
     this.sessionRuntime = sessionRuntime;
-    this.confirmLead = confirmLead;this.atomicAssignment = atomicAssignment;
+    this.confirmLead = confirmLead;this.atomicAssignment = atomicAssignment;this.commitSlot = commitSlot;
     this.sql.exec(SCHEMA);
     const columns = new Set(this.sql.exec<{ name: string }>("PRAGMA table_info(mcp_intents)").toArray().map(row => row.name));
     for (const [name, type] of [["assignment_slot", "TEXT"], ["assignment_title", "TEXT"], ["assignment_turn_id", "TEXT"],
@@ -202,7 +209,7 @@ export class McpRegistry {
     return { ok: true as const, row, sessionId };
   }
 
-  assign(input: McpIntentClaim, slot: SelfAssignmentSlot, now: number): McpAssignmentResult {
+  assign(input: McpIntentClaim, slot: SelfAssignmentSlot, now: number): McpAssignment {
     const found = this.inspectAssignment(input, slot, now);
     if (!found.ok) return found;
     if (found.row.assignment_result !== null) return JSON.parse(String(found.row.assignment_result)) as McpAssignmentResult;
@@ -212,18 +219,18 @@ export class McpRegistry {
   }
 
   private finishAssignment(input: McpIntentClaim, slot: SelfAssignmentSlot, now: number,
-    row: Record<string, SqlStorageValue>, sessionId: string): McpAssignmentResult {
-    const revision = replaceIntercomSlot(this.sql, slot, Number(row.assignment_revision), {
+    row: Record<string, SqlStorageValue>, sessionId: string): McpAssignment {
+    const { revision, effects } = this.commitSlot(slot, Number(row.assignment_revision), {
       nodeId: input.nodeId, runtime: "codex", sessionId, chatName: String(row.assignment_title),
-    });
+    }, now);
     const result: McpAssignmentResult = revision === null
       ? { ok: false, error: "Intercom slot revision conflict", conflict: true } : { ok: true, slot, revision };
     this.sql.exec("UPDATE mcp_intents SET claimed_at=?, outcome=?, assignment_result=? WHERE request_id=?",
       now, revision === null ? "failed" : "succeeded", JSON.stringify(result), input.requestId);
-    return result;
+    return withEffects(result, effects);
   }
 
-  async assignLead(input: McpIntentClaim): Promise<McpAssignmentResult> {
+  async assignLead(input: McpIntentClaim): Promise<McpAssignment> {
     const prepare = (): LeadPreparation => {
       const found = this.inspectAssignment(input, "kherep-lead", Date.now());
       if (!found.ok) return found;
@@ -239,13 +246,14 @@ export class McpRegistry {
     if ("result" in initial) return initial.result;
     const { row, sessionId } = initial.found;
     const existing = this.pendingLead.get(initial.stamp);
-    if (existing) return existing;
+    // A joined call gets the result only; the first caller routes the notices.
+    if (existing) return existing.then(withoutEffects);
     if (this.pendingLead.size >= 32) return { ok: false, error: "native Lead confirmation is busy" };
     const request: McpLeadConfirmRequest = { nonce: crypto.randomUUID(), nodeId: input.nodeId, requestId: input.requestId,
       sessionId, threadId: String(row.thread_id), turnId: String(row.assignment_turn_id), callId: String(row.call_id),
       slot: "kherep-lead", argumentsDigest: String(row.arguments_digest), credentialVersion: Number(row.credential_version),
       leadGuardVersion: 1, expiresAt: Math.min(Number(row.expires_at), Date.now() + MCP_LEAD_CONFIRM_MS) };
-    const operation = (async (): Promise<McpAssignmentResult> => {
+    const operation = (async (): Promise<McpAssignment> => {
       let allowed = false;
       try { allowed = await this.confirmLead(request); } catch { /* Fail closed without remote error details. */ }
       return this.atomicAssignment(() => {

@@ -146,12 +146,14 @@ describe("native self-assignment transaction", () => {
   });
   it("assigns automatic original identity/title and replaces its platform slot without the former holder", async () => {
     const a = await source(), b = await source("33333333-3333-4333-8333-333333333333", "Synthetic original B");
-    const before = await registry().listIntercomSlots();
+    const before = await registry().listIntercomSlots(), messages = await messageCount();
     const first = await a.intent("codex-mac");
     expect(await registry().assignMcpSlot(first, "codex-mac")).toEqual({ ok: true, slot: "codex-mac", revision: 1 });
     expect(a.challenges()).toBe(0);
     const second = await b.intent("codex-mac");
     expect(await registry().assignMcpSlot(second, "codex-mac")).toEqual({ ok: true, slot: "codex-mac", revision: 2 });
+    // Issue #761: a runtime slot carries no role, so its change writes no notice.
+    expect(await messageCount()).toBe(messages);
     expect(await registry().assignMcpSlot(first, "codex-mac")).toEqual({ ok: true, slot: "codex-mac", revision: 1 });
     expect(a.challenges()).toBe(0);
     const after = await registry().listIntercomSlots();

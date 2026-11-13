@@ -1,7 +1,7 @@
 import { handleLoopIdentityCheck } from "./message-loop-identity-api.mts";
 import { handleMessageHolds } from "./message-holds-api.mts";
 import { isNodeId, isPhase1Command, PHASE1_COMMANDS } from "../../protocol.mts";
-import { isMessageId, isMessageText, isSessionRef, MAX_SESSION_REF, OPERATOR_NODE_ID } from "../../protocol-messages.mts";
+import { CONTROL_PLANE_SESSION, isMessageId, isMessageText, isSessionRef, MAX_SESSION_REF, OPERATOR_NODE_ID } from "../../protocol-messages.mts";
 import { registryStub, sessionStub, type Env } from "./env.mts";
 import { health } from "./health.mts";
 import { fail, json, readJsonObject } from "./http.mts";
@@ -15,6 +15,8 @@ export async function handleApi(request: Request, env: Env, actor: string): Prom
   const parts = pathname.split("/").filter(Boolean); // ["api", ...]
   const method = request.method;
   const registry = registryStub(env);
+  // Issue #761: the Worker's own notice sender; no Access identity may act as it.
+  if (actor === CONTROL_PLANE_SESSION) return fail(403, "reserved actor");
 
   if (pathname === "/api/message-loop/identity-check") return handleLoopIdentityCheck(request, env);
 

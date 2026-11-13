@@ -19,6 +19,10 @@ export const MESSAGING_PROXY_CAPABILITY = "messaging.proxy.v1";
 
 // The sender node id of a message that an operator sent through the API.
 export const OPERATOR_NODE_ID = "operator";
+// Issue #761: the sender session of a notice the Worker itself writes for a
+// committed Intercom slot change. The operator API refuses this actor, and a
+// peer cannot send as OPERATOR_NODE_ID, so only the Worker can mint it.
+export const CONTROL_PLANE_SESSION = "control-plane";
 
 export const MAX_MESSAGE_TEXT = 16_384;
 export const MAX_REPLY_DEPTH = 6;

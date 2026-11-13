@@ -88,8 +88,9 @@ open packages travel in the HANDOVER, and work evidence stays in the issues and 
 
 ## Handover
 
-When the operator names another session lead (in this chat, or through a `ROLE CHANGED: lead ->
-team-lead` notice on the role line), send to the new lead in the same turn:
+When the operator names another session lead (in this chat, or through the Kherep control plane
+notice `ROLE CHANGED: lead -> team-lead` that names the `NEW-LEAD:`), send to the new lead in the
+same turn:
 
 ```text
 HANDOVER: <n> open

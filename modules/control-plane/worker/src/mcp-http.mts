@@ -4,7 +4,10 @@ import { createMcpHandler } from "agents/mcp/server";
 import { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
-import { digestMcpArguments, MCP_INBOX_TOO_LARGE, type McpIntentClaim, type McpTool } from "../../protocol-mcp.mts";
+import { digestMcpArguments, MCP_INBOX_TOO_LARGE, type McpAssignmentResult, type McpIntentClaim, type McpTool } from "../../protocol-mcp.mts";
+import type { McpAssignment } from "./mcp-registry.mts";
+import type { MessageEffects } from "./message-store.mts";
+import { withoutEffects } from "./slot-notice.mts";
 import {
   ACCEPTED_SILENCE_CAUSES, ACCEPTED_SILENCE_MS, isMessageProgress, senderState, silentlyAccepted,
 } from "../../protocol-messages.mts";
@@ -88,10 +91,16 @@ function server(env: Env, principal: Principal): McpServer {
     if (prepared.intent.runtime !== "codex" || prepared.intent.threadId !== prepared.intent.sessionId) {
       return error("self-assignment requires the original Codex Mac native thread");
     }
+    let assigned: McpAssignmentResult, notices: MessageEffects | undefined;
     try {
-      const assigned = await registryStub(env).assignMcpSlot(prepared.intent, slot);
-      return assigned.ok ? result({ ...assigned }) : { ...error(assigned.error), structuredContent: { ...assigned } };
+      const committed: McpAssignment | McpAssignmentResult = await registryStub(env).assignMcpSlot(prepared.intent, slot);
+      notices = "effects" in committed ? committed.effects : undefined;
+      assigned = withoutEffects<McpAssignmentResult>(committed);
     } catch { return error("self-assignment temporarily unavailable; retry the same native call"); }
+    // Issue #761: lead-change notices go out once the assignment committed. A routing
+    // failure cannot undo it; a queued notice is flushed on the target's next authentication.
+    if (notices) try { await routeEffects(env, notices); } catch { /* queued for the next authentication */ }
+    return assigned.ok ? result({ ...assigned }) : { ...error(assigned.error), structuredContent: { ...assigned } };
   });
 
   mcp.registerTool("sessions", { description: `List addressable Kherep session references. ${REQUEST_ID_INSTRUCTION}`,

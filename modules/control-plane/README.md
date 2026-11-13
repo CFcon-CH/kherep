@@ -866,6 +866,18 @@ partial roster or storage details. Initialization seeds only a newly created slo
 table, atomically. If rows disappear from an existing table, the roster remains
 unavailable across Registry restarts. Complete table loss is indistinguishable
 from an older database without slot storage and initializes five vacancies.
+
+When the `kherep-lead` slot moves to another session (issue #761), the Control
+Plane itself tells both sessions: the previous lead gets a message
+`ROLE CHANGED: lead -> team-lead` naming `NEW-LEAD: <node>/<session>`, the new
+lead `ROLE CHANGED: team-lead -> lead` naming `PREVIOUS-LEAD:`, each with the slot
+revision and the UTC time. The sender is `operator` / `control-plane`; the
+operator does not have to notify anyone. A first assignment, the same session
+again and the runtime slots send nothing. The notices appear in `GET /api/messages`
+like operator messages, are audited as `intercom.slot-notice`, and are deleted
+24 h after their final state like every message whose sender never
+acknowledges. A node must accept the sender `operator` (or `*`) in
+`messaging.accept`; a node policy without it refuses the notice.
 These are source capabilities; availability
 on a running Control Plane requires separate deployment and target verification.
 

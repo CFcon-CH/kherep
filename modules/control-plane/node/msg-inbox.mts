@@ -1,5 +1,6 @@
 import type { SelectedOwner } from "../protocol-message-binding.mts";
 import { messageOwnerMatches } from "./message-owner.mts";
+import { CONTROL_NOTICE_SENDER, isControlPlaneNotice } from "./control-notice.mts";
 import { isMessageId, isMessageText } from "../protocol-messages.mts";
 import { readInboxRecord } from "./inbox-storage.mts";
 import { acknowledgeCodexOffer } from "./codex-inbox-ack.mts";
@@ -95,7 +96,7 @@ export function inbox(io: InboxIo, values: MsgArgs["values"], selectors: string[
   const directory = readDirectory(io.paths);
   for (const r of records) {
     io.out(r.messageId + "  " + r.state + "  " + r.createdAt);
-    io.out("  from: node " + nodeLabel(directory, r.from.nodeId) + ", session " + r.from.session);
+    io.out("  from: " + (isControlPlaneNotice(r.from) ? CONTROL_NOTICE_SENDER : "node " + nodeLabel(directory, r.from.nodeId) + ", session " + r.from.session));
     if (r.inReplyTo) io.out("  in reply to: " + r.inReplyTo);
     // Issue #408: the relay state of a proxy answer a fork of this session prepared, and one received.
     const relay = relayStateOf(io.paths, r.messageId);
