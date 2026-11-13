@@ -1,7 +1,6 @@
 # Shared npm tools. Entries and optional markers are consumed by bootstrap/npm-globals.mts.
 @anthropic-ai/claude-code
 @forge/cli@13.5.0
-@openai/codex@0.152.1
 claude-baton@2.2.0
 mcp-remote@0.8.3
 supergateway@3.4.3

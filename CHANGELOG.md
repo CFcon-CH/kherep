@@ -9,6 +9,16 @@ increments the minor version; every other release increments the patch version.
 
 ## [Unreleased]
 
+### Removed
+
+- The stale pin `@openai/codex@0.152.1` in `bootstrap/manifest/npm-globals.txt`
+  (#907). The node finds `codex` through `PATH` and its fallback directories:
+  the standalone installer's `~/.local/bin/codex` on macOS, the Codex app's
+  `codex.exe` on Windows. A full install no longer downgrades an existing npm
+  copy to 0.152.1 and does not install or remove one. Operator action: none
+  required; an npm copy that nothing uses can be removed with
+  `npm uninstall -g @openai/codex` once another `codex` is on `PATH`.
+
 ## [0.5.0] - 2026-11-13
 
 Messages now reach running and idle Claude Code and Codex sessions without

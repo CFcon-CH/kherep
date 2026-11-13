@@ -111,7 +111,7 @@ test("fresh-install manifests and Codex parity omit the retired plugin and marke
   assert.equal((capabilities.plugins as string[]).includes(retired), false);
   assert.equal(Object.hasOwn(capabilities.pluginEntrypoints as object, retired), false);
   assert.equal((parity.plugins as { id: string }[]).some((entry) => entry.id === retired), false);
-  assert.match(fs.readFileSync(path.join(repo, "bootstrap/manifest/npm-globals.txt"), "utf8"), /^@openai\/codex@/m);
+  assert.doesNotMatch(fs.readFileSync(path.join(repo, "bootstrap/manifest/npm-globals.txt"), "utf8"), /^@openai\/codex\b/m);
 });
 
 test("strict capability check accepts retained disabled registry but fails a reenabled or unretired install", (t) => {
