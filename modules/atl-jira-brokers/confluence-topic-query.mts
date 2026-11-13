@@ -13,12 +13,25 @@ export const SNIPPET_MAX = 240;
 
 const NAMED: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " " };
 
+// Every "<...>" run goes through tag, the text between runs through prose: the matches of
+// /<[^>]*>/g in one pass. A "<" with no ">" after it ends the scan, so "<<<<" is not rescanned (#906).
+export function replaceTags(text: string, tag: (tag: string) => string, prose: (part: string) => string = (part) => part): string {
+  let out = "";
+  let pos = 0;
+  for (;;) {
+    const open = text.indexOf("<", pos);
+    const close = open < 0 ? -1 : text.indexOf(">", open + 1);
+    if (close < 0) return out + prose(text.slice(pos));
+    out += prose(text.slice(pos, open)) + tag(text.slice(open, close + 1));
+    pos = close + 1;
+  }
+}
+
 // Storage XHTML or search text to one line of plain words. Tags go first, so an
 // entity decoded to "<" can never be read as a tag. An entity this table does
 // not know becomes a space rather than leaking "&hellip;" into a query.
 export function plainText(value: string): string {
-  return String(value ?? "")
-    .replace(/<[^>]*>/g, " ")
+  return replaceTags(String(value ?? ""), () => " ")
     .replace(/&(#x[0-9a-f]+|#\d+|[a-z][a-z0-9]*);/gi, (_match, name: string) => {
       const lower = name.toLowerCase();
       if (lower.startsWith("#")) {

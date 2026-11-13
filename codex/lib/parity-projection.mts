@@ -11,6 +11,7 @@ import type {
 } from "./contracts.mts";
 import type { InstallTransaction } from "./install-transaction.mts";
 import { previousManaged, removeStaleManaged, reservePersonalTargets } from "./managed-projection.mts";
+const SKILL_NAME_LINE = /^name:\s*(?:\S.*)?$/m;
 
 // A row of Claude's installed_plugins.json; only the fields read here are typed.
 export interface InstalledPlugin {
@@ -85,7 +86,7 @@ function installKherepSkills(context: ProjectionContext, usedSkills: Set<string>
     transaction.installDir(path.join(compatibilityRoot, name), target);
     adaptSkillTree(transaction, target);
     const skillFile = path.join(target, "SKILL.md");
-    const skillContent = fs.readFileSync(skillFile, "utf8").replace(/^name:\s*.*$/m, `name: ${name}`);
+    const skillContent = fs.readFileSync(skillFile, "utf8").replace(SKILL_NAME_LINE, `name: ${name}`);
     transaction.writeFile(skillFile, skillContent);
     transaction.writeFile(path.join(target, "agents", "openai.yaml"), [
       "interface:",
@@ -154,7 +155,7 @@ function installPluginSkills(context: ProjectionContext, plugin: CapabilityPlugi
     adaptSkillTree(context.transaction, target);
     if (name !== normalizeName(parsed.metadata.name || path.basename(skillDir))) {
       const installedSkill = path.join(target, "SKILL.md");
-      const content = fs.readFileSync(installedSkill, "utf8").replace(/^name:\s*.*$/m, `name: ${name}`);
+      const content = fs.readFileSync(installedSkill, "utf8").replace(SKILL_NAME_LINE, `name: ${name}`);
       context.transaction.writeFile(installedSkill, content);
     }
     receipt.skills.push({ name, source: plugin.id, status: "projected" });

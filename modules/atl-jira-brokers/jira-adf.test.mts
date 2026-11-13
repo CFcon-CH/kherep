@@ -156,3 +156,29 @@ test("backticks inside a fenced block are data, not markup", () => {
     content: [{ type: "text", text: "echo `date`" }],
   }));
 });
+
+// Issue #906: a marker line is the marker, blanks, and the rest from its first non-blank.
+test("headings and list items take the text after their blanks; a marker without a blank stays prose", () => {
+  const heading = (level: number, text: string): AdfNode => ({ type: "heading", attrs: { level }, content: [{ type: "text", text }] });
+  assert.deepEqual(renderAdf("# Title"), doc(heading(1, "Title")));
+  assert.deepEqual(renderAdf("###### six"), doc(heading(6, "six")));
+  assert.deepEqual(renderAdf("#   spaced  "), doc(heading(1, "spaced")));
+  for (const text of ["####### seven", "#Title", "-a", "1.x"]) assert.deepEqual(renderAdf(text), doc(para(text)), text);
+  assert.deepEqual(renderAdf("- a"), doc({ type: "bulletList", content: [item("a")] }));
+  assert.deepEqual(renderAdf("*   b "), doc({ type: "bulletList", content: [item("b")] }));
+  assert.deepEqual(renderAdf("1. x"), doc({ type: "orderedList", content: [item("x")] }));
+  assert.deepEqual(renderAdf("12) y"), doc({ type: "orderedList", attrs: { order: 12 }, content: [item("y")] }));
+  const empty: AdfNode = { type: "listItem", content: [{ type: "paragraph", content: [] }] };
+  assert.deepEqual(renderAdf("# "), doc({ type: "heading", attrs: { level: 1 }, content: [] }));
+  assert.deepEqual(renderAdf("- "), doc({ type: "bulletList", content: [empty] }));
+  assert.deepEqual(renderAdf("1. "), doc({ type: "orderedList", content: [empty] }));
+});
+
+test("a marker before a long blank run and a U+2028 converts to prose in linear time", () => {
+  for (const marker of ["#", "-", "1."]) {
+    const started = performance.now();
+    const content = renderAdf(`${marker}${" ".repeat(50_000)}\u2028x\u2028y`).content;
+    assert.ok(performance.now() - started < 200, marker);
+    assert.deepEqual(content.map((node) => node.type), ["paragraph"], marker);
+  }
+});

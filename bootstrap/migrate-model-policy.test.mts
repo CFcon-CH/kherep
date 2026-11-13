@@ -9,7 +9,7 @@ import { spawnSync } from "node:child_process";
 import test, { after } from "node:test";
 
 import { dispatchIssue, loadModelPolicy } from "../claude/hooks/lib/model-policy.mts";
-import { LEGACY_FRONTMATTER, migrate } from "./migrate-model-policy.mts";
+import { LEGACY_FRONTMATTER, liveFrontmatter, migrate } from "./migrate-model-policy.mts";
 
 const REPO = path.resolve(import.meta.dirname, "..");
 const SHIPPED = path.join(REPO, "claude", "kherep", "model-policy.json");
@@ -124,4 +124,19 @@ test("the CLI writes a loadable override only when it captured something and pri
   assert.deepEqual(JSON.parse(fs.readFileSync(some.out, "utf8")), { schema_version: 1, agents: { "claude-obs": { effort: "low" } } });
   const policy = loadModelPolicy({ files: { shipped: SHIPPED, user: some.out }, env: {} });
   assert.deepEqual([policy.agents.get("claude-obs")!.model, policy.agents.get("claude-obs")!.effort], ["haiku", "low"]);
+});
+
+// Issue #906: a value is the rest of its line after "model:" or "effort:", trimmed in code.
+test("frontmatter values are trimmed, and a line break inside a value drops the line", () => {
+  const cases: [string, Record<string, string>][] = [
+    ["---\nmodel:  opus  \neffort:\thigh\n---\n", { model: "opus", effort: "high" }],
+    ["---\nmodel:\n---\n", { model: "" }],
+    ["---\nmodel: a b \r\n---\n", { model: "a b" }],
+    ["---\nmodel: a\rb\n---\n", {}],
+    ["---\nmodel: one\nmodel: two\n---\n", { model: "one" }],
+  ];
+  for (const [text, expected] of cases) assert.deepEqual(liveFrontmatter(text), expected, JSON.stringify(text));
+  const started = performance.now();
+  assert.deepEqual(liveFrontmatter(`---\nmodel:${" ".repeat(50_000)}x${" ".repeat(50_000)}\ry\n---\n`), {});
+  assert.ok(performance.now() - started < 200, "linear on a long blank run");
 });

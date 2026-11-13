@@ -197,3 +197,26 @@ test('macOS Computer Use wrapper detaches an owned predecessor that names a Node
  const other = source.replace('SkyComputerUseClient\"', 'OtherClient\"');
  assert.equal(configureMemoryNotify(other, '/opt/homebrew/bin/node', hook, [oldNode]), other);
 });
+
+// Issue #906: the notify assignment is found by a head expression and an index
+// scan of its tail; the text it removes or rewrites is byte for byte the same.
+test('notify removal keeps its extent: blank lines, comments, CRLF and no final line end', () => {
+ const N = '/n/node', K = '/n/hook.mts', pair = `notify = ["${N}", "${K}"]`;
+ const cases: [string, string][] = [
+  [`model = 'x'\n\n\n${pair}\n\n\n[t]\n`, "model = 'x'\n\n\n[t]\n"],
+  [`model = 'x'\n${pair}  # comment\n[t]\n`, "model = 'x'\n\n[t]\n"],
+  [`model = 'x'\n${pair}\n# c\n[t]\n`, "model = 'x'\n\n[t]\n"],
+  [`${pair} x\n`, `${pair} x\n`],
+  ['notify = [1] # ]x\n', 'notify = [1] # ]x\n'],
+  [`model = 'x'\r\n${pair}\r\n[t]\r\n`, "model = 'x'\r\n[t]\r\n"],
+  [`model = 'x'\n${pair}`, "model = 'x'\n"],
+ ];
+ for (const [config, expected] of cases) assert.equal(configureMemoryNotify(config, N, K), expected, JSON.stringify(config));
+ const wrapper = `notify = ["/Applications/Codex.app/SkyComputerUseClient", "turn-ended", "--previous-notify", ${JSON.stringify(JSON.stringify([N, K]))}  ]\n[t]\n`;
+ assert.equal(configureMemoryNotify(wrapper, N, K), 'notify = ["/Applications/Codex.app/SkyComputerUseClient", "turn-ended"  ]\n[t]\n');
+ for (const config of [`x = 1${'\n'.repeat(100_000)}`, `${'\n'.repeat(50_000)}notify = [${'] '.repeat(20_000)}x`]) {
+  const started = performance.now();
+  assert.equal(configureMemoryNotify(config, N, K), config);
+  assert.ok(performance.now() - started < 200, 'linear on long blank runs');
+ }
+});

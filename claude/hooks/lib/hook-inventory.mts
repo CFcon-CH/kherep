@@ -161,7 +161,8 @@ const COMMENT = /(^|[\s,;{}()])(?:\/\*[\s\S]*?\*\/|\/\/[^\n]*)/g;
 // braces and commas only, so it may span lines but never crosses a quote or ;.
 const FROM_STATEMENT = /^[ \t]*(?:import|export)\b([^;'"]*?)\bfrom\s*(["'])(\.[^"']*)\2/gm;
 const BARE_IMPORT = /^[ \t]*import\s*(["'])(\.[^"']*)\1/gm;
-const DYNAMIC_IMPORT = /(?<!\btypeof\s+)\bimport\s*\(\s*(["'])(\.[^"']*)\1\s*\)/g;
+// `typeof import("./x.mts")` is a type query and resolves nothing: group 1 marks it.
+const DYNAMIC_IMPORT = /(\btypeof\s+)?\bimport\s*\(\s*(["'])(\.[^"']*)\2\s*\)/g;
 const CODE_EXTENSION = /\.(?:mts|mjs|cjs|js)$/i;
 
 // The relative specifiers Node resolves when it loads this module. `import type`
@@ -174,8 +175,9 @@ export function relativeSpecifiers(source: string): string[] {
   for (const match of code.matchAll(FROM_STATEMENT)) {
     if (!/^\s*type\s+\S/.test(match[1])) found.push(match[3]);
   }
-  for (const pattern of [BARE_IMPORT, DYNAMIC_IMPORT]) {
-    for (const match of code.matchAll(pattern)) found.push(match[2]);
+  for (const match of code.matchAll(BARE_IMPORT)) found.push(match[2]);
+  for (const match of code.matchAll(DYNAMIC_IMPORT)) {
+    if (match[1] === undefined) found.push(match[3]);
   }
   return [...new Set(found)].filter((specifier) => CODE_EXTENSION.test(specifier));
 }

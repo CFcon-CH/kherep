@@ -62,13 +62,39 @@ function indexBlobs(root: string): Map<string, IndexEntry[]> {
   return result;
 }
 
+const EMAIL_LOCAL = /[A-Za-z0-9._%+-]/;
+const EMAIL_DOMAIN = /[A-Za-z0-9.-]/;
+const LETTER = /[A-Za-z]/;
+
+// Every address-shaped text: local part, @, and a domain that ends in a dot and two or more letters.
+function emailAddresses(text: string): string[] {
+  const found: string[] = [];
+  let floor = 0; // the end of the previous address: a local part never reaches back over it
+  for (let at = text.indexOf('@'); at >= 0; at = text.indexOf('@', at + 1)) {
+    let start = at;
+    while (start > floor && EMAIL_LOCAL.test(text[start - 1])) start -= 1;
+    let stop = at + 1;
+    while (stop < text.length && EMAIL_DOMAIN.test(text[stop])) stop += 1;
+    if (start === at) continue;
+    // The last dot of the domain run with a label before it and two letters after it.
+    let dot = stop - 3;
+    while (dot > at + 1 && !(text[dot] === '.' && LETTER.test(text[dot + 1]) && LETTER.test(text[dot + 2]))) dot -= 1;
+    if (dot <= at + 1) continue;
+    let end = dot + 3;
+    while (end < stop && LETTER.test(text[end])) end += 1;
+    found.push(text.slice(start, end));
+    floor = end;
+  }
+  return found;
+}
+
 function inspectBytes(bytes: Buffer, needles: string[], add: (category: string) => void): void {
   const text = bytes.toString('utf8');
   if (needles.some((term) => text.toLowerCase().includes(term))) add('forbidden-content');
   const secret = /-----BEGIN [A-Z ]*PRIVATE KEY-----|ENC\[AES256_GCM,|(?:AKIA|ASIA)[A-Z0-9]{16}/.test(text);
   // Hard predicates cover the complete decoded buffer, including bytes after NUL.
   if (bytes.includes(0)) { if (secret) add('secret-marker'); add('binary-review'); return; }
-  const emails = text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi) || [];
+  const emails = emailAddresses(text);
   if (emails.some((email) => !/@(?:[^@]*\.)?(?:example\.(?:com|org|net)|example|invalid|test|localhost)$/i.test(email))) add('email-review');
   if (/https?:\/\/(?:[^\s/"']+\.(?:local|internal)(?:[:/\s"']|$)|(?:10\.|192\.168\.|172\.(?:1[6-9]|2\d|3[01])\.)\d)/i.test(text)) add('private-endpoint');
   if (secret) add('secret-marker');

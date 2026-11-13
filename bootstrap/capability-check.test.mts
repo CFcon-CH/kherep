@@ -97,3 +97,31 @@ test("source-only capability check does not require operator plugin enablement",
   assert.match(result.stdout, /PASS \| plugin contract equals install manifest/);
   assert.doesNotMatch(result.stdout, /plugin contract equals settings/);
 });
+
+// Issue #906: a frontmatter name is the first non-blank text after "name:", on the
+// same or a later line. The live owned-agent check reads it; a synthetic home only.
+test("live owned agents are named by their frontmatter, a name on a later line included", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "capability-names-"));
+  try {
+    const claudeHome = path.join(root, ".claude");
+    fs.mkdirSync(path.join(claudeHome, "agents"), { recursive: true });
+    fs.mkdirSync(path.join(claudeHome, "plugins"), { recursive: true });
+    fs.writeFileSync(path.join(claudeHome, "settings.json"), "{}");
+    fs.writeFileSync(path.join(claudeHome, "plugins", "installed_plugins.json"), "{}");
+    fs.writeFileSync(path.join(root, ".claude.json"), "{}");
+    fs.writeFileSync(path.join(claudeHome, "agents", "kherep-builder.md"), "---\nname:\n\n  kherep-builder\n---\n");
+    fs.writeFileSync(path.join(claudeHome, "agents", "dc-plugin-build-runner.md"), "name:   ");
+    fs.writeFileSync(path.join(claudeHome, "agents", "forge-deploy-validator.md"), `name:${"\n".repeat(100_000)}`);
+    const env: NodeJS.ProcessEnv = { ...process.env, CLAUDE_HOME: claudeHome };
+    for (const key of ["KHEREP_USER_HOME", "KHEREP_WORKSPACE", "KHEREP_PROFILE", "CAPABILITY_STRICT"]) delete env[key];
+    const started = performance.now();
+    const result = spawnSync(process.execPath, [path.join(import.meta.dirname, "capability-check.mts"), "--live", "--profile", "mac"],
+      { encoding: "utf8", env });
+    assert.ok(performance.now() - started < 2000, "the check ends within 2 s");
+    assert.match(result.stdout, /^PASS \| live owned agent kherep-builder$/m);
+    assert.match(result.stdout, /^FAIL \| live owned agent dc-plugin-build-runner$/m);
+    assert.match(result.stdout, /^FAIL \| live owned agent forge-deploy-validator$/m);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});

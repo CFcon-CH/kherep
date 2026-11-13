@@ -52,5 +52,19 @@ test('does not materialize unrelated obsolete bundle fields', root => { const va
 test('requires an explicit output directory', root => { const result = spawnSync(process.execPath, [subject], { input: yamlFor(baseline()), encoding: 'utf8' }); assert.equal(result.status, 2); assert.match(result.stderr, /usage: prepare-secrets\.mts OUT_DIR/); assert.deepEqual(fs.readdirSync(root), []); });
 test('refuses an existing output directory without changing any bytes', root => { const values = baseline(), out = path.join(root, 'out'); assert.equal(invoke(out, yamlFor(values)).status, 0); const before = new Map(fs.readdirSync(out).map(name => [name, fs.readFileSync(path.join(out, name))])); values.mcp_json = Buffer.from('{"changed":true}\n'); const result = invoke(out, yamlFor(values)); assert.notEqual(result.status, 0); assert.match(result.stderr, /EEXIST/); assert.deepEqual(fs.readdirSync(out).sort(), [...before.keys()].sort()); for (const [name, bytes] of before)
     assert.deepEqual(fs.readFileSync(path.join(out, name)), bytes); });
+// Issue #906: a value line is indent, key, blanks and one blank-free value; any other form is ignored.
+const yamlLine = (line: string): Buffer => Buffer.from(`data:\n${line}\n`);
+test('reads a value line with tabs, trailing blanks or CRLF', root => { ['  mcp_json: e30=', '\tmcp_json:\te30=  \r'].forEach((line, index) => {
+    const out = path.join(root, `out${index}`), result = invoke(out, yamlLine(line));
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(fs.readFileSync(path.join(out, 'mcp.json'), 'utf8'), '{}');
+}); });
+test('ignores an empty, inner-blank or unindented value line, a long one in linear time', root => {
+    for (const line of ['  mcp_json:', '  mcp_json: e30= x', 'mcp_json: e30=', ` mcp_json:${' '.repeat(50_000)}a${' '.repeat(50_000)}b`]) {
+        const started = performance.now();
+        rejected(root, {}, /missing or empty decrypted secret key: mcp_json/, yamlLine(line));
+        assert.ok(performance.now() - started < 2000, `${line.length} characters within 2 s`);
+    }
+});
 if (!process.exitCode)
     process.stdout.write(`prepare-secrets: ${passed}/${passed} passed\n`);

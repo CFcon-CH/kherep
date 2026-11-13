@@ -33,13 +33,16 @@ export interface Capture {
   notes: string[];
 }
 
+const LINE_BREAK = /[\n\r\u2028\u2029]/;
+
 export function liveFrontmatter(text: string): Entry {
   const lines = text.split(/\r?\n/);
   const end = lines[0] === "---" ? lines.indexOf("---", 1) : -1;
   const found: Entry = {};
   for (const line of end > 0 ? lines.slice(1, end) : []) {
-    const match = /^(model|effort):\s*(.*?)\s*$/.exec(line);
-    if (match && found[match[1] as keyof Entry] === undefined) found[match[1] as keyof Entry] = match[2];
+    const match = /^(model|effort):/.exec(line);
+    const value = match ? line.slice(match[0].length).trim() : "";
+    if (match && !LINE_BREAK.test(value) && found[match[1] as keyof Entry] === undefined) found[match[1] as keyof Entry] = value;
   }
   return found;
 }

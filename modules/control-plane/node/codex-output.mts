@@ -78,8 +78,14 @@ const REDACTIONS: readonly [RegExp, string][] = [
   [/Bearer\s+\S+/gi, "Bearer <redacted>"],
   [/eyJ[\w-]+\.[\w-]+\.[\w-]+/g, "<jwt-redacted>"],
   [/\/\/[^\s/@]+@/g, "//<redacted>@"],
-  [/([a-z][a-z0-9+.-]*:\/\/[^\s?#]*)\?[^\s#]*/gi, "$1?<redacted>"],
 ];
+
+// A URL query: inside one run of non-space, non-# characters, everything after the first "?" that follows scheme://.
+function redactQuery(run: string): string {
+  const scheme = /[a-z][0-9+.-]*:\/\//i.exec(run);
+  const at = scheme ? run.indexOf("?", scheme.index + scheme[0].length) : -1;
+  return at < 0 ? run : `${run.slice(0, at + 1)}<redacted>`;
+}
 
 // The last non-empty line of a CLI's stderr: control characters removed,
 // secrets redacted, at most 200 characters. A line that quotes the framed
@@ -88,5 +94,5 @@ export function lastLine(text: string): string {
   const line = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean).at(-1) ?? "";
   if (/kherep/i.test(line)) return "";
   return REDACTIONS.reduce((out, [pattern, replacement]) => out.replace(pattern, replacement),
-    line.replace(/[\u0000-\u001f\u007f]/g, "")).slice(0, 200);
+    line.replace(/[\u0000-\u001f\u007f]/g, "")).replace(/[^\s#]+/g, redactQuery).slice(0, 200);
 }

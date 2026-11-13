@@ -10,6 +10,7 @@ import { candidateRow, checkRelatedLinks, parseReceipt, RECEIPT_MAX_AGE_MS, RELA
 import { SCOPES, v2, type ConfluenceSession } from './confluence-contract.mts';
 import { findSpace, getPage, updatePage } from './confluence-content.mts';
 import { existingRelated, findRelated, relatedSection, withRelated, type NeighbourDeps } from './confluence-neighbours.mts';
+import { replaceTags } from './confluence-topic-query.mts';
 import { outgoingIds, requireResolvableAnchors } from './confluence-related.mts';
 import type { semanticProposals } from './confluence-semantic.mts';
 import { DEFAULT_PER_PAGE, writeApproved, type Approved } from './confluence-stitch.mts';
@@ -139,7 +140,7 @@ export function observationLinking(ctx: LinkingContext) {
             // Match modeled stored text before submission; preserve tags,
             // existing entities and backslashes. Related anchors are appended below.
             const escaped: Record<string, string> = { '>': '&gt;', '"': '&quot;', '\u2018': '&lsquo;', '\u2019': '&rsquo;' };
-            const prose = finding.bodyStorage.replace(/(<[^>]*>)|[>"\u2018\u2019]/g, (match, tag: string | undefined) => tag ?? escaped[match]);
+            const prose = replaceTags(finding.bodyStorage, tag => tag, part => part.replace(/[>"\u2018\u2019]/g, ch => escaped[ch]));
             return withRelated(prose, linked.approved.length ? relatedSection(key, linked.approved)
                 : `<h2>Related pages</h2><p>No related page on this topic (${linked.reviewed} candidates reviewed).</p>`);
         },

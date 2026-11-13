@@ -108,8 +108,9 @@ function codexInventory(): Wired[] {
   for (const line of renderHooks(CODEX_OPTIONS).split("\n")) {
     event = /^\[\[hooks\.([A-Za-z]+)\]\]$/.exec(line)?.[1] ?? event;
     if (!line.startsWith("command = ")) continue;
-    for (const match of line.matchAll(/([\w.-]+)\.mts/g)) {
-      out.push({ stem: match[1]!, source: `codex/lib/parity-config.mts renderHooks ${event}`, runtime: "Codex" });
+    for (const token of line.split(/[^\w.-]+/)) {
+      const end = token.lastIndexOf(".mts");
+      if (end > 0) out.push({ stem: token.slice(0, end), source: `codex/lib/parity-config.mts renderHooks ${event}`, runtime: "Codex" });
     }
   }
   return out;

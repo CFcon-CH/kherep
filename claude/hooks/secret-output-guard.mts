@@ -35,6 +35,36 @@ interface ToolPayload {
 
 const PRIV_TAG = "<" + "private>...</" + "private>";
 
+const STATUS_ECHO_TEXT = /^["']?[A-Za-z0-9_.:@/+ -]+["']?$/;
+
+// A trimmed command without its closing `&& echo <static text>`; anything else unchanged.
+function withoutStatusEcho(body: string): string {
+  const amp = body.lastIndexOf("&&");
+  const head = amp < 0 ? null : /^\s*echo(\s+)/i.exec(body.slice(amp + 2));
+  if (!head) return body;
+  const text = body.slice(amp + 2 + head[0].length);
+  // `echo  "`: the old expression read the second blank as the text and the quote as its end.
+  const loneQuote = (text === '"' || text === "'") && head[1].length > 1 && head[1].endsWith(" ");
+  return STATUS_ECHO_TEXT.test(text) || loneQuote ? body.slice(0, amp) : body;
+}
+
+const K8S_TOKEN = /kubectl|\bget\s+secrets?\b|-o\s*(?:=\s*)?(?:json|yaml|jsonpath)|base64\s+(?:-d|--decode)|\n/gi;
+
+// kubectl … get secret(s) … and, after it on the same line, an output form that prints values.
+function dumpsK8sSecret(command: string): boolean {
+  let kubectl = false; // a kubectl earlier on this line
+  let armed = false; // kubectl … get secret(s) earlier on this line
+  for (const [token] of command.matchAll(K8S_TOKEN)) {
+    const kind = token[0].toLowerCase();
+    if (kind === "k") { kubectl = true; continue; }
+    if (kind !== "g" && kind !== "\n" && armed) return true;
+    const sameLine = !token.includes("\n");
+    armed = kind === "g" ? kubectl || (armed && sameLine) : armed && sameLine;
+    kubectl = kubectl && sameLine;
+  }
+  return false;
+}
+
 let raw = "";
 process.stdin.on("data", (c) => (raw += c));
 process.stdin.on("end", () => {
@@ -61,8 +91,7 @@ process.stdin.on("end", () => {
   // ist erlaubt, solange es ausschliesslich statischen Text ausgibt.
   function isExistenceOnly(command: string): boolean {
     let body = command.trim();
-    const statusEcho = /\s*&&\s*echo\s+["']?[A-Za-z0-9_.:@/+ -]+["']?\s*$/i;
-    body = body.replace(statusEcho, "").trim();
+    body = withoutStatusEcho(body).trim();
     if (!body || hasAmbiguousCompound(body)) return false;
 
     const quietGrep = /^grep\s+-(?=[a-zA-Z]*[qc])[a-zA-Z]+\b[^|]*$/i;
@@ -88,7 +117,8 @@ process.stdin.on("end", () => {
 
   const existenceOnly = isExistenceOnly(cmd);
 
-  const RULES = [
+  interface Rule { id: string; re: { test(command: string): boolean }; skipIfExistenceOnly: boolean; fix: string }
+  const RULES: Rule[] = [
     {
       id: "env-dump",
       // Nur die DUMP-Form: env/printenv ohne Operand, also gefolgt von Ende, Pipe,
@@ -120,7 +150,7 @@ process.stdin.on("end", () => {
     },
     {
       id: "k8s-secret-dump",
-      re: /kubectl[^\n]*\bget\s+secrets?\b[^\n]*(-o\s*=?\s*(json|yaml|jsonpath)|base64\s+(-d|--decode))/i,
+      re: { test: dumpsK8sSecret },
       skipIfExistenceOnly: false,
       fix: "Secret-Inhalte nie ins Transcript. Nur Namen und Keys listen, oder den Wert direkt im Ziel-Pod konsumieren statt ihn herauszuziehen.",
     },

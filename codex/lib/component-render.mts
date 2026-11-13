@@ -45,7 +45,7 @@ export function parseFrontmatter(text: unknown): Frontmatter {
   if (!match) return { body: source.trim(), metadata: {} };
   const metadata: Record<string, string> = {};
   for (const line of match[1].split(/\r?\n/)) {
-    const field = line.match(/^([A-Za-z][A-Za-z0-9_-]*):\s*(.*)$/);
+    const field = line.match(/^([A-Za-z][A-Za-z0-9_-]*):\s*((?:\S.*)?)$/);
     if (field) metadata[field[1]] = field[2].trim().replace(/^['"]|['"]$/g, "");
   }
   return { body: source.slice(match[0].length).trim(), metadata };

@@ -13,6 +13,8 @@ import { declareCopy } from "../../bootstrap/coverage-copy-fixture.mts";
 const HOOKS_SOURCE = import.meta.dirname;
 export const ENTRY = path.resolve(HOOKS_SOURCE, "..", "kherep", "hook-runtime", "entry.mts");
 export const HOOK = "live-hook-integrity.mts";
+const HOOKS_SEGMENT = "/hooks/";
+const LINE_BREAK = /[\n\r\u2028\u2029]/;
 
 // The entry of the installation hooksDir belongs to: <home>/kherep/hook-runtime beside <home>/hooks.
 export const entryFor = (hooksDir: string): string => path.join(path.dirname(hooksDir), "kherep", "hook-runtime", "entry.mts");
@@ -36,8 +38,12 @@ export function installIntegrity(hooksDir: string): void {
 
 // `node <file under hooks/> ...` in the form the installed settings use; anything else unchanged.
 export function coordinated(command: string, mode = "reader"): string {
-  const match = /^(&\s+)?node\s+(\S*\/hooks\/\S+)(.*)$/.exec(command);
-  return match ? `${match[1] ?? ""}node ~/.claude/kherep/hook-runtime/entry.mts ${mode} ${match[2]}${match[3]}` : command;
+  const match = /^(&\s+)?node\s+(\S+)/.exec(command);
+  if (!match) return command;
+  const rest = command.slice(match[0].length);
+  const at = match[2].indexOf(HOOKS_SEGMENT);
+  if (at < 0 || at + HOOKS_SEGMENT.length >= match[2].length || LINE_BREAK.test(rest)) return command;
+  return `${match[1] ?? ""}node ~/.claude/kherep/hook-runtime/entry.mts ${mode} ${match[2]}${rest}`;
 }
 
 export interface Result { status: number | null; stdout: string; stderr: string }

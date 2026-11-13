@@ -188,7 +188,7 @@ function validateWrapper(action: ServiceAction, binding: ServiceBinding, sourceR
     throw new Error("service wrapper changes execution-affecting Node settings");
   }
   if (/\b(?:Import-Module|using\s+module|Add-Type)\b/i.test(text)
-    || /^\s*[&.]\s+["']?(?:[A-Za-z]:[\\/]|\\\\|\/|\.\.?[\\/])/im.test(text)) {
+    || /^[^\S\n\r\u2028\u2029]*[&.]\s+["']?(?:[A-Za-z]:[\\/]|\\\\|\/|\.\.?[\\/])/im.test(text)) {
     throw new Error("service wrapper has an unsupported external wrapper chain");
   }
 }

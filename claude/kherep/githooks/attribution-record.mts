@@ -32,7 +32,7 @@ export function configRoot(env: NodeJS.ProcessEnv = process.env, platform: NodeJ
 
 // Copy of repoSlug in attribution.mts.
 export function repoSlug(url: string): string | null {
-  const rest = url.replace(/^[A-Za-z][A-Za-z0-9+.-]*:\/\/[^/]*/, "").replace(/^[^/\\:]+@[^:/]+:/, "");
+  const rest = url.replace(/^[A-Za-z][A-Za-z0-9+.-]*:\/\/[^/]*/, "").replace(/^[^/\\:][^/\\:@]*@[^:/]+:/, "");
   const parts = rest.split(/[\\/:]+/).filter(Boolean);
   if (parts.length < 2) return null;
   return `${parts.at(-2)}/${parts.at(-1)!.replace(/\.git$/, "")}`;
