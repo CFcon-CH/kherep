@@ -1,6 +1,6 @@
 {
   "name": "kherep",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "private": true,
   "description": "Kherep orchestration stack. TypeScript runs directly on Node (type stripping, no build); tsc is the type check only.",
   "engines": {

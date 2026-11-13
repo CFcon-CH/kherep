@@ -9,1987 +9,574 @@ increments the minor version; every other release increments the patch version.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-13
+
+Messages now reach running and idle Claude Code and Codex sessions without
+operator input, and `msg status` says why one waits (#706, #883). Hooks fail
+closed on both runtimes and repair themselves under a lock (#507). The node
+service records failures and gains `service recover` (#838). New: team model,
+worker brief revisions, evidence tools. Retired: closed-session resume, the
+Codex fork proxy, `kherep-twg`, the Codex plugin and `usage-watch`.
+
 ### Added
 
-- The Control Plane tells the previous lead when the operator moves the
-  `kherep-lead` slot to another session (#761). In the slot-change transaction
-  the Worker writes `ROLE CHANGED: lead -> team-lead` with `NEW-LEAD:` to the
-  previous lead and `ROLE CHANGED: team-lead -> lead` with `PREVIOUS-LEAD:` to
-  the new one, each with the slot revision and the UTC time, from the sender
-  `operator` / `control-plane`, and audits them once as `intercom.slot-notice`.
-  A conflict, a denial, a replay, a first assignment, the same session again and
-  the runtime slots write none; a storage failure rolls the slot change back with
-  the notices. The slot-selection answer goes out first, the notices after it.
-  The operator API refuses the Access actor `control-plane`. A current node frames
-  the notice as a Control Plane notice without a reply line, and `msg inbox`
-  names the sender `control plane (slot change)`; an older node shows a
-  peer-style block. Notice rows retire through the existing 24 h fallback
-  deletion. The lead and team-lead role texts and both ROUTING copies name the
-  delivered notice instead of the unbuilt role line. Takes effect after a
-  Worker deploy and a node upgrade.
+- Team model (#761). Every session on every node and runtime gets two role
+  texts, `kherep-lead` and `kherep-team-lead`, with the chain of command
+  operator -> lead -> team leads and one message contract (PACKAGE, REPORT,
+  PACKAGE-CLOSED, QUESTION, ANSWER, HANDOVER; eight STATE values). Claude
+  installs `claude/agents/kherep-*.md` through the file manifest and model
+  policy; Codex projects its own `codex/agents/kherep-*.md` into
+  `agents/kherep-*.toml`. Both ROUTING files gain a "Team model" section,
+  and `bootstrap/team-profile-parity.test.mts` keeps the two runtimes on the
+  same contract. When the operator moves the
+  `kherep-lead` slot to another session, the Worker writes
+  `ROLE CHANGED: lead -> team-lead` (with `NEW-LEAD:`) to the previous lead and
+  `ROLE CHANGED: team-lead -> lead` (with `PREVIOUS-LEAD:`) to the new one, from
+  `operator` / `control-plane`, audited once as `intercom.slot-notice`. A
+  conflict, denial, replay, first assignment, the same session again and the
+  runtime slots write none; a storage failure rolls the slot change back. The
+  operator API refuses the Access actor `control-plane`. `msg inbox` names the
+  sender `control plane (slot change)`; an older node shows a peer-style block.
+  Takes effect after a Worker deploy and a node upgrade.
 
-- `kherep-node service recover` starts the installed managed service again
-  after a failed upgrade left the node off or a retained drain blocked it
-  (#810, stage B of #838). Without `--confirm` it prints evidence only
-  (`canRecover`, a fixed refusal `reason`, drain, definition against the
-  receipt, daemon, pin, plan and the display-only last failure) and writes,
-  stops or starts nothing. With `--confirm` it is a strict subset of `service
-  upgrade` to the installed commit: no new source, no definition or receipt
-  write; upgrade's stale-drain reclaim, admission wait, preflight and
-  proof-carrying stop, then start, health, settle and drain release. It refuses
-  definition drift (use `rollback`), a recorded candidate in place, an active
-  or unknown drain, a live daemon outside the stopped service, an unowned live
-  daemon and an unverifiable pin, and keeps the drain after any failure that
-  follows a native effect. Nothing releases a retained drain automatically.
-  The `managedService` doctor check now names `service recover`.
+- `kherep-node service recover` (#810, #838). It starts the installed managed
+  service again after a failed upgrade left the node off or a retained drain
+  blocked it. Without `--confirm` it prints evidence only (`canRecover`, a
+  fixed refusal `reason`, drain, definition, daemon, pin, plan and the last
+  failure) and changes nothing. With `--confirm` it is a strict subset of
+  `service upgrade` to the installed commit: no new source, no definition or
+  receipt write. It refuses definition drift (use `rollback`), a recorded
+  candidate, an active or unknown drain, a live or unowned daemon outside the
+  stopped service and an unverifiable pin, and keeps the drain after any
+  failure that follows a native effect. Nothing releases a retained drain
+  automatically.
 
-- A failed Windows managed-service upgrade or rollback names the native call
-  that failed (#838, stage A). Every PowerShell call of the Windows adapter has a
-  fixed name; the CLI failure, also one raised before any mutation, carries a
-  validated `native` object (call, outcome `timeout|exit|spawn|output`, exit
-  status, elapsed time, limit, fixed reason code) and never native output, paths,
-  pids, task names or SIDs. Every failed upgrade or rollback writes the
-  display-only `service/last-failure.json` (codes, times and a commit, mode
-  0600), removed by the next success and shown by `service status` as
-  `lastFailure`. `service status` also reports `node: running|off|drain-blocked`,
-  and the new `managedService` doctor check reports the same state with the
-  recovery text. No decision path reads the record.
+- Managed service failure records (#838). A failed Windows upgrade or rollback
+  names the PowerShell call that failed in a validated `native` object (call,
+  outcome `timeout|exit|spawn|output`, exit status, elapsed time, limit, reason
+  code), never native output, paths, pids, task names or SIDs. Every failed
+  upgrade or rollback writes the display-only `service/last-failure.json`
+  (mode 0600), which the next success removes. `service status` shows it as
+  `lastFailure` and reports `node: running|off|drain-blocked`; the new
+  `managedService` doctor check reports the same state and names
+  `service recover`. No decision path reads the record.
 
-- The Control Plane daemon has a Codex liveness source (#706, Phase 2). With
-  `wake.nativeQueue: true` it finds, once per listing tick, which live `codex`
-  process holds a thread's rollout open (macOS `ps`/`lsof`; Windows Restart
-  Manager, not yet measured there) and binds the delivery hook's record to that
-  holder. A held, idle thread now reads `idle-loaded`, so the native `codex
-  queue` route admits messages again; a refusal shows `awaiting-user-turn`. Nodes
-  without `nativeQueue` run no probe. The delivery hook also records `Interrupt`
-  and `SessionEnd` and keeps the `SessionStart` source; the installer does not yet
-  add those two hook groups. Refs #706.
+- Codex liveness source for the daemon (#706, #899). With
+  `wake.nativeQueue: true` the daemon finds, once per listing tick, which live
+  `codex` process holds a thread's rollout (macOS `ps`/`lsof`, Windows Restart
+  Manager). A held, idle thread reads `idle-loaded`, so the native
+  `codex queue` route admits messages again; a refusal shows
+  `awaiting-user-turn`. Nodes without `nativeQueue` run no probe. The delivery
+  hook also records `Interrupt` and `SessionEnd`; the installer does not yet
+  add those two hook groups. On Windows, a probe with two or more candidate
+  rollouts no longer fails as a whole: each path is its own literal, a failing
+  Restart Manager call leaves only its thread UNKNOWN, and the daemon log names
+  a probe problem once when it changes and once when it recovers. The fixed
+  Windows script is not yet measured on a Windows node.
 
-- Claude prompt/tool hooks can show up to five fixed session rename data lines
-  per output, with a byte-bounded overflow summary. A disposable owner snapshot
-  remembers omitted changes; hints never retry or wake a session. Refs #828.
+- Wake names that survive renames (#828). A name in `wake.sessions` binds to
+  the session whose full id is listed with it and then follows that id through
+  a rename; damaged binding history refuses the name instead of guessing.
+  Bindings start without a liveness source, and Claude background sessions
+  (whose `claude agents` row carries `state` instead of `status`) are listed,
+  so bindings start in production. Claude prompt and tool hooks show up to
+  five fixed session rename data lines per output with a byte-bounded overflow
+  summary; hints never retry or wake a session.
 
-- Module labels are checked where issues and pull requests are created. The new
-  `module-label-guard` (Claude and the Codex shell dispatcher) blocks `gh issue
-  create` and `gh pr create` without a module label in a repository that committed
-  `.github/module-labels.json`, and when that file is invalid; a repository without
-  the file has no rule. It also recognises the alias `new`, flags before the
-  subcommand, and `env` or `command` in front of `gh`. `--web`, `--help` and a visible
-  `KHEREP_MODULE_LABEL=none` pass. The GitHub broker accepts `labels` on `issue.create` and verifies them on
-  readback; a repository entry with `moduleLabels` in `policy.json` refuses a create
-  without a listed label with the new `label-required`. A module label `github-broker`
-  joins the CONTRIBUTING.md table (#833).
+- Module label guard (#833). `module-label-guard` (Claude and the Codex shell
+  dispatcher) blocks `gh issue create` and `gh pr create` without a module
+  label in a repository that commits `.github/module-labels.json`, and when
+  that file is invalid; a repository without the file has no rule. `--web`,
+  `--help` and a visible `KHEREP_MODULE_LABEL=none` pass. The GitHub broker
+  accepts `labels` on `issue.create` and verifies them on readback; a
+  `moduleLabels` entry in `policy.json` refuses a create without a listed
+  label (`label-required`).
 
-### Fixed
+- GitHub App issue broker (#732): fixed Claude and Codex entry points, strict
+  public-repository operations, local signing, scoped installation tokens and
+  durable receipts for uncertain outcomes. Disabled by default; live identity
+  acceptance is separate.
 
-- The Windows Codex holder probe works again with two or more candidate
-  rollouts (#899). Measured on a Windows node: Windows PowerShell 5.1 wrote the
-  `ConvertFrom-Json` path array as one object, so `$files[0]` held every path
-  joined by a space, `RmGetList` returned 6, the whole scan threw and every
-  Codex session read UNKNOWN, so the native Queue wrote no attempt. Each path
-  is now its own literal. A failing Restart Manager call now reports
-  `X <stage> <code>` for its file only, which leaves just that thread
-  UNKNOWN/failed while the others keep their verdicts, and the daemon log names
-  a probe problem once when it changes and once when it recovers. The new
-  script is not yet measured on a Windows node.
+- Worker brief revision (#701). A brief to a code-bound worker
+  (`kherep-builder`, `dc-plugin-build-runner`, or any dispatch whose brief
+  declares `revision:`) carries `revision: <name>@<sha>` per repository
+  (`<name>@<base>..<head>` for a review, `-dirty` for uncommitted changes) and
+  `decided: <decision>` or `decided: none`. Both dispatch guards deny a missing
+  marker on a code-bound role, a malformed token and an empty `decided:`
+  (`WORKER_BRIEF_FORMAT`); a brief that mentions a review without `revision:`
+  gets a notice (`WORKER_BRIEF_REVISION`). The guards read no git state. Codex
+  refuses a code-bound dispatch when the installed lib is missing. Builder and
+  DC build runner receipts gain `REVISION:`, and both ROUTING files name the
+  fields and the Maestro's `Revision:` receipt line.
 
-- A Windows service stop no longer maps every failure to
-  `STOP_UNKNOWN_DESCENDANTS` with an unproven family (#838). The stop script
-  reports whether it failed before its first effect; such a failure, or one
-  before the script starts, now reports `STOP_BLOCKED_NATIVE_DESCENDANTS`,
-  `STOP_IDENTITY_MISMATCH` or `STOP_NATIVE_REFUSED`, counts as a stop that was not
-  issued and ends `restored` with the drain released instead of a stale drain
-  blocking admissions. A timeout (`STOP_UNPROVEN_TIMEOUT`) or a failure after the
-  first effect keeps the family unproven, recovery `unknown` and the drain, as
-  before (#472, #677). Only the read-only calls `task-read`,
-  `process-provenance`, `task-stop-check` and `current-user` now run once more
-  after a timeout; mutating calls and their limits are unchanged.
+- Denied calls in delegated worker reports (#504, #700). The guard dispatcher
+  and the hook runtime entry journal each guarded call of a delegated Claude
+  worker to `<CLAUDE_HOME>/.cache/denied-calls/<agent_id>.jsonl`: tool, worker
+  type, target class, and per denying guard its tag and the first violation of
+  its reason, not the guard's header (#700). Paths are reduced to basenames
+  and private matches to `<withheld>`. Writes are asynchronous, capped and
+  never change a decision; a lost write leaves `<agent_id>.failed`, and that
+  marker is now awaited until each writer's deadline so it is on disk when the
+  hook exits (#612, #614). The Codex shell dispatcher flushes its output
+  before it exits, so a stuck marker cannot hold a completed deny until the
+  native timeout (#621). The Maestro reads a worker's list with
+  `hooks/denied-calls.mts render <agent_id>`, which prints
+  `DENIED-CALLS: none | <n> | unknown (<code>)` and exits 3 on `unknown`.
+  Codex captures too, but documents no `agent_id` on a child's `PreToolUse`,
+  so every Codex worker reads `unknown (journal-missing)` until a child key is
+  measured (#537). Explore and Plan workers read `unknown (no-agent-id)`.
 
-- Control Plane: a message for a Claude Code session that has no running
-  process (for example after a restart of the Claude desktop app) now carries
-  the diagnostic `target-not-loaded` instead of `target-not-idle`. `msg status`
-  says the session must be opened in the desktop app or resumed, and that a
-  session allowed only through `"*"` needs a typed prompt. The node decides this
-  from absence in a complete `claude agents --json --all` listing no older than
-  three minutes, without a fresh hook observation; an incomplete or failed
-  listing keeps `target-not-idle`. The progress code stays `waiting/target-busy`.
-  No session is woken or started. The code travels only to a peer advertising
-  the new `messaging.diagnostics.v3`; any other gets `target-not-idle`. Nodes
-  and the Worker advertise it, so a sender sees the new text only after both the
-  target node and the Worker are upgraded. Closes #883.
+- Observation handback checks (#555, #571). Since Claude Code v2.1.271 an
+  auto-mode subagent reports through `SubagentHandback`. The new `PostToolUse`
+  hook `obs-handback-record.mts` checks a `claude-obs` report where it is
+  delivered, and `obs-result-check.mts` reads that verdict first, so it no
+  longer blocks a delivered report or passes a wrong one. The new `PreToolUse`
+  guard `obs-handback-gate.mts` refuses a handback whose first non-empty line
+  is not exactly one valid `OBS-RESULT` line, once per agent id; a second
+  malformed handback is delivered and reported. Each adds one hook group; an
+  existing dispatcher entry under that matcher is replaced and logged. Codex
+  is unchanged.
 
-- Control Plane node: a Codex busy-hint lock left behind by a dead owner no
-  longer blocks the busy-hint path for good (`target hint lock is busy`). The
-  lock now records its owner's pid, start time and a token. A lock whose owner
-  is gone, which names this process without being held, or which is empty and
-  older than 60 seconds is replaced under a reclaim gate by rename and compare;
-  a live owner's lock, unparseable content and Windows transient create errors
-  stay busy (#602). A failed release still reports failed but leaves a lock the
-  next call recovers, and `kherep-node doctor` counts busy-hint locks by class
-  under `listeners.busyHintLocks`. An existing empty orphan is recovered on the
-  first publish or claim for that owner after the upgrade. Closes #877.
+- Fail-closed Claude hooks (#507, parts 1 and 2). The five `PreToolUse` groups
+  each run one `hooks/guard-dispatch.mts` entry that starts the group's guards
+  in parallel. A guard that is missing, empty, outside the hooks directory,
+  killed, still running after 10 s, exiting with a code other than 0 or 2, or
+  printing anything other than a decision now denies the tool call, and the
+  reason names the file; before, most of these let the call through. Working
+  guards combine as deny > ask > allow. Every managed Claude hook now starts
+  through `kherep/hook-runtime/entry.mts`, which coordinates hook processes
+  and integrity repairs through `<real hooks>/.kherep-integrity/run.sqlite`.
+  A repair is recorded before its first byte is written and replayed by the
+  next process when its writer died. The heartbeat
+  `.cache/hook-integrity/heartbeat.json` is written only after a final
+  read-only check. The dispatcher re-checks integrity when the heartbeat is
+  older than 30 minutes or missing or a guard could not run, and reports the
+  result as context, never as a decision. For `PreToolUse` every runtime
+  failure is a deny. Operator action: a recorded repair whose target an
+  outside writer replaced stays refused until the operator runs
+  `kherep/hook-runtime/replay-pending.mts` (`inspect`, then `replay`). Limits:
+  the entry cannot check itself; Windows DACL preservation and whether a
+  session shows the notice are UNVERIFIED.
 
-- Control Plane node: resuming a session that `sessions.json` already lists with
-  a runtime no longer adds a second, runtime-less row for the same id. The
-  duplicate made the node's message-reference population invalid, so every
-  reference on the node resolved as `INVALID` until the next listing (about
-  60 s). The listed row now stays the only row for that id; a resume of an
-  unlisted session still adds its provisional row. Reader, Worker, protocol and
-  policy are unchanged; node upgrade, no Worker deployment (#834).
+- Fail-closed Codex hooks (#507, parts 3 and 4). `codex-hook-adapter.mts`
+  denies a `PreToolUse` call on the same failures (a printed `ask` included)
+  and answers at least 1.5 s before its 10 s hook timeout.
+  `codex-hook-integrity.mts` runs under the SQLite lock
+  `<CODEX_HOME>/.cache/hook-integrity/run.lock.sqlite` and writes the
+  heartbeat only after a read-only check; the adapter re-checks after its
+  guards when the heartbeat is stale or a guard could not run. The three
+  guards that still ran directly (`atlassian-destructive-guard`,
+  `codex-dispatch-contract-guard`, `playwright-file-guard`) now run through
+  the adapter, and the adapter and the shell dispatcher check each other
+  against the last proven integrity run. Operator action: Codex marks these
+  three hook definitions for review and skips them until they are trusted in
+  `/hooks`; until then those three guards do not run. The installer prints one
+  line saying so. `docs/CODEX.md` lists every Codex hook group with its
+  fail-closed status. Whether Codex shows the notices is UNVERIFIED.
 
-- Control Plane node: a Claude session is woken for a message its `Stop` left
-  waiting. A wake listener armed at `Stop` ignored, for its whole lifetime, every
-  `accepted` message received before it armed or within its first 3 s, so such a
-  message waited for an unrelated newer message or a user prompt (measured: a
-  reply received 1.7 to 3.7 s after the listener armed waited 7.7 minutes). The
-  listener now wakes the session once per such message when the 3 s are over
-  (audit `backlog`). That includes a message the `Stop` could not offer because
-  the turn budget refused the continuation (`continue-budget`): it is woken for
-  when the spacing or the hourly window allows it, no longer only at the next
-  user prompt. A listener armed at `UserPromptSubmit` is unchanged. Budget
-  values, protocol, Worker, schema and policy are unchanged and there is no new
-  setting (#706); node upgrade, no Worker deployment.
+- Hook upgrade and integrity hardening (#507, #521, #524, #525, #620). The
+  upgrade replaces raw managed commands with their entry form, unwires the old
+  direct guard entries and legacy raw `~/.claude` watcher commands, and logs
+  each one (`hooks: unwire ...`); `umlaut-translit-watch` becomes a managed
+  hook. `drift-check.sh` reports a dispatcher entry whose guard is missing or
+  retired as `DANGLING-HOOK`. The settings render prints
+  `hooks: keep ... (uncoordinated, blocks live-hook-integrity)` for a kept
+  command that runs `hooks/` code outside the runtime entry (#525). A
+  coordination database the process cannot write now refuses writers instead
+  of granting a hollow hold, failures name what happened, and the
+  dispatcher's last-resort deny is a fixed text (#521). A missing hook file is
+  published through a second name in the hooks directory and refused when its
+  directory or staging file changed; a target on another volume is no longer
+  repaired. Imports of a linked hook resolve from the real file (#524). Two
+  integrity runs that start together retry a busy lock three times (#620).
 
-- Control Plane node: `msg status` names a Claude target's exhausted wake budget.
-  An accepted message that a live listener covers reports `waiting/budget-exhausted`
-  with the time the next slot frees while the session's hour or day window is full,
-  instead of `waking/wake-pending`. The daemon reads the ledger without a lock or a
-  charge; a spacing wait and a missing or unreadable ledger still read
-  `wake-pending`. Budget values, protocol and Worker are unchanged (#827); node
-  upgrade and restart, no Worker deployment.
+- Brain drainage and the evidence verb (#517, #519, #687, #693, #695). The
+  manually invoked `brain-drainage` skill is installed for Claude and Codex.
+  Its scanner, `<broker> drainage --space <key> --metadata-approved`, uses GET
+  only and reports candidate rows without titles or body excerpts; nothing is
+  applied automatically. Both update CLIs accept `update --expected-version
+  <n>` and refuse on a missing or mismatched version (#517). Both Confluence
+  brokers gain the read-only `evidence` verb (`prepare`, `decide`, `verify`,
+  `report`, `record`) for an operator-requested confirm path that measures an
+  `evidence-assumed` page against its primary source under fixed promotion
+  gates; human-assigned status is never relabelled, and measurement blocks
+  never count as the page's own content (#519, with #650, #662, #666).
+  `decide` accepts confirmed pages: a contradiction at a newer revision only
+  supersedes, and a holding measurement is the new outcome `holds`. New
+  refusals `revision-not-newer`, `superseded-needs-contradiction` and
+  `page-already-decided`, which replaces `page-not-assumed` (#695). A `code`
+  page without a binding can be superseded through a same-space page that
+  binds the contradicting revision (`superseded-page-not-bound`,
+  `superseded-page-not-current`) (#687). A Revision line may name the paths a
+  finding rests on (`Revision: <name>@<sha> -- <path>`), and
+  `drainage --repo-root <checkout> [--ref <ref>]` reports `revision-stale`
+  pages (#693).
 
-- Control Plane node: keep `sessions.snapshot` within the 64 KiB frame limit. A
-  node over it drops `unknown` rows without proof from the end and logs the count;
-  with only other rows left it sends nothing and logs that. A Worker `frame too
-  large` error no longer leaves the rejected snapshot cached. Under the limit the
-  frame is unchanged. Refs #706.
-- Control Plane node: stop a growing session history from making every resolve answer INVALID. The liveness ledger sets `capped` only when a currently listed session falls off its 512 rows, and it forgets rows the node no longer carries. A listing carries at most 128 unlisted rows, newest by `lastSeen`, and always keeps sessions with a listener file, an inbox record, a wake-name binding or a literal entry in `wake.sessions`; a failed read of any of these carries every row. An idle session outside the bound is no longer addressable until it is listed again. Refs #706.
-- Control Plane Worker: name the target node's answer when owner resolution fails (`resolution-missing`, `-ambiguous`, `-stale`, `-invalid`, `-unreadable`) and a request outside its time window (`resolution-clock`), instead of one `resolution-unavailable`. Nodes advertise `messaging.diagnostics.v2`; a node without it keeps getting `resolution-unavailable`, because it would drop the frame otherwise. Allow 30 s of clock difference between Durable Objects on the request's upper bound. Cut the directory fairly across nodes, so one node no longer fills the frame while another has no rows. Refs #706.
-- Start wake-name bindings without a liveness source. A daemon has none in production, so `session-labels.json` was never created and a name without its id stayed refused (Refs #828).
-- List Claude background sessions, whose `claude agents` row carries `state` instead of `status`. Dropping them marked every listing incomplete, so wake-name bindings never started (Refs #828).
-- Control Plane Worker: preserve reply admission across validated guarded-parent
-  ACK retirement and nonterminal availability changes of the same freshly
-  attested owner. Real identity, connection and lineage changes still refuse;
-  diagnostics use the same validated comparison. Loop budgets, thresholds,
-  retention and native MCP authority remain unchanged. Refs #765, Worker stage 1;
-  CLI diagnostics and live reply acceptance remain separate work.
-- Control Plane Worker: extend that retirement equivalence to unbound guarded
-  parents with positive-state compatibility on both snapshots. Refs #765.
-- Control Plane Worker: stop refusing an ordinary reply with `loop-context-changed`
-  (`lineage`) when its parent moves forward during send preparation. A legacy
-  parent may now retire to its tombstone as a guarded parent already could, and
-  a parent may leave `queued` for `accepted`. Both snapshots must still validate
-  to the same parent kind; a changed node, depth, reason, kind or a refused or
-  expired parent still refuses. The legacy reply limit of six, strikes, holds
-  and the segment limit are unchanged. Refs #765.
+- Commit binding for code-bound observations (#505). A finding about
+  repository code is `confirmed` only when the brief names each repository as
+  `<name>@<full commit sha>` measured on a clean tree; otherwise it is filed as
+  `assumed`, and the page carries a `Revision:` line. Both dispatch guards
+  report a missing binding as a notice, never a deny. The Codex result check
+  rejects a `confirmed` candidate without a full-SHA `Revision:` line.
 
-### Security
+- Topic-judged linking (#736). `related` and `stitch` search with the title
+  plus the finding sentence (`--topic`) inside the space
+  (`twg rovo search --space`, twg 1.3.8 or later). The broker no longer
+  decides a link: `stitch --id --topic --out` lists candidates and writes a
+  receipt, the observation agent judges each, and
+  `stitch --id --candidates --decisions` writes only the approved targets. The
+  Codex adapter gains the read-only `related_candidates` tool and a required
+  `links` key per finding (`links-refused`). Removed: `selectRelated`, the
+  title-term write path, `stitch --dry-run` and `related --parent`.
 
-- CI dependency installs disable lifecycle scripts, with optional platform
-  binaries retained for the Control Plane Worker (#779).
+- Message diagnostics (#493). `GET /api/messages/summary?from=<node id>`,
+  behind the existing Access JWT check, returns counts of one sender node's
+  Registry rows by state, deletability, settlement and age; no ids, times or
+  text. The daemon's round counters line lists the eight most frequent frame
+  kinds from a closed list, and the `disconnected` line reads
+  `disconnected (<code>, clean=<true|false>, error:<class>)`.
 
-- Resolve tools from absolute PATH directories before spawning, excluding the
-  working directory and its aliases, on Windows and POSIX. Shared installed
-  hook libraries preserve lookup-failure behavior without discovery subprocesses.
-  Bound denial-journal command scanning to a single forward pass (#779).
-- Check the deploy transcript by prefix against the projects root and rebuild the Codex adapter's agent id from a fixed character set; accepted and refused inputs stay the same (#779).
-- Rebuild the guard dispatcher's agent id and the exact inbox message id from fixed character sets; accepted and refused inputs stay the same (#779).
+- Weekly usage recorder (#748). The status line hands the documented
+  `rate_limits.seven_day` window to a detached recorder,
+  `hooks/usage-record.mts`, which caches it under `.cache/usage-watch/` and
+  shows one notification per condition per reset window: at 50 % of the
+  weekly budget, or when usage runs at least 5 points ahead of the elapsed
+  window after 10 % of it. Windows shows a toast, macOS a notification through
+  `osascript`. `KHEREP_USAGE_TOAST=0` turns the toast off. The per-prompt
+  `usage-watch` hook added with it is removed again (#774, see Removed).
+
+- Versionless Codex role policy (#509). Astra designs, SOL builds, Terra
+  handles support and research, Luna handles observations and brokers.
+  Installation resolves available models into native agent TOMLs and one
+  dispatch snapshot; an ordinary reinstall keeps that resolution, and
+  `--refresh-models` refreshes it.
+
+- Codex routing-only updater (#707): exact predecessor and current byte
+  checks, isolated backup receipts and verified rollback without a full
+  installation or model refresh.
+
+- Pull request commit policy check (#506). The CI job `commit-policy` runs
+  every commit of a pull request through the versioned `commit-msg` hook, so a
+  commit made with `--no-verify` is still checked. The caller's `KHEREP_*`
+  variables are dropped, which closes the `KHEREP_WORK_ITEM=none` escape
+  hatch. Exit 2 (an unreadable range or hook) is never a pass.
+
+- Documentation: `docs/HOOKS.md` lists every wired hook of both runtimes and
+  the Git hooks, kept complete by `bootstrap/hooks-reference.test.mts`; the
+  README hook statements are corrected (#587, #588).
+  `docs/CENTRAL-BRAIN-READING.md` states the measured reading rules for the
+  Central Brain (#679).
+
+- `npm run test:route -- --base <ref>` (#832): one Windows test route that
+  runs identically defined suites on the candidate and on the base and exits 0
+  only when every base pass is accounted for and nothing fails only on the
+  candidate; exit 1 new failures, exit 2 no verdict. `CONTRIBUTING.md` lists
+  its limits.
 
 ### Changed
 
-- The team-lead profiles and both ROUTING team models no longer tell a team
-  lead to work around the reply limit by opening a replacement thread (#888,
-  retirement step R1). A REPORT stays in the package thread with
-  `--reply-to`; when the Control Plane reports a held or limited exchange, the
-  session stops and tells the operator, because a new thread does not release
-  it.
+- Closed-session resume is retired (#889, operator decision of 2026-11-12).
+  A message for a closed session is no longer resumed, handed over or started
+  in an intercom session of its sender, whatever `messaging.resumeClosed`
+  says. Such a message, also one for a slot whose occupant is closed, stays
+  `accepted` and is refused as undeliverable by the existing listing rule. The
+  key is still read without error and has no effect; `kherep-node doctor`
+  reports a written key as `"resumeClosed": "retired"` without failing.
+  Intercom sessions started earlier are not stopped and no stored state is
+  deleted. `node/codex-app-delivery.mts` is removed.
 
-- Control plane messaging: a message for a closed session is no longer resumed,
-  handed over or started in an intercom session of its sender (#889, retirement
-  step R2, operator decision of 2026-11-12). The daemon stops calling the
-  closed-session fallback after each session listing, whatever
-  `messaging.resumeClosed` says. Such a message, also one for a slot whose
-  occupant is closed, stays `accepted` and is refused as undeliverable by the
-  existing listing rule (early with archive or delete metadata, otherwise after
-  60 minutes with positive closure metadata). The key is
-  still read without error and has no effect; `kherep-node doctor` reports a
-  written key as `"resumeClosed": "retired"` in the policy check without
-  failing. Intercom sessions and runs started earlier are not stopped, no stored
-  state is deleted, and `known-sessions.json` is still written. The unused
-  `node/codex-app-delivery.mts` and its test are removed; `closed-delivery.mts`
-  stays until its deletion step.
+- The Codex fork reply proxy starts no new attempts (#890, operator decision
+  of 2026-11-12). Whatever `wake.codexFork` says, no `thread/fork` starts and
+  no proxy answer is written or sent, also after a daemon restart. Relays made
+  before the upgrade are reconciled without a send; stored attempts are kept.
+  `kherep-node doctor` reports a written section, valid or not, as
+  `"codexFork": "retired"` and no longer fails on a malformed one. The native
+  Queue producer and CP hints are unchanged.
 
-- Control plane Codex delivery: the Codex fork reply proxy starts no new
-  attempts (#890, retirement step R3, operator decision of 2026-11-12). Whatever
-  `wake.codexFork` says, the Codex queue poll no longer schedules a fork reply
-  or runs the relay sweep, and the exchange round has no proxy send gate, so no
-  `thread/fork` starts and no proxy answer is written or sent, also after a
-  daemon restart. The relay bookkeeping still runs in every poll and reconciles
-  relays a node made before the upgrade (withdrawn when the owner reads, cleaned
-  up after 24 hours) without a send; stored attempts are kept. The key is still
-  read without error; `kherep-node doctor` reports a written section, valid or
-  not, as `"codexFork": "retired"` in the policy check and no longer fails on a
-  malformed one. The native Queue producer and CP hints are unchanged. The fork
-  modules stay until their deletion step; their tests drive them through the
-  test-only `node/codex-fork-legacy-poll.mts`.
+- Lead and team-lead profiles keep turns reachable and hand long work to
+  background workers (#829). They no longer tell a team lead to work around
+  the reply limit with a replacement thread: a REPORT stays in the package
+  thread, and on a held or limited exchange the session stops and tells the
+  operator (#888).
 
-- The Control Plane README states the cross-node delivery matrix measured for
-  issue #706: running and idle Claude Code and Codex sessions get messages
-  without operator input in both directions, while a session after a restart
-  of the Claude desktop app must be opened once until issue #883 is resolved.
+- Delivery diagnostics (#706, #827, #883). Nodes and the Worker negotiate
+  fixed-code diagnostics in three steps: `messaging.diagnostics.v1`; `v2`,
+  which names the target node's answer when owner resolution fails
+  (`resolution-missing`, `-ambiguous`, `-stale`, `-invalid`, `-unreadable`,
+  `resolution-clock`) instead of `resolution-unavailable`, allows 30 s of
+  clock difference between Durable Objects and cuts the directory fairly
+  across nodes; and `v3`, which reports `target-not-loaded` for a Claude Code
+  session without a running process (for example after a restart of the
+  Claude desktop app) instead of `target-not-idle`. Older peers keep their
+  status shape. `msg status` renders stored diagnostics in plain words with
+  observation time and stage, says when a session must be opened or resumed,
+  reports `waiting/budget-exhausted` with the next free slot while a Claude
+  target's wake budget is full (#827), and says a pending record has no
+  control-plane confirmation. Target progress names task limits, runtime
+  readiness, turn spacing, budget storage and busy tasks, and the Worker
+  explains identity refusals and records upstream attempt blockers. The
+  Control Plane README states the measured cross-node delivery matrix.
+  Operator action: a sender sees the new texts only after the Worker deploy
+  and the upgrade of the target node.
 
-- Keep a wake name attached to its Claude session through a rename: a name in
-  `wake.sessions` binds to the session whose full id is listed with it, then
-  follows that id. Damaged binding history refuses the name instead of guessing.
-  The rename notice follows separately (Refs #828).
+- Claude model and effort are user-overridable defaults, not pins (#737).
+  `kherep/model-policy.json` assigns each agent a role and each role a default
+  model; the observer default becomes `haiku` with effort `medium`. The
+  operator's `kherep/model-policy.user.json` overrides any role or agent,
+  survives every install and rollback and is never drift. The installer
+  renders agent frontmatter from both files. `dispatch-contract-guard` drops
+  `OWNED_AGENT_MODEL_MISMATCH`; `DISPATCH_MODEL_UNKNOWN` replaces
+  `DISPATCH_MODEL_NONCANONICAL`, and `DISPATCH_EFFORT_UNSUPPORTED` checks a
+  call's effort. A one-time migration (`bootstrap/migrate-model-policy.mts`)
+  captures explicit environment values and edited frontmatter into the user
+  file. Deprecated for one release: `KHEREP_ALLOWED_MODELS` and
+  `KHEREP_AGENT_MODEL_POLICY` (no longer a pin).
 
-- Lead and team-lead profiles keep turns reachable and hand long work to background workers (#829).
+- Control Plane hook commands name a stable entry point on both runtimes
+  (#592, #503). The eight Claude control-plane commands run
+  `<CLAUDE_HOME>/kherep/control-plane/claude-control-plane-hook.mts`, which
+  reads the pointer `kherep/control-plane/source.json`; the six Codex
+  definitions run `hooks/kherep-maestro/codex-control-plane-hook.mts` with the
+  record `orchestra/control-plane-source.json`. Without a usable pointer the
+  entry runs nothing, writes one stderr line and exits 1, with no fallback.
+  `drift-check.sh` compares the pointer by commit (`POINTER-STALE`,
+  `POINTER-INVALID` and related lines), and the doctor `hooks` check reports
+  `pointer`, `stable` and `legacy`. Operator action: a host gets this after
+  `bootstrap/install.sh` from the new source and a session restart; Codex asks
+  once to review the rewritten commands. A revert is not self-healing; see
+  "Rolling back the stable entry" in `docs/INSTALLATION.md`.
 
-- `msg status` renders stored sender and received-message diagnostics in plain
-  words with observation time and stage. Legacy waiting records explicitly say
-  detailed cause is unavailable. Status remains local and does not query the
-  current upstream owner state (#706).
+- The Codex messaging intent hook fails closed (#538). It runs through
+  `codex-hook-adapter.mts` in a new `pre-intent` phase, so a missing, broken,
+  silent or late `mcp-intent-hook.mts` is a deny. Operator action: Codex skips
+  the changed entry until it is trusted in `/hooks`, and until then the five
+  messaging tools are unavailable. Host behaviour (#537) and Windows (#534)
+  remain UNKNOWN.
 
-- Control Plane: negotiate optional, strictly validated fixed-code delivery diagnostics
-  with `messaging.diagnostics.v1`; older peers retain their existing status shape
-  (#706, step 4). Worker changes require a separately approved deploy; node
-  changes require an approved install.
+- Deny reasons, integrity notices and restore lines name a file by its path
+  inside the hooks directory or checkout and never an absolute path; raw error
+  text is replaced by a Node error code or class name (#564, #576). The
+  `incidents.jsonl` restore entries gain a `checkout` key. No command
+  definition, timeout, exit code or Codex trust hash changes.
 
-- SonarQube Cloud (#772) consumes validated same-run LCOV from the existing
-  Ubuntu Node suites and Istanbul Worker tests through a reusable workflow.
-  Missing or mismatched reports fail visibly. Coverage stays honest, the 80%
-  new-code threshold is unchanged, and `SonarCloud Code Analysis` is now a
-  required check on `main`. Raw coverage artifacts expire after two days; fork
-  pull requests skip the scan and therefore cannot satisfy that check.
+- `MacServiceAdapter.write` refuses a plist write over a job launchd still has
+  loaded with a different definition, after a 1 s grace, with
+  `LaunchAgent is still loaded with a different definition`; an unreadable
+  state refuses at once. The file stays untouched (#594, #677).
 
-- Codex: the managed `atlassian-broker` role now defaults to medium reasoning
-  instead of low. An existing install needs one explicit `--refresh-models`,
-  because an ordinary install refuses the changed policy before writes (#786).
-- Dispatch guard: a brief for `kherep-builder` or `dc-plugin-build-runner` now
-  needs `test-route:` and `route-source:`, and the routing and builder contracts
-  require a completed Central Brain lookup before a build. The guard checks the
-  format only, not whether the lookup happened (#812).
+- `service status` drain hints no longer embed the commit in the source
+  placeholder, and `service rollback` waits up to 180 s for the prior daemon's
+  health (#582, #589, #581). On Windows a stop refused by the native script
+  reports `STOP_NATIVE_REFUSED`.
 
-### Fixed
+- Dispatch guard: a brief for `kherep-builder` or `dc-plugin-build-runner`
+  needs `test-route:` and `route-source:`, and the routing and builder
+  contracts require a completed Central Brain lookup before a build. The guard
+  checks the format only (#812).
 
-- Doctor preserves valid session observations beside incomplete or malformed
-  rows, counts canonical `idle-loaded`, and reports snapshot failure reasons
-  and coverage. A provisional resume row no longer makes the snapshot
-  unreadable; doctor samples its clock after reading the wake snapshot and each
-  budget ledger, so a listing or turn written meanwhile is not future-dated. The
-  listener lock count is the known exception: its clock is sampled before the
-  lock reads, so a lock created meanwhile counts as stale, which moves that count
-  and never `doctor.ok`. Other doctor checks keep their earlier clock (#769).
-- Doctor reports stored autonomous-turn budget usage, exhausted owners and
-  rolling-window release times without spending turns. Observed exhaustion
-  keeps doctor successful; failed budget inspection fails its check. Message
-  status displays existing budget progress on the sent route, on accepted
-  received messages and on offered ones whose progress is newer than the offer,
-  including observation and retry times (#769, related #827, stage 1).
+- Codex: the managed `atlassian-broker` role defaults to medium reasoning
+  instead of low. Operator action: an existing install needs one explicit
+  `--refresh-models`, because an ordinary install refuses the changed policy
+  (#786).
 
-- Coverage assembly accepts `c8`'s Windows path separators; traversal stays
-  rejected (#813).
+- Co-author trailers and AI attribution are allowed for every runtime and
+  repository; other commit policies stay (#722).
 
-- The commit policy and hook scope compare paths in one form on Windows, and
-  report a failed comparison instead of silently skipping the check (#816).
+- SonarQube Cloud analysis runs from GitHub Actions on validated same-run
+  coverage (#772). `SonarCloud Code Analysis` is a required check on `main`;
+  fork pull requests skip the scan and cannot satisfy it.
 
-- Control Plane Worker: explain identity refusals with changed semantic dimensions
-  and record fixed upstream attempt blockers, including unconfirmed acceptance.
-  Existing comparisons, claim consumption, retry and delivery decisions are
-  unchanged; owner-scoped remote status queries remain deferred (#706).
-
-- Control Plane target progress now identifies task limits, pending runtime
-  readiness, turn spacing, budget storage, busy tasks/processes and bounded
-  hint failures at the original decision branches. Diagnostics persist with
-  observation time and clear on advancement, without changing admission (#706).
-
-- The Windows supervisor logs `SERVICE_DRAIN_BLOCKED` once per service drain
-  wait; `service status` names the blocked daemon start when a stale or
-  unverifiable drain persists with the task running and no live daemon (#755).
-
-- Node connections have an OPEN deadline and pong watchdog, with a confirmation
-  ping and sleep-safe grace before retrying a silent socket. Connection retirement
-  invalidates old events immediately and reconnects without waiting for close;
-  replay keeps durable owners and one inbox record. Existing backoff and terminal
-  refusals remain. Dead-socket detection is bounded by 80 seconds plus scheduling
-  delay; it does not detect application stalls while pongs continue. Requires a
-  separately authorized node upgrade and restart, no Worker deployment (#764).
-
-- Intercom pending status now says no control-plane confirmation was received.
-  An outbox record without sender status does not prove it was never sent (#706).
-
-- Intercom node intake diagnostics retain original socket arrival times through
-  deferral, count fixed frame classes and measure lane age, pongs and event-loop
-  lag. Bounded content-free threshold logs and numeric doctor samples distinguish
-  local backlog from late callback arrival. A separately authorized node upgrade
-  and restart is needed; no Worker deployment (#706).
-
-- Intercom listeners wait across exhausted wake budgets without spending turns
-  or releasing their owner lock early. Shipped Claude hook lifetimes are now
-  25 hours, retaining the budgeted early re-arm and finite timeout. Codex hints
-  without Receive get one fresh guarded recovery after 60 seconds per retained
-  message, then wait the existing ten-minute reoffer interval. New and excess
-  messages get their own recovery, without normal republish progress churn.
-  Received messages whose hint publication failed cannot erase another retained
-  message's recovery state by replacing it with an empty hint ticket.
-  Transient listener guards keep polling through the early-rearm margin; finite
-  exits audit and preserve replacement owners. Global offer intervals, turn
-  budgets and the ten-minute busy fallback stay unchanged. Existing hook settings need a separately authorized upgrade (#706).
-
-- Intercom identity comparisons use one semantic projection across admission,
-  duplicate validation and egress. Fresh observation refreshes no longer refuse
-  unchanged owners; proof validity, lifecycle, connection, capability and loop
-  lineage checks remain enforced (#706, #765).
-
-- Intercom schedules the first queued acceptance retry pass on the same
-  authenticated socket within 60 seconds, retaining lease, owner, registration
-  and loop checks. The alarm
-  uses eight oldest-first concurrent lanes below the 32-slot resolve limit,
-  leaving room for fresh admission. It catches retry failures with a fixed code,
-  re-arms 60 seconds after pass completion even after failure, and returns to
-  its normal cadence when drained. A 65-second pass therefore starts the next
-  pass after 125 seconds; changing lane positions can take up to 185 seconds
-  to the next attempt, excluding RPC, storage and scheduling delays. Fresh
-  egress during a pass still attempts and retains its retry. Inbox
-  record-lock contention defers the receipt without faulting binding storage.
-  Retries cannot change an already emitted owner binding. A required queued
-  row without a stored binding deliberately waits until its hold ends or it
-  expires, fails closed, and skips pointless resolution (#706).
-
-- Coverage assembly attributes explicitly declared identical test copies to their
-  original source by exact URL and SHA-256, preserving real hits and uncovered
-  branches. The first adopter is the Codex shell dispatcher suite. Parser-proven
-  erased types-only files lose their whole LCOV record and are listed in the
-  coverage summary; Sonar source analysis and exclusions stay unchanged (#792).
-
-- GitHub App issue broker: installation tokens in GitHub's current format
-  contain dots and are about 390 characters long; the token format check now
-  allows `.`, so authentication no longer fails with `auth-refused` (#780).
-
-- GitHub App issue broker: the Windows access check no longer refuses a default
-  `C:\` drive root. At drive-root level only, it accepts TrustedInstaller as owner
-  and a non-inheriting Allow ACE giving Authenticated Users the create-folder right
-  (0x4). Every other ancestor and the private tree keep their checks (#788).
-
-- Managed service activation (#746) binds health/settle to PID and start identity,
-  retains prepared/attested evidence before native replacement/start, and preserves
-  prior pending records during recovery. Windows consumes generation-bound stop
-  evidence and offers explicit, strictly validated rollback recovery for older
-  orphaned activations. Live host acceptance remains separate.
+- The repository moved to the `CFcon-CH` organization; old URLs redirect.
 
 ### Removed
 
-- The Teamwork Graph wrapper `kherep-twg` (issue #897): the `modules/twg/`
-  runtime, the `kherep-twg` skill, their installer, drift and smoke entries and
-  the `twg` module label. Teamwork Graph is used through the vendor `twg` CLI
-  and its own skills, which the operator installs and signs in; no Kherep
-  installer calls `twg`. An upgrade parks `kherep/twg` and `skills/kherep-twg`
-  in the Claude home through `retired.txt` (now also used for directory
-  entries); the Codex installer removes `kherep/twg` and the projected
-  `kherep-twg` skill with their backups. Vendor skills under `skills/twg*` and
-  `~/.agents/skills` are not touched. The `research-stop` hook no longer counts
-  the wrapper CLI or the `kherep-twg` skill as a Central Brain lookup; `twg rovo
-  search` still counts, and a vendor TWG skill counts only when the operator
-  lists it in `research-sources.json`. The GitHub label `twg` stays for history.
+- The Teamwork Graph wrapper `kherep-twg` (#897): the `modules/twg/` runtime,
+  the `kherep-twg` skill, their installer, drift and smoke entries and the
+  `twg` module label. Teamwork Graph is used through the vendor `twg` CLI and
+  its own skills, which the operator installs. An upgrade parks `kherep/twg`
+  and `skills/kherep-twg` in the Claude home through `retired.txt`; the Codex
+  installer removes them with their backups. Vendor skills are not touched.
+  The `research-stop` hook no longer counts the wrapper as a Central Brain
+  lookup; `twg rovo search` still counts, and a vendor TWG skill counts only
+  when listed in `research-sources.json`.
 
 - The Claude Code plugin `codex@openai-codex` and its managed marketplace
-  (#797). Codex remains available through `codex exec` and the Control Plane
-  intercom; the global npm `@openai/codex` stays. Existing hosts need a
-  separately authorized upgrade and a new Claude Code session: that upgrade
-  disables only this exact plugin in user and managed workspace settings,
-  retaining its installed registry, cache and marketplaces for recovery.
+  (#797). Codex stays available through `codex exec` and the Control Plane
+  intercom. Operator action: existing hosts need an authorized upgrade and a
+  new Claude Code session; the upgrade only disables this plugin and keeps its
+  registry, cache and marketplaces for recovery.
 
-- The `usage-watch` prompt hook (issue #774). Installed copies are parked with the
+- The `usage-watch` prompt hook (#774). Installed copies are parked with the
   `usage-band` files through `retired.txt`.
-
-### Added
-
-- `npm run test:route -- --base <ref>`: one Windows test route with a base
-  comparison (#832). It refuses a Codex marker, a dirty candidate or a base that
-  equals the candidate or is not its ancestor, puts Git for Windows first on the
-  tests' PATH, runs identically defined suites on the candidate and on a temporary
-  shared clone of the base, and exits 0 only when every base pass is accounted for
-  on the candidate and nothing fails only there; exit 1 new failures, exit 2 no
-  verdict with the missing names in the receipt. While the type check runs, a
-  `tsconfig.json` that is not byte-identical in both commits is refused with exit 2.
-  It runs in the candidate checkout and writes the receipt and logs into a new
-  directory under the temp folder, printed as `test-route: receipt <path>`.
-  It is no proof against a sandbox that sets no marker and fails under 1 % of the
-  tests; `CONTRIBUTING.md` lists its other limits.
-
-- SonarQube Cloud analysis from GitHub Actions (#772): `sonar-project.properties` (organization `cfcon-ch`, project `CFcon-CH_kherep`)
-  and a reusable `Sonar` workflow called by CI on pushes to main and same-repository pull requests,
-  reading `SONAR_TOKEN` from repository secrets; fork pull requests skip the job.
-  Vendored `codex/parity/plugin-sources` is excluded. The CI caller cancels the
-  older run when a newer commit is pushed to the same pull request.
-
-- The weekly usage recorder shows its notification on macOS through `osascript`.
-- Team model profiles (issue #761, first part): every session on every node and
-  runtime gets two role texts, `kherep-lead` and `kherep-team-lead`, with the chain
-  of command operator -> lead -> team leads and one message contract (PACKAGE,
-  REPORT, PACKAGE-CLOSED, QUESTION, ANSWER, HANDOVER; eight STATE values). Claude
-  installs `claude/agents/kherep-*.md` through the file manifest and model policy
-  (role `root`, native inherit) and drift-check compares them; Codex projects its own
-  `codex/agents/kherep-*.md` into `agents/kherep-*.toml` with the root defaults. Both
-  ROUTING files gain a "Team model" section and the user rules a pointer to it.
-  `bootstrap/team-profile-parity.test.mts` keeps the two runtimes' texts on the same
-  contract. For now the operator names the lead in chat; the Worker team record, the
-  per-turn role line and the send-time contract check follow in a later change.
-- Weekly usage watcher (issue #748): the status line hands the documented
-  `rate_limits.seven_day` window to a detached recorder, `hooks/usage-record.mts`,
-  which caches it under `.cache/usage-watch/` and shows one Windows toast per
-  condition per reset window, when 50 % of the weekly plan budget is used or usage
-  runs at least 5 points ahead of the elapsed window after 10 % of it. The new
-  `UserPromptSubmit` hook `usage-watch` adds a short notice to every prompt while a
-  condition holds. `KHEREP_USAGE_TOAST=0` turns the toast off; no toast outside
-  Windows.
-
-- Topic-judged linking (issue #736): `related` and `stitch` search with the title plus
-  the finding sentence (`--topic`) inside the space (`twg rovo search --space`, twg
-  1.3.8 or later) and print area, a shared-words hint and a snippet per candidate. The
-  broker no longer decides a link: `stitch --id --topic --out` lists candidates and
-  writes a receipt, the observation agent judges each one, and `stitch --id --candidates
-  --decisions` writes only the approved targets, each with a reason in the trace and
-  the version message, and refuses ids outside a fresh receipt for that page. The
-  full-space sweep only lists. The Codex adapter gains the read-only
-  `related_candidates` tool and a required `links` key per finding; it links only the
-  ids codex-obs approved and fails `links-refused` before creating anything otherwise.
-  `selectRelated`, the title-term write path and `stitch --dry-run`/`related --parent`
-  are removed.
-
-- GitHub App issue broker source (Refs #732): fixed Claude/Codex entrypoints, strict public-repository operations, real local signing, scoped installation tokens, durable uncertain-outcome receipts and shared transactional packaging. Default disabled; native/live identity acceptance remains separate.
-
-- Codex routing-only updater (issue #707): exact predecessor/current byte checks,
-  explicit public Intercom rendering, isolated backup receipts and verified
-  rollback without full installation or model refresh. Routing assigns SOL
-  coordination and implementation, managed Astra design, and stops on ambiguous
-  managed worker identity. These instructions add no runtime guard.
-- Confirmed pages in the evidence verb (issue #695): `evidence --mode decide`
-  now accepts an `evidence-confirmed` page. A contradicting measurement at a
-  bound revision proposes `refuted`; at a newer revision (a strict descendant
-  of a bound commit, checked with read-only `git merge-base` in
-  `--repo-root`) it only supersedes, through a same-space page that binds the
-  measured revision. A holding measurement is the new outcome `holds` (exit 0,
-  no body, no label change), counted and printed by `report`. New refusals:
-  `revision-not-newer`, `superseded-needs-contradiction`, and
-  `page-already-decided` for refuted or superseded pages (replacing
-  `page-not-assumed`). The brain-drainage recheck path for `revision-stale`
-  candidates now uses the evidence verb instead of a manual relabel.
-- Revision staleness (issue #693): a Revision line may name the repo-relative
-  paths a code finding rests on (`Revision: <name>@<sha> -- <path> <path>`),
-  and `drainage --repo-root <checkout> [--ref <ref>]` compares those paths
-  between the bound commit and the compared ref with read-only git. The report
-  gains a `revisionStaleness` section (`stale`, `current`, `unscoped`,
-  `unknown` with a reason, coverage and unread pages) and one
-  `revision-stale` / `recheck-evidence` candidate per stale page; no label or
-  page changes. Observation briefs may give `-- <paths>` after each
-  `<name>@<sha>`; the dispatch guards report a binding without paths or a
-  malformed list as a notice, and the Codex candidate check accepts the
-  scoped line under the same grammar. The brain-drainage skill documents the
-  manual recheck and relabel path for a stale page.
-- Worker brief revision (issue #701): a brief to a code-bound worker marks
-  `revision: <name>@<sha>` per repository (a review `<name>@<base>..<head>`,
-  `-dirty` for uncommitted changes) and `decided: <decision>` or
-  `decided: none` at the start of a line. `kherep-builder` and
-  `dc-plugin-build-runner` are code-bound by role (`CODE_BOUND_AGENTS` in
-  `hooks/lib/dispatch-policy.mts`, `"codeBound": true` in
-  `codex/parity/capabilities.json`, no environment override); any other
-  dispatch is checked when its brief declares `revision:`. Both dispatch guards
-  deny a missing marker on a code-bound role and a malformed token, a
-  `revision:` without a token or an empty `decided:` on any checked dispatch
-  (Claude rule `WORKER_BRIEF_FORMAT`), through the new pure lib
-  `hooks/lib/worker-brief-policy.mts`; a brief that mentions a review without
-  `revision:` gets a notice only (`WORKER_BRIEF_REVISION`). The guards read no
-  git state and judge no completeness. `codex:codex-rescue`, `codex exec` from
-  a shell and Control Plane directives stay rule-only. Codex refuses a
-  code-bound dispatch when the installed lib is missing and checks no other;
-  hook integrity checks and restores the lib, and the observation-only updater
-  accepts the `764200b` bytes of `hook-integrity-sources.mts` through
-  `codex/parity/observation-worker-brief-predecessor.json`. The builder and DC
-  build runner receipts gain `REVISION:` (`<name>@<base>..<head>` after an
-  authorized commit). Both `ROUTING.md` files name the fields, the review
-  receipt lines `REVISION:` and `ASSUMED:` with the reviewer rule quoted
-  verbatim in Dispatch, and the Maestro's `Revision: bound | mismatch |
-  unknown` receipt line, which compares the base SHA, in Verification.
-  Observation briefs are unchanged.
-- Observation handback gate (issue #571): the Claude `PreToolUse` guard
-  `hooks/obs-handback-gate.mts` refuses a `claude-obs` handback through
-  SubagentHandback whose first non-empty line is not exactly one valid
-  `OBS-RESULT` status line, once per agent id for a gate that ran, with a reason
-  naming the fixed problem. It uses the recorder's parser and keeps the marker
-  `<CLAUDE_HOME>/.cache/obs-result-check/<agent_id>.refused`, which is retained
-  and removed by no hook. A second malformed handback of the same id is
-  delivered and reported by `obs-handback-record` as before. The template gains
-  one new `PreToolUse` group with matcher `SubagentHandback` and changes no
-  existing entry; on a host, an existing dispatcher entry under that matcher is
-  replaced and logged by the #568 rule. Measured on Claude Code 2.1.309, one
-  refusal led to a corrected handback about 4 seconds later. Codex is unchanged.
-- Reading guide for the Central Brain (issue #679): `docs/CENTRAL-BRAIN-READING.md`
-  maps who does what (Confluence, the Atlassian MCP v2 server, the brokers,
-  the observation and lifecycle workflows) and states the measured reading
-  rules for any client. The MCP read payload carries no labels, so evidence
-  status comes from the broker `labels` verb or a CQL `label =` filter. An MCP
-  search with an unknown space key returns zero results like an empty match
-  (real denied access is untested), and a 404 does not separate missing from
-  not permitted. Truncation
-  shows as `totalSize`/`next` or `truncated: true`. A raw body hash does not
-  identify a page version, and reading never upgrades evidence. Documentation
-  only; no new service.
-- Brain drainage confirm path (issue #519). The `brain-drainage` skill
-  gains an operator-requested path that measures an `evidence-assumed` page
-  against its primary source: the repository at a Revision bound on the
-  page, a real tracker read, a raw official document, or a fresh measurement
-  on the target. It proposes `evidence-confirmed`, `evidence-refuted` or
-  `evidence-superseded`, or leaves the page `assumed` with a named reason.
-  Both Confluence brokers gain the read-only `evidence` verb (`prepare`,
-  `decide`, `verify`, `report`, `record`). It classifies the claim and
-  applies the promotion gates: a dated measurement at most two days old with
-  command and excerpt, a revision bound on the page and present in the named
-  repository, a measurement that touches the claim (every tracker key the
-  page states, matched as a whole key; once a page names one GitHub key
-  (`GitHub issue #N`, `/issues/N` or `/pull/N`), every `#N` it states is a
-  key, matched only as a whole token `#N` in the excerpt (`#10.` and `#10,`
-  count, `#10-other` and `#10.5` do not) or as the number a command that is
-  one `gh issue view N` or `gh pr view N` reads: its first segment begins
-  with exactly those four words, and no other `gh` runs in it; any one code
-  file name), no forbidden
-  source, and no credential-shaped or control-character content. A `--kind`
-  override never makes a historical claim repeatable. It renders the dated
-  measurement block before the `Related pages` footer in a form that storage
-  normalisation keeps byte-identical (LF-only; `&`, `<`, `>` and `"` escaped,
-  `"` as `&quot;` because that is the form Confluence returns), and re-reads the page after the operator's
-  `update --expected-version` and two-step `labels` calls, asserting the
-  reviewed label set with exactly one evidence label. Record and body files
-  lie outside every git work tree (checked on, and written to, the resolved
-  directory), are never overwritten by `prepare` or `record`, not even when
-  created while they run, and are replaced atomically by `decide`. A format
-  repair still never promotes. Human-assigned status is
-  reported, never relabelled. `status-author-*`, `currency-*` and
-  `origin-wiki` are never changed, and a `runtime-*` label is never removed
-  or changed. Private pages stay excluded or UNKNOWN. The scanner and the
-  confirm path classify a page on its body without the measurement blocks
-  the broker wrote, so a tool or file name inside a measurement command
-  never makes a tracker page code-bound (issues #650, #662). Only the run of
-  blocks directly before the footer counts; a block-shaped span elsewhere is
-  content (#666). A Revision line inside any complete block, even a
-  superseded block that lost its link or a line in that link's title, never
-  counts as the page's own Revision; an incomplete block-like span stays
-  author text.
-- Denied calls in delegated worker reports (issue #504). The guard
-  dispatcher, and the hook runtime entry for its own denies, journal each
-  guarded call of a delegated Claude worker (a payload with a valid
-  `agent_id`, the handback excluded) to
-  `<CLAUDE_HOME>/.cache/denied-calls/<agent_id>.jsonl`: tool, worker type,
-  a target class and per denying guard its tag and one line of its
-  reason (a guard's header skipped for its first violation, #700),
-  absolute paths reduced to their basename, privacy denials and
-  marker matches `<withheld>`. Every write is asynchronous, capped (1.5 s,
-  0.5 s in the entry) and never changes or delays a decision past its cap;
-  a lost write leaves `<agent_id>.failed`, a marker line or the journal
-  renamed to it. A second entry of the `PostToolUse` group on
-  `SubagentHandback` (`hooks/denied-calls-delivered.mts`, `timeout` 10)
-  records the delivery after the handback ran and cannot block it; the
-  group's first entry and every other entry are unchanged.
-  The Maestro reads a worker's list with `hooks/denied-calls.mts render
-  <agent_id>`, which prints `DENIED-CALLS: none | <n> | unknown (<code>)`,
-  `none` only on positive evidence, and exits 3 on `unknown`; both
-  ROUTING.md files carry the reading rule and the `Denied:` receipt line.
-  Acceptance 2 of the issue is met through that read for Claude workers,
-  not inside the worker's own text, and nothing enforces it yet. Codex:
-  the adapter and the shell dispatcher capture too, but Codex documents no
-  `agent_id` on a child's `PreToolUse`, so capture is inert until a child
-  key is measured (#537) and every Codex worker reads `unknown
-  (journal-missing)`; no Codex hook group is added and the renderer is
-  installed as `hooks/kherep-maestro/denied-calls.mts`. Limits: append
-  and rename both failing loses the line; a call the hook entry denies
-  whose payload is over 1 MiB leaves no line and no marker; an absolute
-  path with a space keeps the part after the space; a deny with several
-  violations records only the first; Explore and Plan workers return no agent ID and
-  read `unknown (no-agent-id)`; that the returned agent ID equals the
-  hooks' `agent_id` is UNVERIFIED until the host measurement in
-  `docs/CODEX-HOOK-RUNS.md`. `hooks/lib/denial-journal.mts` holds a fourth
-  copy of the private marker pattern, held equal to the three guard copies
-  by a bootstrap test.
-
-- Hook integrity heartbeat, re-check and hook runtime (issue #507, part 2 of
-  4). Every managed Claude hook command now starts through
-  `kherep/hook-runtime/entry.mts`, which admits the hook process to the
-  installation's hooks directory, also for a hook in a subdirectory of it
-  (`<real hooks>/.kherep-integrity/run.sqlite`, `node:sqlite`,
-  rollback journal `DELETE`) before Node loads the hook or its imports: hooks
-  hold a read transaction, `live-hook-integrity.mts` an `EXCLUSIVE` one. A
-  repair is recorded with its complete bytes before the first byte is
-  written, written in the same inode (owner, mode and ACLs stay) or published
-  complete through a hard link, and replayed by the next admitted process when
-  its writer died; the integrity run repairs nothing outside that hold, on
-  another hooks directory, or next to a wired command that bypasses the
-  entry. The heartbeat `<CLAUDE_HOME>/.cache/hook-integrity/heartbeat.json`
-  is removed before the first repair and written only after a final
-  read-only check of the live import closure (walked again after restores, at
-  most three passes) within one hold. The guard dispatcher re-checks after
-  its guards when the heartbeat is older than 30 minutes or missing or a
-  guard could not run, within one deadline 25 s after it starts (stdin
-  included), reports it as `additionalContext` and on stderr, never as a
-  decision, and exits once stdout and stderr are flushed. For `PreToolUse`
-  the entry turns every runtime failure, a missing, empty or broken
-  dispatcher included, into a deny and starts one repair for the next call.
-  `live-hook-integrity.mts` gains a `--trigger <source>` mode that prints
-  plain lines, and journal entries name their `trigger`; `classify`,
-  `restore` and `journal` moved to `hooks/lib/integrity-verdict.mts`. The
-  upgrade replaces each raw managed command with its entry form and removes
-  an entry command at an event the template no longer uses. A recorded
-  repair whose target an outside writer replaced stays refused until an
-  operator runs `kherep/hook-runtime/replay-pending.mts`: `inspect` shows the
-  intent and the current file, `replay` with exactly those values binds the
-  intent to that file and writes the recorded bytes into it in place.
-  Limits: the entry itself cannot be checked; writers and readers outside
-  the runtime are not covered; a persistently failing recorded repair keeps
-  that hooks directory's hooks out; a timed-out re-check reports its outcome
-  as UNKNOWN; no timer, so an idle session is not
-  re-checked; whether the session shows a `PreToolUse` `additionalContext`
-  is UNVERIFIED; Windows DACL preservation is UNVERIFIED.
-- Fail-closed Claude guard dispatcher (issue #507, part 1 of 4). The five
-  `PreToolUse` groups of `claude/settings.user.json` each run one
-  `hooks/guard-dispatch.mts` entry that starts the group's guards in parallel.
-  A guard that is missing, empty, not a regular file, outside the hooks
-  directory (a symlink counts where it points), killed by a signal, still running after 10 s, exiting with a code
-  other than 0 or 2, or printing anything other than a `PreToolUse` decision
-  now denies the tool call, and the reason names the file; before, most of
-  these let the tool call through. Stdin that is not a JSON object is denied too.
-  Working guards keep their verdicts, combined as deny > ask > allow. A guard
-  notice (`additionalContext` without a decision) passes through unchanged;
-  any output field beyond decision, reason and `additionalContext` denies and
-  names the field. The upgrade unwires the old direct guard entries and logs
-  each removal, and `drift-check.sh` reports a dispatcher entry whose guard
-  argument is missing or retired as `DANGLING-HOOK`. Limits: the dispatcher
-  cannot check itself, so an empty `guard-dispatch.mts` fails open until the
-  next session start (part 2 moves this boundary to the hook runtime entry);
-  a hook cancelled at its 30 s `timeout` loses its output,
-  so each guard is capped at 10 s, within one deadline 25 s after the
-  dispatcher starts (part 2); `onFailure` is not set, because no minimum
-  Claude Code version is declared.
-- Pull request commit policy check (issue #506). The CI job `commit-policy`
-  runs on pull requests and passes every commit in
-  `merge-base(base, head)..head`, merge commits included, through the
-  versioned `commit-msg` hook via `bootstrap/pr-commit-policy.mts`, so a
-  commit made with `--no-verify` is still checked. The caller's `KHEREP_*`
-  variables are dropped, which closes the `KHEREP_WORK_ITEM=none` escape
-  hatch, and the hook must first reject a canary message with an attribution
-  trailer. Exit `0` means every commit passed, `1` a policy violation, and `2`
-  a range or hook that could not be read, such as a missing commit, a shallow
-  clone or an emptied hook; a failed read is never a pass.
-- Commit binding for code-bound observations (issue #505). A finding about
-  repository code, tests or a build is `confirmed` only when the brief names
-  each repository as `<name>@<full commit sha>` measured on a clean tree, as
-  `` measured: code <name>@<sha> `<command>` -> <excerpt> ``; without a
-  repository, without a full SHA or on a dirty tree it is filed as `assumed`
-  with a fixed "no exact binding" line, and the page body carries a
-  `Revision:` line. Both dispatch guards report a missing or incomplete
-  binding as a notice that names positions only, never as a deny; every
-  existing deny is unchanged. The Codex result check rejects a `confirmed`
-  candidate whose `Revision:` line is not `<repo>@<full commit sha>`. That a
-  filed page carries the line is contract-enforced and not proven at the
-  target.
-- Versionless Codex role policy (issue #509). Astra designs, SOL builds,
-  Terra handles support and research, and Luna handles observations and brokers.
-  Installation resolves available models into native agent TOMLs and one
-  dispatch snapshot; ordinary reinstall retains that resolution, while
-  `--refresh-models` explicitly refreshes it.
-- Reconnect burst measurement (issue #493). The daemon's round counters line
-  `round sent <n> status/<m> outbox frames, handled <k> inbound items` keeps
-  its text and, when the round handled frames, goes on with
-  `: <kind> <n>, ...`: the eight most frequent frame kinds by count, then
-  `other <n>`. Kinds come from a closed list of 43 labels built from the
-  protocol's message types, node commands, message states and task-control
-  actions, with fixed buckets such as `command:unknown`, `frame:invalid` and
-  `unknown`; a received string never becomes a label. Each frame counts once,
-  on the lane that finally handles it, and the tally resets every round. The
-  line still appears only above 32 frames. The `disconnected` line now reads
-  `disconnected (<code>, clean=<true|false>, error:<class>)`, where the class
-  is a listed socket error code, `unknown`, `missing` or `none`; no error
-  message, close reason or URL is logged.
-- Message summary diagnostic (issue #493). `GET /api/messages/summary?from=<node id>`,
-  behind the existing Access JWT check, groups the Registry rows of one sender
-  node by `state` (a known state or `other`), `deletable` (`1`, `null` or
-  `other`) and `settled` (`settled` or `unsettled`), each with `count`,
-  `withDeadline` and the age buckets `ageUnder24h`, `age1to7d` and
-  `ageOver7d`, and adds `fetchedAt`, the Worker
-  `version` and `commit`, and `rowsRead`. Counts only; no node id, message
-  id, timestamp, session, reason or text. Each call reads the sender's whole
-  history through its index and is logged as `registry.sql` path
-  `messageSummary`. Read-only: replay, acknowledgement, retention and the
-  protocol are unchanged.
-- Brain drainage (issue #517). The manually invoked `brain-drainage` skill is
-  installed for Claude and Codex. Its scanner, `<broker> drainage --space
-  <key> --metadata-approved` (optionally with `--ids` and `--exclude-ids`),
-  uses GET only and reports candidate rows with page ID, read version,
-  problem, proposed action class, bounded structural evidence and uncertainty,
-  without titles or body excerpts. Inventory status is `complete`, `partial`
-  or `failed`, and semantic review stays UNKNOWN. Nothing is applied
-  automatically: a repair needs explicit authority and goes through `update
-  --expected-version <n>`, which both update CLIs now accept and which refuses
-  to write on a missing, invalid or mismatched version. No daemon, database,
-  scheduler, scope or credential is added. See
-  `modules/atl-jira-brokers/README.md`.
-- The settings render prints `hooks: keep <event> [<matcher>]
-  <claude-home>/hooks/<file>[, ...] (uncoordinated, blocks
-  live-hook-integrity)` for every kept hook command that runs `hooks/` code
-  outside `kherep/hook-runtime/entry.mts`, judged by the rule
-  `live-hook-integrity.mts` itself applies and naming the files it counts
-  (`hooks/lib/hook-inventory.mts`), so the install output says why no
-  heartbeat will be written. The command itself is not printed, so no path of
-  the host appears, and an event that is not a plain name is shown as
-  `<event>`. Nothing is printed when every command is coordinated, the stored
-  command is unchanged, and `drift-check.sh` discards the lines as before
-  (issue #525).
-- Windows CI runs the Codex suites (issue #534). The `unit-windows` matrix
-  gains a `codex` shard that runs the whole `npm run test:codex` file set on
-  `windows-latest`, gated by the required check `unit (windows-latest)` like
-  the bootstrap shards, with a 40-minute step timeout so a hang fails instead
-  of running to the job default. `bootstrap/ci-shard.test.mts` names the new
-  shard. Before this, only the ubuntu `typescript` and `unit-engines-floor`
-  jobs ran `codex/`, so the three Windows-only failures fixed in #535 and
-  #539 were first seen on a host.
-- Codex run guard (issue #550). The three CI jobs that run the Codex suites
-  (`unit-windows (codex)`, `typescript`, `unit-engines-floor`) start them
-  through `codex/scripts/codex-run-guard.mts run`, which reads the patterns
-  from the `test:codex` script and fails the step when a pattern selects no
-  file, the run has fewer than 600 tests, a test is `todo`, fails or is
-  cancelled, a suite is skipped, or the skipped tests differ from the
-  accepted list for the platform in `codex/scripts/codex-run-expected.json`.
-  Before this a run that selected nothing or skipped more than before was
-  green. `npm run test:codex` stays the local command.
-- Hook reference (issues #587 and #588). `docs/HOOKS.md` lists every wired
-  hook in one table: runtime, event and matcher, kind and what it does, 52
-  rows for the Claude templates, the Codex render and the Git hooks.
-  `bootstrap/hooks-reference.test.mts` reads those sources in-process and
-  fails when a wired hook has no row or more than one, when a row names a
-  hook nothing wires, when a row breaks the cell vocabulary, or when
-  `README.md` does not link the reference from its Documentation table and
-  its Security model section; it runs in `test:bootstrap` and in the Windows
-  `bootstrap-rest` shard. The README no longer calls the Codex messaging
-  intent hook an exception to the fail-closed adapter (wrong since #538),
-  says that only the hooks under `hooks/` start through the hook runtime
-  entry, describes the Playwright and Atlassian destructive guards, the
-  deploy guard's scope and the research Stop hook, and gains a hook runtime
-  component row.
-  `codex/ARCHITECTURE.md` lists `pre-intent` among the PreToolUse phases.
-  No hook, wiring, settings template or installer changes.
-
-### Changed
-
-- The repository moved to the `CFcon-CH` organization; README, docs, templates,
-  illustrations and test fixtures now name `CFcon-CH/kherep`. Old URLs redirect.
-- Claude model and effort are user-overridable defaults, not pins (issue #737). The
-  shipped `kherep/model-policy.json` assigns each agent a role and each role a default
-  model; the observer default becomes `haiku` with effort `medium`. The operator's
-  `kherep/model-policy.user.json` overrides any role or agent per field, survives every
-  install and rollback byte for byte, and is never drift. `hooks/lib/model-policy.mts`
-  resolves both for the dispatch guard, the hook texts and the installer, which renders
-  agent frontmatter from `model: __KHEREP_MODEL__` / `effort: __KHEREP_EFFORT__` and
-  compares it rendered in `drift-check.sh`; `capture.sh` restores the placeholders.
-  `dispatch-contract-guard` drops `OWNED_AGENT_MODEL_MISMATCH`: any dispatchable model
-  is allowed, `DISPATCH_MODEL_UNKNOWN` replaces `DISPATCH_MODEL_NONCANONICAL`, and
-  `DISPATCH_EFFORT_UNSUPPORTED` checks a call's effort when present. A one-time migration
-  (`bootstrap/migrate-model-policy.mts`) captures explicit environment values and edited
-  frontmatter into the user file. `KHEREP_ALLOWED_MODELS` (still the complete list,
-  migrated as `dispatchable: false` for omitted aliases) and `KHEREP_AGENT_MODEL_POLICY`
-  (no longer a pin) are deprecated for one release; they affect dispatch and the hook
-  texts, while the installer and `drift-check.sh` render frontmatter from the two
-  policy files only. Claude adapter limitation: no queryable model catalog, so a
-  per-model effort list only warns.
-
-- Allow co-author trailers and AI attribution for every runtime and repository; preserve other commit policies and verify the CI hook with an isolated work-item canary (#722).
-
-- CI runs its Ubuntu jobs on `ubuntu-26.04` explicitly instead of
-  `ubuntu-latest`, which GitHub moves from 24.04 to 26.04 between
-  2026-10-19 and 2026-11-19 (actions/runner-images#14748). A mixed image
-  pool would add noise to repeat-gate evidence. The matrix keys and check
-  names stay `ubuntu-latest`, because the main ruleset requires them by
-  name (issue #670).
-
-- `MacServiceAdapter.write` refuses a plist write over a job launchd still
-  has loaded with a different definition (issue #594). After the temp file
-  is written and before the rename, the adapter reads `launchctl print`: a
-  job reported not found (rc 113, `Could not find service`, readable domain)
-  lets the write through; a listed job lets it through only when the bytes
-  equal the file's and the loaded identity attests against them (the same
-  predicate `read` uses). Otherwise it retries every 100 ms within a 1 s
-  grace on a monotonic clock. The grace limits when a new probe may start
-  (at the latest at its end, rechecked after every sleep), not the total
-  duration: each `launchctl` and `plutil` call keeps its own
-  15 s timeout, and a probe that started inside the grace is honoured even
-  when it ends after it. In the issue's measurements the slowest first
-  `launchctl print` after the pid was gone took 145 ms and already reported
-  not found; no stale listing was observed, so the grace is a heuristic,
-  not a measured bound (issue #677). A job
-  still loaded with another definition after the grace refuses with
-  `LaunchAgent is still loaded with a different definition`. Any other
-  `print` result refuses at once with `LaunchAgent loaded state could not
-  be read before write`; a read error never counts as absent. Both leave
-  the file untouched. A foreign `bootstrap` between the last probe and the
-  rename, a gap that includes the `plutil` call on the listed path, is not
-  caught at the write; the next `read` attests it. Not found is not a stop
-  proof: a job launchd no longer lists may still have a live process
-  (issue #677).
-
-- The Claude control-plane hooks run through a stable entry point (issue
-  #592). The eight control-plane commands of `settings.json` now read
-  `node "<CLAUDE_HOME>/kherep/control-plane/claude-control-plane-hook.mts"
-  deliver` (`wake --timeout 86400` with `asyncRewake` and `timeout` 86400,
-  `attribution`) and name no checkout, so they stay the same across upgrades
-  and across the roots an install runs from. The entry, a manifest file,
-  reads `<CLAUDE_HOME>/kherep/control-plane/source.json`, the Codex pointer
-  record naming the source `install.sh` last ran from, and imports that
-  source's hook into its own process: no second process, and the hook's
-  parent, stdin, environment, working directory and exit code are a direct
-  call's. Without a usable pointer, hook name or hook file it runs nothing,
-  writes `kherep control-plane-hook: <reason>; pointer <file>; run
-  bootstrap/install.sh` to stderr and exits 1, never 2, with no fallback.
-  `install.sh` renders the pointer in preflight and installs it in the same
-  transaction as `settings.json`. An install replaces path-form entries of
-  any root with the stable set. `drift-check.sh` compares the pointer by
-  commit, not root: `ok kherep/control-plane/source.json (<kind>
-  <commit7>|unverified)`, `MISSING-LIVE`, `POINTER-INVALID`,
-  `POINTER-UNRESOLVED (<reason>: ...)`, `POINTER-STALE (commit <a> != <b>)`.
-  The `hooks` check of `kherep-node doctor` resolves stable Claude deliver
-  and wake commands through the pointer and reports `pointer`, `stable`,
-  `legacy` and `entry` for Claude as for Codex; a path-form command is
-  `legacy` with a note. A revert is not self-healing: `docs/INSTALLATION.md`
-  ("Rolling back the stable entry") lists the five steps per host. Merging
-  delivers nothing: a host has it after `bootstrap/install.sh` from the new
-  source and a session restart.
-- `service status` drain hints no longer embed the commit in the source
-  placeholder (issue #582): a stale drain reads `kherep-node service upgrade
-  --source <clean checkout> reclaims the stale drain (installed source
-  <commit>)`, a stopped service `kherep-node service upgrade --source <clean
-  checkout> (installed source <commit>)`. `service rollback` now waits up to
-  180 seconds (`ROLLBACK_HEALTH_TIMEOUT_MS`) for the prior daemon's health,
-  as `restorePrior` already did, because the prior source may predate #581
-  (issue #589 item 4, the rollback half; the forward upgrade, also one that
-  reclaims a stale drain, keeps 30 seconds). On Windows a stop refused by the
-  native script is reported as `STOP_NATIVE_REFUSED`;
-  `STOP_BLOCKED_NATIVE_DESCENDANTS` is reported for the read-only descendant
-  wait and on macOS. `rollbackManagedService` moves to
-  `node/service-rollback.mts` and the status report to
-  `node/service-status.mts` for the 250-line budget; `service-transaction.mts`
-  re-exports `rollbackManagedService`.
-
-- Codex hook adapter and hook-integrity hook split into modules below the
-  250-line budget (issue #533). `codex/hooks/hook-adapter.mts` keeps the
-  clock, the re-check and the process I/O and imports
-  `hook-adapter-payload.mts`, `hook-adapter-verdict.mts` and
-  `hook-adapter-run.mts`; its re-exports keep every importer's path.
-  `codex/hooks/hook-integrity.mts` keeps the run under `run.lock` and loads
-  `hook-integrity-repair.mts` and then `hook-integrity-sources.mts` as own
-  steps after the four restore libs, into a namespace of their own; a
-  broken sources module is restored as kind `self`, a broken repair module
-  is reported and needs a reinstall, like the four restore libs. That
-  widens the reinstall-only set by one file whose code moved out of the
-  already reinstall-only `hook-integrity.mts`. The installer copies the
-  five modules under their own names into `hooks/kherep-maestro`; every
-  command definition, deny and notice text, timeout, exit code and the lock
-  sequence is unchanged, and no trust hash moves. A broken adapter module
-  is caught by the shell dispatcher's import and restored by its re-check;
-  for the adapter's own groups it fails open until then, as a broken
-  `codex-hook-adapter.mts` does today. Both adapter copies share the
-  modules, so a broken module disables both at once.
-
-- Codex messaging intent hook fails closed (issue #538). The optional
-  `PreToolUse` messaging intent entry runs through `codex-hook-adapter.mts`
-  in a new `pre-intent` phase: a missing, empty, broken, silent or late
-  `mcp-intent-hook.mts` is a deny that names the file by its basename and the
-  installer, without the guard's stderr; the hook's `allow` with
-  `updatedInput` passes through only as the call's `tool_input` plus a UUID
-  `requestId`, and every other shape is a deny. The entry's `timeout` is 15 s
-  and the guard cap 12 s, so the 8 s acknowledgement wait is kept. Integrity
-  re-check notices of this entry go to stderr only, so the documents Codex
-  reads are the hook's own. Exactly this one definition changes (`command`,
-  `commandWindows`, `timeout`), no entry index moves, the exact previous
-  block is recognised and replaced, and Codex skips the entry until it is
-  trusted in `/hooks`; until then the five messaging tools are unavailable,
-  because the Worker rejects a call without the hook's `requestId`. The file
-  stays outside `hooks/` and is not restored by hook integrity. Host
-  behaviour (#537) and Windows (#534) remain UNKNOWN.
-- The unused internal `readdress` and `updateDeliverySession` exports move
-  from the active inbox and identity modules to
-  `node/_deprecated/session-handover.mts`. Their legacy tests retain the
-  previous behavior; active handover uses the shared task-owned helper
-  (issue #638).
-- Codex run guard: the regeneration hint for
-  `codex/scripts/codex-run-expected.json` is printed only when the skipped
-  tests differ from the list (C3), names the CI-log route first and states
-  that a local run matches CI only on a host that matches the CI image. The
-  observed skips are still printed after any skip check failure (C3, C4,
-  C7). A local `run` without `--tap` writes a per-process TAP file, and the
-  expected file is read once, before the tests run (issue #570).
-- Codex run guard: `check` reconciles the TAP summary with the records it
-  parsed, under Node's counting: test records at any depth count in
-  `# tests`, suite records only in `# suites`, a SKIP or TODO directive
-  decides the bucket even on a `not ok` record, and the plan `1..N` counts
-  the top-level records. It fails closed with a `C8` line, without the
-  observed skips or the regeneration hint, when `# tests`, `# suites`,
-  `# pass`, `# fail + # cancelled`, `# todo` or the plan disagrees;
-  `# skipped` stays C4. Two hand-written fixtures were made self-consistent
-  (issue #578).
-- Guard and hook-file names in deny reasons and hook-integrity notices
-  (issue #564). Every reason or notice line that the Claude guard
-  dispatcher, the Codex hook adapter, the Codex shell dispatcher, the
-  re-check lib `hooks/lib/guard-recheck.mts` and the two hook-integrity
-  scripts build themselves now names a file by its path inside the hooks
-  directory, as the hook runtime entry does since #521:
-  `[guard-dispatch] commit-guard.mts cannot run (…)`,
-  `[hook-adapter] kherep-maestro/commit-guard.mts cannot run (…)`,
-  `kherep-maestro/codex-shell-checks.mts cannot be trusted (…)`,
-  `live-hook-integrity.mts exited with code 1`, and the dispatcher's and
-  adapter's own failures as `guard-dispatch.mts` and
-  `kherep-maestro/codex-hook-adapter.mts`. A file outside that directory is
-  named by its file name. The hooks directory itself and the home are no
-  longer spelled out (`the coordinated hooks directory is not this
-  installation's hooks/`, `no hook file under hooks/ is wired in
-  config.toml`, `config.toml unreadable (<code>)`). Raw error text left
-  those lines: `spawn threw (<code>)`, `spawn failed (<code>)`,
-  `stat failed: <code>`, `lib/guard-recheck.mts cannot be loaded (<code>)`,
-  `stdin read failed (<code>)`, `own import lib/<name>.mts cannot be loaded
-  (<code>)` (also the `reason` of its journal entry) and `the integrity
-  check itself failed (<code>)`, and the adapter's last-resort deny is the
-  fixed `internal error`; `<code>` is a Node error code, else the error's
-  class name, else `unknown`. In the Claude dispatcher a guard outside the
-  hooks directory reads `outside the hooks directory`. Text a guard writes
-  itself passes through unchanged: its exit-2 stderr, its own
-  `permissionDecisionReason`, and the field name in `unsupported field
-  <key>` outside pre-intent. The pre-intent texts of issue #538 change only
-  where an error had no code: it now reads its class name instead of
-  `unknown`. Tests assert that no POSIX, drive, UNC or home-relative path,
-  and no `..` escape, appears in the lines those components build. The
-  restore and library texts followed in #576 (next entry). No command
-  definition, timeout, exit code or Codex trust hash changes.
-- Restore and integrity-library texts name no absolute path (issue #576,
-  follow-up of #564). The restore lines of `hooks/lib/integrity-verdict.mts`,
-  `codex/hooks/hook-integrity-repair.mts` and `hooks/critical-file-integrity.mts`
-  name the versioned source by its path inside the checkout:
-  `NOT restored (versioned source claude/hooks/lib/x.mts unreadable (ENOENT))`,
-  `… codex/hooks/shell-checks.mts is itself 0 bytes`,
-  `… claude/kherep/githooks/commit-msg unreadable (ENOENT)`. Which checkout
-  was tried moves from the notice into the journal: the per-file entries of
-  `incidents.jsonl` written by all three restore writers gain one key,
-  `checkout`. `hooks/lib/restore-write.mts` refuses a linked hooks
-  subdirectory as `hooks directory or its subdirectory resolves outside the
-  hooks root`, the sentence the hook runtime already uses.
-  `hooks/lib/hook-syntax.mts` keeps Node's parser message but reduces every
-  absolute path in it to the file name: `rejected by node --check:
-  SyntaxError: … (Node named it other.js)`, `… could not confirm (exit 1:
-  g.js:1)`; a check that could not run reads a Node error code, else the
-  error's class name, else `unknown`, as do the catch-alls `the
-  critical-file check itself failed (<code>)` and the CLI's `UNGEPRUEFT the
-  check itself failed (<code>)`. `hooks/lib/integrity-heartbeat.mts` prints a
-  code-less error the same way (`run.lock unavailable (TypeError)`,
-  `heartbeat write failed: unknown`), never its message. Tests assert that no
-  POSIX, drive, UNC or home-relative path appears in any restore, parser or
-  heartbeat line on either runtime. Limit: a path with a space inside a Node
-  message (not a location line) keeps its tail after the space, as a deny
-  reason does; the default Windows Node install reads `exit 9: Program
-  Files\nodejs\node.exe: bad option: …`. No command definition, timeout, exit
-  code or Codex trust hash changes.
 
 ### Fixed
 
-- `stitch` with an empty `--id` no longer sweeps the whole space (issue
-  #710). A present `--id` that is empty, blank or not numeric now exits 1
-  before any request; `reportStitch` treats any supplied id as the targeted
-  mode; the Codex observation adapter refuses a non-page id itself; and
-  `claude-obs` takes the id only from the `id:` line its own `create`
-  printed, reporting `OBS-RESULT: failed stitch without page id` otherwise.
-  On 2026-10-31 an empty id fell through to the sweep and wrote to 127
-  unrelated pages. The bare `stitch --space <key>` sweep is unchanged.
-- Denied-call reports name the violation, not a guard's header (issue
-  #700). The commit, deploy and main-checkout guards print a header ending
-  in `:` and then their violations; the journal now records the first
-  violation without its list marker, so a commit-guard denial renders as
-  `[commit-guard] commit message contains an em dash (U+2014)` on Claude
-  and Codex. A reason whose first non-empty line is no such header keeps
-  that line. Path reduction, the 240-character cut and the private-marker
-  refusal apply to the chosen line, and the refusal also to the skipped
-  header. Only the first violation is recorded. The journal format is
-  unchanged; lines written before the fix still render with the header.
-- Brain drainage confirm path (issue #687): a `code` page that declares no
-  binding can be marked `evidence-superseded` when a same-space page binds the
-  revision at which the measurement contradicts the claim. `decide
-  --superseded-by` reads that page's storage body for its Revision lines; new
-  reason `superseded-page-not-bound`, and a superseding page whose status is not
-  `current` is refused (`superseded-page-not-current`). Confirm and refute still
-  require the page's own bound revision.
-- Codex installer: an upgrade no longer refuses a managed block into which the
-  Codex CLI wrote its `[hooks.state]` trust tables and `[tui]` (issue #684);
-  they move behind the end marker with the text TOML gives them, and any other
-  difference, a multiline value in the block or a changed document still refuses.
+- Control Plane node: a Claude session is woken for a message its `Stop` left
+  waiting, including one the turn budget refused (`continue-budget`), instead
+  of waiting for an unrelated message or a user prompt (#706). Node upgrade,
+  no Worker deployment.
 
-- A stop failure is visible to the operator without a candidate record
-  (issue #677). A failure in the `stop` or `prove-stopped` stage carries a
-  fixed `stopCode` from the existing allowlist, which gains
-  `STOP_UNLISTED_ALIVE`; `stopCode` classifies a stop error by an
-  allowlisted `code` first and by its exact message otherwise. The CLI
-  prints the field only when it is in the allowlist, never raw text.
-  `service status` with a stopped service whose recorded daemon still runs
-  names that state and the manual step, instead of the stale-drain upgrade
-  text that the upgrade precondition refuses.
+- Control Plane node: listeners wait across exhausted wake budgets without
+  spending turns. Shipped Claude hook lifetimes are 25 hours, and Codex hints
+  without Receive get one guarded recovery after 60 seconds (#706). Existing
+  hook settings need an authorized upgrade.
 
-- macOS stop proof after `launchctl bootout` returned 0 and unlisted a job
-  whose process stays alive (issue #677). `proveStopped` is the single
-  stop-proof entry point for upgrade, rollback and both recoveries; it
-  computes one deadline (75 s, monotonic clock) at its entry and hands it to
-  an optional adapter hook, which replaces the generic poll. The Mac hook
-  (`service-platform-mac-reclaim.mts`) records the daemon's identity right
-  before bootout and, only after `launchctl print` reports the job not found
-  twice at least 1 s apart with the pid alive and enough grace left, sends
-  one SIGTERM, then from 5 s before the deadline one SIGKILL, each to the
-  attested pid only and only after a fresh process table without
-  descendants, a fresh not-found print and a matching identity read in the
-  same synchronous turn. Success needs a post-exit process table with
-  nothing left in the daemon's group and none of the children seen while it
-  lived, also when the pid ends on its own after launchd reported the job
-  not found; a refusal (identity drift, children, an unreadable table) is
-  never overtaken by a later exit. No launchctl, ps, osascript or kill call,
-  including the second call of a two-step read, and no liveness poll starts
-  after the deadline; a parent whose fate after a signal, or after launchd
-  reported the job not found, is unknown at the deadline leaves the family
-  unproven. Every other
-  case fails closed with a stop code; recovery then writes and starts
-  nothing while the previous pid lives or its family is unproven, and the
-  drain stays. Windows and adapters without the hook keep the generic poll.
-  The read-to-signal pid-reuse race is stated, not closed.
+- Control Plane node: connections have an OPEN deadline and a pong watchdog,
+  so a dead socket is detected within about 80 seconds (#764). Node upgrade
+  and restart, no Worker deployment.
 
-- Codex model catalog read in a fresh Codex home (issue #667, macOS/POSIX).
-  After the app-server exits, the process-group probe may answer EPERM for
-  about 100 ms before ESRCH, and one orphaned helper of the fresh home's
-  plugin sync may outlive the group leader by a few milliseconds. The
-  cleanup check now re-asks the probe for a bounded time (`cleanupGraceMs`
-  1..10000, default 2 s, probe cap, monotonic clock) and sends no further
-  signal: a process-group number does not prove ownership once the owned
-  close has run. Only ESRCH confirms; a group still present or denied at
-  the deadline fails closed as `stage: cleanup`. On every platform the
-  catalog app-server is started with the per-invocation override
-  `-c features.plugins=false`, measured effective on codex-cli 0.160.1
-  (macOS and Windows 11): the read then performs no plugin sync in a fresh
-  home. This is a
-  one-off CLI override; a managed configuration that pins the key, or a
-  later Codex, may behave differently, and the bounded wait carries the
-  read in that case. `--codex-home` naming a missing directory is created
-  (0700) before the read; Codex refuses a `CODEX_HOME` that does not exist.
-  `CatalogReadError` carries a bounded `stage` (`start`, `catalog`,
-  `cleanup`) and whether cleanup was confirmed; the installer prints it as
-  a suffix of the existing message. A transport failure of the
-  `initialized` notification is reported as `stage: start`, not `catalog`.
+- Control Plane node: session listings stay valid. `sessions.snapshot` stays
+  within the 64 KiB frame limit; the liveness ledger sets `capped` only when a
+  listed session falls off, and a listing carries at most 128 unlisted rows,
+  so an idle session outside that bound is not addressable until listed again
+  (#706). Resuming a listed session no longer adds a duplicate row that made
+  every message reference `INVALID` (#834).
 
-- Codex model catalog read on Windows (issue #667, Windows). The tree
-  signal's `taskkill` exit code was the verdict: a tree already gone
-  answered 128 and failed the read as `stage: cleanup` (4 of 12 fresh-home
-  reads; why `taskkill` answered 128 is unknown). A second mode, measured once in 40 reads, was a late child of the
-  fresh home's plugin sync that outlived the root, held its stdio pipe and
-  was still in the one post-kill snapshot 0.4 s after exit. The tree signal
-  is still sent only while the owned child holds its root, but its report
-  is no longer evidence either way. Cleanup is confirmed by observed state
-  only: exit and close of the owned child and a snapshot without a tracked
-  member or a descendant of the root, re-read within the same bounded
-  `cleanupGraceMs` loop as on POSIX. A tree observed gone no longer fails
-  because of the `taskkill` exit code. The loop itself signals nothing; only
-  the client's own close may still signal, and only while the child is
-  owned. A member
-  still present at the deadline, a snapshot that cannot be read, or a child
-  that never exits or closes fails closed as `stage: cleanup`. The catalog
-  app-server now starts with `-c features.plugins=false` on Windows too;
-  measured on codex-cli 0.160.1 the fresh-home tree is then the app-server
-  alone. `signalGroupReport` and the fork reply close are unchanged.
+- Control Plane node: a Codex busy-hint lock left by a dead owner no longer
+  blocks the busy-hint path for good; the lock records its owner and a stale
+  one is reclaimed under a gate, and `kherep-node doctor` counts busy-hint
+  locks under `listeners.busyHintLocks` (#877, #602).
 
-- Confluence brokers: a line directly after a preformatted block is read
-  as its own line (issue #669). `plainText` ended a line at `</p>`,
-  `</div>`, `</h1>`-`</h6>` and `</li>`, but not at `</pre>`, so a
-  `<p>Revision: …</p>`, a disqualifier or a `Code:`, `Host:` or `Doc:`
-  line right after `<pre>…</pre>` was glued to the code block and never
-  parsed. A missing Revision failed safe, a hidden disqualifier did not.
-  Now only a `</pre>` that closes a real outermost `<pre>` ends a line,
-  for the `evidence` classification and the drainage scanner alike. XML
-  comments, CDATA sections and processing instructions are opaque, so a
-  `<pre>` or `</pre>` spelled inside one opens or closes nothing, also
-  inside a real `<pre>`; an unclosed `<pre>` ends no line, and a
-  self-closing `<pre/>` opens none. Revision lines are read in two views
-  (`revisionLines`, which replaces `parseRevisionLines` and takes the
-  storage body): the base view keeps every line, duplicate and
-  disqualifier the old reading found, in order; a marked view adds only
-  lines that start right after such a `</pre>` or after an opaque region,
-  which it replaces with a separator, never with nothing. Every line it
-  does not add stays in it as a barrier, and so does the seam to the base
-  view, so a label and a colon or value from two lines that were not
-  adjacent on the page never join. A bare `Revision:` label right after a
-  code block, followed by an ordinary paragraph, is an empty malformed
-  declaration and refuses confirmation; label and value belong on one
-  line. Text quoted
-  inside a `<pre>`, comment, CDATA section or processing instruction, or
-  in the excerpt of a complete measurement block, therefore never newly
-  binds, and two halves of a SHA around an opaque region never join. The
-  line-anchored claim signals (`Code:`, `Host:`, `Doc:` and their
-  aliases, and the scanner's code-bound line check) read the same two
-  views (`claimViews`), so quoted text in a comment, CDATA section, PI or
-  another `<pre>` after a real `</pre>` adds no signal. Code tokens,
-  tracker keys, command words, URLs and the historical signal keep the
-  base text. `<blockquote>`, table cells
-  and rows and `<br />` are unchanged: documented storage wraps quote
-  text in `<p>`, and a table row or a line break as a line is a separate
-  decision.
+- Windows lock contention: a lock in the delete-pending state (`EPERM`, and
+  `EACCES` and `EBUSY` defensively) counts as held, not as a failure, for the
+  client binding probe and every control-plane lock (#600, #602). The probe
+  reclaims a lock only with a complete owner record of a dead process. A
+  failed write after the exclusive create of the service owner file or launch
+  permit removes the caller's own file instead of blocking every later
+  `service upgrade` or `service rollback` (#644).
 
-- Confluence brokers: a text-search result row without a readable title
-  makes the exact-term half UNKNOWN instead of disappearing (issue #656).
-  A row whose title was missing, not a string, or only whitespace in both
-  documented places (`content.title`, then `title`) was dropped, so
-  `{"results":[{}]}` read like an empty search: `related` printed
-  `count: 0` with exit 0 and `stitch` counted the orphan `isolated`. A
-  whitespace `content.title` also hid a readable flat `title`; it no
-  longer does. Each row is now counted once, after both places, and the
-  readable titles are kept. The exact half then reports
-  `exact-term search: <n> of <m> result row(s) had no readable title.
-  Hits from this half are incomplete and UNKNOWN. cql: <cql>` and never an
-  HTTP status. `related` keeps its exit convention: with hits it prints
-  `The exact-term half was not fully read. The list may be incomplete.`
-  and exits 0; without hits it prints `The exact-term half was not fully
-  read and nothing was found. This result is UNKNOWN, not zero.` and exits
-  1. `stitch` skips that orphan before any assignment, as it does for a
-  refused search: it prints `unsearched <id> <reason>`, counts it as
-  unsearched, writes no link from an incompletely read search, and exits 1.
-  A structurally malformed response (no `results` array, or a row that is
-  not an object) still aborts with `malformed-response`.
+- Inbox records: every rewrite of a record runs under the record's lock, so a
+  daemon refusal no longer loses a delivery written meanwhile (#627, #195).
+  Busy records defer handover mappings and Codex intake work instead of
+  failing them (#634). On Windows, `writeJsonAtomic` retries a rename blocked
+  by another process for up to 1.27 s (#540).
 
-- Staged Claude intent hook test under host load (issue #657).
-  `claude-mcp-client.test.mts` scanned for the hook's published intent 100
-  times, 10 ms apart, while the hook process type-strips its module graph,
-  digests the input and only then renames the intent into place. On a
-  `unit-engines-floor` run no published intent name was observed in those
-  scans, and nothing of the hook's lifecycle or output was captured. The
-  test now waits for the first of a published intent, the hook's close, or
-  a bound, and every later wait is bounded as well. Only the child's
-  `close` counts as closed: an `error` event is recorded, a timeout is
-  reported as a timeout. A failure names the exit and close state, the
-  recorded errors and bounded stdout and stderr. The fixture directory is
-  removed only after the close of every hook started in it was observed;
-  otherwise it is kept and the cleanup fails. The receipt is written
-  atomically, and the delayed case asserts the full rewrite, since a denial
-  also exits 0. Controls with real children: a 2.5 s pause before the
-  intent rename that the hook reports from inside (with it, the old loop
-  failed and the new wait passed in the observed runs; neither is
-  guaranteed under every scheduler), a policy denial, a crash at import, a
-  hang before and a hang after publication, and a hook whose stdio stays
-  open after SIGKILL. The helpers live in `mcp-intent-hook-fixture.mts`.
-  The hook is unchanged; the cause of the CI failure is not established.
+- Claude intercom handover and session mapping: an interrupted copy handover
+  recovers its pending messages (#635); a malformed adoption id is deferred
+  per task and never authorizes a second session start (#638); a listed full
+  session id that is not a valid session reference is never adopted or
+  resumed (#639).
 
-- Confluence brokers: `related` and `stitch` build the CQL text search from
-  the title's words, not the raw title (issue #651). The value of
-  `text ~ "..."` is parsed by Lucene, whose syntax includes `( ) ~ " \ : * ?
-  [ ] { } ^ ! + - /`; a title carrying them was sent unescaped, and a title
-  with parentheses and commas drew HTTP 403, an earlier one with a tilde
-  HTTP 500. The query now holds only the title's lowercase content words
-  (the words `selectRelated` can accept a neighbour on), every word
-  required, no phrase and no OR. A title with no such word sends no
-  request. A text search that fails with an HTTP status no longer aborts
-  the run or reads as a missing scope: `related` prints the status and the
-  CQL, keeps hits from the semantic half, and exits 1 only when nothing
-  was found by a half that ran; `stitch` skips that page, counts it as
-  unsearched, prints `unsearched <id> <reason>` and exits 1 as it already
-  did for a failed semantic search. The cause of the 403 is not determined
-  and is not stated. `textSearch` moves to `confluence-text-search.mts`,
-  which the Claude and Codex installers project and drift-check beside its
-  siblings; `ConfluenceRequestError` carries Atlassian's body message as
-  `detail`.
+- Task runtime limits: a Claude task whose `claude stop` cannot be confirmed
+  is measured and recorded after at most 10 rounds instead of being stopped
+  every round (#541). A Codex task whose recorded pid now belongs to another
+  process settles from its own outcome and never signals the foreign process
+  (#544, #233).
 
-- Codex hook adapter: the capture-failed marker of the denied-call journal
-  (`<CODEX_HOME>/.cache/denied-calls/<agent_id>.failed`) is on disk when the
-  adapter process has exited (issue #612). `journalCall` gave the marker the
-  last 400 ms of its 1 s window and `emit()` then exited through
-  `process.exit(0)`, which abandons a pending `fs.promises` write; a slow
-  write left no marker, and a later `render` could read a count or `none`
-  for a worker whose line was lost. The marker write is now awaited until
-  the hook deadline less 250 ms (about 8.25 s after the hook process
-  starts, 13.25 s in the intent phase); the journal lib keeps its 600 ms.
-  A write that never settles still holds the deny until that deadline
-  instead of 1 s, and still leaves no marker. The shell dispatcher is
-  unchanged: it exits when its event loop drains, so its marker landed
-  already; a test pins it.
-  The test fixture gains the fault `marker-slow` (an append on `*.failed`
-  that settles after 700 ms), which is red against the previous adapter.
-- Codex shell dispatcher: after its checks, flush stdout and stderr before
-  exiting with code 0, so a stuck denied-call marker handle cannot retain a
-  completed deny until the native timeout (issue #621). Journal and marker
-  writes share at most 2 seconds, shortened by the remaining hook budget;
-  the lib keeps its 600 ms cap. With the full capture window and prompt
-  scheduling, a marker delayed by 700 ms still persists.
-  Writes pending at that cap can lose evidence. Imported `shellChecks()`
-  does not exit its caller, and uncapped attribution still prevents an
-  unconditional 40-second answer guarantee. Isolated child-process tests
-  cover the stuck marker, broken-adapter fallback, the deadline clip and
-  both stream callbacks; installed Desktop behavior remains UNKNOWN until
-  measured.
-- The header of `modules/control-plane/node/wake-hook.mts` no longer quotes
-  "There is no deduplication" from the Claude Code hooks page, which no
-  longer carries that sentence (issue #613). It cites the current
-  "Limitations" line on separate background processes and names the
-  section the `timeout` sentence comes from. Comment only.
-- `kherep-node doctor` hooks check (issue #592): the duplicate scan reads
-  the installer template of the running source and ran in the same step as
-  the settings read, so a missing template (`ENOENT`) reported a present
-  Claude `settings.json` as absent. The scan now runs after the read, in its
-  own step; when it cannot read the template it reports `duplicatesUnknown:
-  true` and the check fails with `the control-plane template of this source
-  is unreadable; duplicates unknown` instead of reading as clean or absent.
-  An absent `settings.json` is still reported as absent.
-- `capture.sh` on Windows (issue #592): `portable_paths` folded the Claude
-  home in the forms of `CLAUDE_HOME` as given, while the renderer writes it as
-  `path.resolve` gives it, on Windows with backslashes, so every
-  captured command under the Claude home kept the machine path instead of
-  `~/.claude`. Both forms are folded now.
-- Client binding probe: on Windows the lock that serialises intent creation
-  and verification (`locks/create.lock`, `locks/<requestId>.lock`) is no
-  longer abandoned when another process is releasing it. An exclusive
-  create on a lock file in the delete-pending state fails with
-  `ERROR_ACCESS_DENIED`, reported by libuv as `EPERM`; the waiter now
-  treats `EPERM` like `EEXIST` (and `EACCES` and `EBUSY` too, included
-  defensively) and keeps waiting within the existing bound of 50 attempts
-  of at least 4 ms each (at least 200 ms), then fails closed with the
-  fixed `storage_error` as before. Two concurrent hook runs
-  or two server processes on one Windows host no longer deny a call
-  spuriously, and the CI job `client-binding-probe (windows-latest)` no
-  longer fails in `concurrent first use waits for atomic key publication`;
-  that test now awaits the helper's exit on every path, so no activity
-  outlives it. POSIX behaviour is unchanged except that a genuine
-  permission error on the lock file is reported after the same wait of at
-  least 200 ms (issue #600).
-- Control-plane locks: the other exclusive lock creates now treat a
-  Windows delete-pending lock (`EPERM`, and `EACCES` and `EBUSY`
-  defensively) as contention instead of a hard failure, through one shared
-  classifier (`node/lock-contention.mts`) that looks only at the create.
-  The mid-turn delivery lock used to skip the delivery at once; it now
-  retries at most 50 times of at least 4 ms before it defers, and these
-  codes never trigger its 5-second stale takeover. The autonomy budget lock
-  used to deny the turn at once; such a create now uses one of its existing
-  50 attempts of 10 ms. The Codex busy-ticket lock used to report `failed`;
-  it now reports `busy` at once, while directory errors and every other
-  create error stay `failed`. The service owner file (drain, transaction
-  lock) used to throw the raw error; it now retries on one allowance of 50
-  per acquisition shared with its reclaim gates, then fails with its
-  "already active" message and the code as `cause`, and `EEXIST` still needs
-  owner proof. The Windows launch permit retries the same codes at both of
-  its creates on one shared allowance; `EEXIST` at the second create stays a
-  conflict. The PID write of the mid-turn and budget locks is split from the
-  create, and a failed write removes the lock it just created instead of
-  leaving it for the stale rule. Client binding probe: a holder now writes a
-  complete owner record (`version`, `pid`, `token`, `at`, and a closing
-  newline) into its lock before it works, and a lock whose record is complete
-  and whose process `process.kill(pid, 0)` reports absent is reclaimed
-  through a `.reclaim` gate that rereads the exact bytes, at most 4 gate
-  levels deep. An empty lock of an older version, an incomplete, malformed,
-  oversized or symlinked lock, and a live or unverifiable owner are never
-  removed automatically, whatever their age; the probe README documents the
-  manual cleanup of a quiescent host. A failed release used to be swallowed;
-  it now reports `storage_error`, keeps the persisted intent or receipt, and
-  that process creates no new probe lock until it has retried that release,
-  after which the exact verification returns the same receipt; a lock
-  descriptor whose close failed is reported once and never closed again,
-  and the lock is still removed by path. Intent
-  pruning skips an intent that a concurrent verification removed after the
-  listing (`ENOENT`) instead of failing the creation; every other per-entry
-  error still fails it. A verification whose expired intent was removed by
-  such a pruning reports `intent_expired` instead of `storage_error`. A lock
-  descriptor is closed at most once at every boundary, also when its close
-  fails (issue #602).
-- Service owner file and launch permit: a failed write, fsync or close after
-  the exclusive create no longer leaves the caller's own file behind. Such a
-  partial owner file used to make every later `service upgrade` or `service
-  rollback` refuse with an owner that "cannot be verified", and a partial
-  permit made `claimServiceLaunchPermit` throw, until an operator removed the
-  file by hand. The descriptor is still closed at most once; the file is then
-  removed, also when only the close failed after a complete write, and the
-  original error is rethrown unchanged. If that removal fails too, the
-  original error is still rethrown and the file stays for manual cleanup
-  (issue #644).
-- A failed macOS upgrade recovery no longer leaves the new daemon loaded
-  under the prior plist, after which every service command refused (issue
-  #582). `restorePrior` wrote the prior definition after the candidate stop
-  had failed; a plist write changes only the file, never the loaded job, so
-  launchd kept the candidate while the file held the prior and every read
-  attested the mismatch. The stop failure was swallowed. Recovery now fails
-  closed: the prior bytes are written only over nothing, over themselves or
-  over a candidate proven absent; a candidate that still reads as loaded
-  stays in place, consistent, and the failure reports blocker
-  `RECOVERY_CANDIDATE_LOADED` with one of seven fixed stop codes
-  (`stopCode`), never the stop message. `removeFresh` does the same for a
-  fresh install. `service/candidate.json` records the candidate (binding,
-  digests, the bound prior backup, command, stage, blocker, stop code,
-  `failedAt`), and three verbs finish through the proven stop path: `service
-  upgrade` activates over it, `service rollback` restores the receipt's
-  definition from the recorded prior backup, and after a failed install a
-  repeated `service install` without `--adopt` completes it (`--adopt` over
-  a recorded candidate is refused). The record is used only while its
-  digests are exactly in place under the receipt's binding and its prior
-  backup is bound to the receipt; anything else refuses with a fixed text
-  before any mutation. `service status` reports the record as `candidate`
-  (commit, command, stage, blocker, stop code, `failedAt`, whether the prior
-  is bound), `stale` or `invalid`; when the native read fails it reports
-  `definition: "unattested"` and `running: "unknown"` with exit 1 instead of
-  throwing, on macOS with the configured plist classified by digest as
-  `receipt`, `candidate` or `unknown` and a reload hint only for the first
-  two. Without a receipt it reports a recorded install candidate, and
-  otherwise stays `{ ok: true, managed: false }` without reading the
-  service. A node that is already wedged still needs the manual reload in
-  `docs/INSTALLATION.md`.
-
-- Follow-ups of the start maintenance (issue #589, after issue #581). The
-  sliced inbox purge leaves records whose file was touched within two
-  seconds before the pass began as well as during it. Filesystems stamp a
-  write at a coarse tick (Linux one timer tick, NTFS the system time, an
-  ext4 inode without the extra field whole seconds), so a record written
-  just after the pass began could carry a stamp below the pass start and
-  escape the skip that keeps it, for example a refusal not yet reported.
-  On macOS (APFS) every stamp was measured above a `Date.now()` read just
-  before the write; on Linux and Windows the lag follows from the kernel
-  and platform documentation and was not measured. The margin only delays
-  the retention of such a record to the next start. The daemon's refusal
-  check for sessions that are not running (the first session snapshot
-  after connect, every snapshot and every `session.list`) reads the
-  daemon's inbox index instead of every inbox file. After a start the
-  daemon therefore reads the whole inbox at once only once, to build the
-  index, instead of twice; the sliced start maintenance still reads each
-  record in its own slices, and later checks stat each record. Each
-  refusal is still judged on the record's file, read just before it is
-  rewritten, so a stale copy can delay a refusal but never refuse a record
-  readdressed to a running session. Hooks and the CLI still read the
-  files. The `recorded <n> sent message(s) replied` line counts the
-  records the pass wrote, not those a reply arriving meanwhile had already
-  settled. The offline fallback timer of the maintenance is cleared once
-  the maintenance started. The ordering test's slice count no longer
-  depends on host speed (a fake clock drives the slicer in the test).
-- Control Plane Worker: `agents` moves from 0.24.0 to 0.28.1, and with it
-  `@modelcontextprotocol/server` and `@modelcontextprotocol/client` from
-  2.0.0 to 2.3.1 and the peer-installed `@modelcontextprotocol/sdk` from
-  1.30.0 to 1.32.1, plus the sdk's own express and hono dependencies such
-  as express 5.3.0 (issue #591). `agents` pins its MCP peers to exact
-  versions, so the four can only move together; the separate Dependabot
-  bumps #542, #551 and #553 each failed `npm ci` with `ERESOLVE`. The move
-  clears the advisories `npm audit --omit=dev` reported against the MCP
-  packages: the high-severity GHSA-jm63-cq47-j5jp, GHSA-46jr-4wx8-v453,
-  GHSA-6qxp-vccf-f47h and GHSA-22jm-h49p-29qw, and the moderate
-  GHSA-rvq5-wwqv-78pq and GHSA-6prh-2h8m-c8cw. The Worker code needs no
-  change: it builds a new `McpServer` per request for `createMcpHandler`,
-  which the server's one-connection-per-instance rule of 2.3.0 requires.
-  The install-script set and the `allowScripts` pins are unchanged. Not
-  deployed; the running Worker keeps the old packages until its next
-  deploy.
-- The Claude installer no longer duplicates the control-plane hooks when it
-  runs from another root than the install before it (issue #590). The
-  replace rule identified an existing `deliver-hook.mts`, `wake-hook.mts` or
-  `attribution-hook.mts` entry by the full script path, so an install from a
-  service source pin after an install from the checkout added a second set:
-  a macOS node held 16 control-plane entries instead of 8 over
-  `UserPromptSubmit`, `Stop`, `StopFailure`, `PostToolUse` and
-  `SessionStart`, every delivery and wake hook command ran twice per event,
-  and neither `drift-check.sh` (the merge kept both sets, so the expected
-  file equalled the live one) nor `kherep-node doctor` (it counts hooks, not
-  entries per event) reported it. The identity is now the script's path from
-  `modules/control-plane/node/` on, without root or extension and
-  case-folded on Windows (`bootstrap/managed-hook-key.mts`
-  `controlPlaneHookKey`), so an install from any root replaces every entry
-  of the same script on the same event; a command that chains the script
-  with a shell control operator, substitution or redirection stays as an
-  operator hook, other operator hooks are untouched, and the replace stays
-  unreported as before. `drift-check.sh` runs `bootstrap/duplicate-hooks.mts`
-  on both settings files and fails with one
-  `DUPLICATE-HOOK <event> modules/control-plane/node/<script> x<n>` line per
-  script the installer template wires that appears more than once on an
-  event it wires it for; the doctor's `hooks` check reports the same
-  `duplicates` for the Claude file and fails with `a control-plane script is
-  wired more than once on one event; run bootstrap/install.sh again`. Codex
-  is not affected: its commands name the stable entry point and the
-  installer replaces its managed block whole. Installing again from the
-  current root removes the duplicates.
-- A service upgrade, rollback or stale-drain recovery to this version no
+- Daemon start maintenance runs in the background after the first
+  connection, so a service upgrade, rollback or stale-drain recovery no
   longer fails its 30 s health check on a node with a large local queue
-  (issue #581). The daemon start's inbox maintenance (issue #520: settle
-  answered sent records, then purge records older than 7 days) read every
-  `sent/` and `inbox/` file before the daemon connected: 58 s on a node with
-  4688 inbox and 2528 sent files, and 106 s for the old daemon during the
-  rollback (cause UNVERIFIED). It now runs once per daemon process after the
-  first authenticated connection, or 60 s after the start when no connection
-  comes, in the background in slices of about 50 ms off the frame lanes,
-  settle still before purge, with the same rules and log lines. A reply that
-  arrives meanwhile is settled on arrival as before. The sliced purge leaves
-  inbox files written since the pass began to the next start, so a record
-  the daemon refuses meanwhile is reported refused before it is removed
-  (issue #195). The connect path still captures the source identity of the
-  pin, which grows with the source tree, not with the queue. The
-  `connected as` line carries the seconds since the daemon start and the
-  process uptime, and one line reports the maintenance's duration
-  (`start maintenance done in <s> s`, or `stopped after`). The join of sent
-  records with their replies is linear instead of quadratic, and a purge
-  skips an entry another purge removed after its listing instead of
-  aborting. When a failed health check restores the prior service, that
-  restore now waits up to 180 s for its health, because a prior source may
-  still maintain its queue before it connects; the forward health check
-  keeps 30 s.
-- Upgrade of a changed managed Claude hook (issue #568). The settings merge
-  kept an existing entry next to the managed one whenever anything besides a
-  spelling of the same paths differed, so after a template change both ran
-  in parallel: a changed `timeout`, a changed mode, and a guard added to or
-  removed from a dispatcher group, which ran every guard of that group
-  twice. A managed hook that runs through the hook runtime now replaces
-  every existing entry of the same event and matcher group that runs the
-  same main under `<CLAUDE_HOME>/hooks/`, an operator's edit of it and an
-  extra `guard-dispatch.mts` entry with other guards included. Each
-  replaced entry that differed prints
-  `hooks: replace <event> [<matcher>] hooks/<main>`; an unchanged upgrade
-  prints nothing, and a file that already carries the duplicate heals to
-  one entry. Entries for another hook file, at another matcher or under
-  another home, and forms the template never renders (`& node`,
-  `node <flags>`, single quotes, mixed quoting, `/c/...`, `.` or `..` in the
-  main path, a line break between the parts, and a shell control operator,
-  substitution or redirection after the main outside double quotes) stay.
-  A template change to a managed group's matcher is not covered. The
-  recogniser is the new leaf module
-  `bootstrap/managed-hook-key.mts`. Codex needed no change: its installer
-  replaces the managed hook block as a unit and refuses an unrecognised or
-  edited previous block instead of keeping both.
-- The Control Plane Worker's `allowScripts` pin names the workerd version
-  its lockfile resolves (issue #559). The pin still named
-  `workerd@1.20260923.1` while `package-lock.json` resolves
-  `1.20261006.1`, so the pin matched nothing and `npm ci` listed workerd
-  under "install scripts not yet covered by allowScripts". The pin is now
-  `workerd@1.20261006.1`; `bootstrap/allow-scripts-lock.test.mts` fails when
-  a pinned `allowScripts` entry in any tracked `package.json` names a
-  version its sibling `package-lock.json` does not resolve. `core-js-pure`
-  (a postinstall banner) and `fsevents` (an implicit node-gyp rebuild; the
-  package ships its prebuilt binary, macOS only) are denied by name, so
-  `npm ci` in the Worker prints no install-scripts notice. Under npm 11 an
-  uncovered install script still runs with a notice and a denied one is
-  skipped, so the workerd postinstall ran before this change too.
-- Hook runtime error paths under injected faults (issue #521). A
-  coordination database the hook process can read but not write
-  (`run.sqlite` mode 0444, a read-only mount, another owner) is opened
-  read-only by SQLite, where `BEGIN EXCLUSIVE` excludes nothing: the
-  integrity writer and every replay of a recorded repair are now refused as
-  `not admitted: unavailable` before a byte is written, where a reader with
-  a pending repair used to write the target under that hollow hold; readers
-  without a pending repair stay admitted. The Codex `run.lock.sqlite` in the
-  same state is refused as `run.lock unavailable (ERR_SQLITE_ERROR)`
-  instead of granting a second owner. A repair whose hold could not be
-  taken back reports what happened instead of "busy after the repair was
-  recorded": `write failed (ENOSPC)` for a write that left a prefix (the
-  intent stays pending), `the repair was written but its record could not
-  be cleared (<kind>); ...` for a clear that SQLite rolled back, and a
-  proven repair when its replay had committed. The dispatcher's
-  last-resort deny is the fixed `[guard-dispatch] guard-dispatch.mts cannot
-  run (internal error); ...` without the raw Node message or a path. New
-  suites `claude/hooks/hook-runtime-fault-*.test.mts` inject SQLite
-  auto-rollback, ENOSPC, EACCES, spawn failures and the last-resort catches
-  through `fault-preload.fixture.mts` and in-process patches.
-- Observation result check at the handback (issue #555). Since Claude Code
-  v2.1.271 an auto-mode subagent delivers its report through
-  `SubagentHandback`, and `last_assistant_message` at `SubagentStop` holds only
-  its closing text, so `obs-result-check.mts` could block a delivered report or
-  pass a wrong one. A new `PostToolUse` hook, `obs-handback-record.mts`, matched
-  on `SubagentHandback`, now checks a `claude-obs` report where it is
-  delivered, records the verdict under
-  `<CLAUDE_HOME>/.cache/obs-result-check/<agent_id>.delivered` and gives the
-  operator the `failed` and still-malformed notices. `obs-result-check.mts`
-  reads that state first, waits up to 2 s for it when a handback is plausible,
-  never blocks when Claude Code reports `permission_mode` `auto` or when the
-  subagent transcript shows a handback, and keeps its `last_assistant_message`
-  path, block included, for subagents without the tool. A malformed handback
-  is reported, not refused: whether a refused handback would be retried is
-  UNKNOWN until measured, and an observation run follows nearly every turn.
-  The stop hook writes a fixed-key trace, `<agent_id>.stop`, for that host
-  measurement and prunes the directory after 24 h. The `SubagentStop` entry is
-  unchanged, so the stop uses Claude Code's default hook timeout; an installer
-  upgrade keeps exactly one entry of each hook, which a new bootstrap test
-  renders. Codex is unchanged: its hooks reference has no `SubagentHandback`.
-- Windows: `writeJsonAtomic` (daemon.json, inbox records, task and session
-  records, receipt.json) retries the replace-by-rename on `EPERM`, `EBUSY` and
-  `EACCES` up to 8 attempts with 10–640 ms backoff (1.27 s in total) while
-  another process holds the target open; the temporary file is removed only
-  after the last attempt and the original error is rethrown unchanged. A
-  `kherep-node service upgrade` is less likely to fail at stage `health` with
-  recovery `restored` when a reader briefly holds `daemon.json` open while the
-  new daemon records its state; a hold longer than the budget still fails the
-  write as before. POSIX is unchanged (issue #540).
-- A daemon refusal no longer loses a delivery written meanwhile (issue #627).
-  `markRefused` read an inbox record and rewrote it; a delivery hook in
-  another process that offered or delivered the same record between that
-  read and that write lost its update, and the record ended `refused`
-  although the session had received it. Every rewrite of a record body
-  (`setDeliveryTask`, `markDelivered`, `markAnswered`, `markOffered`,
-  `markRetry`, `markClosedAttempt`, `readdress`, `markRefused`) now reads,
-  judges and writes under the record's lock, an exclusive create of
-  `.<messageId>.json.lock` next to the record
-  (`node/inbox-record-lock.mts`, the lock pattern of the client binding
-  probe): `EEXIST`, and on Windows `EPERM`, `EACCES` and `EBUSY` for a lock in
-  the delete-pending state, mean held and are polled every 20 ms; a lock
-  older than 5 s, either way of the clock, was left by a holder that died and
-  is moved aside, compared and removed, never a fresh one; a newer lock that
-  took its place meanwhile is linked back, or renamed back where the file
-  system has no hard links. A hook, the msg CLI and the MCP client wait 1 s
-  for a held record; the record locks of one delivery hook call (the prompt
-  delivery, a Stop confirmation, a StopFailure retry flag) share one 1 s
-  budget, so a PostToolUse delivery ends well inside its session lock's 5 s
-  stale bound. The daemon waits 250 ms for all the record locks of one lane
-  item together; a record held beyond that is left to the next round. A
-  record still held after its wait is reported, typed `RecordLockBusy`, and
-  handled per writer: an offer, delivery confirmation, retry flag, answer or
-  refusal is "not written" and repeated by the next event, round or read (a
-  repeated offer at worst, never a lost one); a delivery identity, closed
-  attempt or readdress fails its daemon round, which runs again, except after
-  an intercom session was started or resumed for the message, where the
-  record is logged and left out of the hand-over so the round does not start
-  a second session. `markOffered` judges the record under its lock too and
-  does not offer one that was delivered or refused meanwhile. The delivery
-  hook marks a record offered before it shows it and shows exactly what it
-  marked; a record it could not mark waits for the next turn. The purge
-  judges a record's state and receipt on the record under its lock, where it
-  also removes it, instead of on the listed copy: a record delivered after
-  the listing stays until a receipt confirms that state (#195). The write
-  itself is still `writeJsonAtomic` with the Windows rename retry of issue
-  #540. `readdress` judges each record again under its lock and returns only
-  the ids it moved. The purge removes leftover lock files of retention age
-  like leftover temps. The staged messaging client graph of both runtimes
-  gains the new module. Limits: a holder slower than 5 s is treated as dead
-  and its write can then be lost as before; a Windows reader that keeps a
-  lock open while its holder releases leaves the lock to that 5 s rule; a
-  Windows rename retry (1.27 s per write) inside a PostToolUse call is not
-  covered by the budget, as before. Thirteen deterministic tests (each writer
-  holding the lock at its rename, two with the lock held from another
-  process, three of the purge) are red on the previous code.
-- Record-lock follow-ups (issue #634): a busy Claude intercom handover, or a
-  busy record in a task's `deliveryPending`, defers saving its mapping to the
-  next watch while later tasks still run. Retrying repairs delivery identities
-  for messages already moved from the previous session, and fresh moves retain
-  older provenance. Each executing Codex intake-window frame or coalesced tick
-  gets its own 250 ms lock-wait allowance, shared by its acquisitions,
-  including work after an await. Other errors still propagate.
-- A Claude task past its max runtime whose `claude stop` cannot be confirmed
-  is no longer stopped again every watch round for ever (issue #541). After a
-  failed stop the watch measures the run as owner status does
-  (`measureClaude`): a session without a live process is recorded at once
-  (`done` stays `done`, otherwise `stopped`) with the reason "max runtime
-  reached; claude stop not confirmed, fresh status shows no live run"; a run
-  whose process still lives, also behind a row that shows it ended, or whose
-  status cannot be measured is stopped again for at most `MAX_STOP_ROUNDS`
-  (10) rounds, counted on the task record (`stopAttempts`) so a daemon restart
-  does not reset it, then recorded `stopped` with the reason "max runtime
-  reached; claude stop not confirmed after 10 rounds". Each outcome is logged
-  once; a failure while handling the unconfirmed stop is logged and the watch
-  round goes on with the other tasks. Codex tasks are not changed here; the Codex deadline stop still
-  retries every round when the recorded pid was reused by a live foreign
-  process (issue #544).
-- Interrupted Claude intercom copy handover now recovers pending messages
-  associated with the exact delivery task/runtime, including older intermediate
-  addresses, and corrects their destination identity (issue #635). Watcher and
-  immediate resume adoption share the same record-locked operation. All pending
-  messages at the previous address retain legacy movement; foreign identities,
-  provenance and offer/retry evidence are preserved. Delivery identity updates
-  require a matching task and runtime; a destination record belonging to the
-  same task under another runtime keeps its existing identity. Busy resume
-  recovery keeps its old mapping and new short ID so watch can finish without
-  another launch.
-  Target-local terminal metadata may correct, while terminal records elsewhere
-  stay unchanged. Existing opt-in fallback limits for unowned intermediates
-  remain; no historical sweep is added.
-- Malformed nonempty Claude adoption IDs are deferred per task, so later tasks
-  in the watch round continue. A bookkeeping error after a resumed run is kept,
-  including admission release failure, no longer authorizes a second session
-  start. Empty-ID mapping and the two explicit failed-resume fallback paths
-  retain their existing behavior (issue #638).
-- Claude start and continue mapping no longer adopts a listed full session ID
-  that is not a valid session reference (issue #639). A new start, including
-  the closed-session fallback, keeps its short ID, pid and pending marker
-  without a full ID, so its intercom messages stay delivery-pending under the
-  task name until a valid listing maps them; a continue keeps its previous
-  valid full ID while pending. The watch diagnostic for a malformed listed or
-  stored ID now reads `session id is not valid; mapping deferred`. An ended
-  intercom task whose stored full ID is not a valid session reference is no
-  longer selected for resume, so that ID never keys a turn budget file (on
-  Windows a control character made the budget report `locked` every round);
-  its messages take the guarded new-session path on the closed target, with
-  that target's readiness, limits, working directory and budget. The direct
-  resume keeps its unchanged pre-launch refusal of such an ID (issue #638),
-  which this earlier selection now precedes. Existing records are not
-  migrated.
-- Receipts for messages whose reply had already reached this node no longer
-  appear after a service restart or upgrade (issue #520). They had never been
-  shown: the reply in the inbox kept them quiet, and the daemon start's purge
-  of inbox records older than 7 days removed that reply, after which the
-  `delivered` sent record surfaced with its week-old time. A reply now records
-  the sent message `replied` on this node: on arrival, at the next
-  delivery-hook read, and at every daemon start before the inbox purge. A
-  record whose reply an earlier restart had already purged can still surface
-  once, for a session that had no hook event since; nothing on the node
-  distinguishes it from a receipt never shown.
-- Control-plane e2e tests under host load, and a Worker comment (issue
-  #607). `exchange-recovery-e2e.test.mts` and
-  `cross-runtime-reply-e2e.test.mts` polled inbox, sent and directory files
-  every 50 ms with a 5 s bound inside Vitest's default 5 s test bound, and
-  slept a fixed 150 ms after every exchange round; under load the test bound
-  fired first. The harnesses now log every frame the node client handled,
-  dropped or sent (`test/frame-log.mts`) and wait on the frame that writes
-  the record under test: `auth.ok`, `message.deliver`, `message.status` with
-  the expected state, and `directory`; a resend that must not go out is
-  checked on the outgoing log instead of a sleep, and the repeated-send case
-  waits for the Worker's answer to every send instead of a 300 ms quiet
-  period. A missing event fails after 10 s naming the frames seen; the two
-  suites' test bound is 90 s. The Worker test config sets `testTimeout` to
-  30 s for the other node harness tests, whose 5 s waits shared the same
-  bound. The comment on `MessageStore.report` now states the receipt rule
-  the code applies: a report for a row or tombstone of another target node
-  gets no receipt, one for an id without a row settles from its tombstone or
-  as `expired`. No behaviour changes.
-- A Codex task past its max runtime whose recorded pid now belongs to another
-  process (after a reboot, or daemon downtime past the deadline) is no longer
-  stopped again every watch round for ever (issue #544). The watch now measures
-  the run by pid and start identity before the deadline stop, as it already
-  did after it: a run whose root is no longer the recorded process settles
-  from its own outcome in one round (`done` after `turn.completed`,
-  otherwise `failed` with "codex ended without completing the turn"), and its
-  recorded descendants that still have their start identity are ended by pid
-  (issue #233); a run that ended on its own past the deadline is therefore
-  reported from its outcome, not as `stopped` at the max runtime. The node
-  logs `its root (pid <pid>) is no longer the recorded process; settled from
-  its outcome` for such a settle. A stop of such a run (the retried operator
-  stop, `POST /api/tasks/{id}/stop`) no longer lists or waits on the tree
-  under the reused pid: the capture is empty when a root the daemon does not
-  hold has lost its recorded start identity, and the task is recorded
-  `stopped`; that stop does not end the run's recorded descendants (a
-  follow-up); a run past its deadline whose root is gone is settled by the
-  watch, which does. The process that holds the pid now is read once, for its
-  start time, and never signalled.
-- The three Codex guards that still ran directly now run through the
-  fail-closed hook adapter (issue #507, part 4 of 4, the last part).
-  `atlassian-destructive-guard.mts --runtime codex` (last entry of the Agent,
-  web and MCP `PreToolUse` group), `codex-dispatch-contract-guard.mts` and
-  `playwright-file-guard.mts` are wired as
-  `"<node>" ".../codex-hook-adapter.mts" ".../<guard>" "pre" [guard arguments]`,
-  so a guard that is missing, empty, broken, killed or past its budget denies
-  the tool call with a reason that names the file, as the other Codex guard
-  groups have since part 3. The adapter passes a guard's top-level
-  `systemMessage` through when it is a non-empty string (Codex documents it
-  for `PreToolUse`), in its exported `runAdaptedHook` as in its command form,
-  so the dispatch-contract guard's deny reasons and its brief-revision notice
-  reach the session unchanged; any other extra field is still a deny. The
-  shell dispatcher `codex-shell-checks.mts` gets one integer clock ending
-  1.5 s before its 40 s hook timeout, which bounds stdin and every guard, and
-  after its guards, before attribution, starts `codex-hook-integrity.mts
-  --trigger codex-shell-checks` when the heartbeat is older than 30 minutes
-  or missing or a guard could not run, with at most 6 s of what is left;
-  attribution still runs uncapped after it, so the clock bounds the guards
-  and the re-check, not the final answer. Each dispatcher also checks the
-  other (`codex-shell-checks.mts` from the adapter, both adapter copies from
-  the shell dispatcher) and treats it as a guard failure when it is missing,
-  empty, not a regular file, unstatable, or when its device, inode, size or
-  modification time (nanoseconds) differs from what the last proven integrity
-  run recorded in `heartbeat.json` (`peers`). That run takes the record from
-  an fd-bound snapshot of exactly the bytes it syntax-checked (open, `fstat`
-  of that descriptor, read from it, the verdict on those bytes, then a re-stat
-  of the path and its real path) and records nothing when the verdict is not
-  OK or the path no longer names those bytes. The re-check then parses and
-  restores the peer, so a dispatcher broken after the last proven run is
-  restored by the next matched call of the other group, and a heartbeat
-  without that record triggers one re-check (once after every install).
-  Remaining gap: an in-place rewrite that keeps device, inode and size and
-  sets the modification time back to the recorded value (or lands within the
-  same tick on a filesystem with coarse timestamps) is seen only by the next
-  stale-heartbeat or session-start run, a defect the syntax check cannot see
-  (an import that does not resolve, a throw at load) is seen by no check, and
-  both dispatchers broken at once wait for the session start. These three
-  hook command definitions change, and their `commandWindows` forms with
-  them; group count and every entry index stay, so no positional trust key
-  moves and existing `[hooks.state]` bytes are kept. Codex marks exactly these
-  three definitions for review and skips them until they are trusted in
-  `/hooks`: until then the Atlassian destructive guard, the dispatch-contract
-  guard and the Playwright guard do not run; the installer prints one line
-  saying so when it replaces the managed hook block. The upgrade recognises
-  the exact previous block and refuses any other. Every Codex hook group is
-  listed with its fail-closed status in `docs/CODEX.md`: the optional
-  messaging intent group stays direct (it allows with `updatedInput`, waits up
-  to 8 s for its acknowledgement and lives outside `hooks/`, so the adapter
-  cannot carry it), the `Stop` and `SubagentStop` gates keep their own
-  `decision: block` contract, and the remaining events make no permission
-  decision. Whether Codex shows the notices is UNVERIFIED; no Windows CI job
-  runs the Codex suites yet. `codex/ARCHITECTURE.md` now describes the part 3
-  integrity state (eight libs, run lock, heartbeat, triggers).
-  This completes #507.
-- Codex hook-integrity run lock under two runs that start together (issue
-  #620). `takeRunLock` in `hooks/lib/integrity-heartbeat.mts` retries a busy
-  answer three times, 2 to 11 ms apart on the same connection, before it
-  reports `busy, holder UNKNOWN`. Measured with a preload that staged the
-  interleaving: run A, already at SQLite's PENDING lock, was refused
-  EXCLUSIVE because run B held SHARED for its schema read, and B's own
-  BEGIN was then refused by A's PENDING; both backed off, both exited 0,
-  nobody repaired the planted 0-byte lib and no journal line was written:
-  the state T3.5 reported once on windows-latest; whether that run took
-  this path is UNVERIFIED. A second busy path, not staged: B is refused
-  RESERVED by A's RESERVED while B's SHARED blocks A's EXCLUSIVE. Every
-  attempt keeps `busy_timeout 0`, so a contender against a run that is
-  working is still answered within about 40 ms (measured on macOS;
-  Windows UNKNOWN; T4.1 now bounds that at 250 ms). T3.5 keeps each run's
-  stdout and names the path each run took when it fails; a busy pair is
-  not accepted. Limits: the retries lower the chance of a repeat collision,
-  they do not exclude it, and a pair that still collides is repaired by the
-  next matching call, as before.
-- Fail-closed Codex hook adapter and Codex hook-integrity re-check (issue #507,
-  part 3 of 4). `hooks/kherep-maestro/codex-hook-adapter.mts` now denies a
-  `PreToolUse` tool call, with a reason that names the file, when its guard is
-  missing, empty, not a regular file, not spawnable (a spawn that throws
-  included), killed, still running at its cap (the child is killed with
-  SIGKILL; on Windows every signal is a forced termination), out of budget
-  before it could start, exits with a code other than 0 or 2, prints more than
-  1 MiB, or prints anything other than a `PreToolUse` decision; a printed
-  `ask`, which Codex does not support, is a deny; a missing guard argument,
-  stdin that is not a JSON object or stdin that stays open are denied too. One
-  integer clock from the adapter's start bounds stdin, every guard item, the
-  re-check lib load and the re-check itself, so the adapter answers at least
-  1.5 s before its 10 s hook timeout and exits as soon as its output is
-  written; PostToolUse phases are unchanged. Before, each of these let the call
-  through, a guard that ignored SIGTERM was waited for, and in the privacy
-  phase a guard's exit code and stderr were lost once it had printed.
-  Arguments after the phase reach the guard unchanged.
-  `codex-hook-integrity.mts` gains a `--trigger <source>` mode with plain
-  lines. Before anything is restored or journalled, its own libs included, it
-  takes `<CODEX_HOME>/.cache/hook-integrity/run.lock.sqlite` as an `EXCLUSIVE`
-  SQLite transaction (`node:sqlite`, rollback journal `DELETE`, busy timeout
-  0): a lock the operating system keeps for the holding process and releases
-  when that process ends, so it is never taken over, moved or deleted by
-  another run; a second run reports `busy, holder UNKNOWN` and changes
-  nothing. The hook removes the heartbeat before its first repair (a failed
-  removal blocks the repair), walks the import closure again after each repair
-  pass through the new shared `hooks/lib/integrity-passes.mts`, which
-  `live-hook-integrity.mts` now uses for the same loop, at most three passes,
-  checks the live closure once more read-only, and writes `heartbeat.json`
-  only when all of that passed and the write itself succeeded; journal entries
-  name the `trigger`. The adapter starts that re-check after its guards when
-  the heartbeat is older than 30 minutes or missing or a guard could not run,
-  with at most 6 s of what is left; its lines go to stderr and, on an allowed
-  call, to `additionalContext`, on a denied call to `systemMessage`, never
-  into the decision. No Codex hook command definition changes, so no trust
-  review is needed. Limits: the adapter itself is not checked; Codex has no
-  hook runtime, so a file under repair may be loaded by a parallel call; a
-  Codex home on a network filesystem is not supported for the lock; a broken
-  `lib/integrity-heartbeat.mts` is reported, not repaired, until the next
-  installation; whether Codex shows the notice is UNVERIFIED. The three direct
-  Codex guards stay as they are until part 4.
-- Upgrade from a legacy `~/.claude` watcher group (issue #507, part 2). A host
-  that still ran `manifest-watch`, `loc-watch`, `umlaut-translit-watch`,
-  `simplify-nudge` and `drift-managed-path-watch` raw as
-  `node ~/.claude/hooks/<name>.mts` kept those commands after an upgrade: the
-  four watchers the template already ran through the entry ran twice, and the
-  five raw commands made `live-hook-integrity.mts` refuse every repair and
-  write no heartbeat. The settings render now removes a raw command in the
-  `~/.claude`, `$HOME/.claude`, `${HOME}/.claude` or `%USERPROFILE%/.claude`
-  form (the script quoted or not, with `/` or `\`) when the Claude home is the
-  default one, the command is exactly `node <script>` with nothing glued to the
-  script, no argument, operator, redirect or line break after it, the path
-  below the token a plain literal one (letters, digits, `.`, `_`, `-` and `/`;
-  no expansion, glob or escape, no `.`, `..` or empty segment), in a hook
-  with no field besides `type` and `command`, the template runs that main
-  through `kherep/hook-runtime/entry.mts` or passes it to the dispatcher behind
-  it, and the template does not run it in that form at that event; the install
-  output names each with
-  `hooks: unwire <event> <command> (managed under <events>)`. As for the
-  absolute form since part 1, this also removes such a raw command at an event
-  or matcher the template's entry does not cover: a hand-written
-  `node ~/.claude/hooks/commit-guard.mts` under `PreToolUse` `Edit` goes, and
-  the guard then runs only where the template's dispatcher runs it. A
-  `~/.claude` command for a main the template does not manage, one with more
-  than the script (`node "~/.claude/hooks/loc-watch.mts"-x.mts`,
-  `... && node <other>`, an argument, a `timeout` or other own field), an
-  entry command in that form and a main the template runs raw stay; so do
-  `node.exe`, `node <flags>` and `& node` forms, which still count as outside
-  the runtime.
-  `umlaut-translit-watch`, which the template did not wire before, is now a
-  managed `reader` hook in its `PostToolUse` `""` group, directly after
-  `loc-watch`, as Codex already runs it.
-- Publication of a missing hook file (issue #507, part 2). The new file is still
-  created beside its target, so it gets that directory's ACL, default ACL and
-  group, but before its first byte it gets a second name in the hooks directory
-  and the name beside the target is removed. It is linked into place only while
-  the hooks directory, the target's directory and that second name are the ones
-  measured at the start, and only the writer's own file is ever removed: a
-  foreign file renamed to the staging name is no longer published, and a
-  target directory renamed away before the link no longer keeps a complete
-  temporary file (early, crash and hooks-directory-rename windows remain, see
-  docs/INSTALLATION.md). New refusals
-  `target directory changed before the publication; refusing to publish` and
-  `staging file or hooks directory changed before the publication; refusing to
-  publish`. Limitation: a missing file whose directory lies on another volume
-  than the hooks directory, or a hooks directory that may not get a new name, is
-  no longer repaired; the publication fails closed with `publication failed
-  (<code>); the target stays absent` before any byte, and existing files are
-  still written in place. Shared by both `restore-write.mts` copies and Codex
-  hook integrity, which gets no new hold.
-- Reconnect replay of acknowledged legacy rows (issue #493). A message row
-  stored before the deletion existed (no `deletable` mark) was replayed to its
-  sender after every authentication although the sender had acknowledged its
-  final state. The acknowledgement of its current final state by its sender
-  now settles such a row: the Worker stores the acknowledged state in
-  `settled_state` and audits `message.settle` with ids only. The row is kept,
-  never deleted, and the replay leaves it out while its state equals the
-  acknowledged one; a later state, also one set by an earlier Worker version
-  after a rollback, makes it replayed again until that state is acknowledged.
-  The replay reads a partial index over the unacknowledged rows. This inverts the earlier tested expectation that an
-  acknowledged legacy row is replayed again after reconnect: that replay was a
-  redundancy the acknowledgement already covered, not a delivery guarantee. A
-  legacy row whose sender never acknowledged its current state is still
-  replayed on every authentication.
-- Codex hook commands stay the same across upgrades (issue #503). The six
-  Control Plane hook definitions in `config.toml` (shell-group and
-  `PostToolUse` attribution, and delivery on `SessionStart`, `UserPromptSubmit`,
-  `Stop` and the `PostToolUse` busy hint) named the checkout or source pin the
-  installer ran from, so every upgrade from a new pin changed their hash and
-  Codex asked to review them again. They now name the stable entry point
-  `<CODEX_HOME>/hooks/kherep-maestro/codex-control-plane-hook.mts` and a fixed
-  hook name (`deliver` or `attribution`). The installer writes
-  `<CODEX_HOME>/orchestra/control-plane-source.json`, the source root with its
-  commit and kind, inside its install transaction. The entry point checks the
-  record's shape and that the hook file (and, for a pin, its manifest) exists,
-  then runs the hook as its own process with the caller's stdin, stdout,
-  stderr, environment, working directory and exit code. Without a usable record
-  it exits 1 with one stderr line and never falls back to another source. The
-  check per run is not a verified load; `kherep-node doctor` verifies the
-  source identity and reports `codex.pointer`, `stable` and `legacy`. The shell
-  dispatcher still runs its three guards first and calls attribution
-  in-process afterwards, so a missing record costs attribution only. The first
-  install after this change rewrites the old commands once, and Codex asks for
-  one review. Trust entries, rules, guards and permissions are unchanged.
-- Corrected nested-runtime guidance (issue #489). When both
-  `CLAUDE_CODE_SESSION_ID` and `CODEX_THREAD_ID` are set and the available
-  process ancestry does not establish their nesting, the fixed `NESTED_RUNTIME`
-  reason no longer suggests that any `--from` resolves it: for msg commands it
-  states that `--from` needs the full id of a Codex session a Kherep hook
-  recorded within 12 hours, with a matching task when `KHEREP_SESSION_ID` is
-  set. The `msg` usage text, `docs/CODEX.md` (which no longer says the Codex
-  thread is taken as sender regardless of ancestry) and the Control Plane
-  README and architecture match it. New synthetic tests cover `--from` under an
-  undecidable nesting: no record, stale record and a task bound to another
-  thread are refused with nothing written; a fresh record of the own or of
-  another thread is accepted. Sender checks, the refusal code and the exec
-  rules are unchanged; this does not restore or explain any Windows send.
+  (#581, #589, #195). A restore after a failed health check waits up to 180 s.
+  Receipts for messages whose reply had already arrived no longer appear
+  after a restart (#520).
 
-- Windows identity reads no longer block the daemon's event loop (issue #473).
-  The process start-time read (`process-start`) and the process-tree query
-  (`process-relations`) run as awaited child processes behind one runner
-  (`node/child-run.mts`), so message intake keeps storing deliveries while a
-  watch pass, a stop or an exchange round waits for PowerShell or `ps`. The
-  commands, their 10 second timeouts and the meaning of their results are
-  unchanged: no output is no such process, a non-zero exit or a timeout is a
-  failed read, a timed-out tree query runs once more, and each signal of a stop
-  still follows the read of its pid's start directly; a started run gets the
-  end of its prompt only after its start time was read, so a normal run does
-  not end before the read; a run that exits on its own before the read keeps no
-  start time, as does a watch read whose held child ends or is replaced. The exchange round reads
-  an ended Codex task's previous run only after its `maxConcurrent` and
-  working-directory checks, before the readiness verdict and the turn budget,
-  so no refusal and no turn changes; a task at the limit or with a refused
-  working directory costs no PowerShell start per round, and while its previous
-  run still ends it shows that guard's waiting code (and the `cwd-refused` note)
-  instead of `target-busy`. A slow read is logged
-  as `child process <name> took <s> s`; `process-start` and `process-relations`
-  no longer appear in the `synchronous <name> took` line, which now also names
-  a slow `taskkill`. `taskkill`, the one-time owner identity read and the MCP
-  credential write stay synchronous. A stop whose held child ends or is
-  replaced during a read signals nothing: the root's SIGTERM and SIGKILL and
-  the force after a timeout each compare the child held when the stop began
-  after the awaited read, right before the send. Such a stop still completes
-  when a fresh read confirms that the captured processes ended.
-- Import closure of a linked hook (issue #524). A wired hook file that is a
-  link, or sits in a linked directory, now has its relative imports resolved
-  from the real directory of the file Node loads and bounded by the real hooks
-  directory, then named under the wired hooks directory: in the Claude
-  integrity run, in its final read-only proof (from the same snapshot as the
-  syntax verdict) and in `codex-hook-integrity.mts`. Before, imports were
-  resolved from the alias directory, so a dependency the hook never loads could
-  be checked and the one it loads missed, also where a `..` crosses a linked
-  hooks root, and a healthy decoy beside the alias could let the heartbeat be
-  written. A link whose target lies outside the hooks directory contributes no
-  imports; the alias still names the file in reports and the journal; restore
-  targets are unchanged.
-- Message-retention Worker test barrier (issue #529): the test took the
-  answer to a later `directory.get` as proof that a resend's `message.status`
-  had been sent. Each frame reaches the Registry on its own stub, and there
-  is no ordering between different stubs, so the directory answer may come
-  first. The test now waits for the status, error or receipt frame itself,
-  by message id and state, with every earlier frame still asserted, checks
-  the row and tombstone before the resend, and a regression forces this order
-  with a non-storage hold on the Registry's resend answer. The Worker is
-  unchanged; the cause of the one observed CI failure is not established.
-- Message-retention Worker test acks (issue #557): after an acknowledgement
-  frame, which the Worker answers with no frame, the tests took the answer to
-  a later `directory.get` as proof that the ack had run; there is no ordering
-  between different stubs, so it may not have. Of the 25 such barriers, the
-  13 acks that delete or settle a row are now awaited on that row's state,
-  the 11 acks without an effect go through the Registry's RPC, whose answer
-  is the completion, and the one ack the frame validator refuses keeps its
-  barrier, because the error is sent before the ack reaches any stub. A
-  regression holds the ack's transaction with a non-storage hold until the
-  directory answer has passed. The Worker is unchanged.
-- Timing-dependent tests on the macOS unit job (issue #565). Hook runtime R2
-  read `child.pid` while `writeFileSync` had created it but not yet written
-  it: `Number("")` is 0, and `alive(0)` signals the own process group, so the
-  child never counted as ended. The child now publishes its pid by rename,
-  the test refuses a value that is no process id, `alive()` throws for a pid
-  of 0 or less, and a failed assertion releases the child and kills the entry
-  so the file still exits. The nested guard of the hooks-root test publishes
-  its pids by rename for the same window. The fake Codex app-server ended its
-  child two event-loop turns after stdin ended, racing the client's 30 ms
-  grace timer, so one stalled turn under load turned a clean close into a
-  SIGKILL; it now ends on `process.nextTick`. The 24 h retention deadline is
-  bounded by the time before the first send and after the row was read,
-  without the 1 s slack, and awaited on the row, since `directory.get` is no
-  barrier for the `delivered` status frames. Test and fixture code only.
-- Message-retention Worker test reports (issue #569): after a `message.status`
-  report, the tests took the answer to a later `directory.get` as proof that
-  the report had run; there is no ordering between different stubs, so it may
-  not have. The issue took these reports for receipt-less: the Worker answers
-  every report of the target node with a `message.receipt` event, sent after
-  the Registry's RPC returned, and only a report of another node gets none.
-  The six report sites answered by a receipt now wait for that receipt, by
-  message id and requested state, and assert the stored state it carries; the
-  two reports of another node go through the Registry's RPC, whose null
-  receipt is the completion; the reply and the resend in the same tests wait
-  for the `message.status` that answers a send. The target's `message.deliver`
-  frame, which the barrier used to swallow unseen, is consumed where a row is
-  delivered. A regression holds the report's transaction with a non-storage
-  hold until the directory answer has passed. The file is split along its
-  three test groups into `message-retention-ack.test.mts`,
-  `message-retention-sweep.test.mts` and `message-retention-legacy.test.mts`
-  over a shared `message-retention-fixture.mts`. The Worker is unchanged.
-- Timing-dependent test on the macOS unit job (issue #611). Case (h) of
-  `claude/hooks/obs-result-check.test.mts` planted the recorder's state 800 ms
-  after spawning the hook; on a slow runner the hook's first read came later
-  and saw the record already (`state=present waited=0`). The case now calls
-  `decide()` in the test process and plants the record after the call returns
-  its promise, which is after the hook's first read and before its first poll,
-  so the order no longer depends on how fast Node starts. Test code only.
-- Claude hook writers: the capture-failed marker of the denied-call journal
-  (`<CLAUDE_HOME>/.cache/denied-calls/<agent_id>.failed`) is on disk when the
-  hook process has exited (issue #614, the Claude side of #612). The guard
-  dispatcher, the hook runtime entry (for its own denies) and the delivery
-  recorder each gave the marker write a fixed 400 ms slice and then exited
-  through `process.exit`, which abandons a pending `fs.promises` write; a
-  slow write left no marker, and a later `render` could read a count or
-  `none` for a worker whose line was lost. The marker write is now awaited
-  until each writer's own deadline: the dispatcher's, at most 25 s after
-  its start; the entry's `OUTER_DEADLINE - 2_000`, 26 s after its start; and in the
-  delivery recorder a new deadline 5.5 s after its process start (its entry
-  has `timeout` 10, and the entry's Node start precedes its clock). The
-  journal writes keep their caps (1.5 s, 0.5 s in the entry). The
-  recorder's rename retry for `EPERM`, `EACCES` and `EBUSY` now runs up to
-  that deadline instead of 0.4 s. A write that never settles still leaves
-  no marker and now holds the decision until that deadline, which ends
-  before Claude Code's hook `timeout` as long as each Node start stays
-  within the assumed 2 s. The fixture fault
-  `marker-slow` now also fails the journal append with `ENOSPC`, so a
-  writer without a journal lib seam reaches its marker path; the three new
-  tests are red against the previous writers.
+- Control Plane Worker: an acknowledged legacy message row is no longer
+  replayed to its sender after every authentication; the acknowledgement
+  settles it in `settled_state`, and a later state is replayed again (#493).
+
+- Control Plane Worker: reply admission survives guarded-parent retirement
+  and nonterminal availability changes of the same owner, and an ordinary
+  reply is no longer refused with `loop-context-changed` when its parent moves
+  forward during send preparation (#765). Identity comparisons use one
+  semantic projection across admission, duplicate validation and egress
+  (#706, #765). Loop budgets and the reply limit of six are unchanged.
+
+- Control Plane Worker: the first queued acceptance retry pass runs on the
+  same socket within 60 seconds, with eight oldest-first lanes, and re-arms
+  after a failed pass (#706).
+
+- Doctor and node diagnostics: doctor keeps valid session observations beside
+  malformed rows, counts `idle-loaded`, and reports stored turn-budget usage
+  without spending turns (#769, #827). Node intake diagnostics measure lane
+  age, pongs and event-loop lag (#706); they need a node upgrade and restart.
+
+- `NESTED_RUNTIME` guidance states what `--from` needs when both
+  `CLAUDE_CODE_SESSION_ID` and `CODEX_THREAD_ID` are set (#489).
+
+- Windows process identity reads no longer block the daemon's event loop;
+  `process-start` and `process-relations` run as awaited child processes
+  (#473).
+
+- Managed service stops: a Windows stop that failed before its first effect
+  reports `STOP_BLOCKED_NATIVE_DESCENDANTS`, `STOP_IDENTITY_MISMATCH` or
+  `STOP_NATIVE_REFUSED` and releases the drain instead of leaving a stale one
+  (#838, #472, #677). A stop failure carries a fixed `stopCode` (new
+  `STOP_UNLISTED_ALIVE`), and on macOS a job launchd unlisted while its
+  process lives is proven stopped, or signalled by attested pid, within one
+  75 s deadline (#677).
+
+- A failed macOS upgrade recovery no longer leaves the new daemon loaded under
+  the prior plist. Recovery fails closed with `RECOVERY_CANDIDATE_LOADED`,
+  records `service/candidate.json`, and `service upgrade`, `service rollback`
+  or a repeated `service install` finish it; `service status` reports the
+  record (#582). A node that is already wedged still needs the manual reload
+  in `docs/INSTALLATION.md`.
+
+- Managed service activation binds health and settle to PID and start
+  identity and keeps prepared evidence before native replacement; Windows
+  offers strictly validated rollback recovery for older orphaned activations
+  (#746). The Windows supervisor logs `SERVICE_DRAIN_BLOCKED` once per drain
+  wait, and `service status` names the blocked start (#755).
+
+- Claude installer: an install from another root no longer duplicates the
+  control-plane hooks (#590). `drift-check.sh` reports `DUPLICATE-HOOK`, and
+  the doctor `hooks` check fails on duplicates and reports
+  `duplicatesUnknown` when it cannot read the template (#592). Installing
+  again from the current root removes the duplicates. `capture.sh` folds the
+  Windows form of the Claude home (#592).
+
+- Upgrade of a changed managed Claude hook replaces the existing entry of the
+  same event and matcher instead of running both, and prints
+  `hooks: replace ...` (#568).
+
+- Codex installer: an upgrade no longer refuses a managed block into which
+  the Codex CLI wrote `[hooks.state]` and `[tui]` (#684).
+
+- The commit policy and hook scope compare paths in one form on Windows and
+  report a failed comparison instead of skipping the check (#816).
+
+- Codex model catalog read in a fresh Codex home: cleanup is confirmed by
+  observed process state within a bounded grace, not by a signal's exit code,
+  and the app-server starts with `-c features.plugins=false` (#667).
+
+- Confluence brokers: `stitch` with an empty `--id` no longer sweeps the
+  whole space; an empty, blank or non-numeric id exits 1 before any request.
+  On 2026-10-31 such a run wrote to 127 unrelated pages (#710).
+
+- Confluence brokers: `related` and `stitch` build the text search from the
+  title's content words, so special characters no longer cause HTTP 403 or
+  500, and a failed text search is reported instead of aborting (#651). A
+  result row without a readable title makes the result UNKNOWN instead of
+  disappearing (#656). A line directly after a `<pre>` block is read as its
+  own line (#669).
+
+- GitHub App issue broker: installation tokens containing `.` are accepted
+  (#780), and the Windows access check accepts a default `C:\` drive root
+  (#788).
+
+### Security
+
+- Spawned tools resolve from absolute PATH directories only, excluding the
+  working directory and its aliases, on Windows and POSIX. CI dependency
+  installs disable lifecycle scripts. Agent and inbox message ids are rebuilt
+  from fixed character sets, the deploy transcript is checked by prefix, and
+  denial-journal scanning is bounded to one pass (#779).
+
+- Control Plane Worker: `agents` 0.28.1 with `@modelcontextprotocol/server`
+  and `/client` 2.3.1 and `@modelcontextprotocol/sdk` 1.32.1 clear the
+  advisories GHSA-jm63-cq47-j5jp, GHSA-46jr-4wx8-v453, GHSA-6qxp-vccf-f47h,
+  GHSA-22jm-h49p-29qw (high), GHSA-rvq5-wwqv-78pq and GHSA-6prh-2h8m-c8cw
+  (moderate) (#591, replacing #542, #551, #553). Takes effect after a Worker
+  deploy.
+
+- The Worker's `allowScripts` pin names the workerd version its lockfile
+  resolves, and `core-js-pure` and `fsevents` are denied by name;
+  `bootstrap/allow-scripts-lock.test.mts` keeps pins and lockfiles equal
+  (#559).
+
+Internal (test, CI, coverage and refactor changes without user-facing
+effect): #529, #533, #534 (with #535, #539), #550, #557, #565, #569, #570,
+#578, #607, #611, #613, #638, #657, #670, #792, #813.
 
 ## [0.4.0] - 2026-10-18
 
@@ -4169,7 +2756,8 @@ First public release.
 - Turn-completion observations for Claude and Codex through the service-account
   Confluence path.
 
-[Unreleased]: https://github.com/CFcon-CH/kherep/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/CFcon-CH/kherep/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/CFcon-CH/kherep/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/CFcon-CH/kherep/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/CFcon-CH/kherep/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/CFcon-CH/kherep/compare/v0.1.2...v0.2.0
