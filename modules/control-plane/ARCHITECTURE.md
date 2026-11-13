@@ -114,9 +114,19 @@ held, decision D1) and `turn` from the hook record bound to the holder
 or a startup/resume/clear/fork SessionStart is idle unless the rollout's mtime
 is more than 30 seconds later; Interrupt, SessionEnd and compact are UNKNOWN).
 Two holders are a conflict; a probe throw, timeout or abort is an UNKNOWN
-envelope, never `present: false`. `judgeSession` is unchanged. When the native
-Queue producer refuses for liveness it marks the messages `waiting` /
-`awaiting-user-turn`.
+envelope, never `present: false`. On Windows (issue #899) the script embeds
+each rollout path as its own base64 literal decoded by `ForEach-Object`, because
+Windows PowerShell 5.1 writes a `ConvertFrom-Json` array as one pipeline
+object and the former list joined every path into one. A failing Restart
+Manager call yields an `X <index> <stage> <code>` row for that file only
+(stage `session`, `register`, `list1`, `list2` or `error`, plus a non-zero
+`RmEndSession` code); that thread gets `holder` UNKNOWN/failed and no `loaded`
+or `turn`, while the other threads keep their verdicts. The source
+writes the probe problem (`scan: <last stderr line>` or the sorted
+`<thread>: <stage> <code>` list) to the daemon log only when it changes, and
+one `recovered` line; an abort writes nothing. `judgeSession` is unchanged.
+When the native Queue producer refuses for liveness it marks the messages
+`waiting` / `awaiting-user-turn`.
 
 `session-lifecycle.mts` retains bounded authoritative archive/delete tombstones
 by runtime/full ID, even after directory exclusion. Hooks, names and scan misses

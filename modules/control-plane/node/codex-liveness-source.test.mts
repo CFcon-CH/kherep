@@ -99,6 +99,57 @@ test("a scan limited to candidates gives no entry for an unprobed thread", async
   assert.deepEqual(evidence(observation).map(e => e.sessionId), [OTHER]);
 });
 
+// Issue #899: one failed thread must not turn every other thread unknown.
+test("a thread whose own query failed is unknown while another thread keeps its real verdict", async (t) => {
+  const { paths, rollout } = node(t);
+  const other = rollout.replace(ID, OTHER);
+  fs.writeFileSync(other, "");
+  setMtime(other, T - 120_000);
+  recordCodexSession(paths, OTHER, undefined, T - 120_000, "default", "Stop");
+  markStopEnded(paths, OTHER);
+  const probe: HolderProbe = async () => ({ ...scanOf({ [OTHER]: [{ ...holder(), file: other }] }, undefined, [ID, OTHER]),
+    failed: new Map([[ID, "list1 6"]]) });
+  const observation = await observe(paths, probe, [{ runtime: "codex", sessionId: ID }, { runtime: "codex", sessionId: OTHER }]);
+  assert.deepEqual([observation.status, observation.complete], ["value", true]);
+  const [failed, held] = evidence(observation);
+  assert.deepEqual([failed.sessionId, failed.holder?.status, failed.holder?.reasonCode, failed.loaded, failed.turn], [ID, "unknown", "failed", undefined, undefined]);
+  assert.equal(judgeSession(failed, T).state, "unknown");
+  assert.equal(held.sessionId, OTHER);
+  assert.equal(judgeSession(held, T).state, "idle-loaded");
+});
+
+test("probe problems are logged once per change, with one recovery line and nothing on abort", async (t) => {
+  const { paths } = node(t);
+  const lines: string[] = [];
+  let next: (signal: AbortSignal) => Promise<HolderScan> = async () => scanOf({});
+  const source = codexLivenessSource({ paths, probe: async (_h, _c, signal) => next(signal), now: () => T, platform: "darwin", log: l => lines.push(l) });
+  const step = async (probe: typeof next, controller = new AbortController()) => { next = probe; await source.observe([{ runtime: "codex", sessionId: ID }], controller.signal); };
+  // The measured execFile shape: no stderr property, the command and stderr in the message.
+  const stderr = "Ausnahme beim Aufrufen von \"Holders\": \"list 6\"\r\nIn C:\\synthetic\\rollout-x.jsonl Zeile 3\r\n";
+  const cmd = "powershell.exe -Command FromBase64String('c3ludGhldGlj')\n'E'\n";
+  const failure = Object.assign(new Error(`Command failed: ${cmd}\n${stderr}`), { code: 1, killed: false, signal: null, cmd });
+  const silent = Object.assign(new Error(`Command failed: ${cmd}\n`), { code: 1, killed: false, signal: null, cmd });
+  const failedScan = async () => ({ ...scanOf({}, [holder()], [ID, OTHER]), failed: new Map([[OTHER, "list1 6"], [ID, "list2 6 end 6"]]) });
+  await step(async () => { throw failure; });
+  await step(async () => { throw failure; });
+  await step(failedScan);
+  await step(failedScan);
+  const controller = new AbortController();
+  await step(async (signal) => { controller.abort(); signal.throwIfAborted(); return scanOf({}); }, controller);
+  await step(async () => scanOf({}));
+  await step(async () => scanOf({}));
+  await step(async () => { throw silent; });
+  await step(async () => { throw new Error(`x\n${"y".repeat(300)}`); });
+  assert.deepEqual(lines, [
+    "kherep-node: codex holder probe failed: scan: In <path> Zeile 3",
+    `kherep-node: codex holder probe failed: ${ID}: list2 6 end 6; ${OTHER}: list1 6`,
+    "kherep-node: codex holder probe recovered",
+    "kherep-node: codex holder probe failed: scan: exit 1",
+    `kherep-node: codex holder probe failed: scan: ${"y".repeat(200)}`,
+  ]);
+  assert.equal(lines.some(l => /rollout|base64|synthetic/i.test(l)), false);
+});
+
 const rec = (fields: Partial<CodexSessionRecord>): CodexSessionRecord => ({ sessionId: ID, runtime: "codex", lastSeen: new Date(T).toISOString(), ...fields });
 const at = (ms: number) => new Date(ms).toISOString();
 const turn = (o: Observation<string>) => (o.status === "value" ? o.value : `unknown:${o.reasonCode}`);

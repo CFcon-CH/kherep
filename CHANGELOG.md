@@ -82,6 +82,17 @@ increments the minor version; every other release increments the patch version.
 
 ### Fixed
 
+- The Windows Codex holder probe works again with two or more candidate
+  rollouts (#899). Measured on a Windows node: Windows PowerShell 5.1 wrote the
+  `ConvertFrom-Json` path array as one object, so `$files[0]` held every path
+  joined by a space, `RmGetList` returned 6, the whole scan threw and every
+  Codex session read UNKNOWN, so the native Queue wrote no attempt. Each path
+  is now its own literal. A failing Restart Manager call now reports
+  `X <stage> <code>` for its file only, which leaves just that thread
+  UNKNOWN/failed while the others keep their verdicts, and the daemon log names
+  a probe problem once when it changes and once when it recovers. The new
+  script is not yet measured on a Windows node.
+
 - A Windows service stop no longer maps every failure to
   `STOP_UNKNOWN_DESCENDANTS` with an unproven family (#838). The stop script
   reports whether it failed before its first effect; such a failure, or one
