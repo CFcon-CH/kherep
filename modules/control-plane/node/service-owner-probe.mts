@@ -74,7 +74,7 @@ export function createServiceOwnerProbe(deps: ServiceOwnerProbeDeps = {}): Servi
     const result = spawn("ps", ["-p", String(pid), "-o", "user=", "-o", "lstart="], { encoding: "utf8", timeout });
     if (result.status === 1 && result.stdout.trim() === "") return null;
     if (result.status !== 0) return "unknown";
-    const match = /^(\S+)\s+(.+)$/.exec(result.stdout.trim());
+    const match = /^(\S+)\s+(\S.*)$/.exec(result.stdout.trim());
     const startedAt = match ? new Date(match[2]).toISOString() : "";
     return match && startedAt !== "Invalid Date" ? { owner: match[1], startedAt } : "unknown";
   };

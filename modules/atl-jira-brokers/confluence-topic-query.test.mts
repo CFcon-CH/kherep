@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { bodyTopic, capWords, plainText, QUERY_MAX, SNIPPET_MAX, snippetLine, topicQuery } from "./confluence-topic-query.mts";
+import { bodyTopic, capWords, plainText, QUERY_MAX, replaceTags, SNIPPET_MAX, snippetLine, topicQuery } from "./confluence-topic-query.mts";
 
 test("the query is title, a full stop and the topic, whitespace collapsed", () => {
   assert.equal(topicQuery("  Logon task\tworkaround ", "A scheduled task\n\nruns at  logon."),
@@ -54,4 +54,28 @@ test("an orphan's topic is the opening 500 characters of its body as plain text"
   const topic = bodyTopic(body);
   assert.ok(topic.startsWith("Head alpha"));
   assert.ok(topic.length <= QUERY_MAX);
+});
+
+// Issue #906: replaceTags finds the matches of /<[^>]*>/g in one pass.
+const timed = (run: () => void): number => { const started = performance.now(); run(); return performance.now() - started; };
+test("replaceTags replaces every <...> run and leaves a < without a later > alone", () => {
+  const cases: [string, string][] = [["", ""], ["a<b>c", "a c"], ["<a<b>c", " c"], ["a>b<c", "a>b<c"], ["<a\nb>x<>y", " x y"]];
+  for (const [text, expected] of cases) assert.equal(replaceTags(text, () => " "), expected, JSON.stringify(text));
+  assert.equal(plainText("a<b"), "a<b");
+  assert.equal(plainText("x<<p>y"), "x y");
+});
+
+test("replaceTags is linear on runs of < and of tags", () => {
+  const cases: [string, string][] = [["<".repeat(50_000), "<".repeat(50_000)], ["<a>".repeat(50_000), " ".repeat(50_000)]];
+  for (const [text, expected] of cases) {
+    let out = "";
+    assert.ok(timed(() => { out = replaceTags(text, () => " "); }) < 200, text.slice(0, 3));
+    assert.equal(out, expected);
+  }
+  let prose = "";
+  assert.ok(timed(() => { prose = replaceTags('<"'.repeat(50_000), (tag) => tag, (part) => part.replace(/[>"]/g, "&")); }) < 200);
+  assert.equal(prose, "<&".repeat(50_000));
+  let plain = "";
+  assert.ok(timed(() => { plain = plainText(`${"<".repeat(50_000)}a`); }) < 200);
+  assert.ok(plain.endsWith("a"));
 });

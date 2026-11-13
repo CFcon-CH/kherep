@@ -226,3 +226,13 @@ test('invalid next queries cannot turn a truncated inventory into a complete emp
     assert.equal(reads,1,'malformed next links must be refused before following them');
   }
 });
+// Issue #906: a code-bound label counts at a line start after horizontal blanks only.
+test('#906 a code-bound label counts at a line start only', () => {
+  const missing = (value: string) => drainageRules([{ id: '1', version: 3, title: 'Synthetic 1', spaceId: '9', parentId: null, body: value,
+    labels: ['type-observation'] }], true).filter(c => c.problem === 'revision-missing-or-invalid').map(c => c.pageId);
+  for (const value of ['<p>Code: x</p>', '<p>a</p><p>   repo : x</p>', '<p>Code-bound: yes</p>']) assert.deepEqual(missing(value), ['1'], value);
+  assert.deepEqual(missing('<p>see Code: x</p>'), []);
+  const started = performance.now();
+  assert.deepEqual(missing('\n'.repeat(50_000)), []);
+  assert.ok(performance.now() - started < 200, 'linear on a run of line ends');
+});

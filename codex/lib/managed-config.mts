@@ -59,8 +59,21 @@ export function assertNoUnmanagedMcp(config: string, names: string[], startMarke
   }
 }
 
+// The lines of config with their line ends. Text up to a U+2028 or U+2029 belongs to no line.
 function tomlLines(config: string): string[] {
-  return String(config).match(/.*(?:\r\n|\n|\r|$)/g)?.filter(Boolean) || [];
+  const source = String(config);
+  const lines: string[] = [];
+  let start = 0;
+  for (let i = 0; i < source.length; i += 1) {
+    const char = source[i];
+    if (char === "\u2028" || char === "\u2029") { start = i + 1; continue; }
+    if (char !== "\n" && char !== "\r") continue;
+    if (char === "\r" && source[i + 1] === "\n") i += 1;
+    lines.push(source.slice(start, i + 1));
+    start = i + 1;
+  }
+  if (start < source.length) lines.push(source.slice(start));
+  return lines;
 }
 
 export function mcpTableRange(config: string, name: string): { start: number; end: number; text: string } | undefined {

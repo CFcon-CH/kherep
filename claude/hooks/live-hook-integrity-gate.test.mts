@@ -200,3 +200,18 @@ test("with both settings files missing an own-lib repair is not made either", ()
   assert.equal(read(path.join(box.hooks, "lib", "hook-syntax.mts")), "");
   assert.equal(read(path.join(box.cache, "incidents.jsonl")), null);
 });
+
+// Issue #906: coordinated() reads the hook token and the rest of the command in code.
+test("coordinated() rewrites node <file under hooks/> and leaves anything else unchanged", () => {
+  assert.equal(coordinated("node ~/.claude/hooks/commit-guard.mts"),
+    "node ~/.claude/kherep/hook-runtime/entry.mts reader ~/.claude/hooks/commit-guard.mts");
+  assert.equal(coordinated('& node "C:/u/.claude/hooks/a.mts" --x 1', "writer"),
+    '& node ~/.claude/kherep/hook-runtime/entry.mts writer "C:/u/.claude/hooks/a.mts" --x 1');
+  for (const command of ["node ~/.claude/hooks/", "node hooks/a.mts", "nodex ~/.claude/hooks/a.mts", "node ~/.claude/hooks/a.mts\nrm x"]) {
+    assert.equal(coordinated(command), command);
+  }
+  const long = `node ${"/hooks/".repeat(10_000)}${"a ".repeat(20_000)}\n`;
+  const started = performance.now();
+  assert.equal(coordinated(long), long);
+  assert.ok(performance.now() - started < 200, "linear on a long command");
+});

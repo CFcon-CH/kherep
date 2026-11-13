@@ -163,5 +163,37 @@ expectBlocked(
 );
 expectAllowed("direkter Producer vor wc bleibt erlaubt", "cat /tmp/example.env | wc -l");
 
+// Issue #906: the closing status echo and the k8s dump rule are read without a
+// backtracking expression; every case keeps today's verdict.
+console.log("\n-- #906: Status-echo und k8s-Secret-Dump ohne Backtracking --");
+const E = "env | grep -q X";
+for (const command of [`${E} && echo ja/nein`, `${E}   &&   ECHO "ok 1"`, `${E} && echo 'a b`, `${E} && echo  "`]) {
+  expectAllowed(`status echo ${JSON.stringify(command)}`, command);
+}
+for (const command of [`${E} && echo $HOME`, `${E} && echo ok; env`, `${E} && echo a && cat`, `${E} && echo\tok\tx`, `${E} &&echo`, `${E} && echo "`]) {
+  expectBlocked(`no status echo ${JSON.stringify(command)}`, command, "env-dump");
+}
+for (const command of ["kubectl -n a get secrets x -o=json", "KUBECTL GET SECRET x -O YAML", "kubectl get\nsecret x -o yaml",
+  "kubectl get secret x -o\n yaml", "kubectl get secret x -o = jsonpath={.data}",
+  "kubectl get pods; kubectl get secret x | base64 --decode", "kubectl get secret a get secret b -o yaml"]) {
+  expectBlocked(`k8s dump ${JSON.stringify(command)}`, command, "k8s-secret-dump");
+}
+for (const command of ["kubectl\nget secret x -o yaml", "kubectl get secret x\n-o yaml", "kubectl get secretsx -o yaml",
+  "kubectl target secret -o yaml", "get secret x -o yaml", "kubectl get secret x -o wide", "kubectl get pods -o yaml"]) {
+  expectAllowed(`no k8s dump ${JSON.stringify(command)}`, command);
+}
+for (const [label, command, ruleId] of [
+  ["status echo before 50 000 blanks", `env && echo${" ".repeat(50_000)}!`, "env-dump"],
+  ["5 000 times kubectl get secret", "kubectl get secret ".repeat(5_000), ""],
+  ["-o before 50 000 blanks", `kubectl get secret -o${" ".repeat(50_000)}x`, ""],
+]) {
+  const started = Date.now();
+  if (ruleId) expectBlocked(label, command, ruleId);
+  else expectAllowed(label, command);
+  const elapsed = Date.now() - started;
+  if (elapsed < 2000) { pass++; console.log(`  ok   TIME   ${label} (${elapsed} ms)`); }
+  else { fail++; console.log(`  FAIL TIME   ${label} (${elapsed} ms, limit 2000)`); }
+}
+
 console.log(`\n${pass} pass, ${fail} fail`);
 process.exit(fail ? 1 : 0);

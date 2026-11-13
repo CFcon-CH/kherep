@@ -137,22 +137,64 @@ function isComputerUseWrapper(command: string): boolean {
     || path.posix.basename(command) === "SkyComputerUseClient";
 }
 
+const LINE_BREAK = /[\n\r\u2028\u2029]/;
+const TABLE_HEADER = /^[^\S\n\r\u2028\u2029]*\[/m;
+const NOTIFY_HEAD = /^[^\S\n\r\u2028\u2029]*notify\s*=\s*\[/gm;
+
+// The earliest line start from which only whitespace leads to lineStart: blank lines before a line belong to it.
+function blankBlockStart(text: string, lineStart: number): number {
+  let start = lineStart;
+  for (let i = lineStart; i > 0 && /\s/.test(text[i - 1]); i -= 1) {
+    if (i === 1 || LINE_BREAK.test(text[i - 2])) start = i - 1;
+  }
+  return start;
+}
+
+// Where an assignment ends when only whitespace and one comment may follow `from`; -1 when other text follows on the line.
+function assignmentEnd(text: string, from: number): number {
+  let at = from;
+  let lastBreak = -1;
+  while (at < text.length && /\s/.test(text[at])) {
+    if (LINE_BREAK.test(text[at])) lastBreak = at;
+    at += 1;
+  }
+  if (at === text.length) return at;
+  if (text[at] !== "#") return lastBreak;
+  while (at < text.length && !LINE_BREAK.test(text[at])) at += 1;
+  return at;
+}
+
+// The top-level `notify = [...]` assignment: its whole text (with the blank lines it owns) and its array.
+function notifyAssignment(top: string): { text: string; value: string } | null {
+  for (const head of top.matchAll(NOTIFY_HEAD)) {
+    const open = head.index + head[0].length - 1;
+    let lineEnd = open;
+    while (lineEnd < top.length && top[lineEnd] !== "\n" && top[lineEnd] !== "\r") lineEnd += 1;
+    for (let close = lineEnd - 1; close > open; close -= 1) {
+      if (top[close] !== "]") continue;
+      const end = assignmentEnd(top, close + 1);
+      if (end >= 0) return { text: top.slice(blankBlockStart(top, head.index), end), value: top.slice(open, close + 1) };
+    }
+  }
+  return null;
+}
+
 export function configureMemoryNotify(config: string, node: string, hook: string, previousNodes: string[] = []): string {
-  const firstTable = config.search(/^\s*\[/m);
-  const top = firstTable < 0 ? config : config.slice(0, firstTable);
-  const line = top.match(/^\s*notify\s*=\s*(\[[^\r\n]*\])\s*(?:#.*)?$/m);
+  const table = TABLE_HEADER.exec(config);
+  const top = table ? config.slice(0, blankBlockStart(config, table.index)) : config;
+  const line = notifyAssignment(top);
   if (line) {
     try {
-      const { values, secondEnd } = notifyStrings(line[1]);
+      const { values, secondEnd } = notifyStrings(line.value);
       const nodes = [node, ...previousNodes];
-      if (values.length === 2 && nodes.includes(values[0]) && values[1] === hook) return config.replace(line[0], "");
+      if (values.length === 2 && nodes.includes(values[0]) && values[1] === hook) return config.replace(line.text, "");
       if (values.length === 4 && isComputerUseWrapper(values[0])
           && values[1] === "turn-ended" && values[2] === "--previous-notify") {
         const previous: unknown = JSON.parse(values[3]);
         if (Array.isArray(previous) && previous.length === 2 && previous.every((value) => typeof value === "string")
             && nodes.some((entry) => sameNotifyPath(previous[0], entry)) && sameNotifyPath(previous[1], hook)) {
-          const wrapper = line[1].slice(0, secondEnd) + line[1].match(/[\t ]*\]$/)![0];
-          return config.replace(line[0], line[0].replace(line[1], wrapper));
+          const wrapper = line.value.slice(0, secondEnd) + line.value.match(/(?<![\t ])[\t ]*\]$/)![0];
+          return config.replace(line.text, line.text.replace(line.value, wrapper));
         }
       }
     } catch { /* Preserve custom or unsupported one-line TOML and nested JSON. */ }

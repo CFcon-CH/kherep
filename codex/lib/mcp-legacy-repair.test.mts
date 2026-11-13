@@ -102,3 +102,24 @@ test("does not touch an owned-looking table inside the managed block", () => {
     oldPrefix: "LEGACY_", newPrefix: "KHEREP_", startMarker: START, endMarker: END,
   }), { config, migrated: false });
 });
+
+// Issue #906: an inline env item takes one optional leading comma; the accepted forms are unchanged.
+test("inline env items with and without blanks around their commas", () => {
+  const options = {
+    name: "legacy", expectedNode: node, expectedBridge: bridge,
+    expectedRegistry: "private-registry", expectedSourceName: "legacy-source",
+    oldPrefix: "LEGACY_", newPrefix: "KHEREP_", startMarker: START, endMarker: END,
+  };
+  const env = (items: string) => table().replace(/^env = \{.*\}$/m, () => `env = {${items}}`);
+  const R = 'LEGACY_MCP_REGISTRY_FILE = "private-registry"', S = "LEGACY_MCP_SERVER_NAME = 'legacy-source'";
+  const A = 'LEGACY_MCP_ALLOW_INSECURE_HTTP = "1"';
+  for (const items of [` ,  ${R}, ${S}, ${A} `, `${R.replaceAll(" ", "")},${S} , ${A}`]) {
+    assert.equal(canonicalizeOwnedRegistryTable(env(items), options).migrated, true, items);
+  }
+  for (const items of [`${R},, ${S}, ${A}`, `${R} ${S}, ${A}`]) {
+    assert.equal(canonicalizeOwnedRegistryTable(env(items), options).migrated, false, items);
+  }
+  const started = performance.now();
+  assert.equal(canonicalizeOwnedRegistryTable(env(`${" ".repeat(100_000)}! `), options).migrated, false);
+  assert.ok(performance.now() - started < 200, "linear on a long blank run");
+});

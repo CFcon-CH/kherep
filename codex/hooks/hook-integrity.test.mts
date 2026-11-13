@@ -168,3 +168,15 @@ test("maps a wired path under a symlinked spelling of the home onto the real hoo
   // A path outside the home stays outside, link or not.
   assert.deepEqual(wiredHookFiles([path.join(root, "elsewhere.mts")], hooksDir), []);
 });
+
+// Issue #906: a command value starts at its first non-blank, or the line has none.
+test("command values are read after the blanks around =, and a line break after the value hides it", () => {
+  const H = "[[hooks.Stop.hooks]]\n";
+  assert.deepEqual(hookCommandParts(`${H}command   =\t"node \\"/h/a.mts\\""`), ["/h/a.mts"]);
+  assert.deepEqual(hookCommandParts(`${H}  command="node \\"/h/a.mts\\" \\"/h/b.mts\\""`), ["/h/a.mts", "/h/b.mts"]);
+  assert.deepEqual(hookCommandParts(`${H}command = 'node "/h/c.mts"'`), ["/h/c.mts"]);
+  for (const line of ["command =", "command =   ", 'command = "node \\"/h/a.mts\\""\u2028x']) assert.deepEqual(hookCommandParts(H + line), [], line);
+  const started = performance.now();
+  assert.deepEqual(hookCommandParts(`${H}command =${" ".repeat(50_000)}x\ry`), []);
+  assert.ok(performance.now() - started < 200, "linear on a long blank run");
+});

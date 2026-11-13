@@ -1,5 +1,6 @@
 // The published observation Revision grammar (issues #519, #693). The confirm path, the drainage scanner and the
 // revision staleness check all import it from here, so they judge a page alike. Pure: no I/O.
+import { replaceTags } from './confluence-topic-query.mts';
 
 // <name>@<40 hex>: the binding core. The drainage scanner and the evidence gates compare cores by equality.
 export const BOUND_REVISION = /^[A-Za-z0-9][A-Za-z0-9._-]*(?:\/[A-Za-z0-9][A-Za-z0-9._-]*)*@[0-9a-f]{40}$/;
@@ -30,9 +31,9 @@ export function scopedRevision(line: string): Scoped | null {
 
 // #669: plainText(body) is the base text. With a mark, only a </pre> closing an outermost <pre> ends a line; outer comments, CDATA and PIs become marks.
 export function plainText(body: string, mark = ''): string { let depth = 0;
-  return body.replace(/<!--[^]*?(?:-->|$)|<!\[CDATA\[[^]*?(?:\]\]>|$)|<\?[^]*?(?:\?>|$)|<\/pre>|<pre\b(?:"[^"]*"|'[^']*'|[^>"'])*>/gi, tag => /^<[!?]/.test(tag) ? (mark && !depth ? mark : tag)
-    : tag[1] === '/' ? (depth > 0 && --depth === 0 && mark ? `${tag}\n${mark}` : tag) : tag.endsWith('/>') ? tag : (depth++ === 0 && mark ? `${mark}\n${tag}` : tag))
-    .replace(/<\/(?:p|div|h[1-6]|li)>/gi, '\n').replace(/<[^>]*>/g, ' ').replace(/&(?:nbsp|amp|lt|gt|quot);/g, ' ').replace(/[ \t]+/g, ' ').trim();
+  const marked = body.replace(/<!--[^]*?(?:-->|$)|<!\[CDATA\[[^]*?(?:\]\]>|$)|<\?[^]*?(?:\?>|$)|<\/pre>|<pre\b(?:"[^"]*"|'[^']*'|[^>"'])*>/gi, tag => /^<[!?]/.test(tag) ? (mark && !depth ? mark : tag)
+    : tag[1] === '/' ? (depth > 0 && --depth === 0 && mark ? `${tag}\n${mark}` : tag) : tag.endsWith('/>') ? tag : (depth++ === 0 && mark ? `${mark}\n${tag}` : tag));
+  return replaceTags(marked.replace(/<\/(?:p|div|h[1-6]|li)>/gi, '\n'), () => ' ').replace(/&(?:nbsp|amp|lt|gt|quot);/g, ' ').replace(/[ \t]+/g, ' ').trim();
 }
 const CLAIM_BARRIER = '\x01';
 function markedClaimLine(line: string): string {
@@ -46,7 +47,7 @@ export const claimViews = (body: string): [string, string] => [plainText(body), 
   ...plainText(body, CLAIM_BARRIER).split('\n').map(markedClaimLine)].join('\n')];
 export function revisionLines(body: string): Revisions { // claimViews: the base text, then the lines after a real </pre> or region; every other line is a \x01 barrier (#672 review)
   const out: Revisions = { bound: [], unbound: [], malformed: [], paths: {} };
-  for (const [view, text] of claimViews(body).entries()) for (const match of text.matchAll(/(?:^|\n)\s*Revision\s*:\s*([^\n]*)/gmi)) {
+  for (const [view, text] of claimViews(body).entries()) for (const match of text.matchAll(/^[^\S\n\r\u2028\u2029]*Revision\s*:\s*((?:\S[^\n]*)?)/gim)) {
     const trimmed = match[1].trim(), line = trimmed === CLAIM_BARRIER ? '' : trimmed, scoped = scopedRevision(line);
     const kind = scoped ? 'bound' : NO_BINDING_LINE.test(line) || scopedRevision(DIRTY_LINE.exec(line)?.[1] ?? '') ? 'unbound' : 'malformed';
     // A bound entry is its core, so equality consumers see '<name>@<sha>'; scoped lines of one core merge into one entry.

@@ -57,7 +57,7 @@ function inlineEnv(text: string, prefix: string): Record<string, StringValue> | 
   const values: Record<string, StringValue> = {};
   let rest = match[1];
   while (rest.trim()) {
-    const item = /^\s*,?\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*("(?:\\.|[^"\\])*"|'[^']*')\s*/.exec(rest);
+    const item = /^\s*(?:,\s*)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*("(?:\\.|[^"\\])*"|'[^']*')\s*/.exec(rest);
     if (!item || (Object.keys(values).length > 0 && !/^\s*,/.test(rest))) return undefined;
     const parsed = stringValue(item[2]);
     if (!parsed || values[item[1]]) return undefined;

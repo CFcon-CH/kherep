@@ -28,7 +28,7 @@ export function parseModelPolicy(text: string): ModelPolicy {
   let current: Partial<RolePolicy> | null = null;
   let schema = false;
   for (const raw of text.split(/\r?\n/)) {
-    const line = raw.replace(/\s+#.*$/, "").trim();
+    const line = raw.replace(/(?<!\s)\s+#.*$/, "").trim();
     if (!line || line.startsWith("#")) continue;
     if (/^schema_version\s*=\s*1$/.test(line) && !schema && current === null) { schema = true; continue; }
     const table = line.match(/^\[roles\.([a-z]+)\]$/);

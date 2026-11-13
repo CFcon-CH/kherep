@@ -28,7 +28,7 @@ const yaml = decodeUtf8(fs.readFileSync(0), 'decrypted SOPS YAML');
 const required = ['mcp_json'];
 const encoded = new Map<string, string>();
 for (const line of yaml.split(/\r?\n/)) {
-  const match = line.match(/^\s+(mcp_json):\s*(\S*)\s*$/);
+  const match = line.trimEnd().match(/^\s+(mcp_json):\s*(\S*)$/);
   if (!match) continue;
   if (encoded.has(match[1])) throw new Error(`duplicate decrypted secret key: ${match[1]}`);
   encoded.set(match[1], match[2]);

@@ -29,8 +29,11 @@ function regexStart(source: string, slash: number): boolean {
   let previous = slash - 1;
   while (previous >= 0 && /\s/.test(source[previous])) previous -= 1;
   if (previous < 0 || /[=(:,[!&|?{};]/.test(source[previous])) return true;
-  const keyword = /([A-Za-z_$][\w$]*)\s*$/.exec(source.slice(0, slash))?.[1];
-  return Boolean(keyword && ["return", "throw", "case", "yield", "await", "typeof", "void", "delete", "new"].includes(keyword));
+  let start = previous;
+  while (start >= 0 && /[\w$]/.test(source[start])) start -= 1;
+  start += 1;
+  while (start <= previous && /\d/.test(source[start])) start += 1;
+  return ["return", "throw", "case", "yield", "await", "typeof", "void", "delete", "new"].includes(source.slice(start, previous + 1));
 }
 
 function skipRegex(source: string, start: number): number {

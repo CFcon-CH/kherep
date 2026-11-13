@@ -41,8 +41,10 @@ function codexCommands(text: string, event?: string): string[] {
   const table = event ? new RegExp(`^hooks\\.${event}(?:\\.|$)`) : /^hooks\./;
   let inHooks = false;
   for (const line of text.split(/\r?\n/)) {
-    const header = /^\s*\[\[?\s*([^\]]+?)\s*\]\]?\s*$/.exec(line);
-    if (header) { inHooks = table.test(header[1]); continue; }
+    // The table name is the bracket content, trimmed. "[[]" and "[ ]" keep the single character the lazy group used to take.
+    const header = /^\s*\[(\[?)([^\]]*)\]\]?\s*$/.exec(line);
+    const name = header ? header[2].trim() || header[2].slice(-1) || header[1] : "";
+    if (name) { inHooks = table.test(name); continue; }
     const entry = inHooks ? /^\s*command(?:Windows)?\s*=\s*("(?:[^"\\]|\\.)*")\s*$/.exec(line) : null;
     if (!entry) continue;
     try { commands.push(JSON.parse(entry[1]) as string); } catch { /* not a JSON-compatible string */ }

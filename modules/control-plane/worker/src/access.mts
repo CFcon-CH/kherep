@@ -16,7 +16,7 @@ const keySets = new Map<string, JWTVerifyGetKey>();
 export type AccessResult = { ok: true; actor: string } | { ok: false; response: Response };
 
 export function accessConfig(env: Env): { teamDomain: string; audience: string } | null {
-  const teamDomain = (env.ACCESS_TEAM_DOMAIN ?? "").trim().replace(/\/+$/, "");
+  const teamDomain = (env.ACCESS_TEAM_DOMAIN ?? "").trim().replace(/(?<!\/)\/+$/, "");
   const audience = (env.ACCESS_AUD ?? "").trim();
   if (!teamDomain || !audience || !/^https:\/\/[^/\s]+$/.test(teamDomain)) return null;
   return { teamDomain, audience };

@@ -70,8 +70,13 @@ test("repoSlug keeps owner/name and never the userinfo of a remote URL", () => {
     ["/synthetic/remotes/example/repo.git", "example/repo"],
     ["C:\\synthetic\\remotes\\example\\repo.git", "example/repo"],
     ["", null],
+    // Issue #906: userinfo ends at its first "@" after the first character.
+    ["git@github.example:o/r.git", "o/r"], ["a@b@host:o/r", "o/r"], ["@@h:o/r", "o/r"], ["@h:o/r", "o/r"], ["a@:o/r", "o/r"],
   ];
   for (const [url, slug] of cases) assert.equal(attribution.repoSlug(url), slug, url);
+  const started = performance.now();
+  assert.equal(attribution.repoSlug(`a${"@".repeat(50_000)}`), null);
+  assert.ok(performance.now() - started < 200, "linear on a run of @");
 });
 
 test("session ids are plain file-name characters", () => {

@@ -132,3 +132,17 @@ test("failed and timed-out native children cannot supply partial start proof", (
     assert.equal(probe.active(recorded), "unknown");
   }
 });
+
+// Issue #906: outside Windows the ps row is user, blanks and start time, read without backtracking.
+test("outside Windows a ps row is user, blanks and start time; anything else is unknown", () => {
+  const probe = (stdout: string) => createServiceOwnerProbe({ platform: "linux",
+    spawn: () => ({ pid: 0, output: [], stdout, stderr: "", status: 0, signal: null }) });
+  const startedAt = new Date("Mon Nov  9 10:00:00 2026").toISOString();
+  const owner = (name: string) => ({ version: 1 as const, pid: 4242, startedAt, owner: name });
+  assert.equal(probe("root     Mon Nov  9 10:00:00 2026\n").active(owner("root")), true);
+  assert.equal(probe("  u\tMon Nov  9 10:00:00 2026  \n").active(owner("u")), true);
+  assert.equal(probe("root\n").active(owner("root")), "unknown");
+  const started = performance.now();
+  assert.equal(probe(`u${" ".repeat(50_000)}\nx\ny`).active(owner("u")), "unknown");
+  assert.ok(performance.now() - started < 200, "linear on a long blank run");
+});

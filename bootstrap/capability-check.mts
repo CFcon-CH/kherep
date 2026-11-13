@@ -78,7 +78,7 @@ function enabledKeys(value: EnabledPlugins): string[] {
   return Object.entries(value.enabledPlugins || {}).filter(([, on]) => on).map(([key]) => key);
 }
 function frontmatterName(file: string): string {
-  try { return (fs.readFileSync(file, "utf8").match(/^name:\s*(.+)$/m) || [])[1] || ""; }
+  try { return (fs.readFileSync(file, "utf8").match(/^name:\s*(\S.*)$/m) || [])[1] || ""; }
   catch { return ""; }
 }
 function directFiles(dir: string, suffix = ""): string[] {

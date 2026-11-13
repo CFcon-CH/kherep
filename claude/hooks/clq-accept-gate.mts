@@ -68,12 +68,12 @@ function lastAssistantText(transcriptPath: unknown): string {
 function missingField(text: string): string {
   if (!text) return "";
   // 3. receipt present
-  if (!/^\s*Dispatched:/m.test(text) && !/\bDispatched:\s*\d/.test(text)) {
+  if (!/^[^\S\n\r\u2028\u2029]*Dispatched:/m.test(text) && !/\bDispatched:\s*\d/.test(text)) {
     return "";
   }
 
   // Every dispatch result must be grounded. Placeholders are not evidence.
-  const hasEvidence = /^\s*Evidence:\s*(?!none\b|n\/?a\b|unknown\b)\S.+$/im.test(text);
+  const hasEvidence = /^[^\S\n\r\u2028\u2029]*Evidence:\s*(?!none\b|n\/?a\b|unknown\b)\S.+$/im.test(text);
   if (!hasEvidence) return "Evidence";
 
   // Build-phase agent / marker referenced.

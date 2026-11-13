@@ -193,3 +193,21 @@ test("T10 a notice quotes no name, no SHA and no brief text", () => {
     assert.doesNotMatch(text, /[0-9a-f]{7,}/i, brief);
   }
 });
+
+// Issue #906: code span cases of the current expression, kept as the reference for its replacement.
+test("code spans follow CommonMark backtick runs", () => {
+  for (const brief of ["measured: `npm test` -> 42 pass", "measured: ``a`b`` -> ok", "measured: ```x` -> ok"]) {
+    assert.equal(observationBriefIssue(brief), null, brief);
+  }
+  denied("measured: `a`` -> ok", /has no command in an inline code span/);
+  denied("measured: ` ` -> ok", /has no command in an inline code span/);
+  denied("measured: `a` then `b` no arrow", /has no -> after the command/);
+  // The binding words end where the span starts: an opener used from its last backtick leaves the others before it.
+  const bound = `measured: code r@${"0123456789abcdef".repeat(2)}01234567 -- a/b.mts`;
+  assert.equal(observationBriefNotice(`${bound} \`x\` -> ok`), null);
+  for (const span of ["``x`", "```x`"]) assert.match(observationBriefNotice(`${bound} ${span} -> ok`) ?? "", /path list that is not repo-relative/, span);
+  const rising = `measured: ${Array.from({ length: 400 }, (_, i) => `${"`".repeat(i + 1)}a`).join("")}`;
+  const started = performance.now();
+  denied(rising, /has no command in an inline code span/);
+  assert.ok(performance.now() - started < 200, "linear on rising backtick runs");
+});

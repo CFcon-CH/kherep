@@ -6,13 +6,15 @@ import { RELATED_HEADING } from './confluence-neighbours.mts';
 // #693: the Revision grammar and claim text live in confluence-claim-text.mts; re-exported for every current importer.
 import { BOUND_REVISION, claimViews, DIRTY_LINE, plainText, revisionLines, type Revisions } from './confluence-claim-text.mts';
 export { BOUND_REVISION, claimViews, DIRTY_LINE, NO_BINDING_LINE, plainText, revisionLines, scopedRevision, type Revisions, type Scoped } from './confluence-claim-text.mts';
-// Copied, not imported (neither source is in the broker install closure): codex-output.mts:76-81 in
-// modules/control-plane/node and bootstrap/publication-audit.mts:67. A hit is refused, never redacted.
+// Copied, not imported (neither source is in the broker install closure): codex-output.mts:76-88 in
+// modules/control-plane/node and bootstrap/publication-audit.mts:94. A hit is refused, never redacted.
 export const SECRET_MARKERS: readonly RegExp[] = [
   /sk-[A-Za-z0-9_*-]{8,}/, /Bearer\s+\S+/i, /eyJ[\w-]+\.[\w-]+\.[\w-]+/, /\/\/[^\s/@]+@/,
-  /[a-z][a-z0-9+.-]*:\/\/[^\s?#]*\?[^\s#]*(?:token|key|secret|password|sig)=/i,
   /-----BEGIN [A-Z ]*PRIVATE KEY-----/, /ENC\[AES256_GCM,/, /(?:AKIA|ASIA)[A-Z0-9]{16}/,
 ];
+// A URL whose query names a credential, inside one run of non-space, non-# characters: scheme://, the first "?" after it, then the key (same rule, string form).
+const secretQuery = (text: string): boolean => text.split(/[\s#]+/).some(run => { const scheme = /[a-z][0-9+.-]*:\/\//i.exec(run), at = scheme ? run.indexOf('?', scheme.index + scheme[0].length) : -1;
+  return at >= 0 && /(?:token|key|secret|password|sig)=/i.test(run.slice(at + 1)); });
 
 export type MeasuredKind = 'code' | 'tracker' | 'live' | 'doc';
 export type Kind = MeasuredKind | 'historical' | 'unclassified';
@@ -56,11 +58,11 @@ export function classifyClaim(snapshot: ClaimSource, bodyApproved: boolean, kind
   // Priority order: a bound revision makes code repeatable; nothing repeats a historical claim.
   const has: [Kind, boolean][] = [
     ['code', [revisions.bound, revisions.unbound, revisions.malformed].some(lines => lines.length > 0) || codeTokens.length > 0
-      || /(?:^|\n)\s*(?:Code|Repository|Repo|Commit|Code[- ]bound)\s*:/im.test(lines)],
+      || /^[^\S\n\r\u2028\u2029]*(?:Code|Repository|Repo|Commit|Code[- ]bound)\s*:/im.test(lines)],
     ['historical', /\b(?:historical(?:ly)?|at the time of (?:measurement|writing))\b/i.test(text)],
     ['tracker', trackerKeys.length > 0],
-    ['live', /(?:^|\n)\s*(?:Host|Target|Deployment|Live)\s*:/im.test(lines) || /\b(?:kubectl|systemctl|journalctl)\b/.test(text)],
-    ['doc', /(?:^|\n)\s*(?:Doc|Documentation)\s*:/im.test(lines) || /https?:\/\/(?:developer\.atlassian\.com|docs\.)/.test(original)],
+    ['live', /^[^\S\n\r\u2028\u2029]*(?:Host|Target|Deployment|Live)\s*:/im.test(lines) || /\b(?:kubectl|systemctl|journalctl)\b/.test(text)],
+    ['doc', /^[^\S\n\r\u2028\u2029]*(?:Doc|Documentation)\s*:/im.test(lines) || /https?:\/\/(?:developer\.atlassian\.com|docs\.)/.test(original)],
   ];
   const signals = has.filter(([, on]) => on).map(([kind]) => kind);
   const classified: Kind = signals[0] ?? 'unclassified';
@@ -111,7 +113,7 @@ function measurementGate(claim: Claim, m: Record<string, unknown>, options: Deci
   const strings = Object.values(m).filter((v): v is string => typeof v === 'string');
   // C0 controls other than tab, LF and CR (an ANSI escape, say) could rewrite a terminal or the report.
   if (strings.some(v => /[\x00-\x08\x0b\x0c\x0e-\x1f]/.test(v))) return 'excerpt-control-chars';
-  if (strings.some(v => SECRET_MARKERS.some(marker => marker.test(v)))) return 'excerpt-secret-marker';
+  if (strings.some(v => SECRET_MARKERS.some(marker => marker.test(v)) || secretQuery(v))) return 'excerpt-secret-marker';
   const age = today(options.now) - measured;
   if (age > (options.maxAgeDays ?? 2)) return 'measurement-stale';
   return age < 0 ? 'measurement-in-future' : null;

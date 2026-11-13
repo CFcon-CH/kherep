@@ -107,3 +107,16 @@ test("unsupported Luna Medium is attributed to broker when preceding roles are s
     ? { ...model, supportedReasoningEfforts: [{ reasoningEffort: "low" }] } : model) };
   assert.throws(() => resolveModels(policy, catalog), /role broker, family luna/);
 });
+
+// Issue #906: a trailing comment is cut from the first blank of its whitespace run.
+test("trailing comments are ignored, and a lone CR inside a setting line still refuses it", () => {
+  const commented = policyText.split("\n").map((line) => line === "schema_version = 1" ? `${line}   # c`
+    : line.startsWith("[roles.") ? `${line} # c` : line.includes(" = ") ? `${line}\t#c` : line).join("\n");
+  assert.deepEqual(parseModelPolicy(`# c\n${commented}`).roles, parseModelPolicy(policyText).roles);
+  const setting = (suffix: string) => policyText.replace('family = "sol"', `family = "sol"${suffix}`);
+  assert.deepEqual(parseModelPolicy(setting(" #x #y")).roles.root, { family: "sol", reasoning: "xhigh" });
+  assert.throws(() => parseModelPolicy(setting(" #x\r #y")), /Invalid or duplicate model policy setting/);
+  const started = performance.now();
+  assert.throws(() => parseModelPolicy(`schema_version = 1\n${" ".repeat(50_000)}x\n`), /Invalid or duplicate model policy setting/);
+  assert.ok(performance.now() - started < 200, "linear on a long blank run");
+});

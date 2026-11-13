@@ -89,3 +89,15 @@ test("a problem never quotes the message", () => {
     assert.doesNotMatch(result.problem, /Example|example\.com|99999|\b7\b|\b3\b/, result.problem);
   }
 });
+
+// Issue #906: the reason starts at the first non-blank after the status word.
+test("a reason starts after the blanks; a line break or a glued word makes no status line", () => {
+  assert.deepEqual(checkObsResult("OBS-RESULT: wrote 2 11,12"), { status: "wrote" });
+  assert.deepEqual(checkObsResult("OBS-RESULT:\tfailed \t  broker down "), { status: "failed" });
+  assert.deepEqual(checkObsResult("OBS-RESULT: empty"), { problem: "empty needs a reason" });
+  const none = { problem: "the first non-empty line is no OBS-RESULT status line" };
+  for (const message of ["OBS-RESULT: wrote\t\r2 11 12", "OBS-RESULT: failedx"]) assert.deepEqual(checkObsResult(message), none, message);
+  const started = performance.now();
+  assert.deepEqual(checkObsResult(`OBS-RESULT: failed${" ".repeat(50_000)}x\u2028y`), none);
+  assert.ok(performance.now() - started < 200, "linear on a long blank run");
+});

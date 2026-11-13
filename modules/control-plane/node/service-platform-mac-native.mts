@@ -94,7 +94,7 @@ function attestEnvironment(lines: string[]): void {
     const end = lines.indexOf("\t}", starts[0] + 1);
     if (end < 0) unavailable();
     for (const line of lines.slice(starts[0] + 1, end)) {
-      const entry = /^\t\t([A-Za-z0-9_]+)\s*=>\s*(.*)$/u.exec(line);
+      const entry = /^\t\t([A-Za-z0-9_]+)\s*=>\s*((?:\S.*)?)$/u.exec(line);
       if (!entry) throw new Error("launchd loaded service identity is unavailable");
       if (/^(?:NODE_OPTIONS|NODE_PATH)$/iu.test(entry[1])) {
         throw new Error("launchd loaded service has execution-affecting environment");
@@ -190,10 +190,13 @@ export function attestMacProcessAbsence(run: MacCommand, commands: string[]): vo
   const lines = inventory.stdout.split(/\r?\n/u).filter(Boolean);
   if (!lines.length) throw new Error("managed daemon process inventory is unavailable");
   for (const line of lines) {
-    const process = /^\s*([1-9]\d*)\s+(\d+)\s+(.+)$/u.exec(line);
-    if (!process || !Number.isSafeInteger(Number(process[1])) || !Number.isSafeInteger(Number(process[2]))) {
+    const head = /^\s*([1-9]\d*)\s+(\d+)\s/u.exec(line);
+    // The command is the rest without leading whitespace; a rest of whitespace only keeps its last character, as (.+)$ did.
+    const rest = head ? line.slice(head[0].length) : "", command = rest.trimStart() || rest.slice(-1);
+    if (!head || command === "" || /[\n\r\u2028\u2029]/u.test(command)
+      || !Number.isSafeInteger(Number(head[1])) || !Number.isSafeInteger(Number(head[2]))) {
       throw new Error("managed daemon process inventory is unavailable");
     }
-    if (commands.includes(process[3])) throw new Error("managed daemon process remains without a loaded LaunchAgent");
+    if (commands.includes(command)) throw new Error("managed daemon process remains without a loaded LaunchAgent");
   }
 }

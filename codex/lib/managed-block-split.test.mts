@@ -183,3 +183,12 @@ test("re-anchors every #274 layout to the same bytes as before issue #684", () =
   ];
   for (const [config, expected] of cases) assert.equal(prepareManagedConfig(config, OPTIONS).config, expected);
 });
+
+// Issue #906: a header path is parsed key by key instead of by a backtracking expression.
+test("fixture headers take quoted and dotted keys and refuse anything else", () => {
+  assert.deepEqual(tomlDocument("[a . \"b c\" . 'd.e']\nx = 1\n").tables, { 'a."b c"."d.e"': ["x = 1"] });
+  for (const header of ["[a b]", "[a. ]"]) assert.throws(() => tomlDocument(`${header}\n`), /Not a fixture header/, header);
+  const started = performance.now();
+  assert.throws(() => tomlDocument(`[${" ".repeat(50_000)}]\n`), /Not a fixture header/);
+  assert.ok(performance.now() - started < 200, "linear on a long blank header");
+});

@@ -12,6 +12,8 @@ import { observationBroker } from './observation-broker.mts';
 import { publishObservations } from './observation-publisher.mts';
 import { receiptStore } from './observation-receipt.mts';
 import { observationRpc } from './observation-stdio.mts';
+import { observationLinking, type LinkingContext } from './observation-linking.mts';
+import type { Finding } from './observation-policy.mts';
 import type { ConfluenceContext } from './confluence-session.mts';
 
 const W = 'Synthetic logon task workaround for the agent account state';
@@ -200,4 +202,21 @@ test('the stdio candidates tool answers through RPC and never touches the journa
     assert.equal(fs.existsSync(path.join(f.home, 'receipts')), false);
     const unwired = await observationRpc(call, async () => 'OBS-RESULT: empty no-admissible-findings') as any;
     assert.equal(unwired.error.message, 'method-unavailable');
+});
+
+// Issue #906: the prose escape keeps every <...> run (found in one pass) and escapes
+// only the text between them. related() is called directly: the publish path refuses
+// tag attributes and a dangling < before it gets here.
+test('related prose escapes text between tags and keeps a quote inside a tag', async () => {
+    const linking = observationLinking({} as LinkingContext);
+    const prose = (body: string) => linking.related('KEY', { bodyStorage: body } as Finding, { approved: [], reviewed: 0 });
+    const none = '<h2>Related pages</h2><p>No related page on this topic (0 candidates reviewed).</p>';
+    for (const [body, expected] of [
+        ['<p title="x">\u2018q\u2019</p>', '<p title="x">&lsquo;q&rsquo;</p>'],
+        ['<p>a</p>tail "x" < y', '<p>a</p>tail &quot;x&quot; < y'],
+        ['<p>a < b > c</p>', '<p>a < b > c</p>'],
+    ]) assert.equal(await prose(body), expected + none, body);
+    const started = performance.now();
+    assert.equal(await prose('<"'.repeat(50_000)), '<&quot;'.repeat(50_000) + none);
+    assert.ok(performance.now() - started < 200, 'linear on a run of < without >');
 });

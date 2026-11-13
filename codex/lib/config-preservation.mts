@@ -17,6 +17,7 @@ import type { RetiredCentralBrainRender } from "./retired-central-brain.mts";
 import { enableHooks, setMarkedBlock, setTopLevelSetting, topLevelSetting } from "./text-merge.mts";
 import { hasTomlStringReference, rewriteExactTomlStringArgs } from "./toml-args.mts";
 
+const MCP_TABLE_HEADER = /^[^\S\n\r\u2028\u2029]*\[\s*mcp_servers\s*\./m;
 export interface ConfigUpgradeOptions {
   startMarker: string;
   endMarker: string;
@@ -90,7 +91,7 @@ export function replaceExactManagedFragment(
       throw new Error("Refusing to replace an ambiguous exact known managed fragment");
     }
     const remainder = body.slice(0, currentOffset) + body.slice(currentOffset + next.length);
-    if (/^\s*\[\s*mcp_servers\s*\./m.test(remainder)) {
+    if (MCP_TABLE_HEADER.test(remainder)) {
       throw new Error("Refusing to retain unmatched MCP tables in the managed block");
     }
     return config;
@@ -105,7 +106,7 @@ export function replaceExactManagedFragment(
       throw new Error("Refusing to replace an ambiguous exact known managed fragment");
     }
     const remainder = body.slice(0, offset) + body.slice(offset + candidate.length);
-    if (/^\s*\[\s*mcp_servers\s*\./m.test(remainder)) {
+    if (MCP_TABLE_HEADER.test(remainder)) {
       throw new Error("Refusing to retain unmatched MCP tables in the managed block");
     }
     const absolute = bodyStart + offset;
