@@ -24,7 +24,9 @@ export type Pages = Record<string, { body: string; labels: string[]; spaceId?: s
 // git merge-base prints (absent: the call fails).
 export interface HarnessOptions { exec?: ExecLike; links?: Record<string, string | null>; files?: FileOps; onRequest?: () => void; mergeBase?: string }
 
-export function harness(pages: Pages = { '1': { body: BODY, labels: LABELS } }, options: HarnessOptions = {}) {
+const defaultPages = (): Pages => ({ '1': { body: BODY, labels: LABELS } });
+
+export function harness(pages: Pages = defaultPages(), options: HarnessOptions = {}) {
   const calls: RequestSpec[] = [];
   const execs: string[][] = [];
   const files = new Map<string, string>();

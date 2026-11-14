@@ -45,15 +45,22 @@ function git(repo: string, args: string[]): Buffer {
   return execFileSync(requireTrustedExecutable("git"), ["-C", repo, ...args], { maxBuffer: 1024 * 1024 * 1024 });
 }
 
-function walk(root: string, found = { files: [] as string[], directories: [] as string[] }, relative = "") {
+interface Found { files: string[]; directories: string[] }
+
+function walk(root: string): Found {
+  const found: Found = { files: [], directories: [] };
+  collect(root, "", found);
+  return found;
+}
+
+function collect(root: string, relative: string, found: Found): void {
   for (const entry of fs.readdirSync(path.join(root, relative), { withFileTypes: true })) {
     const child = relative ? `${relative}/${entry.name}` : entry.name;
     if (entry.isSymbolicLink()) throw new Error(`Symlink remains in the export: ${child}`);
-    if (entry.isDirectory()) { found.directories.push(child); walk(root, found, child); }
+    if (entry.isDirectory()) { found.directories.push(child); collect(root, child, found); }
     else if (entry.isFile()) found.files.push(child);
     else throw new Error(`Unsupported file type in the export: ${child}`);
   }
-  return found;
 }
 
 export function exportRevision(repo: string, revision: string, outDir: string): ExportResult {

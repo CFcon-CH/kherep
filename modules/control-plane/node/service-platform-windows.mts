@@ -211,7 +211,7 @@ export class WindowsServiceAdapter implements ServiceAdapter {
     return true;
   }
   async preflightStop(binding: ServiceBinding, expected: ServiceStopContext | undefined): Promise<void> {
-    await this.#stop(binding, expected, true);
+    await this.#stop(binding, expected, true, { spawned: false });
   }
   async write(binding: ServiceBinding, definition: Buffer, security: Buffer): Promise<void> {
     const value = invokeNativeJson<{ ok?: boolean; definition?: string; security?: string; running?: boolean }>("task-write", WINDOWS_WRITE_SCRIPT,
@@ -239,7 +239,7 @@ export class WindowsServiceAdapter implements ServiceAdapter {
     }
   }
   async #stop(binding: ServiceBinding, expected: ServiceStopContext | undefined, checkOnly: boolean,
-    progress: { spawned: boolean } = { spawned: false }): Promise<void> {
+    progress: { spawned: boolean }): Promise<void> {
     if (checkOnly && expected) {
       await waitForWindowsQuiescence(() => stopEvidence(this, binding, expected));
       return;
