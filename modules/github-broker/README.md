@@ -73,7 +73,12 @@ remote branch exists and is not a local ancestor of sha (no fast-forward), the
 remote default branch tip is not available locally, or any commit in
 `sha --not <remote default>` (at most 256) has an author or committer email outside
 the allowed bot emails or touches `.github/workflows` (merge commits are diffed
-against every parent). The push itself is one fixed command:
+against every parent). Every git call uses system Git from a fixed path, never
+from `PATH`: `C:\Program Files\Git\cmd\git.exe` or `...\bin\git.exe` on
+Windows, `/usr/bin/git` or `/usr/local/bin/git` elsewhere (owned by root and its
+directory too, neither writable by group or others). Without one, `branch.push`
+fails with `git-unavailable` before the receipt; API operations do not need Git.
+The push itself is one fixed command:
 
 ```text
 git -c credential.helper= -c credential.helper=!'<node>' '<tools>/github-<rt>-credential.mts' <operationId>
@@ -85,7 +90,9 @@ git -c credential.helper= -c credential.helper=!'<node>' '<tools>/github-<rt>-cr
 The empty first helper resets every configured helper (manager, keychain, store),
 so no personal credential can answer. The child environment drops git tracing,
 `GIT_CONFIG*`, askpass, alternative repository variables and `GH_TOKEN`/`GITHUB_TOKEN`,
-and sets `GIT_TERMINAL_PROMPT=0` and `GCM_INTERACTIVE=never`. Repository hooks
+replaces `PATH` with a fixed system list (`C:\Program Files\Git\cmd;C:\Windows\System32;C:\Windows`
+on Windows, `/usr/bin:/bin` elsewhere) and sets `GIT_TERMINAL_PROMPT=0` and
+`GCM_INTERACTIVE=never`. Repository hooks
 such as `pre-push` still run. The credential helper answers only `get` for
 `https://github.com/<allowlisted slug>.git`, and only while a pending, locked
 `branch.push` receipt for that runtime and operation, admitted less than 120 s

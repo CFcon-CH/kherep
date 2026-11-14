@@ -3,6 +3,7 @@ import { fail } from './contract.mts';
 import type { Identity } from './config.mts';
 import type { Http } from './transport.mts';
 export type Permissions = Record<string, 'read'|'write'>;
+const ISSUES_WRITE:Permissions = Object.freeze({issues:'write'});
 export function jwt(key: Buffer, clientId: string, now: number): string {
   try {
     const privateKey = createPrivateKey(key);
@@ -43,6 +44,6 @@ export async function authenticateRepository(http:Http, key:Buffer, identity:Ide
   if (target.id !== repo.id || target.full_name !== repo.slug || target.private !== false || target.visibility !== undefined && target.visibility !== 'public') fail('target-refused');
   return {token:token.token, target};
 }
-export async function authenticate(http:Http, key:Buffer, identity:Identity, repo:{slug:string;id:number}, now:number, permissions:Permissions={issues:'write'}): Promise<string> {
+export async function authenticate(http:Http, key:Buffer, identity:Identity, repo:{slug:string;id:number}, now:number, permissions:Permissions=ISSUES_WRITE): Promise<string> {
   return (await authenticateRepository(http,key,identity,repo,now,permissions)).token;
 }
