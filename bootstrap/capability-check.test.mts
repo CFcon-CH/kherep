@@ -111,13 +111,19 @@ test("live owned agents are named by their frontmatter, a name on a later line i
     fs.writeFileSync(path.join(root, ".claude.json"), "{}");
     fs.writeFileSync(path.join(claudeHome, "agents", "kherep-builder.md"), "---\nname:\n\n  kherep-builder\n---\n");
     fs.writeFileSync(path.join(claudeHome, "agents", "dc-plugin-build-runner.md"), "name:   ");
-    fs.writeFileSync(path.join(claudeHome, "agents", "forge-deploy-validator.md"), `name:${"\n".repeat(100_000)}`);
     const env: NodeJS.ProcessEnv = { ...process.env, CLAUDE_HOME: claudeHome };
     for (const key of ["KHEREP_USER_HOME", "KHEREP_WORKSPACE", "KHEREP_PROFILE", "CAPABILITY_STRICT"]) delete env[key];
-    const started = performance.now();
-    const result = spawnSync(process.execPath, [path.join(import.meta.dirname, "capability-check.mts"), "--live", "--profile", "mac"],
+    const check = () => spawnSync(process.execPath, [path.join(import.meta.dirname, "capability-check.mts"), "--live", "--profile", "mac"],
       { encoding: "utf8", env });
-    assert.ok(performance.now() - started < 2000, "the check ends within 2 s");
+    // The bound is on the time beyond a run without the long file, so the start-up does not count (#914).
+    let started = performance.now();
+    check();
+    const control = performance.now() - started;
+    fs.writeFileSync(path.join(claudeHome, "agents", "forge-deploy-validator.md"), `name:${"\n".repeat(100_000)}`);
+    started = performance.now();
+    const result = check();
+    const beyond = performance.now() - started - control;
+    assert.ok(beyond < 2000, `the check took ${beyond.toFixed(0)} ms beyond a run without the long file`);
     assert.match(result.stdout, /^PASS \| live owned agent kherep-builder$/m);
     assert.match(result.stdout, /^FAIL \| live owned agent dc-plugin-build-runner$/m);
     assert.match(result.stdout, /^FAIL \| live owned agent forge-deploy-validator$/m);

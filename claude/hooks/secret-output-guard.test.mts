@@ -187,12 +187,16 @@ for (const [label, command, ruleId] of [
   ["5 000 times kubectl get secret", "kubectl get secret ".repeat(5_000), ""],
   ["-o before 50 000 blanks", `kubectl get secret -o${" ".repeat(50_000)}x`, ""],
 ]) {
-  const started = Date.now();
+  // The bound is on the time beyond a short command run just before, so the hook start-up does not count (#914).
+  let started = Date.now();
+  runHook("echo ok");
+  const control = Date.now() - started;
+  started = Date.now();
   if (ruleId) expectBlocked(label, command, ruleId);
   else expectAllowed(label, command);
-  const elapsed = Date.now() - started;
-  if (elapsed < 2000) { pass++; console.log(`  ok   TIME   ${label} (${elapsed} ms)`); }
-  else { fail++; console.log(`  FAIL TIME   ${label} (${elapsed} ms, limit 2000)`); }
+  const beyond = Date.now() - started - control;
+  if (beyond < 2000) { pass++; console.log(`  ok   TIME   ${label} (${beyond} ms beyond a short command)`); }
+  else { fail++; console.log(`  FAIL TIME   ${label} (${beyond} ms beyond a short command, limit 2000)`); }
 }
 
 console.log(`\n${pass} pass, ${fail} fail`);
