@@ -1,5 +1,7 @@
 # Codex integration
 
+The shell dispatcher carries warning-only event-shape diagnostics for `commit-guard` and `deploy-guard` (issue #808, Stage 1). Native input is classified before existing normalization, preserving string inputs and the current string-valued `command`, `source`, `code`, `input` and `patch` carriers. Valid `functions.exec` source without an extracted shell command stays silent. Only exact fixed warnings from those two guard slots are admitted; unrelated guard notices remain fail closed. Existing policy denials, failures, transcript suppression and inline approval behavior remain in effect. See [the warning contract](HOOKS.md). Synthetic source and candidate tests do not prove native invocation or warning presentation; Stage 2 remains separate.
+
 Kherep projects shared rules, skills and agents into Codex through a separate adapter. Claude and Codex keep their own configuration and account bindings.
 
 ## Install

@@ -4,6 +4,7 @@
 // force-pushes, kubectl apply/scale/destructive verbs and destructive Helm verbs.
 // Rationale: CLAUDE.md (project-level) requires dev-deploy-first + explicit user OK for prod.
 
+import { classifyToolEvent, warningText, warningDocument } from "./lib/tool-event-shape.mts";
 import { humanText, transcriptLines } from './lib/deploy-transcript.mts';
 import { forcePushVerdict, legacyForcePush } from './lib/git-push-match.mts';
 import {
@@ -73,15 +74,18 @@ function explicitlyApprovesProductionDeploy(text: string): boolean {
 }
 
 await (async () => {
-  const raw = await read(process.stdin);
-  let payload: ToolPayload | null = null;
-  try {
-    payload = JSON.parse(raw) as ToolPayload | null;
-  } catch {
+  let value: unknown;
+  try { value = JSON.parse(await read(process.stdin)); } catch { /* explicit invalid envelope */ }
+  const shape = classifyToolEvent(value, "deploy-guard", "shared");
+  function success(): never {
+    if (shape.kind === "unclassifiable") {
+      process.stderr.write(`${warningText("deploy-guard", shape.reason)}\n`);
+      process.stdout.write(warningDocument([{ guard: "deploy-guard", reason: shape.reason }]));
+    }
     process.exit(0);
   }
-
-  if (!payload || payload.tool_name !== 'Bash') process.exit(0);
+  const payload = value as ToolPayload | null;
+  if (!payload || !(payload.tool_name === 'Bash')) success();
   const cmd = ((payload.tool_input && payload.tool_input.command) || '') as string;
   const violations: string[] = [];
 
@@ -210,7 +214,7 @@ await (async () => {
     );
   }
 
-  if (violations.length === 0) process.exit(0);
+  if (violations.length === 0) success();
 
   process.stderr.write(
     `deploy-guard blocked this command:\n  - ${violations.join('\n  - ')}\n\n` +

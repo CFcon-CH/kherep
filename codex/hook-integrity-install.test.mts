@@ -166,6 +166,15 @@ test("2f. a 0-byte lib/denial-journal.mts is named as imported by both adapter c
   assertRestored(ctx, result, "lib/denial-journal.mts", "claude/hooks/lib/denial-journal.mts");
 });
 
+test("shape helper is restored with all three computed dispatcher importers", (t) => {
+  const ctx = fixture(t);
+  fs.writeFileSync(path.join(ctx.hookDir, "lib", "tool-event-shape.mts"), "");
+  const result = run(ctx);
+  const importers = /lib\/tool-event-shape\.mts \(imported by ([^)]*)\)/.exec(String(result.context))?.[1] ?? "";
+  for (const name of ["codex-hook-adapter", "hook-adapter", "codex-shell-checks"]) assert.ok(importers.includes(`kherep-maestro/${name}.mts`), String(result.context));
+  assertRestored(ctx, result, "lib/tool-event-shape.mts", "claude/hooks/lib/tool-event-shape.mts");
+});
+
 test("3. a missing commit-guard.mts is restored", (t) => {
   const ctx = fixture(t);
   fs.rmSync(path.join(ctx.hookDir, "commit-guard.mts"));

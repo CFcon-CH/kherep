@@ -18,7 +18,7 @@ The workspace path must be a single shell word: no whitespace and none of ``| & 
 
 ## 2. Review an isolated installation
 
-For Codex, follow the [isolated candidate procedure](CODEX.md) and inspect the native hook definitions. The shell dispatcher introduced in issue #386 replaces three guard adapters and pre-tool attribution with one command. Existing state and custom groups are preserved, but the changed definition needs host review in `/hooks` and a native-session restart after an authorized update. Repository checks do not establish Desktop activation; use the [bounded host acceptance](CODEX-HOOK-RUNS.md#host-acceptance) to verify guards and Intercom.
+For Codex, follow the [isolated candidate procedure](CODEX.md) and inspect the native hook definitions. The shell dispatcher runs four guards (`commit-guard`, `deploy-guard`, `main-checkout-guard` and `module-label-guard`) and pre-tool attribution with one command. Existing state and custom groups are preserved, but the changed definition needs host review in `/hooks` and a native-session restart after an authorized update. Repository checks do not establish Desktop activation; use the [bounded host acceptance](CODEX-HOOK-RUNS.md#host-acceptance) to verify guards and Intercom.
 
 This preview writes managed files to a new candidate directory, leaves global, system and workspace Git configuration unchanged and does not install dependencies or start a memory agent. `KHEREP_INSTALL_PREVIEW=1` implies `KHEREP_INSTALL_SKIP_GITCONFIG`, `KHEREP_INSTALL_SKIP_RUNTIME_AGENT`, `KHEREP_INSTALL_SKIP_ATL_CREDENTIAL` and `KHEREP_INSTALL_SKIP_KNOWLEDGE_SPACE`, so the preview never reads a real credential file named by an inherited `KHEREP_ATL_CRED_FILE_*` variable and makes no live call. The Git, credential and knowledge-space steps each print one `install: SKIP_<STEP>=1 (by <reason>; ...)` line when skipped.
 
@@ -34,6 +34,8 @@ SKIP_SECRETS=1 SKIP_DEPS=1 bash bootstrap/install.sh
 ```
 
 A `CLAUDE_HOME` other than `<HOME>/.claude` is treated as a candidate even without the switch: the installer then leaves global and system `core.hooksPath` unchanged and skips the credential step, so a forgotten switch cannot point the account's Git hooks at a temporary directory. The knowledge-space step is not skipped by the home, so such a run without `KHEREP_INSTALL_PREVIEW=1` ends with `DONE WITH ERRORS` because the space was not checked. If a non-default `CLAUDE_HOME` is your real Claude home, opt in per step with `KHEREP_INSTALL_ALLOW_GITCONFIG=1` and `KHEREP_INSTALL_ALLOW_ATL_CREDENTIAL=1` (see [section 5](#5-configure-integrations)).
+
+For issue #808 Stage 1, verify that `hooks/lib/tool-event-shape.mts` is present in the Claude candidate and `hooks/kherep-maestro/lib/tool-event-shape.mts` is present in the Codex candidate. The synthetic checks in `bootstrap/tool-event-shape-delivery.test.mts`, `codex/shared-guards-install.test.mts` and `codex/hook-integrity-install.test.mts` execute installed commands and check helper recovery without live activation. They do not establish native invocation or warning presentation; Stage 2 needs separate host acceptance.
 
 Inspect the candidate's rules, settings, hook commands and installation receipt. Keep its backup until you have checked recovery. A files-only preview does not establish that connected services work.
 

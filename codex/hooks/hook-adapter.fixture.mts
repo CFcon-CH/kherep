@@ -22,4 +22,6 @@ export const ADAPTER_MODULES: string[] = closure("hook-adapter.mts");
 export function copyAdapter(dir: string, entryName = "hook-adapter.mts"): void {
   fs.copyFileSync(path.join(HERE, "hook-adapter.mts"), path.join(dir, entryName));
   for (const name of ADAPTER_MODULES) fs.copyFileSync(path.join(HERE, name), path.join(dir, name));
+  fs.mkdirSync(path.join(dir, "lib"), { recursive: true });
+  fs.copyFileSync(path.resolve(HERE, "../../claude/hooks/lib/tool-event-shape.mts"), path.join(dir, "lib/tool-event-shape.mts"));
 }

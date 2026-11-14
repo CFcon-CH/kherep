@@ -120,6 +120,7 @@ export async function shellChecks(payload: HookPayload, attributionHook?: string
   const deadline = options.deadline ?? DEADLINE;
   const remaining = (): number => Math.max(0, deadline - Date.now());
   let decision = "";
+  const shapeNotices: string[] = [];
   let broken = false;
   const denials: { decision: string; reason: string; broken?: boolean }[] = []; // issue #504: every denying guard
   let runAdaptedHook: typeof import("./hook-adapter.mts").runAdaptedHook | undefined;
@@ -146,14 +147,20 @@ export async function shellChecks(payload: HookPayload, attributionHook?: string
         denials.push({ decision: "deny", reason: tagged(guard, why) });
       }
       else if (result.stdout.trim()) {
-        // These guards allow silently; their only supported stdout is
-        // the adapter's native deny. Unexpected output must not allow a call.
+        // Only these two slots may transport the exact closed shape warning.
+        // Every other notice or unexpected output keeps its fail-closed outcome.
         const output = JSON.parse(result.stdout) as { hookSpecificOutput?: { hookEventName?: string; permissionDecision?: string;
           permissionDecisionReason?: string } };
-        if (output.hookSpecificOutput?.hookEventName !== "PreToolUse"
-          || output.hookSpecificOutput.permissionDecision !== "deny") throw new Error("unsupported guard output");
-        decision ||= result.stdout;
-        denials.push({ decision: "deny", reason: output.hookSpecificOutput.permissionDecisionReason ?? "", broken: result.broken === true });
+        if (output.hookSpecificOutput?.hookEventName === "PreToolUse" && output.hookSpecificOutput.permissionDecision === "deny") {
+          decision ||= result.stdout;
+          denials.push({ decision: "deny", reason: output.hookSpecificOutput.permissionDecisionReason ?? "", broken: result.broken === true });
+        } else if (guard === "commit-guard.mts" || guard === "deploy-guard.mts") {
+          const { toolEventShapeLib } = await import("./hook-adapter-run.mts");
+          const lib = toolEventShapeLib();
+          const warnings = lib.parseShapeWarning(result.stdout, guard === "commit-guard.mts" ? "commit-guard" : "deploy-guard");
+          if (!warnings) throw new Error("unsupported guard output");
+          shapeNotices.push(...warnings.map(item => lib.warningText(item.guard, item.reason)));
+        } else throw new Error("unsupported guard output");
       }
     } catch {
       broken ||= fault;
@@ -186,6 +193,12 @@ export async function shellChecks(payload: HookPayload, attributionHook?: string
       handleAttributionHook(payload, "codex", { paths: nodePaths(), env: process.env });
     } catch { process.stderr.write("kherep shell-checks: attribution could not complete\n"); }
   }
+  if (shapeNotices.length) {
+    const doc = decision ? JSON.parse(decision) : { hookSpecificOutput: { hookEventName: "PreToolUse" } };
+    const context = [...shapeNotices, doc.hookSpecificOutput.additionalContext].filter(Boolean).join("\n");
+    doc.hookSpecificOutput.additionalContext = [...new Set(context.split("\n"))].join("\n");
+    decision = JSON.stringify(doc);
+  }
   if (!notice) return decision;
   // The block goes to stderr always, to a top-level systemMessage on a deny (after the guard's
   // own line, as the adapter does), to additionalContext otherwise; it never changes the decision.
@@ -193,6 +206,10 @@ export async function shellChecks(payload: HookPayload, attributionHook?: string
   if (!decision) return JSON.stringify({ hookSpecificOutput: { hookEventName: "PreToolUse", additionalContext: notice } });
   const lines = notice.split("\n");
   const doc = JSON.parse(decision) as Record<string, unknown>;
+  const output = doc.hookSpecificOutput as Record<string, unknown>;
+  if (!output.permissionDecision) return JSON.stringify({ ...doc, hookSpecificOutput: {
+    ...output, additionalContext: [output.additionalContext, notice].filter(Boolean).join("\n"),
+  } });
   const integrity = `Kherep hook integrity: ${lines[0]}${lines.length > 1 ? ` (+${lines.length - 1} more)` : ""}`;
   return JSON.stringify({ ...doc, systemMessage: [doc.systemMessage, integrity].filter(Boolean).join("\n") });
 }

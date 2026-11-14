@@ -157,6 +157,7 @@ test("CLI completion awaits stdout and stderr callbacks, including a silent allo
     for (const name of fs.readdirSync(home.hookDir)) if (fs.statSync(path.join(home.hookDir, name)).isFile()) {
       fs.copyFileSync(path.join(home.hookDir, name), path.join(home.root, name === "codex-shell-checks.mts" ? "shell-checks.mts" : name));
     }
+    fs.cpSync(path.join(home.hookDir, "lib"), path.join(home.root, "lib"), { recursive: true });
     const receipt = path.join(home.root, "flush.jsonl"), preload = path.join(home.root, "flush-preload.mts");
     fs.writeFileSync(preload, `import fs from "node:fs";
       for (const name of ["stdout", "stderr"]) {

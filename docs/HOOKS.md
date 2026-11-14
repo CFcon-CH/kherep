@@ -1,5 +1,9 @@
 # Hook reference
 
+`commit-guard` and `deploy-guard` report missing or invalid required tool event fields with a fixed `[kherep:event-shape:WARN:<guard>:<reason>]` diagnostic (issue #808, Stage 1). They emit notice-only `PreToolUse.additionalContext` and the same line on stderr. The seven reasons are `EVENT_ENVELOPE_INVALID`, `TOOL_NAME_MISSING`, `TOOL_NAME_INVALID`, `TOOL_INPUT_MISSING`, `TOOL_INPUT_INVALID`, `COMMAND_MISSING` and `COMMAND_INVALID`. Diagnostics contain no input values. A warning changes no permission decision: existing denials, failures and wrapper envelope validation still apply. Recognized unrelated tools, valid empty commands and absent optional metadata remain silent. The guards do not guess renamed keys or broaden their matchers.
+
+Claude transports these notices through the existing dispatcher and hook runtime. Codex checks native fields before normalization and admits exact canonical notice documents only from these two shell guard slots; another guard's notice still fails closed. Source and isolated installation tests establish transport and dependency recovery. Native invocation and UI/model presentation remain UNKNOWN until separately authorized Stage 2 acceptance.
+
 Every hook Kherep wires, one row each. A hook is wired when one of these sources runs it:
 
 - the Claude settings templates, `claude/settings.user.json` and `claude/settings.project.json`: the hooks under `hooks/`, which start through the hook runtime entry, and the Control Plane hooks, which run through the stable entry point `kherep/control-plane/claude-control-plane-hook.mts`;

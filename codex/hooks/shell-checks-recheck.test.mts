@@ -78,6 +78,7 @@ function box(t: TestContext, installed = true): Box {
     fs.writeFileSync(path.join(root, "pristine", name), text);
   }
   fs.copyFileSync(path.join(REPO, "claude", "hooks", "lib", "guard-recheck.mts"), path.join(dir, "lib", "guard-recheck.mts"));
+  fs.copyFileSync(path.join(REPO, "claude", "hooks", "lib", "tool-event-shape.mts"), path.join(dir, "lib", "tool-event-shape.mts"));
   const attribution = path.join(root, "attribution", "attribution-hook.mts");
   fs.mkdirSync(path.dirname(attribution));
   fs.writeFileSync(attribution, `import fs from "node:fs";
