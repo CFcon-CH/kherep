@@ -168,16 +168,21 @@ for (const line of ["Evidence: none", "Evidence: N/A", "evidence: na", "Evidence
   caseRun(`placeholder, one character or mid-line: ${line}`, `Dispatched: 1 agents\n${line}`, {}, true);
 }
 (function linearReceiptScan() {
+  // The bound is on the time beyond a short receipt run just before, so the hook start-up does not count (#914).
+  const controlTranscript = scopedTranscript("Dispatched: 1 agents\nOutcomes: x");
   for (const [name, text] of [
     ["100 000 line feeds before the receipt", `${"\n".repeat(100_000)}Dispatched: 1 agents\nOutcomes: x`],
     ["50 000 line feeds around a placeholder", `Dispatched: 1\n${"\n".repeat(50_000)}Evidence:${"\n".repeat(50_000)}none`],
   ]) {
-    const started = Date.now();
+    let started = Date.now();
+    runHook({ transcript_path: controlTranscript, cwd: "D:\\Work\\kherep" }, { KHEREP_WORKSPACE: "D:\\Work" });
+    const control = Date.now() - started;
+    started = Date.now();
     caseRun(name, text, {}, true);
-    const elapsed = Date.now() - started;
-    const ok = elapsed < 2000;
+    const beyond = Date.now() - started - control;
+    const ok = beyond < 2000;
     ok ? pass++ : fail++;
-    console.log(`${ok ? "PASS" : "FAIL"} | ${name} within 2 s | ${elapsed} ms`);
+    console.log(`${ok ? "PASS" : "FAIL"} | ${name} within 2 s beyond a short receipt | ${beyond} ms`);
   }
 })();
 

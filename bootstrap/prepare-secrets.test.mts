@@ -60,10 +60,14 @@ test('reads a value line with tabs, trailing blanks or CRLF', root => { ['  mcp_
     assert.equal(fs.readFileSync(path.join(out, 'mcp.json'), 'utf8'), '{}');
 }); });
 test('ignores an empty, inner-blank or unindented value line, a long one in linear time', root => {
+    // The bound is on the time beyond the last short line, so the CLI start-up does not count (#914).
+    let control = 0;
     for (const line of ['  mcp_json:', '  mcp_json: e30= x', 'mcp_json: e30=', ` mcp_json:${' '.repeat(50_000)}a${' '.repeat(50_000)}b`]) {
         const started = performance.now();
         rejected(root, {}, /missing or empty decrypted secret key: mcp_json/, yamlLine(line));
-        assert.ok(performance.now() - started < 2000, `${line.length} characters within 2 s`);
+        const elapsed = performance.now() - started;
+        if (line.length < 100) { control = elapsed; continue; }
+        assert.ok(elapsed - control < 2000, `${line.length} characters took ${(elapsed - control).toFixed(0)} ms beyond a short line`);
     }
 });
 if (!process.exitCode)
