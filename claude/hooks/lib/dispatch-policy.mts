@@ -5,6 +5,7 @@
 
 import { dispatchIssue, dispatchWarning, loadModelPolicy, ModelPolicyError, type ResolvedPolicy } from "./model-policy.mts";
 import { observationBriefIssue, observationBriefNotice } from "./obs-brief-policy.mts";
+import { observationSessionIssue } from "./obs-session-policy.mts";
 import { referencesArtifact, referencesCredentials } from "./private-path-policy.mts";
 import { declaresRevision, workerBriefIssue, workerBriefNotice } from "./worker-brief-policy.mts";
 
@@ -23,6 +24,8 @@ export interface DispatchEvent {
   // The Agent tool's prompt alone, without its description (issue #331).
   brief?: unknown;
   privacy?: unknown;
+  // Issue #922. The payload session_id; only a claude-obs dispatch reads it.
+  sessionId?: unknown;
   [key: string]: unknown;
 }
 
@@ -132,8 +135,11 @@ export function evaluateDispatch(event: DispatchEvent | null | undefined): Dispa
   let noticeRuleId: DispatchResult["noticeRuleId"] = "OBS_BRIEF_REVISION";
   const brief = String(event.brief ?? "");
   if (normalized.agent === "claude-obs") {
+    // Issue #922. One deny names both problems, so one retry fixes both.
     const issue = observationBriefIssue(brief);
-    if (issue) return deny("OBS_BRIEF_FORMAT", issue, normalized);
+    const session = observationSessionIssue(brief, event.sessionId);
+    if (issue) return deny("OBS_BRIEF_FORMAT", session ? `${issue}\n${session}` : issue, normalized);
+    if (session) return deny("OBS_BRIEF_SESSION", session, normalized);
     notice = observationBriefNotice(brief);
   } else if (CODE_BOUND_AGENTS.has(normalized.agent) || declaresRevision(brief)) {
     // Issue #701. Code-bound by role, or by declaring revision:.

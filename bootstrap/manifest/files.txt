@@ -72,6 +72,8 @@ hooks/lib/worker-brief-policy.test.mts
 hooks/lib/command-walk.mts
 hooks/lib/obs-brief-policy.mts
 hooks/lib/obs-brief-policy.test.mts
+hooks/lib/obs-session-policy.mts
+hooks/lib/obs-session-policy.test.mts
 hooks/lib/obs-result-policy.mts
 hooks/lib/obs-result-policy.test.mts
 hooks/lib/obs-handback-state.mts

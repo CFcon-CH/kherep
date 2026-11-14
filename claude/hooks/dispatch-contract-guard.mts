@@ -8,6 +8,8 @@ interface DispatchPayload {
   tool_name?: unknown;
   tool_input?: unknown;
   cwd?: unknown;
+  // Issue #922. Claude Code puts it in every hook payload; absent fails open.
+  session_id?: unknown;
 }
 
 // The Agent/Task tool input fields the dispatch event is built from.
@@ -68,6 +70,7 @@ function main(): void {
     prompt: [input.description, input.prompt].filter(Boolean).join("\n"),
     brief: input.prompt,
     cwd: payload.cwd,
+    sessionId: payload.session_id,
   };
   const result = evaluateDispatch(event);
   if (result.decision === "deny") emitDeny(result.ruleId, result.reason, result.metadata);

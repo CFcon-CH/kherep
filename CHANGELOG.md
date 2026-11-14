@@ -21,6 +21,19 @@ increments the minor version; every other release increments the patch version.
 
 ### Fixed
 
+- Claude observation pages carry the dispatching session's `session-<id>`
+  label again (#922). `dispatch-contract-guard` denies a `claude-obs` dispatch
+  whose brief does not start with `Session id: <id>`, the `session_id` of the
+  hook payload, and its reason gives the exact line to copy (`OBS_BRIEF_SESSION`,
+  or appended to an `OBS_BRIEF_FORMAT` deny). A brief naming another id is
+  denied; a payload without a usable `session_id` is not checked, so
+  `claude-obs` still writes "Session id: not given in the brief." and invents no
+  label. `claude-obs` takes the id only from that first line. New hook lib
+  `hooks/lib/obs-session-policy.mts`, installed by `bootstrap/manifest/files.txt`.
+  Operator action: run the installer; until then the installed guard does not
+  check the line. A denied observation dispatch that is not retried produces no
+  page.
+
 - A held, idle-loaded Codex thread whose last hook event is more than twelve
   hours old no longer misses its native Queue pointer (#919). The poll now takes
   such a thread as a candidate while an accepted message waits for it, and the
