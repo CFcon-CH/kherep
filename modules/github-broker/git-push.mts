@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import path from 'node:path';
 import { execFile, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -7,15 +8,37 @@ import { ABSENT } from './transport.mts';
 import type { Context, Handler } from './operations.mts';
 const MAX_COMMITS = 256;
 // Dropped from every git child: tracing, injected configuration, askpass programs,
-// alternative repositories and ambient tokens. Prompts are switched off.
-const DROPPED = /^(?:GIT_TRACE.*|GIT_CURL_VERBOSE|GIT_REDACT_COOKIES|GIT_CONFIG.*|GIT_ASKPASS|SSH_ASKPASS|GIT_DIR|GIT_WORK_TREE|GIT_COMMON_DIR|GIT_INDEX_FILE|GIT_OBJECT_DIRECTORY|GIT_ALTERNATE_OBJECT_DIRECTORIES|GIT_SSH.*|GIT_PROXY_COMMAND|GH_TOKEN|GITHUB_TOKEN|GH_ENTERPRISE_TOKEN|GITHUB_ENTERPRISE_TOKEN|GCM_TRACE.*)$/i;
-export function gitEnv(env:NodeJS.ProcessEnv=process.env):NodeJS.ProcessEnv {
+// alternative repositories, ambient tokens and the search path. Prompts are switched off.
+const DROPPED = /^(?:PATH|GIT_TRACE.*|GIT_CURL_VERBOSE|GIT_REDACT_COOKIES|GIT_CONFIG.*|GIT_ASKPASS|SSH_ASKPASS|GIT_DIR|GIT_WORK_TREE|GIT_COMMON_DIR|GIT_INDEX_FILE|GIT_OBJECT_DIRECTORY|GIT_ALTERNATE_OBJECT_DIRECTORIES|GIT_SSH.*|GIT_PROXY_COMMAND|GH_TOKEN|GITHUB_TOKEN|GH_ENTERPRISE_TOKEN|GITHUB_ENTERPRISE_TOKEN|GCM_TRACE.*)$/i;
+// Git and the programs it starts come from fixed system locations, never from the caller's PATH.
+const GIT_CANDIDATES = {win32:['C:\\Program Files\\Git\\cmd\\git.exe','C:\\Program Files\\Git\\bin\\git.exe'], posix:['/usr/bin/git','/usr/local/bin/git']};
+const GIT_PATH = {win32:'C:\\Program Files\\Git\\cmd;C:\\Windows\\System32;C:\\Windows', posix:'/usr/bin:/bin'};
+export function gitEnv(env:NodeJS.ProcessEnv=process.env, platform:NodeJS.Platform=process.platform):NodeJS.ProcessEnv {
   const out:NodeJS.ProcessEnv={};
   for (const [k,v] of Object.entries(env)) if (v!==undefined && !DROPPED.test(k)) out[k]=v;
-  return {...out, GIT_TERMINAL_PROMPT:'0', GCM_INTERACTIVE:'never'};
+  return {...out, PATH:platform==='win32'?GIT_PATH.win32:GIT_PATH.posix, GIT_TERMINAL_PROMPT:'0', GCM_INTERACTIVE:'never'};
+}
+// POSIX: owned by root and writable by nobody else.
+const rootOnly = (s:fs.Stats) => s.uid===0 && (s.mode & 0o022)===0;
+let defaultGit:string|undefined;
+/** The first fixed candidate that is a regular file (on POSIX root-owned, in a root-owned directory); none fails `git-unavailable`. */
+export function trustedGit(platform:NodeJS.Platform=process.platform, stat:typeof fs.statSync=fs.statSync):string {
+  const isDefault=platform===process.platform && stat===fs.statSync;
+  if (isDefault && defaultGit) return defaultGit;
+  const win=platform==='win32';
+  for (const file of win?GIT_CANDIDATES.win32:GIT_CANDIDATES.posix) {
+    try {
+      const s=stat(file);
+      if (!s.isFile() || !win && !(rootOnly(s) && rootOnly(stat(path.posix.dirname(file))))) continue;
+      if (isDefault) defaultGit=file;
+      return file;
+    } catch { /* Absent candidate: try the next one. */ }
+  }
+  return fail('git-unavailable');
 }
 function git(cwd:string, args:string[]):string|undefined {
-  try { return execFileSync('git',args,{cwd,env:gitEnv(),encoding:'utf8',windowsHide:true,timeout:30000,maxBuffer:16*1024*1024,stdio:['ignore','pipe','ignore']}).trim(); }
+  const exe=trustedGit();
+  try { return execFileSync(exe,args,{cwd,env:gitEnv(),encoding:'utf8',windowsHide:true,timeout:30000,maxBuffer:16*1024*1024,stdio:['ignore','pipe','ignore']}).trim(); }
   catch { return undefined; }
 }
 const isCommit = (dir:string, sha:string) => git(dir,['cat-file','-t',sha])==='commit';
@@ -67,7 +90,7 @@ export function checkCommits(dir:string, sha:string, base:string, emails:string[
   if (commits.size>MAX_COMMITS) fail('target-refused');
 }
 function run(dir:string, args:string[]):Promise<boolean> {
-  return new Promise(resolve=>{execFile('git',args,{cwd:dir,env:gitEnv(),timeout:120000,windowsHide:true,maxBuffer:1024*1024},error=>resolve(!error));});
+  return new Promise(resolve=>{execFile(trustedGit(),args,{cwd:dir,env:gitEnv(),timeout:120000,windowsHide:true,maxBuffer:1024*1024},error=>resolve(!error));});
 }
 export const pushHandler: Handler = {
   kind:'push',

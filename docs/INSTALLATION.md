@@ -850,6 +850,9 @@ and `github-codex-credential.mts`. Each entrypoint binds its runtime internally.
 uses the existing installation transaction, preserving rollback and idempotence;
 bootstrap drift checking compares every file in that closure. Both actual staged
 entrypoints are import-tested without configuration, key or network side effects.
+`branch.push` needs system Git (Git for Windows in `C:\Program Files\Git`, the
+Xcode Command Line Tools' `/usr/bin/git`, or the distribution package); API
+operations are unaffected.
 
 Installation creates no enabled policy, key, App registration, installation,
 permission grant or network probe. Operational setup and publication authority

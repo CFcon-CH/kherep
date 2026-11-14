@@ -33,7 +33,8 @@ operation's handler for preflight, mutation, known IDs, readback and public IDs.
 `issues.mts`, `pulls.mts`, `runs.mts` and `git-push.mts` are those handlers.
 `git-push.mts` also owns the local preflight (local commit, fast-forward, default
 and `v*` branches, bot authorship of every new commit, no `.github/workflows`
-path) and the fixed push command. `credential.mts` is the git credential helper
+path) and the fixed push command, run by system Git from a fixed path with a fixed
+child `PATH` (`git-unavailable` when absent). `credential.mts` is the git credential helper
 behind `github-<runtime>-credential.mts`: it answers only `get` for an
 allowlisted `https://github.com/<slug>.git` while the broker holds the lock of
 that operation's pending `branch.push` receipt admitted within 120 s, and writes

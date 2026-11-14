@@ -5,7 +5,7 @@ export type IssueOperation = typeof ISSUE_OPERATIONS[number];
 export type Operation = IssueOperation | typeof GITHUB_OPERATIONS[number];
 export type Request = { operationId: string; repository: string; operation: Operation | 'verify' | 'identity'; issueNumber?: number; title?: string; body?: string; labels?: string[]; state?: 'open' | 'closed'; stateReason?: 'completed' | 'not_planned' | 'reopened';
   branch?: string; sha?: string; head?: string; base?: string; draft?: boolean; prNumber?: number; runId?: number; failedOnly?: boolean };
-export type ErrorCode = 'invalid-request' | 'label-required' | 'policy-disabled' | 'policy-invalid' | 'key-access-denied' | 'auth-refused' | 'target-refused' | 'transport-failed' | 'verification-failed' | 'operation-conflict' | 'operation-busy' | 'receipt-invalid' | 'receipt-full' | 'outcome-unknown';
+export type ErrorCode = 'invalid-request' | 'label-required' | 'policy-disabled' | 'policy-invalid' | 'key-access-denied' | 'auth-refused' | 'target-refused' | 'transport-failed' | 'verification-failed' | 'operation-conflict' | 'operation-busy' | 'receipt-invalid' | 'receipt-full' | 'outcome-unknown' | 'git-unavailable';
 export class BrokerError extends Error {
   code: ErrorCode;
   constructor(code: ErrorCode) { super(code); this.code = code; }
@@ -24,7 +24,7 @@ export function positive(value: unknown): value is number { return Number.isSafe
 export function slug(value: unknown): value is string { return typeof value === 'string' && /^[A-Za-z0-9_-][A-Za-z0-9_.-]{0,99}\/[A-Za-z0-9_-][A-Za-z0-9_.-]{0,99}$/.test(value); }
 /** A plain branch name of this repository: no ref prefix, owner, glob, `..` or trailing dot. */
 export function refName(value: unknown): value is string {
-  return typeof value === 'string' && value.length <= 200 && value !== 'HEAD' && /^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(value) && !/\.\.|\/\/|\/\.|\.lock(?:\/|$)|[/.]$/.test(value);
+  return typeof value === 'string' && value.length <= 200 && value !== 'HEAD' && /^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(value) && !/\.\.|\/\/|\/\.|\.lock(?:\/|$)/.test(value) && !/[/.]$/.test(value);
 }
 function validLabels(value: unknown): boolean {
   return Array.isArray(value) && value.length >= 1 && value.length <= 20 && new Set(value).size === value.length

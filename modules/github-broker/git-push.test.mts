@@ -6,7 +6,7 @@ import path from 'node:path';
 import { execFile, execFileSync } from 'node:child_process';
 import { promisify } from 'node:util';
 import { randomUUID } from 'node:crypto';
-import { checkCommits, gitEnv, helperCommand, pushArgs } from './git-push.mts';
+import { checkCommits, gitEnv, helperCommand, pushArgs, trustedGit } from './git-push.mts';
 import { gitServer } from './git-http.fixture.mts';
 import { BOTS, TOKEN, brokerRoot, email, fakeGithub, stubWindowsAcl } from './flow.fixture.mts';
 import { run as claude } from './github-claude.mts';
@@ -39,8 +39,31 @@ test('helper command single-quotes forward-slash paths and refuses a quote',()=>
   assert.equal(args.some(a=>/force|delete|tags|mirror|^\+/.test(a)),false);
 });
 test('git child environment drops ambient tokens, tracing and injected configuration',()=>{
-  const env=gitEnv({PATH:'p',GH_TOKEN:'x',GITHUB_TOKEN:'x',GIT_TRACE:'1',GIT_TRACE_CURL:'1',GIT_CURL_VERBOSE:'1',GIT_CONFIG_COUNT:'1',GIT_CONFIG_KEY_0:'http.extraHeader',GIT_CONFIG_PARAMETERS:'x',GIT_ASKPASS:'x',SSH_ASKPASS:'x',GIT_DIR:'x',GIT_TERMINAL_PROMPT:'1'});
-  assert.deepEqual(env,{PATH:'p',GIT_TERMINAL_PROMPT:'0',GCM_INTERACTIVE:'never'});
+  const input={PATH:'p',Path:'evil',GH_TOKEN:'x',GITHUB_TOKEN:'x',GIT_TRACE:'1',GIT_TRACE_CURL:'1',GIT_CURL_VERBOSE:'1',GIT_CONFIG_COUNT:'1',GIT_CONFIG_KEY_0:'http.extraHeader',GIT_CONFIG_PARAMETERS:'x',GIT_ASKPASS:'x',SSH_ASKPASS:'x',GIT_DIR:'x',GIT_TERMINAL_PROMPT:'1',LANG:'C'};
+  assert.deepEqual(gitEnv(input,'win32'),{LANG:'C',PATH:'C:\\Program Files\\Git\\cmd;C:\\Windows\\System32;C:\\Windows',GIT_TERMINAL_PROMPT:'0',GCM_INTERACTIVE:'never'});
+  assert.deepEqual(gitEnv(input,'linux'),{LANG:'C',PATH:'/usr/bin:/bin',GIT_TERMINAL_PROMPT:'0',GCM_INTERACTIVE:'never'});
+});
+test('trusted git comes from fixed system paths only, never from PATH',()=>{
+  type Entry={file?:boolean; uid?:number; mode?:number};
+  const stat=(entries:Record<string,Entry>)=>{
+    const seen:string[]=[];
+    const fn=((p:string)=>{seen.push(p);const e=entries[p];if (!e) throw new Error('ENOENT');return {isFile:()=>e.file ?? true,uid:e.uid ?? 0,mode:e.mode ?? 0o755};}) as unknown as typeof fs.statSync;
+    return {fn,seen};
+  };
+  const [cmd,bin]=['C:\\Program Files\\Git\\cmd\\git.exe','C:\\Program Files\\Git\\bin\\git.exe'];
+  const saved=process.env.PATH;process.env.PATH='/attacker/bin';
+  try {
+    assert.equal(trustedGit('win32',stat({[cmd]:{},[bin]:{}}).fn),cmd);
+    assert.equal(trustedGit('win32',stat({[cmd]:{file:false},[bin]:{}}).fn),bin);
+    assert.throws(()=>trustedGit('win32',stat({}).fn),{message:'git-unavailable'});
+    const posix=stat({'/usr/bin/git':{},'/usr/bin':{},'/usr/local/bin/git':{},'/usr/local/bin':{}});
+    assert.equal(trustedGit('linux',posix.fn),'/usr/bin/git');
+    assert.equal(posix.seen.some(p=>p.startsWith('/attacker')),false);
+    // Non-root owner, group/other-writable file or directory: refused, next candidate.
+    assert.equal(trustedGit('darwin',stat({'/usr/bin/git':{uid:501},'/usr/bin':{},'/usr/local/bin/git':{},'/usr/local/bin':{}}).fn),'/usr/local/bin/git');
+    assert.throws(()=>trustedGit('linux',stat({'/usr/bin/git':{mode:0o775},'/usr/bin':{},'/usr/local/bin/git':{},'/usr/local/bin':{mode:0o777}}).fn),{message:'git-unavailable'});
+    assert.throws(()=>trustedGit('linux',stat({'/usr/bin/git':{},'/usr/bin':{uid:1000},'/usr/local/bin/git':{mode:0o757},'/usr/local/bin':{}}).fn),{message:'git-unavailable'});
+  } finally {process.env.PATH=saved;}
 });
 test('author preflight admits own-bot commits and refuses foreign authors, committers and workflow paths',t=>{
   const r=repos(t),own=[email(0).toLowerCase()];
@@ -68,7 +91,7 @@ if(process.argv[3]==='get') process.stdout.write('username=x-access-token\\npass
   assert.equal(args.join(' ').includes(TOKEN),false);
   // Asynchronous: the loopback server runs in this process.
   // System and global configuration stay out, so even a regression cannot reach a real credential manager.
-  await promisify(execFile)('git',args,{cwd:r.work,env:{...gitEnv(),GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:path.join(r.base,'global.gitconfig')},windowsHide:true,timeout:60000});
+  await promisify(execFile)(trustedGit(),args,{cwd:r.work,env:{...gitEnv(),GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:path.join(r.base,'global.gitconfig')},windowsHide:true,timeout:60000});
   assert.equal(r.remote('feat/x'),sha);assert.ok(server.authorized.length>0);assert.ok(server.authorized.every(u=>u==='x-access-token'));
   const calls=fs.readFileSync(log,'utf8').trim().split('\n').map(l=>JSON.parse(l));
   assert.deepEqual(calls[0].argv,[id,'get']);assert.match(calls[0].input,/path=example\/project\.git/);
