@@ -156,6 +156,28 @@ test("each shared guard still blocks through its wired Codex command after an in
   assertGuardsBlock(config, hookDir);
 });
 
+test("installed shell command carries both shape warnings with its own helper", (t) => {
+  const { hookDir, options } = fixture(t);
+  const result = install(options);
+  const config = fs.readFileSync(result.targets.config, "utf8");
+  const helper = path.join(hookDir, "lib", "tool-event-shape.mts");
+  const source = path.resolve(import.meta.dirname, "../claude/hooks/lib/tool-event-shape.mts");
+  assert.deepEqual(fs.readFileSync(helper), fs.readFileSync(source));
+  const wired = wiredGuard(config, hookDir, "commit-guard");
+  const run = () => spawnSync(wired.command, { shell: true, input: "{}", encoding: "utf8",
+    env: { PATH: process.env.PATH, CODEX_HOME: options.codexHome, KHEREP_WORKSPACE: options.workspace } });
+  const r = run();
+  assert.equal(r.status, 0, r.stderr);
+  const doc = JSON.parse(r.stdout);
+  assert.equal(doc.hookSpecificOutput.permissionDecision, undefined);
+  assert.match(doc.hookSpecificOutput.additionalContext, /WARN:commit-guard:TOOL_NAME_MISSING/);
+  assert.match(doc.hookSpecificOutput.additionalContext, /WARN:deploy-guard:TOOL_NAME_MISSING/);
+  assert.match(r.stderr, /event-shape/);
+  fs.writeFileSync(helper, "");
+  assert.equal(JSON.parse(run().stdout).hookSpecificOutput.permissionDecision, "deny");
+  assert.deepEqual(fs.readFileSync(helper), fs.readFileSync(source), "re-check restores the helper");
+});
+
 test("upgrade preserves the exact attribution-denying guard and transaction rollback restores it", (t) => {
   const { hookDir, options } = fixture(t);
   install(options);

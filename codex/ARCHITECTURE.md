@@ -1,5 +1,7 @@
 # Codex adapter architecture
 
+For issue #808 Stage 1, `hook-adapter-run.mts` classifies native event fields for only `commit-guard` and `deploy-guard` before lossy normalization. Their fixed warning lines merge through the existing verdict notice channel, with no new permission decision. `shell-checks.mts` admits only the complete canonical warning document for the expected guard slot and merges the two notices with any integrity notice into one JSON response. Existing denials and broken-guard handling retain precedence; arbitrary stdout and other guards' notice-only responses remain rejected. The synchronous shared helper loads from the source layout or the installed `lib/tool-event-shape.mts`, with no checkout fallback from installed copies. Integrity records computed dependencies for both adapter entry copies and the shell dispatcher. Native activation and presentation remain UNKNOWN pending separate Stage 2 acceptance.
+
 The Codex adapter projects shared Kherep capabilities into a separate Codex configuration. It does not copy credentials into its receipt or managed native HTTP entries.
 
 ## Memory backends

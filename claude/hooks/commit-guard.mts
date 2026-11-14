@@ -2,6 +2,7 @@
 // Early commit-message feedback. The commit-msg hook is the enforcement boundary.
 // The process import is the global process; nothing needs it since lib/hook-syntax.mts replaced `node --check` (#278).
 import process from "node:process";
+import { classifyToolEvent, warningText, warningDocument } from "./lib/tool-event-shape.mts";
 import { commitsViaGit } from "./lib/git-commit-match.mts";
 
 // The fields this hook reads from a PreToolUse payload.
@@ -41,11 +42,20 @@ function subjectOf(message: string): string {
   return message.split(/\r?\n/).map((line) => line.trim()).find(Boolean) || "";
 }
 await (async () => {
-  let payload: ToolPayload | null = null;
-  try { payload = JSON.parse(await read(process.stdin)) as ToolPayload | null; } catch { process.exit(0); }
-  if (!payload || !["Bash", "PowerShell"].includes(payload.tool_name as string)) process.exit(0);
+  let value: unknown;
+  try { value = JSON.parse(await read(process.stdin)); } catch { /* explicit invalid envelope */ }
+  const shape = classifyToolEvent(value, "commit-guard", "shared");
+  function success(): never {
+    if (shape.kind === "unclassifiable") {
+      process.stderr.write(`${warningText("commit-guard", shape.reason)}\n`);
+      process.stdout.write(warningDocument([{ guard: "commit-guard", reason: shape.reason }]));
+    }
+    process.exit(0);
+  }
+  const payload = value as ToolPayload | null;
+  if (!payload || !["Bash", "PowerShell"].includes(payload.tool_name as string)) success();
   const command = payload.tool_input && payload.tool_input.command;
-  if (typeof command !== "string" || !commitsViaGit(command)) process.exit(0);
+  if (typeof command !== "string" || !commitsViaGit(command)) success();
   const violations: string[] = [];
   if (/\u2014/.test(command)) violations.push("commit message contains an em dash (U+2014)");
   const policyEnabled = process.env.KHEREP_WORK_ITEM_REQUIRED === "1";
@@ -61,7 +71,7 @@ await (async () => {
       if (pattern && !pattern.test(subjectOf(message))) violations.push("commit subject does not start with the configured work-item key and a space");
     }
   }
-  if (!violations.length) process.exit(0);
+  if (!violations.length) success();
   process.stderr.write(`commit-guard blocked this commit:\n  - ${violations.join("\n  - ")}\n`);
   process.exit(2);
 })();

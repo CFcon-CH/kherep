@@ -47,7 +47,7 @@ export function handleAttributionHook(payload,runtime){fs.appendFileSync(${JSON.
   // Issue #507, part 4. This installed layout re-checks hook integrity unless the heartbeat is
   // fresh and records both adapter copies as they are; these cases are about attribution only.
   copyAdapter(hookDir, "codex-hook-adapter.mts");
-  fs.mkdirSync(path.join(hookDir, "lib"));
+  fs.mkdirSync(path.join(hookDir, "lib"), { recursive: true });
   fs.copyFileSync(path.join(import.meta.dirname, "..", "..", "claude", "hooks", "lib", "guard-recheck.mts"), path.join(hookDir, "lib", "guard-recheck.mts"));
   const peers = Object.fromEntries(["codex-hook-adapter.mts", "hook-adapter.mts"].map((name) => {
     const s = fs.statSync(path.join(hookDir, name), { bigint: true });
