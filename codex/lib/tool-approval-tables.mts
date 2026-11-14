@@ -13,6 +13,13 @@ export interface ToolApproval { path: string[]; text: string }
 
 const pathKey = (path: string[]): string => JSON.stringify(path);
 
+// Collapses a run of trailing newlines into one, in linear time; text without one stays as it is.
+function oneTrailingNewline(text: string): string {
+  let end = text.length;
+  while (end > 0 && text[end - 1] === "\n") end--;
+  return end === text.length ? text : `${text.slice(0, end)}\n`;
+}
+
 // A plain table under no array of tables, whose address is therefore its path.
 export function isToolApprovalTable({ path, array, address, payload }: ScannedTable): boolean {
   if (array || path.length !== 4 || path[0] !== "mcp_servers" || path[2] !== "tools") return false;
@@ -71,8 +78,8 @@ export function restoreToolApprovals(
   }
   let next = config;
   for (const edit of edits.sort((left, right) => right.start - left.start)) next = next.slice(0, edit.start) + edit.text + next.slice(edit.end);
-  if (orphans.length) next = next.replace(/\n+$/, "\n");
+  if (orphans.length) next = oneTrailingNewline(next);
   if (!appended.length) return next;
   const at = next.indexOf(endMarker, next.indexOf(startMarker)) + endMarker.length;
-  return `${next.slice(0, at)}\n\n${appended.join("\n\n")}\n${next.slice(at).replace(/^\n*/, "\n")}`.replace(/\n+$/, "\n");
+  return oneTrailingNewline(`${next.slice(0, at)}\n\n${appended.join("\n\n")}\n${next.slice(at).replace(/^\n*/, "\n")}`);
 }
