@@ -5,7 +5,7 @@ import type { MessageProgressCode } from "../protocol-messages.mts";
 import { livenessAdmissionVerdict, sessionVerdict } from "./session-lifecycle.mts";
 import path from "node:path";
 
-import { bypassesPermissions, takeTurn, type WakeGrant } from "./autonomy.mts";
+import { bypassesPermissions, takeTurn, type Budget, type WakeGrant } from "./autonomy.mts";
 import { codexHome, currentCodexApp } from "./codex-app.mts";
 import { findCodex } from "./codex-binary.mts";
 import { busyPolicyFingerprint, busyWakeDisabled } from "./codex-busy-policy.mts";
@@ -37,6 +37,13 @@ const blockers = new Map<string, NativeBlocker & { at: number; ids: Set<string> 
 const storeFull = new Set<string>();
 const notIdle = (observedState: MessageDiagnostic["observedState"]): NativeBlocker => ({ code: "awaiting-user-turn", detail: "target-not-idle", observedState });
 const runtimePending: NativeBlocker = { code: "awaiting-user-turn", detail: "runtime-pending" };
+function budgetBlocker(budget: Exclude<Budget, "ok">): NativeBlocker {
+  switch (budget) {
+    case "exhausted": return { code: "budget-exhausted" };
+    case "spacing": return { code: "retry-pending", detail: "turn-spacing" };
+    case "locked": return { code: "retry-pending", detail: "budget-lock-unavailable" };
+  }
+}
 let nativeLane: Promise<void> = Promise.resolve();
 export function nativeAttemptDir(deps: RunnerDeps, owner: string): string {
   return nativeAttemptsPath(deps.paths, owner);
@@ -192,8 +199,7 @@ async function produce(deps: RunnerDeps, owner: string, messageIds: string[], fi
   const budget = takeTurn(deps.paths, owner, now, admission.budget);
   if (budget !== "ok") {
     releaseNativeOwner(deps.paths, owner, ids);
-    return park(deps, owner, messageIds, budget === "exhausted" ? { code: "budget-exhausted" }
-      : { code: "retry-pending", detail: budget === "spacing" ? "turn-spacing" : "budget-lock-unavailable" }, now);
+    return park(deps, owner, messageIds, budgetBlocker(budget), now);
   }
   const claimed: string[] = [];
   for (const messageId of ids) {
