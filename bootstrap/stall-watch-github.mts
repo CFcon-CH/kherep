@@ -24,7 +24,9 @@ export function nextLink(header: string | null): string | null {
 }
 
 export function githubClient(options: ClientOptions): GithubClient {
-  const api = options.api.replace(/\/+$/, "");
+  let end = options.api.length;
+  while (end > 0 && options.api[end - 1] === "/") end--;
+  const api = options.api.slice(0, end);
   const headers = {
     accept: "application/vnd.github+json",
     authorization: `Bearer ${options.token}`,
