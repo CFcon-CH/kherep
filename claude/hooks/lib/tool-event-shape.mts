@@ -4,6 +4,7 @@ export type ShapeReason = "EVENT_ENVELOPE_INVALID" | "TOOL_NAME_MISSING" | "TOOL
   | "TOOL_INPUT_MISSING" | "TOOL_INPUT_INVALID" | "COMMAND_MISSING" | "COMMAND_INVALID";
 export interface ShapeWarning { guard: ShapeGuard; reason: ShapeReason }
 export type ShapeClassification = { kind: "irrelevant" | "recognized" } | { kind: "unclassifiable"; reason: ShapeReason };
+export interface GuardEvent<T> { payload: T | null | undefined; success(): never }
 const GUARDS: readonly ShapeGuard[] = ["commit-guard", "deploy-guard"];
 const REASONS: readonly ShapeReason[] = ["EVENT_ENVELOPE_INVALID", "TOOL_NAME_MISSING", "TOOL_NAME_INVALID",
   "TOOL_INPUT_MISSING", "TOOL_INPUT_INVALID", "COMMAND_MISSING", "COMMAND_INVALID"];
@@ -37,6 +38,24 @@ export function warningDocument(warnings: readonly ShapeWarning[]): string {
     return warning ? [warningText(guard, warning.reason)] : [];
   });
   return lines.length ? JSON.stringify({ hookSpecificOutput: { hookEventName: "PreToolUse", additionalContext: lines.join("\n") } }) : "";
+}
+
+// Shared guard lifecycle: policy checks still own every denial. Only an existing
+// successful return emits this pending warning; parsing itself performs no I/O.
+export async function parseGuardEvent<T>(raw: Promise<string>, guard: ShapeGuard): Promise<GuardEvent<T>> {
+  let value: unknown;
+  try { value = JSON.parse(await raw); } catch { /* explicit invalid envelope */ }
+  const shape = classifyToolEvent(value, guard, "shared");
+  return {
+    payload: value as T | null | undefined,
+    success(): never {
+      if (shape.kind === "unclassifiable") {
+        process.stderr.write(`${warningText(guard, shape.reason)}\n`);
+        process.stdout.write(warningDocument([{ guard, reason: shape.reason }]));
+      }
+      process.exit(0);
+    },
+  };
 }
 
 // Compare the complete canonical serialization, including key order, to reject duplicate
