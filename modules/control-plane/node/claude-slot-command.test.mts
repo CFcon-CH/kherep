@@ -520,12 +520,20 @@ test("invalid, auxiliary and wrong-prompt expansions write zero selections", asy
 
 test("slot entry contains dependency construction failure and leaves missing or oversized stdin without a result", t => {
   const { root } = fixture(t);
-  const preload = path.join(root, "synthetic-setup.mts");
-  fs.writeFileSync(preload, `import path from "node:path"; const join = path.join; path.join = (...parts) => {
-    if (parts[1] === "control-plane") throw new Error("SYNTHETIC_PRIVATE_SETUP"); return join(...parts); };`);
+  const preload = path.join(root, "synthetic-setup.mts"), trace = path.join(root, "synthetic-setup.trace");
+  // The trace shows how far the child got when it does not exit; steps are space separated.
+  fs.writeFileSync(preload, `import fs from "node:fs"; import path from "node:path";
+    const mark = (step) => fs.appendFileSync(${JSON.stringify(trace)}, step + " ");
+    const join = path.join; path.join = (...parts) => {
+    if (parts[1] === "control-plane") { mark("setup-thrown"); throw new Error("SYNTHETIC_PRIVATE_SETUP"); } return join(...parts); };
+    process.on("exit", (code) => mark("exit-" + code)); mark("preloaded");`);
   const hook = path.join(import.meta.dirname, "deliver-hook.mts");
+  // Bounded so a child that never exits fails with a diagnostic instead of hanging the run (#914).
+  const bounded = { encoding: "utf8", timeout: 60_000, killSignal: "SIGKILL", env: { ...process.env, KHEREP_CONFIG_DIR: root } } as const;
+  const started = Date.now();
   const failed = spawnSync(process.execPath, ["--import", pathToFileURL(preload).href, hook], {
-    input: JSON.stringify(native("kherep-lead")), encoding: "utf8", env: { ...process.env, KHEREP_CONFIG_DIR: root } });
+    ...bounded, input: JSON.stringify(native("kherep-lead")) });
+  const elapsedMs = Date.now() - started;
   // Older admitted Node releases emit only this known type-stripping warning.
   const stderr = (value: string) => value.replace(/^\(node:\d+\) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time\r?\n\(Use `node --trace-warnings \.\.\.` to show where the warning was created\)\r?\n/, "");
   const diagnostic = (value: string, limit: number) => {
@@ -535,13 +543,14 @@ test("slot entry contains dependency construction failure and leaves missing or 
     }
     return value.slice(0, limit);
   };
-  assert.equal(failed.status, 0, JSON.stringify({ status: failed.status, signal: failed.signal,
+  assert.equal(failed.status, 0, JSON.stringify({ status: failed.status, signal: failed.signal, elapsedMs,
     error: failed.error ? diagnostic(String(failed.error), 512) : null,
-    stderr: diagnostic(failed.stderr ?? "", 2048) }));
+    stdout: diagnostic(failed.stdout ?? "", 512), stderr: diagnostic(failed.stderr ?? "", 2048),
+    trace: fs.existsSync(trace) ? fs.readFileSync(trace, "utf8").trim().split(" ") : null }));
   assert.equal(stderr(failed.stderr), "");
   assert.deepEqual(JSON.parse(failed.stdout), expansion("Kherep could not confirm a slot selection."));
   for (const input of ["", JSON.stringify({ ...native(), extra: "x".repeat(65_536) })]) {
-    const child = spawnSync(process.execPath, [hook], { input, encoding: "utf8", env: { ...process.env, KHEREP_CONFIG_DIR: root } });
+    const child = spawnSync(process.execPath, [hook], { ...bounded, input });
     assert.deepEqual([child.status, child.stdout, stderr(child.stderr)], [0, "", ""]);
   }
 });
