@@ -45,72 +45,52 @@ Keep production configuration out of tests. Tests that need an unavailable platf
 
 ## SonarQube Cloud coverage
 
-CI produces real LCOV from the existing current-LTS Ubuntu test steps. The
-`unit`, `typescript` and `client-binding-probe` jobs collect step-local Node V8
-coverage; the Worker tests use Istanbul in workerd. Tests keep their original
-exit status. The `coverage-report` job requires all four contributing jobs to
-succeed, validates their non-empty artifacts, and converts the Node union once
-with c8 `--all`. Unexecuted maintained Node source therefore contributes zero.
-Worker `src/` belongs to Istanbul; Worker configuration and shared protocol code
-remain in the Node population. The existing Sonar source/test classifications
+CI collects raw Node V8 coverage in the existing Ubuntu and macOS unit tests,
+all ten Windows shards, TypeScript suites and Ubuntu binding probe. Worker
+`src/` uses Istanbul in workerd. The `coverage-report` job requires all
+contributing jobs to succeed, validates the complete 15-producer set and converts
+one V8 union with c8 `--all`. Unexecuted maintained Node source contributes zero.
+Worker configuration and shared protocol code remain in the Node population.
+Existing source/test classification, exclusions and the 80% new-code threshold
 are unchanged.
 
-Each producer manifest contains only its producer, run ID, attempt, checkout SHA
-and test outcome. Assembly and the reusable scanner verify all four against the
-same event checkout, run and attempt. On pull requests that is the default merge
-checkout, not the PR head SHA. Raw and final artifacts expire after two days.
-These same-run artifacts transport reports; they do not make PR code trusted.
-A missing, malformed or mismatched report fails `coverage-report` visibly; a
-partial report is never accepted for scanning. The scanner receives only the
-named Sonar secret after report validation. Fork PRs run coverage validation and
-skip the secret-bearing scan with a summary.
+Raw artifacts carry exact producer/run/attempt/SHA/outcome identities and a
+canonical checkout directory file URL. Assembly selects each producer's latest
+attempt from the same run/SHA, up to the assembly attempt, and rejects a bad
+newest candidate without falling back. It preserves actual producer attempts in
+the final manifest. Successful assembly passes its accepted artifact name and
+attempt to Sonar, allowing failed-only producer reruns and scanner-only reruns.
+Both reports and identity are validated before the secret-bearing scan. Fork
+PRs skip that scan and therefore cannot satisfy the required
+`SonarCloud Code Analysis` check without a same-repository branch.
 
-`SonarCloud Code Analysis` is a **required merge check** on `main`. A fork PR gets
-no scan, so it cannot satisfy this check; a maintainer has to move such a change
-to a same-repository branch. The existing 80% coverage threshold on new code
-stays unchanged; no exclusions, synthetic hits or ignored-line
-comments are added to reach it. Linux coverage does not prove native Windows or
-macOS behavior. Their existing compatibility checks and engine-floor jobs remain
-in place. The matrix dependencies wait for their sibling jobs. Child processes
-that clear the coverage variable, die before flushing, or execute temporary
-installed copies may remain uncovered. Environment sanitization is preserved.
-Raw coverage is about 1.3 GB for `unit` and 599 MB for `typescript` on the runner;
-the compressed artifacts measured 168 MB and 78 MB in the #790 run.
+Foreign Windows/macOS/Linux script URLs and nested cached source maps are
+relocated to contained repository source. Exact declared copy URLs retain
+SHA-256 verification; unused declarations are logged as no data. V8 ranges and
+counts remain intact. The pinned TypeScript parser omits a whole LCOV record
+only when every statement is an erased type-only import, interface or type alias;
+mixed/runtime/unknown files keep their records. The summary lists omitted paths.
+No new Sonar exclusion is added.
 
-Tests that execute unchanged copies can call `declareCopy(original, copy)` from
-`bootstrap/coverage-copy-fixture.mts`. It checks identical bytes. When
-`NODE_V8_COVERAGE` is already set, it appends a `coverage-copies.jsonl` sidecar in
-that directory, carried by the existing raw artifact upload. It never enables
-coverage or changes a child environment. Without the variable it only checks
-the bytes. A test that edits its copy after declaring it must not declare it;
-this simple mechanism does not track later mutations or file identity.
-Assembly maps only an exact declared script URL to its repository original,
-after checking the original's SHA-256 against the declaration. Invalid hashes,
-paths, conflicting mappings and declarations with no matching script in that
-producer's reports fail assembly. Undeclared external scripts remain ignored;
-synthetic dependencies receive no attribution. V8 ranges and counts are retained
-for the single c8 union conversion. Initially only `shell-checks.test.mts` adopts
-the helper.
-
-After conversion, the pinned TypeScript parser removes an entire LCOV record
-only when every statement is an erased type-only import, interface or type alias.
-Mixed files, value imports, runtime constants, unknown syntax and parse failures
-keep their records unchanged. `coverage/summary.json` lists the dropped paths.
-These sources remain analysed, with no new Sonar exclusion. Whether Sonar stops
-counting `contracts.mts` after omission is UNKNOWN until a real pull request.
-
-For a local typed-source and child-process diagnostic after `npm ci`, run:
+See [the CI coverage contract](.github/coverage.md) for producer identities,
+validation, reruns, copy-helper limits and required native/runtime evidence.
+These local focused checks need installed dependencies:
 
 ```sh
-node --test bootstrap/coverage-report.test.mts bootstrap/coverage-copies.test.mts bootstrap/coverage-erased-types.test.mts
+node --test bootstrap/coverage-report.test.mts bootstrap/coverage-artifacts.test.mts bootstrap/coverage-source-urls.test.mts bootstrap/coverage-copies.test.mts bootstrap/coverage-erased-types.test.mts
+npm run typecheck
 ```
 
-The c8 integration and TypeScript parser fixtures explicitly skip when dependencies are unavailable
-in a dependency-free compatibility job. CI runs these fixtures after `npm ci` in
-`typescript`. Pure validation fixtures always run. To assemble local real
-reports, collect `NODE_V8_COVERAGE` into each producer's `raw/` directory, create
-its manifest with `npm run coverage:report -- manifest`, and provide the four
-producer directories (Worker contains `lcov.info`) to:
+Dependency-free jobs explicitly skip c8/parser fixtures when dependencies are
+unavailable; CI also runs them after `npm ci`. Local fixture success does not
+prove native Windows/macOS behavior, hosted rerun support or a percentage gain.
+Coverage variables remain step-local, and existing test-environment sanitizers
+are preserved. Raw and final artifacts expire after two days.
+
+For local assembly, put each manifest and payload under its exact
+`coverage-<producer>-<runId>-<attempt>` artifact directory. Collect into `raw/`
+and use `npm run coverage:report -- manifest` for Node producers; Worker carries
+`lcov.info`. Use a complete real producer set and one checkout identity:
 
 ```sh
 npm run coverage:report -- assemble --artifacts /tmp/coverage-inputs \
@@ -119,11 +99,9 @@ npm run coverage:report -- verify --run-id 1 --attempt 1 \
   --checkout-sha "$(git rev-parse HEAD)"
 ```
 
-Use a single real checkout identity throughout. `--source-root` explicitly names
-the trusted collection checkout root when relocation is needed; only contained
-repository file URLs and byte-verified copy declarations are relocated. Other
-temporary installation paths are not mapped back. Outputs are
-`coverage/node/lcov.info` and `coverage/worker/lcov.info`, with
+`--source-root` optionally asserts that every selected producer root equals
+that canonical collection directory; it does not override foreign producer roots.
+Outputs are `coverage/node/lcov.info` and `coverage/worker/lcov.info`, with
 unique repository-relative `SF:` paths. Generated coverage stays out of Git.
 
 ## Submitting changes

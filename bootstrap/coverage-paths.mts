@@ -1,6 +1,8 @@
 import { readFileSync, realpathSync, statSync } from "node:fs";
 import { isAbsolute, relative, resolve, sep } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { pathToFileURL } from "node:url";
+
+import { canonicalFileUrl, repositoryPathFromUrl, repositoryRelativeUrlPath } from "./coverage-source-urls.mts";
 
 const byCodeUnit = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 
@@ -21,17 +23,16 @@ type Range = { startOffset: number; endOffset: number; count: number };
 type V8Function = { ranges: Range[]; [key: string]: unknown };
 type Script = { url: string; functions: V8Function[]; [key: string]: unknown };
 type V8Report = { result: Script[]; "source-map-cache"?: Record<string, unknown>; [key: string]: unknown };
-export function relocateV8Report(value: unknown, sourceRoot: string, repositoryRoot: string, copies: ReadonlyMap<string, string> = new Map(), usedCopies = new Set<string>()): { report: V8Report; ignored: number } {
+export function relocateV8Report(value: unknown, sourceRootUrl: string, repositoryRoot: string, copies: ReadonlyMap<string, string> = new Map(), usedCopies = new Set<string>()): { report: V8Report; ignored: number } {
   if (!value || typeof value !== "object" || !Array.isArray((value as V8Report).result)) throw new Error("malformed V8 report");
   const report = value as V8Report;
   let ignored = 0;
   function relocate(url: string): string | null {
     if (!url.startsWith("file:")) return null;
-    noTraversal(url);
+    canonicalFileUrl(url);
     if (copies.has(url)) return copies.get(url)!;
-    const path = fileURLToPath(url); const rel = relative(resolve(sourceRoot), path);
-    if (!rel || rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel) || rel.split(sep).includes("node_modules")) return null;
-    if (!/\.(mts|ts|js|mjs|cjs|cts)$/.test(rel)) return null;
+    const rel = repositoryPathFromUrl(url, sourceRootUrl);
+    if (!rel) return null;
     return pathToFileURL(containedFile(repositoryRoot, rel)).href;
   }
   const scripts: Script[] = [];
@@ -50,7 +51,30 @@ export function relocateV8Report(value: unknown, sourceRoot: string, repositoryR
   const cache = report["source-map-cache"];
   if (cache !== undefined && (!cache || typeof cache !== "object" || Array.isArray(cache))) throw new Error("malformed V8 source-map-cache");
   const relocatedCache: Record<string, unknown> = {};
-  for (const [key, entry] of Object.entries(cache ?? {})) { const url = relocate(key); if (url) relocatedCache[url] = entry; }
+  for (const [key, entry] of Object.entries(cache ?? {})) {
+    const url = relocate(key); if (!url) continue;
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) throw new Error("malformed source map entry");
+    const map = entry as { url?: unknown; data?: unknown };
+    if (map.url !== undefined && map.url !== null && typeof map.url !== "string") throw new Error("malformed source map URL");
+    if (!map.data || typeof map.data !== "object" || Array.isArray(map.data)) throw new Error("malformed source map data");
+    const data = map.data as { sources?: unknown; sourceRoot?: unknown; [key: string]: unknown };
+    if (data.version !== 3 || typeof data.mappings !== "string" || !Array.isArray(data.names) || !Array.isArray(data.sources) || data.sources.some(s => typeof s !== "string") || (data.sourceRoot !== undefined && typeof data.sourceRoot !== "string")) throw new Error("malformed source map sources");
+    const reference = (value: string, base: string): string => {
+      if (/[\\\0?#]/.test(value) || /%(?:2f|5c|00)/i.test(value) || value.split("/").some(segment => segment.includes("%") && [".", ".."].includes(decodeURIComponent(segment)))) throw new Error("unsupported source map reference");
+      const resolved = new URL(value, base).href; canonicalFileUrl(resolved); return resolved;
+    };
+    const mapUrl = typeof map.url === "string" && !map.url.startsWith("data:") ? reference(map.url, key) : key;
+    const base = data.sourceRoot ? reference(String(data.sourceRoot).replace(/\/?$/, "/"), mapUrl) : mapUrl;
+    const sources = (data.sources as string[]).map(source => {
+      const original = reference(source, base), local = relocate(original);
+      if (!local) throw new Error("unsupported source map source outside repository");
+      return local;
+    });
+    const mapPath = repositoryRelativeUrlPath(mapUrl, sourceRootUrl);
+    if (!mapPath && mapUrl !== key) throw new Error("unsupported source map location outside repository");
+    const relocatedMap = mapPath ? pathToFileURL(resolve(repositoryRoot, mapPath)).href : url;
+    relocatedCache[url] = { ...entry, ...(typeof map.url === "string" && !map.url.startsWith("data:") ? { url: relocatedMap } : {}), data: { ...data, sourceRoot: "", sources } };
+  }
   return { report: { ...report, result: scripts, ...(cache === undefined ? {} : { "source-map-cache": relocatedCache }) }, ignored };
 }
 export function normalizeLcovPaths(lcov: string, repositoryRoot: string, sourceRoot = repositoryRoot): string {

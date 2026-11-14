@@ -54,6 +54,11 @@ increments the minor version; every other release increments the patch version.
   check the line. A denied observation dispatch that is not retried produces no
   page.
 
+- CI coverage now includes native macOS and every Windows unit shard, with
+  URL-aware V8/source-map relocation. Same-run failed-only reruns reuse validated
+  earlier producer attempts; scanner-only reruns retain the accepted assembly
+  artifact identity (#920). Native CI and runtime acceptance remain pending.
+
 - A held, idle-loaded Codex thread whose last hook event is more than twelve
   hours old no longer misses its native Queue pointer (#919). The poll now takes
   such a thread as a candidate while an accepted message waits for it, and the

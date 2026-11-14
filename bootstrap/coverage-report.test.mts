@@ -1,6 +1,7 @@
+import { producers } from "./coverage-artifacts.mts";
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, cpSync, realpathSync, existsSync, symlinkSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, rmSync, cpSync, realpathSync, existsSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve, join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -17,6 +18,7 @@ function fixture() {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "kherep-coverage-")));
   mkdirSync(join(root, "src"), { recursive: true });
   writeFileSync(join(root, "src/typed.mts"), "export function typed(value: number): number {\n  if (value > 0) {\n    return value + 1;\n  }\n  return 0;\n}\nconsole.log(typed(2));\n");
+  writeFileSync(join(root, "src/zero.mts"), "export const untouched: number = 42;\n");
   writeFileSync(join(root, "src/child.mts"), "const child: number = 42;\nconsole.log(child);\n");
   const worker = join(root, "modules/control-plane/worker/src");
   mkdirSync(join(worker, "first"), { recursive: true }); mkdirSync(join(worker, "second"));
@@ -25,9 +27,9 @@ function fixture() {
 }
 function artifacts(root: string) {
   const input = join(root, "inputs"); mkdirSync(input);
-  for (const producer of ["unit", "typescript", "probe", "worker"]) {
-    const dir = join(input, producer); mkdirSync(dir);
-    writeFileSync(join(dir, "manifest.json"), JSON.stringify({ producer, runId: "123", attempt: "2", checkoutSha: sha, testOutcome: "success" }));
+  for (const producer of producers) {
+    const dir = join(input, `coverage-${producer}-123-2`); mkdirSync(dir);
+    writeFileSync(join(dir, "manifest.json"), JSON.stringify({ producer, runId: "123", attempt: "2", checkoutSha: sha, testOutcome: "success", sourceRootUrl: pathToFileURL(root + "/").href }));
     if (producer === "worker") {
       writeFileSync(join(dir, "lcov.info"), "SF:src/first/same.mts\nDA:1,1\nLF:1\nLH:1\nend_of_record\nSF:src/second/same.mts\nDA:1,0\nLF:1\nLH:0\nend_of_record\n");
     } else { mkdirSync(join(dir, "raw")); writeFileSync(join(dir, "raw/report.json"), JSON.stringify({ result: [] })); }
@@ -52,11 +54,11 @@ test("coverage assembly rejects malformed, wrong checkoutSha, wrong attempt and 
   for (const name of ["malformed", "wrong checkoutSha", "wrong attempt", "duplicate producer"]) {
     const root = fixture();
     try {
-      const input = artifacts(root); const file = join(input, "unit/manifest.json");
+      const input = artifacts(root); const file = join(input, "coverage-unit-123-2/manifest.json");
       if (name === "malformed") writeFileSync(file, "{");
       if (name === "wrong checkoutSha") { const m = JSON.parse(readFileSync(file, "utf8")); m.checkoutSha = "b".repeat(40); writeFileSync(file, JSON.stringify(m)); }
       if (name === "wrong attempt") { const m = JSON.parse(readFileSync(file, "utf8")); m.attempt = "1"; writeFileSync(file, JSON.stringify(m)); }
-      if (name === "duplicate producer") cpSync(join(input, "unit"), join(input, "duplicate"), { recursive: true });
+      if (name === "duplicate producer") cpSync(join(input, "coverage-unit-123-2"), join(input, "duplicate"), { recursive: true });
       const result = run(["assemble", "--artifacts", input, "--output", join(root, "coverage"), "--root", root, ...identity()]);
       assert.notEqual(result.status, 0, name); assert.match(result.stderr, /coverage:/);
       console.log(`negative ${name}: exit ${result.status}, ${result.stderr.trim()}`);
@@ -68,10 +70,10 @@ test("coverage rejects traversal and retains same basename in different worker f
   const root = fixture();
   try {
     assert.throws(() => normalizeLcovPaths("SF:../../outside.mts\nDA:1,1\nend_of_record\n", root, join(root, "modules/control-plane/worker")), /traversal|outside/);
-    assert.throws(() => relocateV8Report({ result: [{ url: pathToFileURL(root).href + "/../outside.mts", functions: [] }] }, root, root), /traversal/);
+    assert.throws(() => relocateV8Report({ result: [{ url: pathToFileURL(root).href + "/../outside.mts", functions: [] }] }, pathToFileURL(root + "/").href, root), /traversal/);
     console.log("negative path traversal: rejected LCOV and V8 traversal");
     const input = artifacts(root);
-    const normalized = normalizeLcovPaths(readFileSync(join(input, "worker/lcov.info"), "utf8"), root, join(root, "modules/control-plane/worker"));
+    const normalized = normalizeLcovPaths(readFileSync(join(input, "coverage-worker-123-2/lcov.info"), "utf8"), root, join(root, "modules/control-plane/worker"));
     assert.match(normalized, /SF:modules\/control-plane\/worker\/src\/first\/same.mts/);
     assert.match(normalized, /SF:modules\/control-plane\/worker\/src\/second\/same.mts/);
     assert.equal(validateLcov(normalized, root).files, 2);
@@ -97,19 +99,33 @@ test("coverage normalizes Windows producer separators and rejects traversal", ()
 test("real type-stripped V8 union maps typed lines, unexecuted branch and spawned child", { skip: existsSync(resolve("node_modules/c8/bin/c8.js")) ? false : "c8 dependency unavailable in this dependency-free compatibility job" }, () => {
   const root = fixture();
   try {
-    const input = artifacts(root); const raw = join(input, "unit/raw");
+    const input = artifacts(root); const raw = join(input, "coverage-unit-123-2/raw");
     const main = join(root, "runner.mts");
     writeFileSync(main, `import './src/typed.mts';\nimport { spawnSync } from 'node:child_process';\nconst child = spawnSync(process.execPath, ['src/child.mts'], { stdio: 'inherit' });\nif (child.status !== 0) process.exit(1);\n`);
     const execution = spawnSync(process.execPath, [main], { cwd: root, encoding: "utf8", env: { ...process.env, NODE_V8_COVERAGE: raw } });
     assert.equal(execution.status, 0, execution.stderr);
+    // Real Windows reports and nested Node maps, rewritten to foreign producer URLs.
+    const originalReports = readdirSync(raw).map(name => [name, readFileSync(join(raw, name), "utf8")] as const);
+    for (const [producer, sourceRootUrl] of [["unit", "file:///D:/a/repo/"], ["unit-macos", "file:///Users/runner/repo/"]]) {
+      const directory = join(input, "coverage-" + producer + "-123-2");
+      const manifestFile = join(directory, "manifest.json"), manifest = JSON.parse(readFileSync(manifestFile, "utf8"));
+      manifest.sourceRootUrl = sourceRootUrl; writeFileSync(manifestFile, JSON.stringify(manifest));
+      for (const [name, content] of originalReports) writeFileSync(join(directory, "raw", name), content.replaceAll(pathToFileURL(root + "/").href, sourceRootUrl));
+    }
     const output = join(root, "coverage");
     const result = run(["assemble", "--artifacts", input, "--output", output, "--root", root, ...identity()]);
     assert.equal(result.status, 0, result.stderr);
+    const summary = JSON.parse(readFileSync(join(output, "summary.json"), "utf8"));
+    assert.equal(summary.producers.length, 15);
+    for (const producer of ["unit", "unit-macos"]) assert(summary.producers.find((p: { producer: string; retained: number }) => p.producer === producer).retained > 0);
     const lcov = readFileSync(join(output, "node/lcov.info"), "utf8");
     const typed = lcov.split("end_of_record").find(s => s.includes("SF:src/typed.mts"))!;
     const child = lcov.split("end_of_record").find(s => s.includes("SF:src/child.mts"))!;
-    assert.match(typed, /DA:3,[1-9]\d*/); assert.match(typed, /DA:5,0/);
-    assert.match(child, /DA:1,[1-9]\d*/);
+    assert.match(typed, /DA:3,2(?:\n|$)/); assert.match(typed, /DA:5,0/);
+    assert.match(child, /DA:1,2(?:\n|$)/);
+    const zero = lcov.split("end_of_record").find(s => s.includes("SF:src/zero.mts"))!;
+    assert.match(zero, /DA:1,0/);
+    assert.match(typed, /BRDA:\d+,[^,]+,[^,]+,0/);
     const verification = run(["verify", "--output", output, "--root", root, ...identity()]);
     assert.equal(verification.status, 0, verification.stderr);
     console.log("typed mapping: typed.mts line 3 hit; line 5 zero; spawned child.mts line 1 hit; assemble/verify exit 0");
@@ -131,8 +147,8 @@ test("coverage assembly rejects malformed raw JSON and failed tests", () => {
     const root = fixture();
     try {
       const input = artifacts(root);
-      if (name === "malformed raw") writeFileSync(join(input, "unit/raw/report.json"), "{");
-      else { const path = join(input, "unit/manifest.json"); const m = JSON.parse(readFileSync(path, "utf8")); m.testOutcome = "failure"; writeFileSync(path, JSON.stringify(m)); }
+      if (name === "malformed raw") writeFileSync(join(input, "coverage-unit-123-2/raw/report.json"), "{");
+      else { const path = join(input, "coverage-unit-123-2/manifest.json"); const m = JSON.parse(readFileSync(path, "utf8")); m.testOutcome = "failure"; writeFileSync(path, JSON.stringify(m)); }
       const result = run(["assemble", "--artifacts", input, "--output", join(root, "coverage"), "--root", root, ...identity()]);
       assert.notEqual(result.status, 0); assert.match(result.stderr, /coverage:/);
       console.log(`negative ${name}: exit ${result.status}, ${result.stderr.trim()}`);
@@ -175,9 +191,12 @@ test("scanner verification rejects identity mismatch and absent or empty reports
   try {
     const input = artifacts(root); const output = join(root, "coverage");
     mkdirSync(join(output, "node"), { recursive: true }); mkdirSync(join(output, "worker"));
-    writeFileSync(join(output, "manifest.json"), JSON.stringify({ producers: ["unit", "typescript", "probe", "worker"].map(p => JSON.parse(readFileSync(join(input, p, "manifest.json"), "utf8"))) }));
+    writeFileSync(join(output, "manifest.json"), JSON.stringify({ runId: "123", attempt: "2", checkoutSha: sha, producers: producers.map(p => JSON.parse(readFileSync(join(input, `coverage-${p}-123-2`, "manifest.json"), "utf8"))) }));
     writeFileSync(join(output, "node/lcov.info"), "SF:src/typed.mts\nDA:3,1\nend_of_record\n");
-    writeFileSync(join(output, "worker/lcov.info"), normalizeLcovPaths(readFileSync(join(input, "worker/lcov.info"), "utf8"), root, join(root, "modules/control-plane/worker")));
+    writeFileSync(join(output, "worker/lcov.info"), normalizeLcovPaths(readFileSync(join(input, "coverage-worker-123-2/lcov.info"), "utf8"), root, join(root, "modules/control-plane/worker")));
+    const later = run(["verify", "--output", output, "--root", root, ...identity(), "--consumer-attempt", "10", "--artifact-name", "sonar-coverage-123-2"]);
+    assert.equal(later.status, 0, later.stderr);
+    for (const extra of [["--consumer-attempt", "1"], ["--consumer-attempt", "02"], ["--artifact-name", "sonar-coverage-123-3"]]) assert.notEqual(run(["verify", "--output", output, "--root", root, ...identity(), ...extra]).status, 0);
     for (const [key, value] of [["--checkout-sha", "b".repeat(40)], ["--attempt", "3"], ["--run-id", "999"]]) {
       const args = identity(); args[args.indexOf(key) + 1] = value;
       const result = run(["verify", "--output", output, "--root", root, ...args]);
