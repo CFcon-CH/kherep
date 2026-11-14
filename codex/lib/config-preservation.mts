@@ -9,13 +9,13 @@ import * as parityConfig from "./parity-config.mts";
 import { preserveExternalPostToolPositions } from "./post-tool-trust-position.mts";
 import { recognizeHistoricalManagedConfig } from "./historical-managed-artifacts.mts";
 import { configureMemoryNotify } from "./memory-provider.mts";
-import { reanchorSplitManagedBlock, UnknownManagedFragmentError } from "./managed-block-split.mts";
+import { reanchorSplitManagedBlock, UnknownManagedFragmentError, type Reanchored } from "./managed-block-split.mts";
 import { managedNodePaths, withManagedNodePaths } from "./node-path.mts";
 import { managedOutboxRoots, projectOutboxWritableRoot } from "./outbox-writable-root.mts";
 import { managedFragmentFamily, retiredCentralBrainFragments, retireUnmanagedCentralBrainTable } from "./retired-central-brain.mts";
 import type { RetiredCentralBrainRender } from "./retired-central-brain.mts";
 import { enableHooks, setMarkedBlock, setTopLevelSetting, topLevelSetting } from "./text-merge.mts";
-import { restoreToolApprovals, type ToolApproval } from "./tool-approval-tables.mts";
+import { restoreToolApprovals } from "./tool-approval-tables.mts";
 import { hasTomlStringReference, rewriteExactTomlStringArgs } from "./toml-args.mts";
 
 const MCP_TABLE_HEADER = /^[^\S\n\r\u2028\u2029]*\[\s*mcp_servers\s*\./m;
@@ -212,7 +212,7 @@ function reportedValue(raw: string): string {
 
 export function prepareManagedConfig(config: string, options: ManagedConfigOptions) {
   let baseline = config;
-  let held: ToolApproval[] | undefined, lifted: string[][] | undefined;
+  let anchored: Reanchored | undefined;
   let result: ReturnType<typeof prepareAnchoredConfig>;
   try {
     result = prepareAnchoredConfig(config, options);
@@ -221,18 +221,18 @@ export function prepareManagedConfig(config: string, options: ManagedConfigOptio
     // again once the split is undone; any other unknown block still refuses.
     if (!(error instanceof UnknownManagedFragmentError)) throw error;
     // Issue #921: a retired server's tables, which the install removes anyway, hold no lift back.
-    const anchored = reanchorSplitManagedBlock(managedConfig.removeMcpTables(config, options.retiredMcpServerNames),
+    anchored = reanchorSplitManagedBlock(managedConfig.removeMcpTables(config, options.retiredMcpServerNames),
       options.startMarker, options.endMarker, error.knownFragments);
     if (!anchored) throw error;
-    ({ config: baseline, held, lifted } = anchored);
+    baseline = anchored.config;
     result = prepareAnchoredConfig(baseline, options, config);
   }
-  // Issue #921. The operator's tool approvals keep their text, unless their server
-  // is gone; bytes the install leaves as they were are a current block, also
-  // when it took the re-anchor.
-  const restored = restoreToolApprovals(result.config, options.startMarker, options.endMarker, held ?? [], lifted ?? []);
-  const managedFragment = result.managedFragment === "created" ? "created" as const : restored === config ? "current" as const
-    : held || restored !== result.config ? "replaced" as const : result.managedFragment;
+  // Issue #921. The operator's tool approvals keep their text, unless their server is gone.
+  const restored = restoreToolApprovals(result.config, options.startMarker, options.endMarker, anchored?.held ?? [], anchored?.lifted ?? []);
+  // Bytes the install leaves as they were are a current block, also when it took the re-anchor.
+  let managedFragment = result.managedFragment;
+  if (managedFragment !== "created" && restored === config) managedFragment = "current";
+  else if (managedFragment !== "created" && (anchored || restored !== result.config)) managedFragment = "replaced";
   result = { ...result, config: restored, managedFragment };
   preserveExternalPostToolPositions(baseline, result.config, options.startMarker, options.endMarker);
   return result;

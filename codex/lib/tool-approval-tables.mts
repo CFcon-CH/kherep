@@ -53,13 +53,14 @@ export function restoreToolApprovals(
   const orphans = doc.tables.filter((table) => table.span.start >= end && isToolApprovalTable(table)
     && liftedKeys.has(pathKey(table.path)) && !inside.has(pathKey(table.path)) && !served.has(table.path[1]))
     .map((table) => ({ table, span: table.span }));
+  const leaving = [...outside, ...orphans];
   const texts = new Map<string, ToolApproval>();
-  for (const approval of [...held, ...[...outside, ...orphans].map(({ table }) => ({ path: table.path, text: table.payload.join("\n") }))]) {
+  for (const approval of [...held, ...leaving.map(({ table }) => ({ path: table.path, text: table.payload.join("\n") }))]) {
     if (texts.has(pathKey(approval.path))) throw new Error("Refusing to merge more than one copy of a tool approval table");
     texts.set(pathKey(approval.path), approval);
   }
   // A table that leaves its place keeps its comments there.
-  const edits: (Span & { text: string })[] = [...outside, ...orphans].map(({ span }) => ({ ...span, text: config.slice(span.start, span.end)
+  const edits: (Span & { text: string })[] = leaving.map(({ span }) => ({ ...span, text: config.slice(span.start, span.end)
     .split(/(?<=\n)/).filter((line) => !line.trim() || line.trimStart().startsWith("#")).join("").replace(/^\n+/, "") }));
   const appended: string[] = [];
   for (const [key, { path, text }] of texts) {
