@@ -19,6 +19,7 @@ export function exact(value: Record<string, unknown>, allowed: string[]): void {
   if (Object.keys(value).some(k => !allowed.includes(k))) fail('invalid-request');
 }
 export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+export const SHA = /^[0-9a-f]{40}$/;
 export function positive(value: unknown): value is number { return Number.isSafeInteger(value) && Number(value) > 0; }
 export function slug(value: unknown): value is string { return typeof value === 'string' && /^[A-Za-z0-9_-][A-Za-z0-9_.-]{0,99}\/[A-Za-z0-9_-][A-Za-z0-9_.-]{0,99}$/.test(value); }
 /** A plain branch name of this repository: no ref prefix, owner, glob, `..` or trailing dot. */
@@ -47,7 +48,7 @@ export function parseRequest(text: string): Request {
   exact(x, ['operationId', 'repository', 'operation', ...FIELDS[x.operation]]);
   if ((REQUIRED[x.operation] ?? []).some(k => x[k] === undefined)) fail('invalid-request');
   if (['issueNumber','prNumber','runId'].some(k => x[k] !== undefined && !positive(x[k]))) fail('invalid-request');
-  if (['branch','head','base'].some(k => x[k] !== undefined && !refName(x[k])) || x.sha !== undefined && (typeof x.sha !== 'string' || !/^[0-9a-f]{40}$/.test(x.sha))) fail('invalid-request');
+  if (['branch','head','base'].some(k => x[k] !== undefined && !refName(x[k])) || x.sha !== undefined && (typeof x.sha !== 'string' || !SHA.test(x.sha))) fail('invalid-request');
   if (['draft','failedOnly'].some(k => x[k] !== undefined && typeof x[k] !== 'boolean')) fail('invalid-request');
   if (x.title !== undefined && (typeof x.title !== 'string' || !x.title.trim() || [...x.title].length > 256)) fail('invalid-request');
   if (x.body !== undefined && (typeof x.body !== 'string' || Buffer.byteLength(x.body) > 32768)) fail('invalid-request');
@@ -57,6 +58,15 @@ export function parseRequest(text: string): Request {
   if (x.operation === 'pr.update' && !['title','body','state','base'].some(k => x[k] !== undefined)) fail('invalid-request');
   x.operationId = x.operationId.toLowerCase();
   return x as Request;
+}
+/** The given receipt fields that are set, in the given order: the public IDs of an operation. */
+export function pickIds<T extends object>(receipt: T, keys: (keyof T & string)[]): Record<string, unknown> {
+  return Object.fromEntries(keys.filter(k => receipt[k]).map(k => [k, receipt[k]]));
+}
+/** The actor is exactly the runtime's bot account. */
+export function isBotActor(identity: { botId: number; botLogin: string }, actor: unknown): boolean {
+  const user = actor as Record<string, unknown> | null;
+  return !!user && user.id === identity.botId && user.login === identity.botLogin && user.type === 'Bot';
 }
 export function payload(r: Request): Record<string, unknown> {
   return Object.fromEntries(['title','body','labels','state','stateReason'].filter(k => r[k as keyof Request] !== undefined).map(k => [k === 'stateReason' ? 'state_reason' : k, r[k as keyof Request]]));

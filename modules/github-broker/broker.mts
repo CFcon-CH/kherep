@@ -42,7 +42,7 @@ export async function execute(runtime:Runtime, text:string, deps:Dependencies={}
       const admitted=await handler.preflight(context);
       receipt={version:handler.kind==='issue'?1:2,...(handler.kind!=='issue'?{kind:handler.kind}:{}),digest:store.digest(request),operation,status:'pending',fieldHashes:store.hashFields(handler.fields(request)),...admitted} as Receipt;
       store.write(receipt);
-      const save=(known:Partial<Receipt>)=>{receipt={...receipt!,...known};if(handler.known(receipt))receipt.status='known';store.write(receipt);publicIds=safe();};
+      const save=(known:Partial<Receipt>)=>{receipt={...receipt!,...known};if(handler.known(receipt))receipt.status='known';store.write(receipt);};
       try {save(await handler.mutate(context,receipt,save));} catch {publicIds=safe();fail('outcome-unknown');}
     }
     if(!isVerify) publicIds=safe();

@@ -100,12 +100,11 @@ function brokerPullRequest(response: unknown): { pr: number; repo: string } | nu
   return null;
 }
 
-function prCreateRecord(intent: AttributionIntent, toplevel: string, payload: Record<string, unknown>, runtime: HookRuntime,
-  deps: AttributionHookDeps, now: number): AttributionRecord {
+function prCreateRecord(intent: AttributionIntent, toplevel: string, payload: Record<string, unknown>,
+  fromBroker: { pr: number; repo: string } | null, runtime: HookRuntime, deps: AttributionHookDeps, now: number): AttributionRecord {
   const output = typeof payload.tool_response === "string" ? payload.tool_response : JSON.stringify(payload.tool_response ?? null);
   let found: { pr: number | null; repo: string | null; prSource: "stdout" | "gh" | "unresolved" } = { pr: null, repo: null,
     prSource: "unresolved" };
-  const fromBroker = intent.kind === "broker" ? brokerPullRequest(payload.tool_response) : null;
   const fromOutput = fromBroker ?? pullRequest(output);
   if (fromOutput) found = { ...fromOutput, prSource: "stdout" };
   else {
@@ -140,12 +139,13 @@ export function handleAttributionHook(input: unknown, runtime: HookRuntime, deps
   for (const command of shellCommands(payload, runtime)) {
     for (const intent of attributionIntents(command, cwd)) {
       if (event === "PostToolUse" && intent.kind === "push") continue;
+      const fromBroker = intent.kind === "broker" ? brokerPullRequest(payload.tool_response) : null;
       // Only a broker call that opened a PR leaves a pr-create record.
-      if (event === "PostToolUse" && intent.kind === "broker" && !brokerPullRequest(payload.tool_response)) continue;
+      if (event === "PostToolUse" && intent.kind === "broker" && !fromBroker) continue;
       const toplevel = workspaceToplevel(intent.dir, deps.env);
       if (!toplevel) continue;
       if (event === "PreToolUse") writePendingMarker(deps.paths, toplevel, payload.session_id, "codex", now);
-      else appendAttribution(deps.paths, prCreateRecord(intent, toplevel, payload, runtime, deps, now), now);
+      else appendAttribution(deps.paths, prCreateRecord(intent, toplevel, payload, fromBroker, runtime, deps, now), now);
     }
   }
 }

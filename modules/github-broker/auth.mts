@@ -22,7 +22,7 @@ function grants(have:unknown, want:Permissions):boolean {
  * with exactly `permissions` (plus GitHub's implicit metadata:read). The token
  * stays in memory. Returns it with the checked public repository object.
  */
-export async function authenticateRepository(http:Http, key:Buffer, identity:Identity, repo:{slug:string;id:number}, now:number, permissions:Permissions={issues:'write'}): Promise<{token:string; target:Record<string,unknown>}> {
+export async function authenticateRepository(http:Http, key:Buffer, identity:Identity, repo:{slug:string;id:number}, now:number, permissions:Permissions): Promise<{token:string; target:Record<string,unknown>}> {
   const signed = jwt(key, identity.clientId, now);
   const app = await http('GET','/app',signed);
   if (app.id !== identity.appId || app.client_id !== identity.clientId || !grants(app.permissions, permissions) || typeof app.slug !== 'string' || !/^[A-Za-z0-9_-]{1,100}$/.test(app.slug) || identity.botLogin !== `${app.slug}[bot]`) fail('auth-refused');
