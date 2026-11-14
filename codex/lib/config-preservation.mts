@@ -212,7 +212,7 @@ function reportedValue(raw: string): string {
 
 export function prepareManagedConfig(config: string, options: ManagedConfigOptions) {
   let baseline = config;
-  let held: ToolApproval[] | undefined;
+  let held: ToolApproval[] | undefined, lifted: string[][] | undefined;
   let result: ReturnType<typeof prepareAnchoredConfig>;
   try {
     result = prepareAnchoredConfig(config, options);
@@ -224,12 +224,13 @@ export function prepareManagedConfig(config: string, options: ManagedConfigOptio
     const anchored = reanchorSplitManagedBlock(managedConfig.removeMcpTables(config, options.retiredMcpServerNames),
       options.startMarker, options.endMarker, error.knownFragments);
     if (!anchored) throw error;
-    ({ config: baseline, held } = anchored);
+    ({ config: baseline, held, lifted } = anchored);
     result = prepareAnchoredConfig(baseline, options, config);
   }
-  // Issue #921. The operator's tool approvals keep their text; bytes the install
-  // leaves as they were are a current block, also when it took the re-anchor.
-  const restored = restoreToolApprovals(result.config, options.startMarker, options.endMarker, held ?? []);
+  // Issue #921. The operator's tool approvals keep their text, unless their server
+  // is gone; bytes the install leaves as they were are a current block, also
+  // when it took the re-anchor.
+  const restored = restoreToolApprovals(result.config, options.startMarker, options.endMarker, held ?? [], lifted ?? []);
   const managedFragment = result.managedFragment === "created" ? "created" as const : restored === config ? "current" as const
     : held || restored !== result.config ? "replaced" as const : result.managedFragment;
   result = { ...result, config: restored, managedFragment };

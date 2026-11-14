@@ -24,8 +24,12 @@ export function isToolApprovalTable({ path, array, address, payload }: ScannedTa
 // Puts the operator's text in the place of a tool approval table the block
 // renders. `held` came out of the block; any other copy stands outside it and
 // leaves its comments there. A held table the block no longer renders goes
-// behind the end marker.
-export function restoreToolApprovals(config: string, startMarker: string, endMarker: string, held: ToolApproval[]): string {
+// behind the end marker. Codex refuses to load a tools table without its server
+// table, so a held or `lifted` table whose server the config no longer defines
+// is dropped, its comments kept; an orphan that was outside already stays.
+export function restoreToolApprovals(
+  config: string, startMarker: string, endMarker: string, held: ToolApproval[], lifted: string[][] = [],
+): string {
   const start = config.indexOf(startMarker), end = start < 0 ? -1 : config.indexOf(endMarker, start);
   if (end < 0) return config;
   let doc;
@@ -33,7 +37,7 @@ export function restoreToolApprovals(config: string, startMarker: string, endMar
     doc = scanDocument(config);
   } catch (error) {
     // With nothing held, a document the scanner cannot follow stays as it was.
-    if (error instanceof TomlStructureError && !held.length) return config;
+    if (error instanceof TomlStructureError && !held.length && !lifted.length) return config;
     throw error;
   }
   const lineEnd = (at: number): number => config.indexOf("\n", at) < 0 ? config.length : config.indexOf("\n", at) + 1;
@@ -43,22 +47,30 @@ export function restoreToolApprovals(config: string, startMarker: string, endMar
   const outside = doc.tables.filter((table) => (table.span.start < start || table.span.start >= end)
     && isToolApprovalTable(table) && inside.has(pathKey(table.path)))
     .map((table) => ({ table, span: { start: table.span.start, end: table.span.start < start ? Math.min(table.span.end, start) : table.span.end } }));
-  const texts = new Map<string, string>();
-  for (const { path, text } of [...held, ...outside.map(({ table }) => ({ path: table.path, text: table.payload.join("\n") }))]) {
-    if (texts.has(pathKey(path))) throw new Error("Refusing to merge more than one copy of a tool approval table");
-    texts.set(pathKey(path), text);
+  const served = new Set(doc.tables.filter(({ path, array }) => !array && path.length === 2 && path[0] === "mcp_servers")
+    .map(({ path }) => path[1]));
+  const liftedKeys = new Set(lifted.map(pathKey));
+  const orphans = doc.tables.filter((table) => table.span.start >= end && isToolApprovalTable(table)
+    && liftedKeys.has(pathKey(table.path)) && !inside.has(pathKey(table.path)) && !served.has(table.path[1]))
+    .map((table) => ({ table, span: table.span }));
+  const texts = new Map<string, ToolApproval>();
+  for (const approval of [...held, ...[...outside, ...orphans].map(({ table }) => ({ path: table.path, text: table.payload.join("\n") }))]) {
+    if (texts.has(pathKey(approval.path))) throw new Error("Refusing to merge more than one copy of a tool approval table");
+    texts.set(pathKey(approval.path), approval);
   }
-  const edits: (Span & { text: string })[] = outside.map(({ span }) => ({ ...span, text: config.slice(span.start, span.end)
+  // A table that leaves its place keeps its comments there.
+  const edits: (Span & { text: string })[] = [...outside, ...orphans].map(({ span }) => ({ ...span, text: config.slice(span.start, span.end)
     .split(/(?<=\n)/).filter((line) => !line.trim() || line.trimStart().startsWith("#")).join("").replace(/^\n+/, "") }));
   const appended: string[] = [];
-  for (const [path, text] of texts) {
-    const piece = inside.get(path);
-    if (!piece) { appended.push(text); continue; }
+  for (const [key, { path, text }] of texts) {
+    const piece = inside.get(key);
+    if (!piece) { if (served.has(path[1])) appended.push(text); continue; }
     const current = config.slice(piece.start, piece.end);
     edits.push({ ...piece, text: text + current.slice(current.trimEnd().length) });
   }
   let next = config;
   for (const edit of edits.sort((left, right) => right.start - left.start)) next = next.slice(0, edit.start) + edit.text + next.slice(edit.end);
+  if (orphans.length) next = next.replace(/\n+$/, "\n");
   if (!appended.length) return next;
   const at = next.indexOf(endMarker, next.indexOf(startMarker)) + endMarker.length;
   return `${next.slice(0, at)}\n\n${appended.join("\n\n")}\n${next.slice(at).replace(/^\n*/, "\n")}`.replace(/\n+$/, "\n");
