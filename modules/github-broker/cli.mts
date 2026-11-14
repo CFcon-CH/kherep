@@ -5,7 +5,7 @@ import { execute } from './broker.mts';
 import type { Dependencies } from './broker.mts';
 import type { Runtime } from './contract.mts';
 export function entry(runtime:Runtime) {return (text:string,deps:Dependencies={})=>execute(runtime,text,deps);}
-function isMainModule(url: string): boolean {
+export function isMainModule(url: string): boolean {
   const entry = process.argv[1];
   if (!entry) return false;
   try {

@@ -9,6 +9,26 @@ increments the minor version; every other release increments the patch version.
 
 ## [Unreleased]
 
+### Added
+
+- GitHub App broker writes beyond issues (#780, part A). Policy schema 2 adds
+  `identity` (the bot's commit name and noreply email, without key or network),
+  `branch.push`, `pr.create`, `pr.update`, `pr.comment`, `run.rerun` and
+  `run.cancel`, each with exactly one installation-token permission set
+  (`contents`, `pull_requests` plus `issues` for labels, or `actions` write).
+  `branch.push` refuses the default branch, `v*` branches, non-fast-forward
+  pushes, commits authored or committed by anyone but the allowed bots (default:
+  the runtime's own) and any change under `.github/workflows`; it pushes through
+  a fixed `git push` whose only credential helper is the new per-runtime
+  `github-<runtime>-credential.mts`, which answers only while that push's
+  receipt is pending and locked, so the token never reaches argv, environment,
+  disk or output. There is still no merge, force-push, branch deletion, tag push
+  or `workflows` permission. The attribution hook records broker-created PRs.
+  Policy schema 1 stays valid for issue operations. Session rules route GitHub
+  writes in allowlisted repositories through the broker. Operator action: to use
+  the new operations, move the host policy to version 2 and list the operations
+  per runtime; no installer creates policy or keys.
+
 ### Removed
 
 - The stale pin `@openai/codex@0.152.1` in `bootstrap/manifest/npm-globals.txt`

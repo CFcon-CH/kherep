@@ -22,6 +22,11 @@ import { hookRuntime, isMainModule, type HookRuntime } from "./deliver-hook.mts"
 // The PR number comes from a /pull/<n> URL in the tool output, else from
 // `gh pr view --json number,url` (5 s), else it stays null ("unresolved").
 // Neither the command text nor the output is ever recorded.
+//
+// Issue #780, PR-A. The GitHub App broker (tools/github-broker/github-<rt>.mts)
+// opens pull requests and pushes on its own: its pr.create receipt on stdout
+// names the repository and PR number, and Codex gets the same pending marker,
+// because a broker push runs git push and so the pre-push hook.
 
 export interface AttributionHookDeps {
   paths: NodePaths;
@@ -30,13 +35,18 @@ export interface AttributionHookDeps {
   prView?: (dir: string) => { number: number; url: string } | null;
 }
 
-export interface AttributionIntent { kind: "push" | "pr-create"; dir: string }
+export interface AttributionIntent { kind: "push" | "pr-create" | "broker"; dir: string }
+
+const BROKER_ENTRY = /(?:^|[\\/])github-(?:claude|codex)\.mts$/;
 
 export function attributionIntents(command: string, cwd: string): AttributionIntent[] {
   return commandSegments(command, cwd).flatMap((segment): AttributionIntent[] => {
     if (segment.name === "git") {
       const { verb, dir } = gitSubcommand(segment.args, segment.dir);
       return verb === "push" ? [{ kind: "push", dir }] : [];
+    }
+    if (segment.name === "node" && BROKER_ENTRY.test(segment.args.find((arg) => !arg.startsWith("-")) ?? "")) {
+      return [{ kind: "broker", dir: segment.dir }];
     }
     const [group, verb] = segment.args;
     return segment.name === "gh" && group === "pr" && verb === "create" ? [{ kind: "pr-create", dir: segment.dir }] : [];
@@ -78,15 +88,28 @@ function ghPrView(dir: string): { number: number; url: string } | null {
   }
 }
 
-function prCreateRecord(dir: string, toplevel: string, payload: Record<string, unknown>, runtime: HookRuntime,
+// A successful broker pr.create receipt in the tool output: one JSON line.
+function brokerPullRequest(response: unknown): { pr: number; repo: string } | null {
+  const output = typeof response === "string" ? response : (response as { stdout?: unknown } | null)?.stdout;
+  for (const line of typeof output === "string" ? output.split(/\r?\n/) : []) {
+    let value: Record<string, unknown> | null = null;
+    try { value = JSON.parse(line) as Record<string, unknown> | null; } catch { continue; }
+    if (value?.ok === true && value.operation === "pr.create" && Number.isSafeInteger(value.prNumber) && typeof value.repository === "string"
+      && /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(value.repository)) return { pr: value.prNumber as number, repo: value.repository };
+  }
+  return null;
+}
+
+function prCreateRecord(intent: AttributionIntent, toplevel: string, payload: Record<string, unknown>, runtime: HookRuntime,
   deps: AttributionHookDeps, now: number): AttributionRecord {
   const output = typeof payload.tool_response === "string" ? payload.tool_response : JSON.stringify(payload.tool_response ?? null);
   let found: { pr: number | null; repo: string | null; prSource: "stdout" | "gh" | "unresolved" } = { pr: null, repo: null,
     prSource: "unresolved" };
-  const fromOutput = pullRequest(output);
+  const fromBroker = intent.kind === "broker" ? brokerPullRequest(payload.tool_response) : null;
+  const fromOutput = fromBroker ?? pullRequest(output);
   if (fromOutput) found = { ...fromOutput, prSource: "stdout" };
   else {
-    const viewed = (deps.prView ?? ghPrView)(dir);
+    const viewed = (deps.prView ?? ghPrView)(intent.dir);
     if (viewed) found = { pr: viewed.number, repo: pullRequest(viewed.url)?.repo ?? null, prSource: "gh" };
   }
   const sessionId = isSessionId(payload.session_id) ? payload.session_id : null;
@@ -116,11 +139,13 @@ export function handleAttributionHook(input: unknown, runtime: HookRuntime, deps
   const now = deps.now?.() ?? Date.now();
   for (const command of shellCommands(payload, runtime)) {
     for (const intent of attributionIntents(command, cwd)) {
-      if (event === "PostToolUse" && intent.kind !== "pr-create") continue;
+      if (event === "PostToolUse" && intent.kind === "push") continue;
+      // Only a broker call that opened a PR leaves a pr-create record.
+      if (event === "PostToolUse" && intent.kind === "broker" && !brokerPullRequest(payload.tool_response)) continue;
       const toplevel = workspaceToplevel(intent.dir, deps.env);
       if (!toplevel) continue;
       if (event === "PreToolUse") writePendingMarker(deps.paths, toplevel, payload.session_id, "codex", now);
-      else appendAttribution(deps.paths, prCreateRecord(intent.dir, toplevel, payload, runtime, deps, now), now);
+      else appendAttribution(deps.paths, prCreateRecord(intent, toplevel, payload, runtime, deps, now), now);
     }
   }
 }
