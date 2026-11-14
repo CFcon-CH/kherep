@@ -1,4 +1,5 @@
 import type { Operation, Request, Runtime } from './contract.mts';
+import { noreply } from './config.mts';
 import type { Identity } from './config.mts';
 import type { Permissions } from './auth.mts';
 import type { Http } from './transport.mts';
@@ -42,5 +43,5 @@ export function permissionsFor(operation:Operation, labels:boolean):Permissions 
 }
 /** The public commit identity of a runtime's bot, as GitHub attributes it. */
 export function botIdentity(identity:Identity):{name:string; email:string} {
-  return {name:identity.botLogin, email:`${identity.botId}+${identity.botLogin}@users.noreply.github.com`};
+  return {name:identity.botLogin, email:noreply(identity.botId,identity.botLogin)};
 }

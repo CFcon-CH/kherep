@@ -1,4 +1,4 @@
-import { fail, positive } from './contract.mts';
+import { fail, isBotActor, pickIds, positive } from './contract.mts';
 import type { Request } from './contract.mts';
 import type { Http } from './transport.mts';
 import { matchesFields } from './receipt.mts';
@@ -16,10 +16,6 @@ async function pull(http:Http, token:string, repo:string, prNumber:number, code:
 function project(item:Record<string,unknown>):Record<string,unknown> {
   const ref=(side:unknown)=>(side as {ref?:unknown}|null)?.ref;
   return {title:item.title, body:item.body, state:item.state, draft:item.draft, base:ref(item.base), head:ref(item.head), labels:item.labels};
-}
-function bot(c:Context, actor:unknown):boolean {
-  const user=actor as Record<string,unknown>|null;
-  return !!user && user.id===c.identity.botId && user.login===c.identity.botLogin && user.type==='Bot';
 }
 async function create(c:Context, save:(known:Partial<Receipt>)=>void):Promise<Partial<Receipt>> {
   const r=c.request, base=`/repos/${c.repo.slug}`;
@@ -48,7 +44,7 @@ export const pullHandler: Handler = {
       const comment=await c.http('POST',`${base}/issues/${r.prNumber}/comments`,c.token,{body:r.body});
       return positive(comment.id)?{targetId:comment.id}:{};
     }
-    const updated=await c.http('PATCH',`${base}/pulls/${r.prNumber}`,c.token,Object.fromEntries(['title','body','state','base'].filter(k=>r[k as keyof Request]!==undefined).map(k=>[k,r[k as keyof Request]])));
+    const updated=await c.http('PATCH',`${base}/pulls/${r.prNumber}`,c.token,pullHandler.fields(r));
     return positive(updated.id)?{targetId:updated.id}:{};
   },
   known:receipt=>positive(receipt.prNumber) && positive(receipt.targetId),
@@ -57,14 +53,14 @@ export const pullHandler: Handler = {
     const repo=c.repo.slug;
     if (receipt.operation==='pr.comment') {
       const comment=await c.http('GET',`/repos/${repo}/issues/comments/${receipt.targetId}`,c.token);
-      if (comment.id!==receipt.targetId || !matchesFields(comment,receipt.fieldHashes) || comment.issue_url!==`https://api.github.com/repos/${repo}/issues/${receipt.prNumber}` || !bot(c,comment.user)) fail('verification-failed');
+      if (comment.id!==receipt.targetId || !matchesFields(comment,receipt.fieldHashes) || comment.issue_url!==`https://api.github.com/repos/${repo}/issues/${receipt.prNumber}` || !isBotActor(c.identity,comment.user)) fail('verification-failed');
       await pull(c.http,c.token,repo,receipt.prNumber,'verification-failed');
       return;
     }
     const item=await pull(c.http,c.token,repo,receipt.prNumber,'verification-failed');
     if (item.id!==receipt.targetId || !matchesFields(project(item),receipt.fieldHashes)) fail('verification-failed');
-    if (receipt.operation==='pr.create' && (owner(item.head)!==repo || !bot(c,item.user))) fail('verification-failed');
+    if (receipt.operation==='pr.create' && (owner(item.head)!==repo || !isBotActor(c.identity,item.user))) fail('verification-failed');
   },
-  ids:receipt=>({...(receipt.prNumber?{prNumber:receipt.prNumber}:{}),...(receipt.targetId?{targetId:receipt.targetId}:{})}),
+  ids:receipt=>pickIds(receipt,['prNumber','targetId']),
   attribution:receipt=>receipt.operation==='pr.update'?'authenticated-installation':'bot-author',
 };

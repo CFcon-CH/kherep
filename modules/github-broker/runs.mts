@@ -1,4 +1,4 @@
-import { fail, positive } from './contract.mts';
+import { fail, isBotActor, pickIds, positive } from './contract.mts';
 import type { Context, Handler } from './operations.mts';
 type Code = 'target-refused'|'verification-failed';
 async function readRun(c:Context, runId:number, code:Code):Promise<Record<string,unknown>> {
@@ -17,7 +17,9 @@ export const runHandler: Handler = {
     return {runId, attempt:run.run_attempt as number};
   },
   async mutate(c) {
-    const action=c.request.operation==='run.cancel' ? 'cancel' : c.request.failedOnly ? 'rerun-failed-jobs' : 'rerun';
+    let action='rerun';
+    if (c.request.operation==='run.cancel') action='cancel';
+    else if (c.request.failedOnly) action='rerun-failed-jobs';
     await c.http('POST',`/repos/${c.repo.slug}/actions/runs/${c.request.runId}/${action}`,c.token);
     return {};
   },
@@ -30,9 +32,8 @@ export const runHandler: Handler = {
       if (run.conclusion!=='cancelled') fail('verification-failed');
       return;
     }
-    const actor=run.triggering_actor as Record<string,unknown>|null;
-    if (Number(run.run_attempt)<=receipt.attempt || actor?.id!==c.identity.botId || actor?.login!==c.identity.botLogin || actor?.type!=='Bot') fail('verification-failed');
+    if (Number(run.run_attempt)<=receipt.attempt || !isBotActor(c.identity,run.triggering_actor)) fail('verification-failed');
   },
-  ids:receipt=>({...(receipt.runId?{runId:receipt.runId}:{}),...(receipt.attempt?{attempt:receipt.attempt}:{})}),
+  ids:receipt=>pickIds(receipt,['runId','attempt']),
   attribution:receipt=>receipt.operation==='run.rerun'?'bot-actor':'authenticated-installation',
 };

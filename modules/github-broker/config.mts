@@ -4,7 +4,7 @@ import { exact, fail, GITHUB_OPERATIONS, ISSUE_OPERATIONS, object, positive, slu
 import type { Operation, Request, Runtime } from './contract.mts';
 import { readProtected } from './key-access.mts';
 export type Identity = { appId:number; clientId:string; botId:number; botLogin:string; installationId:number; keyRef:string; operations:Operation[]; repositories:{slug:string; id:number; moduleLabels?:string[]}[];
-  allowedAuthorBotIds?:number[]; version?:1|2; authorEmails?:string[] };
+  allowedAuthorBotIds?:number[]; authorEmails?:string[] };
 export function canonicalRoot(): string {
   try { return path.join(os.userInfo().homedir, '.kherep', 'github-broker'); }
   catch { return fail('policy-disabled'); }
@@ -12,7 +12,8 @@ export function canonicalRoot(): string {
 function validModuleLabels(value: unknown): boolean {
   return Array.isArray(value) && value.length >= 1 && value.length <= 100 && value.every(l => typeof l === 'string' && l.length > 0);
 }
-const noreply = (botId:number, botLogin:string) => `${botId}+${botLogin}@users.noreply.github.com`.toLowerCase();
+/** The GitHub noreply commit address of a bot account, in its original case. */
+export const noreply = (botId:number, botLogin:string) => `${botId}+${botLogin}@users.noreply.github.com`;
 /**
  * Version 1 admits the issue operations only. Version 2 adds the push, pull
  * request and run operations, `identity`, and an optional allowedAuthorBotIds per
@@ -42,7 +43,7 @@ export function validatePolicy(value: unknown, runtime: Runtime, request: Reques
     if (!selected || !selected.repositories.some(r => r.slug === request.repository)) fail('policy-invalid');
     if (request.operation === 'identity' ? !v2 : request.operation !== 'verify' && !selected.operations.includes(request.operation)) fail('policy-invalid');
     const authors = (selected.allowedAuthorBotIds ?? [selected.botId]).map(id => values.find(o => o.botId === id)!);
-    return {...selected, version: p.version as 1|2, authorEmails: authors.map(o => noreply(o.botId, o.botLogin))};
+    return {...selected, authorEmails: authors.map(o => noreply(o.botId, o.botLogin).toLowerCase())};
   } catch (e) { if (e instanceof Error && e.message === 'policy-disabled') throw e; fail('policy-invalid'); }
 }
 export async function loadPolicy(root: string, runtime: Runtime, request: Request): Promise<Identity> {
