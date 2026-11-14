@@ -38,6 +38,14 @@ increments the minor version; every other release increments the patch version.
   Confluence evidence test harness, the service supervisor's runtime check
   and the Windows service stop build their object per call or take it from
   the caller. Behavior is unchanged.
+- An idle Codex app thread no longer stays `reachable-probable` when the app
+  writes a record that starts no turn more than 30 seconds after `Stop`, such
+  as a sub-agent completion or a `thread_settings_applied` record; a queued
+  message then waited in `awaiting-user-turn` until the operator typed in the
+  thread. For such a late write the Codex liveness source now reads the held
+  rollout's tail backwards to the boundary (at most 1 MiB, record types and
+  timestamps only, nothing logged) and stays UNKNOWN for a turn start, any
+  unlisted record or an unreadable tail (#911). Operator action: none.
 
 ## [0.5.0] - 2026-11-13
 

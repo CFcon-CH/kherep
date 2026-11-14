@@ -3,6 +3,7 @@ import fs from "node:fs";
 import { codexHome } from "./codex-app.mts";
 import { probeCodexHolders, type Holder, type HolderProbe, type HolderScan } from "./codex-holder-probe.mts";
 import { probeCodexHoldersWindows } from "./codex-holder-probe-windows.mts";
+import { lateWrites, type LateWrites } from "./codex-rollout-tail.mts";
 import { CODEX_ACTIVE_MS, CODEX_RUNTIME, isCodexSessionId, readCodexSession, type CodexSessionRecord } from "./codex-sessions.mts";
 import type { NodePaths } from "./config.mts";
 import type { LivenessSource } from "./liveness-pass.mts";
@@ -16,15 +17,19 @@ import { validIdentity, type Observation, type ReasonCode, type SessionEvidence,
 // - app (native-app): whether any codex process runs;
 // - loaded (native-app): true while held (decision D1);
 // - turn (native-turn): the delivery hook's record bound to that holder
-//   (decision D2); the rollout is stat'ed, never opened.
+//   (decision D2); the rollout is stat'ed; it is opened only when it was
+//   written more than IDLE_WRITE_SLACK_MS after the turn boundary, and then
+//   only record types and timestamps are evaluated (codex-rollout-tail.mts,
+//   issue #911).
 // Every failure is UNKNOWN: never a positive, never an absence.
 
 // Below the 60 s listing tick, so every tick observes once and the receipt
 // (DISPLAY_TTL_MS) never lapses between ticks (design finding F1).
 export const CODEX_LIVENESS_INTERVAL_MS = 50_000;
-// An idle claim is refuted when the rollout was written this long after the
-// turn boundary: a turn started that no hook recorded. ASSUMED from one
-// measurement (task_complete about 150 ms after Stop).
+// Records up to this long after the turn boundary belong to the ended turn and
+// are not classified; a later write makes the source read the rollout tail,
+// where a turn start or an unlisted record refutes idle (issue #911). ASSUMED
+// from one measurement (task_complete about 150 ms after Stop).
 export const IDLE_WRITE_SLACK_MS = 30_000;
 const IDLE_SOURCES = new Set(["startup", "resume", "clear", "fork"]);
 
@@ -36,7 +41,10 @@ const valueAt = <T,>(observedAt: number, source: Observation<T>["source"], value
 
 // The turn of a held thread from its hook record. rolloutMtimeMs: undefined
 // when the held rollout could not be stat'ed, which refuses an idle claim.
-export function turnFor(record: CodexSessionRecord | null, holder: Holder, rolloutMtimeMs: number | undefined, now: number): Turn {
+// late: the verdict on the records written after the boundary, asked only when
+// the mtime is later than the slack; the default keeps the mtime rule alone.
+export function turnFor(record: CodexSessionRecord | null, holder: Holder, rolloutMtimeMs: number | undefined, now: number,
+  late: (boundaryMs: number) => LateWrites = () => "turn"): Turn {
   const unknown = (reason: ReasonCode): Turn => unknownAt(now, "native-turn", reason);
   if (!record) return unknown("missing");
   const eventAt = Date.parse(record.lastEventAt ?? "");
@@ -46,7 +54,10 @@ export function turnFor(record: CodexSessionRecord | null, holder: Holder, rollo
   if (eventAt < holder.startMs) return unknown("incomplete");
   const idleSince = (boundary: number): Turn => {
     if (rolloutMtimeMs === undefined) return unknown("failed");
-    return rolloutMtimeMs - boundary > IDLE_WRITE_SLACK_MS ? unknown("conflict") : valueAt(now, "native-turn", "idle");
+    if (rolloutMtimeMs - boundary <= IDLE_WRITE_SLACK_MS) return valueAt(now, "native-turn", "idle");
+    const written = late(boundary);
+    if (written === "non-turn") return valueAt(now, "native-turn", "idle");
+    return unknown(written === "turn" ? "conflict" : "failed");
   };
   switch (record.lastEvent) {
     case "UserPromptSubmit": case "PostToolUse": return valueAt(now, "native-turn", "running");
@@ -97,7 +108,8 @@ export function threadEvidence(paths: NodePaths, target: SessionTarget, scan: Ho
   const stored = record(paths, target.sessionId);
   return { ...evidence, holder: valueAt(at, "native-holder", { present: true, creationIdentity: holder.identity }),
     loaded: valueAt(at, "native-app", true),
-    turn: stored === "malformed" ? unknownAt(at, "native-turn", "malformed") : turnFor(stored, holder, mtime(holder.file), at) };
+    turn: stored === "malformed" ? unknownAt(at, "native-turn", "malformed")
+      : turnFor(stored, holder, mtime(holder.file), at, boundary => lateWrites(holder.file, boundary, IDLE_WRITE_SLACK_MS)) };
 }
 
 // Windows candidates: recorded threads seen within CODEX_ACTIVE_MS, newest first.

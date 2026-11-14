@@ -69,3 +69,18 @@ test("an X row leaves only its thread unknown, logged once; the next clean scan 
   assert.deepEqual(lines.slice(1), ["kherep-node: codex holder probe recovered"]);
   assert.equal(runs, 4, "one powershell.exe per scan");
 });
+
+// Issue #911: the late-write reader runs on the rollout path the Windows probe returns.
+test("a late sub-agent completion in the rollout the Windows probe found reads idle-loaded", async (t) => {
+  const { paths, home } = windowsNode(t);
+  const stop = T - 60_000, rollout = path.join(home, "sessions", "2026", "11", "11", `rollout-2026-11-11T09-00-00-${NEWER}.jsonl`);
+  const row = (ms: number, type: string, payload: Record<string, unknown>) => `${JSON.stringify({ timestamp: new Date(ms).toISOString(), type, payload })}\n`;
+  fs.writeFileSync(rollout, row(stop - 600_000, "session_meta", {}) + row(stop - 300_000, "event_msg", { type: "task_started" })
+    + row(stop + 150, "event_msg", { type: "task_complete" }) + row(stop + 45_000, "event_msg", { type: "item_completed", item: { type: "SubAgentActivity" } }));
+  fs.utimesSync(rollout, (stop + 45_000) / 1000, (stop + 45_000) / 1000);
+  const run: ChildRun = async () => `P 4242 ${FT}\nP 4343 ${FT}\nH 0 4242:${FT}\nH 1 4343:${FT}\nE\n`;
+  const source = codexLivenessSource({ paths, home, now: () => T, platform: "win32", probe: (h, c, signal) => probeCodexHoldersWindows(h, c, signal, run, () => T) });
+  const observation = await source.observe([{ runtime: "codex", sessionId: NEWER }, { runtime: "codex", sessionId: OLDER }], new AbortController().signal);
+  const value = observation.status === "value" ? observation.value : [];
+  assert.deepEqual(Object.fromEntries(value.map((e: SessionEvidence) => [e.sessionId, judgeSession(e, T).state])), { [NEWER]: "idle-loaded", [OLDER]: "idle-loaded" });
+});

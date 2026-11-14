@@ -66,9 +66,13 @@ macOS it runs `ps` and `lsof` once per 60-second listing tick (its interval is
 50 seconds) and finds which live `codex` process holds a thread's rollout file
 open. That holder counts as the loaded thread (decision D1), and the delivery
 hook's record bound to it gives the turn (decision D2): an ended `Stop` or a
-fresh `SessionStart` is idle unless the rollout was written more than 30 seconds
-later. A held, idle thread reads `idle-loaded` and opens the native Queue route.
-The rollout is stat'ed, never opened. Windows uses the Restart Manager through
+fresh `SessionStart` is idle when the rollout was last written within 30 seconds
+of it, and the file is then not opened. After a later write the source reads the
+rollout's tail, record types and timestamps only and nothing logged (#911): it
+stays idle when no turn started and every record later than 30 seconds is a
+settings record or a sub-agent or command completion, and is UNKNOWN otherwise.
+A held, idle thread reads `idle-loaded` and opens the native Queue route.
+Windows uses the Restart Manager through
 one `powershell.exe` run, limited to 16 recently seen threads; a thread whose
 Restart Manager call fails stays UNKNOWN without affecting the others (issue
 #899). A probe problem is logged once when it changes, and once when it
