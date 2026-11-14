@@ -46,6 +46,19 @@ increments the minor version; every other release increments the patch version.
   rollout's tail backwards to the boundary (at most 1 MiB, record types and
   timestamps only, nothing logged) and stays UNKNOWN for a turn start, any
   unlisted record or an unreadable tail (#911). Operator action: none.
+- The Codex installer keeps tool approval tables
+  (`[mcp_servers.<server>.tools.<tool>]` with only `approval_mode` and
+  `output_token_limit`) across an upgrade instead of refusing it. A table the
+  Codex app wrote into the managed block moves verbatim behind its end marker,
+  for any server; a changed value in a table the installer renders itself,
+  such as the read-only `codebase-memory-mcp` tools or the Atlassian
+  `executeDestructive` prompt, stays in the block, and a copy of such a table
+  outside the block replaces the block's own instead of standing beside it as
+  a duplicate. The observation-only updater no longer reports
+  `observation-tool-table-drift` for an approval table of
+  `kherep_observations`. Any other key, path or form is still refused.
+  Operator action: none; removing such a table by hand before an upgrade is no
+  longer needed (#921).
 
 ## [0.5.0] - 2026-11-13
 

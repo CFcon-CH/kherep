@@ -15,9 +15,11 @@ import { managedOutboxRoots, projectOutboxWritableRoot } from "./outbox-writable
 import { managedFragmentFamily, retiredCentralBrainFragments, retireUnmanagedCentralBrainTable } from "./retired-central-brain.mts";
 import type { RetiredCentralBrainRender } from "./retired-central-brain.mts";
 import { enableHooks, setMarkedBlock, setTopLevelSetting, topLevelSetting } from "./text-merge.mts";
+import { restoreToolApprovals, type ToolApproval } from "./tool-approval-tables.mts";
 import { hasTomlStringReference, rewriteExactTomlStringArgs } from "./toml-args.mts";
 
 const MCP_TABLE_HEADER = /^[^\S\n\r\u2028\u2029]*\[\s*mcp_servers\s*\./m;
+const UNMATCHED_MCP = "Refusing to retain unmatched MCP tables in the managed block";
 export interface ConfigUpgradeOptions {
   startMarker: string;
   endMarker: string;
@@ -85,20 +87,20 @@ export function replaceExactManagedFragment(
   const bodyEnd = config.indexOf(endMarker, bodyStart);
   const body = config.slice(bodyStart, bodyEnd);
   const next = replacement.trim();
+  const candidates = [...knownFragments].map((fragment) => fragment.trim())
+    .filter(Boolean).sort((left, right) => right.length - left.length);
+  // Issue #921: such a table can be a tool approval the re-anchor lifts.
+  const unmatched = () => new UnknownManagedFragmentError([next, ...candidates], UNMATCHED_MCP);
   const currentOffset = body.indexOf(next);
   if (currentOffset >= 0) {
     if (body.indexOf(next, currentOffset + next.length) >= 0) {
       throw new Error("Refusing to replace an ambiguous exact known managed fragment");
     }
     const remainder = body.slice(0, currentOffset) + body.slice(currentOffset + next.length);
-    if (MCP_TABLE_HEADER.test(remainder)) {
-      throw new Error("Refusing to retain unmatched MCP tables in the managed block");
-    }
+    if (MCP_TABLE_HEADER.test(remainder)) throw unmatched();
     return config;
   }
 
-  const candidates = [...knownFragments].map((fragment) => fragment.trim())
-    .filter(Boolean).sort((left, right) => right.length - left.length);
   for (const candidate of candidates) {
     const offset = body.indexOf(candidate);
     if (offset < 0) continue;
@@ -106,9 +108,7 @@ export function replaceExactManagedFragment(
       throw new Error("Refusing to replace an ambiguous exact known managed fragment");
     }
     const remainder = body.slice(0, offset) + body.slice(offset + candidate.length);
-    if (MCP_TABLE_HEADER.test(remainder)) {
-      throw new Error("Refusing to retain unmatched MCP tables in the managed block");
-    }
+    if (MCP_TABLE_HEADER.test(remainder)) throw unmatched();
     const absolute = bodyStart + offset;
     return config.slice(0, absolute) + next + config.slice(absolute + candidate.length);
   }
@@ -212,6 +212,7 @@ function reportedValue(raw: string): string {
 
 export function prepareManagedConfig(config: string, options: ManagedConfigOptions) {
   let baseline = config;
+  let held: ToolApproval[] | undefined;
   let result: ReturnType<typeof prepareAnchoredConfig>;
   try {
     result = prepareAnchoredConfig(config, options);
@@ -219,19 +220,28 @@ export function prepareManagedConfig(config: string, options: ManagedConfigOptio
     // Issue #274. A block the Codex app split around its trust tables is matched
     // again once the split is undone; any other unknown block still refuses.
     if (!(error instanceof UnknownManagedFragmentError)) throw error;
-    const anchored = reanchorSplitManagedBlock(config, options.startMarker, options.endMarker, error.knownFragments);
+    // Issue #921: a retired server's tables, which the install removes anyway, hold no lift back.
+    const anchored = reanchorSplitManagedBlock(managedConfig.removeMcpTables(config, options.retiredMcpServerNames),
+      options.startMarker, options.endMarker, error.knownFragments);
     if (!anchored) throw error;
-    baseline = anchored;
-    result = { ...prepareAnchoredConfig(anchored, options), managedFragment: "replaced" as const };
+    ({ config: baseline, held } = anchored);
+    result = prepareAnchoredConfig(baseline, options, config);
   }
+  // Issue #921. The operator's tool approvals keep their text; bytes the install
+  // leaves as they were are a current block, also when it took the re-anchor.
+  const restored = restoreToolApprovals(result.config, options.startMarker, options.endMarker, held ?? []);
+  const managedFragment = result.managedFragment === "created" ? "created" as const : restored === config ? "current" as const
+    : held || restored !== result.config ? "replaced" as const : result.managedFragment;
+  result = { ...result, config: restored, managedFragment };
   preserveExternalPostToolPositions(baseline, result.config, options.startMarker, options.endMarker);
   return result;
 }
 
-function prepareAnchoredConfig(config: string, options: ManagedConfigOptions) {
+// `original` is the config as read, before a re-anchor, for the receipt.
+function prepareAnchoredConfig(config: string, options: ManagedConfigOptions, original = config) {
   const retiredMcpServers = options.retiredMcpServerNames.map((name) => ({
     name,
-    status: managedConfig.removeMcpTables(config, [name]) !== config ? "removed" : "absent",
+    status: managedConfig.removeMcpTables(original, [name]) !== original ? "removed" : "absent",
   }));
   let migrated = managedConfig.removeMcpTables(config, options.retiredMcpServerNames);
   const recoveredMcpServers = new Set<string>();
