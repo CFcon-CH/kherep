@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { test } from "node:test";
 import { pathToFileURL } from "node:url";
-import { rawFiles } from "./coverage-artifacts.mts";
+import { rawFiles, producers } from "./coverage-artifacts.mts";
 import { readCopyDeclarations } from "./coverage-copies.mts";
 import { relocateV8Report } from "./coverage-paths.mts";
 
@@ -21,16 +21,16 @@ function fixture(t: import("node:test").TestContext) {
   mkdirSync(join(root, "src")); writeFileSync(join(root, "src/original.mts"), source);
   const copy = join(external, "copy.mts"); copyFileSync(join(root, "src/original.mts"), copy);
   const input = join(root, "inputs");
-  for (const producer of ["unit", "typescript", "probe", "worker"]) {
-    const dir = join(input, producer); mkdirSync(dir, { recursive: true });
-    writeFileSync(join(dir, "manifest.json"), JSON.stringify({ producer, runId: "792", attempt: "1", checkoutSha: "a".repeat(40), testOutcome: "success" }));
+  for (const producer of producers) {
+    const dir = join(input, `coverage-${producer}-792-1`); mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "manifest.json"), JSON.stringify({ producer, runId: "792", attempt: "1", checkoutSha: "a".repeat(40), testOutcome: "success", sourceRootUrl: pathToFileURL(root + "/").href }));
     if (producer === "worker") {
       mkdirSync(join(root, "modules/control-plane/worker/src"), { recursive: true });
       writeFileSync(join(root, "modules/control-plane/worker/src/fixture.mts"), "export const fixture = 1;\n");
       writeFileSync(join(dir, "lcov.info"), "SF:src/fixture.mts\nDA:1,1\nend_of_record\n");
     } else { mkdirSync(join(dir, "raw")); writeFileSync(join(dir, "raw/report.json"), JSON.stringify({ result: [] })); }
   }
-  const raw = join(input, "unit/raw"), declaration = { copyUrl: pathToFileURL(copy).href, original: "src/original.mts", sha256: digest(source) };
+  const raw = join(input, "coverage-unit-792-1/raw"), declaration = { copyUrl: pathToFileURL(copy).href, original: "src/original.mts", sha256: digest(source) };
   const declare = (value = declaration) => writeFileSync(join(raw, sidecar), JSON.stringify(value) + "\n");
   const assemble = () => spawnSync(process.execPath, [cli, "assemble", "--root", root, "--artifacts", input, "--output", join(root, "coverage"), ...identity], { encoding: "utf8" });
   return { root, input, copy, raw, declaration, declare, assemble };
@@ -38,7 +38,7 @@ function fixture(t: import("node:test").TestContext) {
 
 test("raw validator accepts transported declarations without treating them as V8 reports", t => {
   const f = fixture(t); f.declare();
-  assert.deepEqual(rawFiles(join(f.input, "unit")), ["report.json"]);
+  assert.deepEqual(rawFiles(join(f.input, "coverage-unit-792-1")), ["report.json"]);
 });
 
 test("declareCopy checks bytes with no coverage variable and appends only when already enabled", async t => {
@@ -86,7 +86,7 @@ test("an undeclared same-basename URL stays ignored and cannot consume a declara
   writeFileSync(join(f.raw, "report.json"), JSON.stringify(raw));
   const declarations = readCopyDeclarations(JSON.stringify(f.declaration), f.root);
   const used = new Set<string>();
-  const relocated = relocateV8Report(raw, f.root, f.root, declarations, used);
+  const relocated = relocateV8Report(raw, pathToFileURL(f.root + "/").href, f.root, declarations, used);
   assert.equal(relocated.ignored, 1); assert.deepEqual(relocated.report.result, []); assert.equal(used.size, 0);
   // A declared copy without a report is no data, not a failure: a killed child must not block every merge.
   const result = f.assemble(); assert.match(result.stdout, /1 declared copies without a report/); assert.doesNotMatch(result.stderr, /declar/);
@@ -100,4 +100,15 @@ test("malformed and conflicting declaration lines fail visibly", t => {
     const result = f.assemble(); assert.notEqual(result.status, 0); assert.match(result.stderr, /coverage:/);
   }
   console.log("invalid declarations: malformed JSON, unknown fields and conflicting URL mappings refused");
+});
+
+test("foreign Windows copy URLs retain exact mapping, hashes and no-data semantics", t => {
+  const f = fixture(t), copyUrl = "file:///D:/temp/copied%20source.mts";
+  const copies = readCopyDeclarations(JSON.stringify({ ...f.declaration, copyUrl }), f.root);
+  const functions = [{ ranges: [{ startOffset: 0, endOffset: 20, count: 2 }] }];
+  const mapped = relocateV8Report({ result: [{ url: copyUrl, functions }] }, "file:///D:/a/repo/", f.root, copies);
+  assert.equal(mapped.report.result[0].url, pathToFileURL(join(f.root, "src/original.mts")).href);
+  assert.deepEqual(mapped.report.result[0].functions, functions);
+  assert.equal(relocateV8Report({ result: [{ url: "file:///D:/other/copied%20source.mts", functions }] }, "file:///D:/a/repo/", f.root, copies).ignored, 1);
+  for (const unsafe of ["file:///D:/temp/../copy.mts", "file://server/copy.mts", "file:///D:/temp/%2fcopy.mts"]) assert.throws(() => readCopyDeclarations(JSON.stringify({ ...f.declaration, copyUrl: unsafe }), f.root));
 });

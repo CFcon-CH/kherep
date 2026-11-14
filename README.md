@@ -244,7 +244,7 @@ npm run typecheck
 npm run test:bootstrap
 ```
 
-[CONTRIBUTING.md](CONTRIBUTING.md) lists the checks for each component. CI runs the suites on Linux, macOS and Windows for every pull request. [SonarQube Cloud coverage](CONTRIBUTING.md#sonarqube-cloud-coverage) uses real Ubuntu Node and Worker reports; Sonar is not a required merge check yet.
+[CONTRIBUTING.md](CONTRIBUTING.md) lists the checks for each component. CI runs the suites on Linux, macOS and Windows for every pull request. [SonarQube Cloud coverage](CONTRIBUTING.md#sonarqube-cloud-coverage) uses one real Node V8 union from Ubuntu, macOS and Windows plus separate Worker reports; `SonarCloud Code Analysis` is a required merge check, and fork PRs need a same-repository branch for the secret-bearing scan.
 
 ## Contributing
 
