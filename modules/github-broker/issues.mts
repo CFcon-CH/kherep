@@ -1,4 +1,4 @@
-import { fail, payload, positive } from './contract.mts';
+import { fail, payload, pickIds, positive } from './contract.mts';
 import type { Request } from './contract.mts';
 import type { Identity } from './config.mts';
 import type { Http } from './transport.mts';
@@ -40,6 +40,6 @@ export const issueHandler: Handler = {
   mutate:c=>mutate(c.http,c.token,c.request),
   known:receipt=>positive(receipt.targetId) && positive(receipt.issueNumber),
   readback:(c,receipt)=>readback(c.http,c.token,c.repo.slug,c.identity,receipt),
-  ids:receipt=>({...(receipt.issueNumber?{issueNumber:receipt.issueNumber}:{}),...(receipt.targetId?{targetId:receipt.targetId}:{})}),
+  ids:receipt=>pickIds(receipt,['issueNumber','targetId']),
   attribution:receipt=>receipt.operation==='issue.update'?'authenticated-installation':'bot-author',
 };

@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
-import { exact, fail, GITHUB_OPERATIONS, ISSUE_OPERATIONS, object, positive, payload, refName } from './contract.mts';
+import { exact, fail, GITHUB_OPERATIONS, ISSUE_OPERATIONS, object, positive, payload, refName, SHA } from './contract.mts';
 import type { Operation, Request, Runtime } from './contract.mts';
 import { protectedDirectory, readProtectedSync } from './key-access.mts';
 import { checkWindowsAccess } from './windows-access.mts';
@@ -49,7 +49,7 @@ export class ReceiptStore {
       } else {
         exact(r,['version','kind','digest','operation','status','fieldHashes','targetId','branch','sha','prNumber','runId','attempt','admittedAt']);
         if (r.version!==2 || !(GITHUB_OPERATIONS as readonly string[]).includes(String(r.operation)) || r.kind!==KIND[String(r.operation)]) fail('receipt-invalid');
-        if (r.branch!==undefined && !refName(r.branch) || r.sha!==undefined && !/^[0-9a-f]{40}$/.test(String(r.sha)) || [r.prNumber,r.runId,r.attempt,r.admittedAt].some(v=>v!==undefined && !positive(v))) fail('receipt-invalid');
+        if (r.branch!==undefined && !refName(r.branch) || r.sha!==undefined && !SHA.test(String(r.sha)) || [r.prNumber,r.runId,r.attempt,r.admittedAt].some(v=>v!==undefined && !positive(v))) fail('receipt-invalid');
       }
       if (!/^[a-f0-9]{64}$/.test(String(r.digest)) || !['pending','known','verified'].includes(String(r.status))) fail('receipt-invalid');
       const fields=object(r.fieldHashes);exact(fields,['title','body','labels','state','state_reason','base','head','draft']);

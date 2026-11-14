@@ -1,11 +1,10 @@
 import path from 'node:path';
 import { execFile, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { fail, refName } from './contract.mts';
+import { fail, pickIds, refName, SHA } from './contract.mts';
 import type { Runtime } from './contract.mts';
 import { ABSENT } from './transport.mts';
 import type { Context, Handler } from './operations.mts';
-const SHA = /^[0-9a-f]{40}$/;
 const MAX_COMMITS = 256;
 // Dropped from every git child: tracing, injected configuration, askpass programs,
 // alternative repositories and ambient tokens. Prompts are switched off.
@@ -95,6 +94,6 @@ export const pushHandler: Handler = {
   async readback(c, receipt) {
     if (await remoteSha(c,receipt.branch!,'verification-failed')!==receipt.sha) fail('verification-failed');
   },
-  ids:receipt=>({...(receipt.branch?{branch:receipt.branch}:{}),...(receipt.sha?{sha:receipt.sha}:{})}),
+  ids:receipt=>pickIds(receipt,['branch','sha']),
   attribution:()=>'authenticated-installation',
 };
