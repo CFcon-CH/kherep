@@ -233,9 +233,10 @@ customer would have to be guessed. Customers are not guessed. Then you do not wr
 You do NOT write the runtime label. The broker computes `runtime-<runtime>-<host>` itself and adds it to whatever you
 pass, and it replaces one you pass rather than trusting it.
 
-You take the session id only from the brief. When the brief gives no session id, you leave the session label out of
-`--labels` and write "Session id: not given in the brief." in the body. You never derive, shorten or invent one: a
-made-up session label groups a page with nothing.
+You take the session id only from the brief's first non-empty line when it is exactly `Session id: <id>`, `<id>` of
+lowercase letters, digits and hyphens: label `session-<id>`, body `<p>Session id: <id></p>`. A session id anywhere
+else, or of another shape, is not given. When the brief gives no session id, you leave the session label out of
+`--labels` and write "Session id: not given in the brief." in the body. You never derive, shorten or invent one: a made-up session label groups a page with nothing.
 
 Use exactly one nonempty `<p>Finding: …</p>`, `<p>Origin: …</p>`, `<p>Source: …</p>` and `<p>Timestamp: …</p>`.
 Origin names host, runtime, session/turn IDs and the actual reporter: "dispatching session <id>, measured in this turn:

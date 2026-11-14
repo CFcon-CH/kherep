@@ -127,7 +127,10 @@ explicit model: `claude-obs` on Claude, `codex-obs` on Codex. A dispatch without
 On Claude the model and effort are defaults of the resolved model policy, not pins: the shipped
 `kherep/model-policy.json` gives the observer `haiku` with effort `medium`, the operator's
 `kherep/model-policy.user.json` may override both, and `observation-stop` names the resolved model;
-any dispatchable model is accepted, an unknown one is denied. On Codex the installed policy decides
+any dispatchable model is accepted, an unknown one is denied. On Claude the first non-empty line
+of the brief is `Session id: <id>` with the dispatching session's id; `dispatch-contract-guard` denies
+a brief without it and its reason gives the line to copy, so `claude-obs` can label the page
+`session-<id>`. On Codex the installed policy decides
 as described in its own integration documentation. An observation
 run never dispatches another observation run. On Claude the dispatch is enforced by the Stop hook
 `observation-stop`, and a turn with nothing to file opts out by ending with `[obs: none – <reason>]`.

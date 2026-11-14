@@ -144,6 +144,25 @@ noticeCheck("claude-obs on another model keeps its notice", obs(BARE_CODE, "Reco
 noticeCheck("claude-obs unknown-model deny carries no notice", obs(BARE_CODE, "Record observations", "operator-model"), "deny");
 check("claude-obs unknown-model deny keeps its rule", obs(BARE_CODE, "Record observations", "operator-model"), true, "DISPATCH_MODEL_UNKNOWN");
 noticeCheck("claude-obs format deny carries no notice", obs("measured: code npm test -> green"), "deny");
+// Issue #922. With a session_id in the payload, the claude-obs brief starts with
+// its line; without one (every case above) the check is skipped, fail open.
+const SID = "0f3c2a9e-1b7d-4c55-9e21-5a0d6b8c4f17";
+const LINE = `Session id: ${SID}`;
+const sess = (prompt: string, description?: string, model?: string) => ({ ...obs(prompt, description, model), session_id: SID });
+check("claude-obs without the session line denied", sess(GOOD_BRIEF), true, "OBS_BRIEF_SESSION");
+check("claude-obs session deny gives the line to copy", sess(GOOD_BRIEF), true, `\n${LINE}\n`);
+check("claude-obs session line first is allowed", sess(`${LINE}\n${GOOD_BRIEF}`), false);
+check("claude-obs session line before the findings passes the format check alone", obs(`${LINE}\n${GOOD_BRIEF}`), false);
+check("claude-obs forged session line denied", sess(`Session id: a1b2c3d4-0000-4000-8000-000000000000\n${GOOD_BRIEF}`), true, LINE);
+check("claude-obs session line in the description only denied", sess(GOOD_BRIEF, LINE), true, "OBS_BRIEF_SESSION");
+check("claude-obs bad format and no line: one format deny carrying both", sess("no markers"), true, "OBS_BRIEF_FORMAT");
+check("claude-obs format deny appends the session reason", sess("no markers"), true, `[obs: none – <reason>].\nObservation brief session:`);
+check("claude-obs session line first keeps the format check", sess(`${LINE}\nAll green.`), true, "OBS_BRIEF_FORMAT");
+check("claude-obs unknown model is decided before the session line", sess(GOOD_BRIEF, "Record observations", "operator-model"), true, "DISPATCH_MODEL_UNKNOWN");
+check("claude-obs unusable session_id fails open", { ...obs(GOOD_BRIEF), session_id: "Not An Id" }, false);
+check("other agent unaffected by session_id", { ...call("kherep-builder", "opus"), session_id: SID }, false);
+noticeCheck("claude-obs with the session line keeps its revision notice", sess(`${LINE}\n${BARE_CODE}`), "notice");
+noticeCheck("claude-obs session deny carries no notice", sess(BARE_CODE), "deny");
 // Issue #701: the worker brief cases are in dispatch-contract-guard-worker.test.mts.
 check("non-dispatch tool ignored", { tool_name: "Bash", tool_input: { command: "echo ok" } }, false);
 check("malformed dispatch input fails closed", "not-json", true, "HOOK_INPUT_INVALID");
