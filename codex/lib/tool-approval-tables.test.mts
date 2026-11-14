@@ -52,10 +52,33 @@ test("takes an operator copy before the start marker into the block and keeps it
   assert.equal(result, `top = 1\n\n# operator note\n\n${BLOCK.replace(RENDERED, `${OPERATOR} # mine`)}`);
 });
 
-test("appends held text behind the end marker when the block no longer renders its table", () => {
+test("appends held text behind the end marker when the block renders its server but not its table", () => {
+  const text = '[mcp_servers.m.tools.y]\napproval_mode = "prompt"';
+  const held = [{ path: ["mcp_servers", "m", "tools", "y"], text }];
+  assert.equal(restore(BLOCK, held), `${BLOCK}\n${text}\n`);
+  assert.equal(restore(`${BLOCK}\n\n[operator]\nkeep = 1\n\n`, held), `${BLOCK}\n${text}\n\n[operator]\nkeep = 1\n`);
+  const outside = `${BLOCK}\n[mcp_servers.gone]\ncommand = "gone"\n`;
+  assert.equal(restore(outside, [{ path: ["mcp_servers", "gone", "tools", "x"], text: GONE }]),
+    `${BLOCK}\n${GONE}\n\n[mcp_servers.gone]\ncommand = "gone"\n`);
+});
+
+// A3: Codex refuses to start on a tools table whose server table is absent.
+test("drops held text whose server the config no longer defines", () => {
   const held = [{ path: ["mcp_servers", "gone", "tools", "x"], text: GONE }];
-  assert.equal(restore(BLOCK, held), `${BLOCK}\n${GONE}\n`);
-  assert.equal(restore(`${BLOCK}\n\n[operator]\nkeep = 1\n\n`, held), `${BLOCK}\n${GONE}\n\n[operator]\nkeep = 1\n`);
+  assert.equal(restore(BLOCK, held), BLOCK);
+  assert.equal(restore(`${BLOCK}\n[operator]\nkeep = 1\n`, held), `${BLOCK}\n[operator]\nkeep = 1\n`);
+});
+
+test("drops a lifted table whose server the config defines nowhere, and only that one", () => {
+  const lifted = [["mcp_servers", "gone", "tools", "x"]];
+  const other = '[mcp_servers.other.tools.x]\napproval_mode = "approve"';
+  assert.equal(restoreToolApprovals(`${BLOCK}\n${GONE}\n# operator note\n`, START, END, [], lifted), `${BLOCK}\n# operator note\n`);
+  assert.equal(restoreToolApprovals(`${BLOCK}\n${GONE}\n\n${other}\n`, START, END, [], lifted), `${BLOCK}\n${other}\n`);
+  assert.equal(restoreToolApprovals(`${BLOCK}\n${other}\n`, START, END, [], [["mcp_servers", "other", "tools", "y"]]), `${BLOCK}\n${other}\n`);
+  const defined = `${BLOCK}\n${GONE}\n\n[mcp_servers.gone]\ncommand = "gone"\n`;
+  assert.equal(restoreToolApprovals(defined, START, END, [], lifted), defined);
+  assert.throws(() => restoreToolApprovals(`${BLOCK}\n${GONE}\n\n${GONE}\n`, START, END, [], lifted),
+    /more than one copy of a tool approval table/);
 });
 
 test("refuses two operator copies of one table", () => {

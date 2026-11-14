@@ -25,9 +25,10 @@ export class UnknownManagedFragmentError extends Error {
   }
 }
 
-// The re-anchored config, and the operator's text of each tool approval table
-// the fragment renders with another value (issue #921).
-export interface Reanchored { config: string; held: ToolApproval[] }
+// The re-anchored config, the operator's text of each tool approval table the
+// fragment renders with another value, and the path of each one lifted out of
+// the block (issue #921).
+export interface Reanchored { config: string; held: ToolApproval[]; lifted: string[][] }
 
 const isState = ({ path, array }: ScannedTable): boolean => !array && path[0] === "hooks" && path[1] === "state";
 const pathKey = (path: string[]): string => JSON.stringify(path);
@@ -141,7 +142,8 @@ function reanchor(
     const rest = !moves ? config.slice(endLineEnd) : (moved ? `\n${moved}\n` : "") + (remainder ? `\n${remainder}` : "");
     const candidate = `${config.slice(0, start)}${startMarker}\n${fragment}\n${endMarker}\n${rest}`;
     return sameDocument(doc, managed.map(({ table }) => table), candidate, start + startMarker.length + 1, fragment.length)
-      ? { config: candidate, held } : undefined;
+      ? { config: candidate, held, lifted: lifted.map(({ table }) => table).filter(isToolApprovalTable).map(({ path }) => path) }
+      : undefined;
   }
   return undefined;
 }

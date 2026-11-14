@@ -54,8 +54,11 @@ increments the minor version; every other release increments the patch version.
   such as the read-only `codebase-memory-mcp` tools or the Atlassian
   `executeDestructive` prompt, stays in the block, and a copy of such a table
   outside the block replaces the block's own instead of standing beside it as
-  a duplicate. The observation-only updater no longer reports
-  `observation-tool-table-drift` for an approval table of
+  a duplicate. Such a table from the block is dropped when the resulting
+  config no longer defines its server, for example after an opt-out, since
+  Codex does not start with a tools table whose server table is absent; one
+  that already stood outside the block stays. The observation-only updater no
+  longer reports `observation-tool-table-drift` for an approval table of
   `kherep_observations`. Any other key, path or form is still refused.
   Operator action: none; removing such a table by hand before an upgrade is no
   longer needed (#921).

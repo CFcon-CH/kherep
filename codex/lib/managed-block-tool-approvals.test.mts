@@ -98,21 +98,77 @@ test("keeps the operator's value in a block an earlier source pin wrote", () => 
   stable(result.config);
 });
 
-test("moves an operator value behind the marker when the new block no longer renders its table", () => {
-  const plugin = { command: String.raw`C:\Synthetic\bin\plugin.exe`, args: [], promptTools: ["executeDestructive"] };
-  const withPlugin = { ...OPTS, pluginMcpServers: { fixture_plugin: plugin }, optionalPluginMcpServers: { fixture_plugin: plugin } };
-  const optedOut = { ...OPTS, predecessorOptionalPluginMcpServers: [{ fixture_plugin: plugin }] };
-  const prompt = '[mcp_servers.fixture_plugin.tools.executeDestructive]\napproval_mode = "prompt"';
-  const approve = prompt.replace('"prompt"', '"approve"');
+const PLUGIN = { command: String.raw`C:\Synthetic\bin\plugin.exe`, args: [], promptTools: ["executeDestructive"] };
+const PROMPT = '[mcp_servers.fixture_plugin.tools.executeDestructive]\napproval_mode = "prompt"';
+const APPROVE = PROMPT.replace('"prompt"', '"approve"');
+const STRANGER = '[mcp_servers.stranger.tools.lookup]\napproval_mode = "approve"';
+const STRANGER_SERVER = '[mcp_servers.stranger]\ncommand = "stranger"';
+
+function pluginInstall() {
+  const withPlugin = { ...OPTS, pluginMcpServers: { fixture_plugin: PLUGIN }, optionalPluginMcpServers: { fixture_plugin: PLUGIN } };
   const installed = prepareManagedConfig("", withPlugin).config;
-  assert.equal(count(managedBlock(installed), prompt), 1);
+  assert.equal(count(managedBlock(installed), PROMPT), 1);
+  return installed.replace(PROMPT, APPROVE);
+}
 
-  const result = prepareManagedConfig(installed.replace(prompt, approve), optedOut);
+test("moves an operator value behind the marker when the new block renders its server but not its table", () => {
+  const quiet = { ...PLUGIN, promptTools: [] };
+  const options = { ...OPTS, pluginMcpServers: { fixture_plugin: quiet }, optionalPluginMcpServers: { fixture_plugin: quiet },
+    predecessorOptionalPluginMcpServers: [{ fixture_plugin: PLUGIN }] };
 
-  assert.equal(managedBlock(result.config), managedBlock(FRESH));
-  assert.equal(count(result.config, approve), 1);
-  assert.ok(behindEnd(result.config).startsWith(`${END}\n\n${approve}\n`));
-  stable(result.config, optedOut);
+  const result = prepareManagedConfig(pluginInstall(), options);
+
+  assert.equal(count(managedBlock(result.config), "[mcp_servers.fixture_plugin]"), 1);
+  assert.equal(count(managedBlock(result.config), "[mcp_servers.fixture_plugin.tools."), 0);
+  assert.equal(count(result.config, APPROVE), 1);
+  assert.ok(behindEnd(result.config).startsWith(`${END}\n\n${APPROVE}\n`));
+  stable(result.config, options);
+});
+
+// A3: Codex refuses to start on a tools table whose server table is absent.
+test("drops an operator value whose server the new block no longer renders", () => {
+  const optedOut = { ...OPTS, predecessorOptionalPluginMcpServers: [{ fixture_plugin: PLUGIN }] };
+  for (const tail of ["", `\n[operator_after]\nkeep = 1\n`]) {
+    const result = prepareManagedConfig(pluginInstall() + tail, optedOut);
+
+    assert.equal(managedBlock(result.config), managedBlock(FRESH));
+    assert.equal(result.managedFragment, "replaced");
+    assert.equal(result.config.includes("fixture_plugin"), false);
+    assert.equal(behindEnd(result.config), `${END}\n${tail}`);
+    assert.doesNotThrow(() => tomlDocument(result.config));
+    stable(result.config, optedOut);
+  }
+});
+
+test("drops a lifted approval table whose server the config defines nowhere, and keeps its comment", () => {
+  const cases: [string, string][] = [[before(FRESH, MSG, STRANGER), `${END}\n`],
+    [`${atEnd(FRESH, STRANGER)}# operator note\n`, `${END}\n\n# operator note\n`],
+    [`${before(FRESH, MSG, STRANGER)}\n[operator_after]\nkeep = 1\n`, `${END}\n\n[operator_after]\nkeep = 1\n`]];
+  for (const [config, tail] of cases) {
+    const result = prepareManagedConfig(config, OPTS);
+
+    assert.equal(result.managedFragment, "replaced");
+    assert.equal(managedBlock(result.config), managedBlock(FRESH));
+    assert.equal(result.config.includes("stranger"), false);
+    assert.equal(behindEnd(result.config), tail);
+    assert.doesNotThrow(() => tomlDocument(result.config));
+    stable(result.config);
+  }
+});
+
+test("keeps a lifted approval table whose server stands outside the block, and an orphan already outside", () => {
+  const defined = prepareManagedConfig(`${before(FRESH, MSG, STRANGER)}\n${STRANGER_SERVER}\n`, OPTS);
+  assert.equal(managedBlock(defined.config), managedBlock(FRESH));
+  assert.equal(count(defined.config, STRANGER), 1);
+  assert.ok(behindEnd(defined.config).includes(`\n${STRANGER}\n`));
+  stable(defined.config);
+
+  const orphan = '[mcp_servers.elsewhere.tools.lookup]\napproval_mode = "approve"';
+  const both = prepareManagedConfig(`${before(FRESH, MSG, STRANGER)}\n${orphan}\n`, OPTS);
+  assert.equal(both.config.includes("stranger"), false);
+  assert.ok(behindEnd(both.config).includes(`\n${orphan}\n`));
+  stable(both.config);
+  stable(`${FRESH}\n${orphan}\n`);
 });
 
 test("merges an operator copy outside the block into the table the block renders", () => {
