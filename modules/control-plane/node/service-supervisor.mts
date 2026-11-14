@@ -41,10 +41,12 @@ interface SupervisorDependencies {
 
 const canonical = (value: string, realpath: (path: string) => string): string => realpath(value).toLowerCase();
 
-export function validateSupervisorRuntime(binding: ServiceBinding, evidence: RuntimeEvidence = {
+const liveRuntimeEvidence = (binding: ServiceBinding): RuntimeEvidence => ({
   nodeExecutable: process.execPath, sourceRoot: runtimeSourceRoot(), env: process.env,
   captureSource: () => captureSourceIdentity(binding.source.root), realpath: fs.realpathSync.native,
-}): void {
+});
+
+export function validateSupervisorRuntime(binding: ServiceBinding, evidence: RuntimeEvidence = liveRuntimeEvidence(binding)): void {
   if (Object.keys(evidence.env).some(key => /^(?:NODE_OPTIONS|NODE_PATH)$/i.test(key))) {
     throw new Error("service supervisor has execution-affecting Node environment variables");
   }

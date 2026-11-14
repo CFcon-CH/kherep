@@ -33,6 +33,11 @@ increments the minor version; every other release increments the patch version.
 - `RunLock.release()` in the integrity heartbeat returns nothing instead of
   an always-empty string, and the gap-recording `node --check` test asserts
   its run (#906).
+- No object literal serves as a default parameter any more (#912): the four
+  sites SonarQube flags with `typescript:S7737` in the public export walk, the
+  Confluence evidence test harness, the service supervisor's runtime check
+  and the Windows service stop build their object per call or take it from
+  the caller. Behavior is unchanged.
 
 ## [0.5.0] - 2026-11-13
 
