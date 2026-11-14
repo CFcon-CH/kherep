@@ -1,0 +1,45 @@
+name: Stall watch
+
+# Issue #744. Every ten minutes, report open pull requests whose required checks
+# stayed red for 20 minutes: one comment per head commit, and the user author is
+# assigned if not yet assigned. Scheduled runs use the default branch's script
+# only; no pull request code is checked out or executed. Off the top of the hour,
+# as GitHub advises for schedule load. A manual dispatch defaults to a dry run.
+on:
+  schedule:
+    - cron: "7-59/10 * * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Print what would be posted instead of posting it
+        type: boolean
+        default: true
+
+permissions: {}
+
+concurrency:
+  group: stall-watch
+  cancel-in-progress: false
+
+jobs:
+  # The job id is not one of the required check names of main.
+  stall-watch:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      checks: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: lts/*
+      - name: Report stalled pull requests
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          STALL_WATCH_DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || 'false' }}
+          STALL_WATCH_TIMEZONE: ${{ vars.STALL_WATCH_TIMEZONE || 'UTC' }}
+        run: node bootstrap/stall-watch.mts

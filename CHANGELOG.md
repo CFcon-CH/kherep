@@ -9,6 +9,26 @@ increments the minor version; every other release increments the patch version.
 
 ## [Unreleased]
 
+### Added
+
+- Stall watch for red pull requests (#744). The scheduled workflow
+  `.github/workflows/stall-watch.yml` runs `bootstrap/stall-watch.mts` from
+  `main` every ten minutes. It reads the required checks of `main` live from the
+  branch rules, matching each by name and app id. When the latest run of a
+  required check on an open pull request's head commit has stayed red
+  (`failure`, `timed_out`, `cancelled`, `action_required`, `startup_failure`)
+  for 20 minutes, the workflow posts one comment per head commit and assigns the
+  pull request to its user author. Drafts are included. The comment carries no
+  pull request text, login or `@`. A marker counts as already reported only in a
+  comment by `github-actions[bot]`. The token has `contents: read`,
+  `checks: read` and `pull-requests: write`. A failed or capped read fails the
+  run. Both ROUTING files gain a paragraph at the end of "Peer coordination":
+  the owner reports a stall to the operator within 20 minutes, and in a public
+  repository any session may read failed job logs and post the root cause on the
+  pull request, while the fix stays with the owner. Operator action: optionally
+  set the repository variable `STALL_WATCH_TIMEZONE`; until then times show in
+  UTC.
+
 ### Removed
 
 - The stale pin `@openai/codex@0.152.1` in `bootstrap/manifest/npm-globals.txt`
