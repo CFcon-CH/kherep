@@ -26,6 +26,13 @@ export async function node(name: string, capabilities = ACKING): Promise<{ key: 
 export const frame = (socket: TestSocket, type: MessageType, body: Record<string, unknown>) => socket.send(makeEnvelope(type, body, 0, 0));
 export const ack = (socket: TestSocket, messageId: string, state: string) => frame(socket, "event", { name: MESSAGE_STATUS_ACK, messageId, state });
 export const query = <T,>(run: (sql: SqlStorage) => T) => runInDurableObject(registry(), (_i, state) => run(state.storage.sql));
+// A closed socket reaches the Registry on its own (node-session.mts webSocketClose,
+// registry.mts invalidateMessageConnection), and a send prepared before it lands
+// is refused as loop-context-changed (issue #914). The close has landed once the
+// node's message connection token is gone.
+export const offline = (nodeId: string) => vi.waitFor(async () => expect(await query((sql) =>
+  sql.exec("SELECT message_connection_token AS token FROM nodes WHERE id = ?", nodeId).toArray()[0]?.token)).toBeNull(),
+{ timeout: 10_000, interval: 20 });
 export const row = (id: string): Promise<Row> => query((sql) => sql.exec("SELECT * FROM messages WHERE id = ?", id).toArray()[0]);
 export const tombstone = (id: string): Promise<Row> => query((sql) => sql.exec("SELECT * FROM message_tombstones WHERE id = ?", id).toArray()[0]);
 export const deletes = (id: string) => query((sql) => sql.exec("SELECT actor, detail FROM audit WHERE action = 'message.delete' AND detail LIKE ?",

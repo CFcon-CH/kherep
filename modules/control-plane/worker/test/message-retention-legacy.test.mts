@@ -6,7 +6,7 @@ import { MessageStore } from "../src/message-store.mts";
 import { registry, until } from "./helpers.mts";
 import { nodes } from "./message-proxy-fixture.mts";
 import {
-  ack, acked, deletes, frame, legacyGroups, legacyRow, node, pair, query, receipt, reconnect, replyTo, reported, row, settledByAck,
+  ack, acked, deletes, frame, legacyGroups, legacyRow, node, offline, pair, query, receipt, reconnect, replyTo, reported, row, settledByAck,
   settledState, settles, statusOf, tombstone,
 } from "./message-retention-fixture.mts";
 
@@ -107,6 +107,7 @@ describe("rows stored before this version", () => {
     const { a, sender, target, b } = await pair();
     const old = await legacyRow(a.nodeId, b.nodeId);
     sender.ws.close(1000, "offline");
+    await offline(a.nodeId);
     await replyTo(target, old, { nodeId: a.nodeId, session: "s-a" });
     expect(await row(old)).toMatchObject({ state: "replied", settled_state: null });
     const back = await reconnect(a);
