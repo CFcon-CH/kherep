@@ -2,6 +2,7 @@
 import path from 'node:path';
 import { command, contextCommand, hookGroup } from './parity-config.mts';
 import { managedNodePaths } from './node-path.mts';
+import { isToolApprovalTable } from './tool-approval-tables.mts';
 import { scanDocument, structure, type ScannedTable, type Span } from './toml-block-structure.mts';
 const START = '# >>> Kherep Codex Maestro >>>', END = '# <<< Kherep Codex Maestro <<<';
 export interface ContextCommandEdit extends Span {
@@ -67,7 +68,8 @@ export function observationWiring(config: string, home: string, node: string, wo
     });
     if (!resultVariants.includes(fragment))
         throw new Error('observation-result-wiring-drift');
-    const tables = doc.tables.filter(t => t.path[0] === 'mcp_servers' && t.path[1] === 'kherep_observations');
+    // Issue #921: a tool approval table the Codex app wrote is the operator's, not drift.
+    const tables = doc.tables.filter(t => t.path[0] === 'mcp_servers' && t.path[1] === 'kherep_observations' && !isToolApprovalTable(t));
     if (tables.some(t => t.path.length !== 2 || t.array || t.payload[0] !== '[mcp_servers.kherep_observations]') || tables.length > 1)
         throw new Error('observation-tool-table-drift');
     const messaging = doc.tables.filter(t => inside(t) && t.path.join('.') === 'mcp_servers.kherep_messaging');

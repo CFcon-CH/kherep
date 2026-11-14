@@ -8,6 +8,7 @@
 import { isDeepStrictEqual } from "node:util";
 
 import { stableHookCommands } from "./control-plane-hook-path.mts";
+import { isToolApprovalTable, type ToolApproval } from "./tool-approval-tables.mts";
 import {
   blockPieces, fragmentPieces, scanDocument, structure, TomlStructureError,
   type ScannedDocument, type ScannedTable, type Span,
@@ -18,11 +19,15 @@ const MESSAGE = "Refusing to overwrite a managed block without an exact known ma
 export class UnknownManagedFragmentError extends Error {
   readonly knownFragments: string[];
 
-  constructor(knownFragments: string[]) {
-    super(MESSAGE);
+  constructor(knownFragments: string[], message = MESSAGE) {
+    super(message);
     this.knownFragments = knownFragments;
   }
 }
+
+// The re-anchored config, and the operator's text of each tool approval table
+// the fragment renders with another value (issue #921).
+export interface Reanchored { config: string; held: ToolApproval[] }
 
 const isState = ({ path, array }: ScannedTable): boolean => !array && path[0] === "hooks" && path[1] === "state";
 const pathKey = (path: string[]): string => JSON.stringify(path);
@@ -57,7 +62,7 @@ function atCheckoutOf(fragment: string): (text: string) => string {
 // rewrite stay with the caller.
 export function reanchorSplitManagedBlock(
   config: string, startMarker: string, endMarker: string, knownFragments: string[],
-): string | undefined {
+): Reanchored | undefined {
   const start = config.indexOf(startMarker);
   const end = start < 0 ? -1 : config.indexOf(endMarker, start);
   if (end < 0 || config[end - 1] !== "\n" || (start > 0 && config[start - 1] !== "\n")) return undefined;
@@ -72,8 +77,9 @@ export function reanchorSplitManagedBlock(
 
 function reanchor(
   config: string, start: number, end: number, startMarker: string, endMarker: string, knownFragments: string[],
-): string | undefined {
+): Reanchored | undefined {
   const text = ({ start: from, end: to }: Span): string => config.slice(from, to);
+  const hasKeys = (span: Span): boolean => text(span).split("\n").some((line) => line.trim() && !line.trim().startsWith("#"));
   const startLineEnd = config.indexOf("\n", start) + 1;
   const endNewline = config.indexOf("\n", end);
   const endLineEnd = endNewline < 0 ? config.length : endNewline + 1;
@@ -81,38 +87,50 @@ function reanchor(
   // A multiline value in the block could hide or fake a table header.
   if (doc.multiline.some((span) => span.start < end && span.end > startLineEnd)) return undefined;
   const block = blockPieces(doc, startLineEnd, end, endLineEnd);
-  if (text(block.preamble).split("\n").some((line) => line.trim() && !line.trim().startsWith("#"))) return undefined;
+  if (hasKeys(block.preamble)) return undefined;
   const fragments = knownFragments.map((fragment) => fragment.trim()).sort((left, right) => right.length - left.length)
     .map((fragment) => ({ fragment, pieces: fragmentPieces(fragment) }));
   // Only a table whose binding does not depend on its position may move: plain,
-  // under no array of tables, and a trust table or one no fragment defines.
+  // under no array of tables, and a trust table or one no fragment defines, or
+  // (issue #921) a tool approval table the matched fragment does not define.
   const managedPaths = new Set(fragments.flatMap(({ pieces }) => pieces.tables.map(({ table }) => pathKey(table.path))));
   const arrayPaths = new Set(doc.tables.filter(({ array }) => array).map(({ path }) => pathKey(path)));
-  const liftable = (table: ScannedTable): boolean => !table.array
-    && table.path.slice(0, -1).every((_, at) => !arrayPaths.has(pathKey(table.path.slice(0, at + 1))))
+  const plain = (table: ScannedTable): boolean => !table.array
+    && table.path.slice(0, -1).every((_, at) => !arrayPaths.has(pathKey(table.path.slice(0, at + 1))));
+  const foreign = (table: ScannedTable): boolean => plain(table)
     && (isState(table) || (!managedPaths.has(pathKey(table.path)) && table.path[0] !== "mcp_servers" && table.path[0] !== "hooks"));
-  const lifted = block.tables.filter(({ table }) => liftable(table));
-  const kept = block.tables.filter(({ table }) => !liftable(table));
-  // In TOML, the text between the marker and the next table belongs to the last
-  // table of the block. It may move only along with a table that moves.
   const owner = block.tables.at(-1);
-  if (text(block.carry).trim() && !(owner && liftable(owner.table))) return undefined;
   const behind = doc.tables.filter(({ span }) => span.start >= block.carry.end);
   const stateCount = behind.findIndex((table) => !isState(table));
   const stateBehind = behind.slice(0, stateCount < 0 ? behind.length : stateCount);
   const following = behind.slice(stateBehind.length);
   for (const { fragment, pieces } of fragments) {
+    const defined = new Set(pieces.tables.map(({ table }) => pathKey(table.path)));
+    const liftable = (table: ScannedTable): boolean => foreign(table)
+      || (plain(table) && isToolApprovalTable(table) && !defined.has(pathKey(table.path)));
+    const lifted = block.tables.filter(({ table }) => liftable(table));
+    const kept = block.tables.filter(({ table }) => !liftable(table));
     if (kept.length > pieces.tables.length) continue;
     // Issue #274: the tables behind the trust tables complete the fragment.
     const tail = following.slice(0, pieces.tables.length - kept.length);
     const managed = [...kept, ...tail.map((table) => ({ table, piece: table.span }))];
     if (managed.length !== pieces.tables.length) continue;
+    // In TOML, the text between the marker and the next table belongs to the last
+    // table of the block. It may move only along with a table that moves. When
+    // nothing moves it stays where it is, and it may hold no key (issue #921).
+    const moves = lifted.length > 0 || tail.length > 0;
+    if (text(block.carry).trim() && !(owner && liftable(owner.table)) && (moves || hasKeys(block.carry))) continue;
     if (text(block.preamble).trim() !== fragment.slice(pieces.preamble.start, pieces.preamble.end).trim()) continue;
     const atCheckout = atCheckoutOf(fragment);
+    const held: ToolApproval[] = [];
     const matches = managed.every(({ table, piece }, index) => {
       const known = pieces.tables[index];
-      return isDeepStrictEqual(table.path, known.table.path) && table.array === known.table.array
-        && atCheckout(text(piece).trimEnd()) === fragment.slice(known.piece.start, known.piece.end).trimEnd();
+      if (!isDeepStrictEqual(table.path, known.table.path) || table.array !== known.table.array) return false;
+      if (atCheckout(text(piece).trimEnd()) === fragment.slice(known.piece.start, known.piece.end).trimEnd()) return true;
+      // Issue #921: the operator's value in a tool approval table the fragment renders.
+      if (!isToolApprovalTable(table) || !isToolApprovalTable(known.table)) return false;
+      held.push({ path: table.path, text: text(piece).trimEnd() });
+      return true;
     });
     if (!matches) continue;
     const moved = [...lifted.map(({ piece }) => text(piece)), text(block.carry), ...stateBehind.map(({ span }) => text(span))]
@@ -120,10 +138,10 @@ function reanchor(
     const last = tail.at(-1);
     const consumed = last ? last.span.start + text(last.span).trimEnd().length : stateBehind.at(-1)?.span.end ?? block.carry.end;
     const remainder = config.slice(consumed).replace(/^\n+/, "");
-    const candidate = `${config.slice(0, start)}${startMarker}\n${fragment}\n${endMarker}\n`
-      + (moved ? `\n${moved}\n` : "") + (remainder ? `\n${remainder}` : "");
+    const rest = !moves ? config.slice(endLineEnd) : (moved ? `\n${moved}\n` : "") + (remainder ? `\n${remainder}` : "");
+    const candidate = `${config.slice(0, start)}${startMarker}\n${fragment}\n${endMarker}\n${rest}`;
     return sameDocument(doc, managed.map(({ table }) => table), candidate, start + startMarker.length + 1, fragment.length)
-      ? candidate : undefined;
+      ? { config: candidate, held } : undefined;
   }
   return undefined;
 }
