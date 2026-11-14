@@ -4,6 +4,7 @@ import type { Identity } from './config.mts';
 import type { Http } from './transport.mts';
 import { matchesFields } from './receipt.mts';
 import type { Receipt } from './receipt.mts';
+import type { Handler } from './operations.mts';
 export async function preflightIssue(http:Http, token:string, repo:string, issueNumber:number):Promise<void> {
   const issue=await http('GET',`/repos/${repo}/issues/${issueNumber}`,token);
   if (issue.number !== issueNumber || !positive(issue.id) || Object.hasOwn(issue,'pull_request') || issue.repository_url !== `https://api.github.com/repos/${repo}`) fail('target-refused');
@@ -28,3 +29,17 @@ export async function readback(http:Http, token:string, repo:string, identity:Id
     if (!actor || actor.id !== identity.botId || actor.login !== identity.botLogin || actor.type !== 'Bot') fail('verification-failed');
   }
 }
+export const issueHandler: Handler = {
+  kind:'issue',
+  fields:payload,
+  async preflight(c) {
+    if (!c.request.issueNumber) return {};
+    await preflightIssue(c.http,c.token,c.repo.slug,c.request.issueNumber);
+    return {issueNumber:c.request.issueNumber};
+  },
+  mutate:c=>mutate(c.http,c.token,c.request),
+  known:receipt=>positive(receipt.targetId) && positive(receipt.issueNumber),
+  readback:(c,receipt)=>readback(c.http,c.token,c.repo.slug,c.identity,receipt),
+  ids:receipt=>({...(receipt.issueNumber?{issueNumber:receipt.issueNumber}:{}),...(receipt.targetId?{targetId:receipt.targetId}:{})}),
+  attribution:receipt=>receipt.operation==='issue.update'?'authenticated-installation':'bot-author',
+};

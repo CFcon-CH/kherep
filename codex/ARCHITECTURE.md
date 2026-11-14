@@ -263,8 +263,9 @@ The shared, manually invoked `brain-drainage` skill is projected from `claude/sk
 ## GitHub App issue broker source
 
 The installer projects the same validated shared closure to
-`<workspace>/tools/github-broker/`, including `github-claude.mts` and
-`github-codex.mts`. Each entrypoint binds its runtime internally. The source copy
+`<workspace>/tools/github-broker/`, including `github-claude.mts`,
+`github-codex.mts` and their git credential helpers `github-claude-credential.mts`
+and `github-codex-credential.mts`. Each entrypoint binds its runtime internally. The source copy
 uses the existing installation transaction, preserving rollback and idempotence;
 bootstrap drift checking compares every file in that closure. Both actual staged
 entrypoints are import-tested without configuration, key or network side effects.

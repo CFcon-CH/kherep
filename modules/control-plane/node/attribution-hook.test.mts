@@ -158,3 +158,39 @@ test("the hook entry point exits 0 without stdout on any input", () => {
     assert.deepEqual([run.status, run.stdout], [0, ""], run.stderr);
   }
 });
+
+// Issue #780, PR-A: the GitHub App broker opens PRs without gh.
+const BROKER = "printf '%s' \"$REQUEST\" | node tools/github-broker/github-claude.mts";
+const receipt = (fields: Record<string, unknown>) => JSON.stringify({ ok: true, operationId: "550e8400-e29b-41d4-a716-446655440000",
+  runtime: "claude", repository: "example/broker", ...fields, status: "verified", attribution: "bot-author", bot: "synthetic[bot]" });
+
+test("a broker invocation is an intent of its own, in either runtime's entry point and through a pipe", () => {
+  const cwd = "/synthetic/ws/a";
+  assert.deepEqual(attributionIntents(BROKER, cwd), [{ kind: "broker", dir: cwd }]);
+  assert.deepEqual(attributionIntents("node /x/tools/github-broker/github-codex.mts < r.json", cwd), [{ kind: "broker", dir: cwd }]);
+  for (const other of ["node tools/github-broker/github-claude-credential.mts x get", "node other.mts", "echo github-claude.mts"]) {
+    assert.deepEqual(attributionIntents(other, cwd), [], other);
+  }
+});
+
+test("a broker pr.create receipt records the PR; other broker results record nothing", () => {
+  const dir = repo();
+  const d = deps(() => assert.fail("the broker receipt names the PR, so gh is never asked"));
+  for (const output of [receipt({ operation: "issue.create", issueNumber: 3, targetId: 4 }), receipt({ operation: "branch.push", branch: "feat/pr" }),
+    receipt({ operationId: "x", repository: "example/broker", prNumber: 5, targetId: 6 }), "{\"ok\":false,\"error\":\"auth-refused\"}"]) {
+    handleAttributionHook(post(dir, BROKER, { stdout: `${output}\n`, stderr: "" }), "claude", d);
+  }
+  assert.equal(fs.existsSync(d.paths.attribution), false, "no pr.create receipt, no record");
+  handleAttributionHook(post(dir, BROKER, { stdout: `${receipt({ operation: "pr.create", prNumber: 77, targetId: 9 })}\n`, stderr: "" }), "claude", d);
+  const [entry, ...rest] = readAttribution(d.paths);
+  assert.equal(rest.length, 0);
+  assert.deepEqual([entry?.kind, entry?.repo, entry?.pr, entry?.prSource, entry?.sessionId], ["pr-create", "example/broker", 77, "stdout", "synthetic-claude-1"]);
+});
+
+test("a Codex broker call leaves the pending marker its push consumes", () => {
+  const dir = repo();
+  const d = deps();
+  handleAttributionHook({ hook_event_name: "PreToolUse", session_id: "synthetic-codex-3", cwd: dir, tool_name: "shell_command",
+    tool_input: { command: BROKER } }, "codex", d);
+  assert.equal(fs.readdirSync(d.paths.attributionPending).length, 1);
+});

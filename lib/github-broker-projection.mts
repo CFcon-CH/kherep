@@ -17,7 +17,8 @@ export function githubBrokerFiles(repo:string):string[] {
       visit(specifier.slice(2));
     }
   }
-  visit('github-claude.mts');visit('github-codex.mts');
+  // The broker CLIs and the git credential helpers their pushes start.
+  for (const runtime of ['claude','codex']) {visit(`github-${runtime}.mts`);visit(`github-${runtime}-credential.mts`);}
   // Entrypoints install last. Enumeration completes before the first copy.
   return [...seen].sort((a,b)=>Number(a.startsWith('github-'))-Number(b.startsWith('github-'))||a.localeCompare(b));
 }
