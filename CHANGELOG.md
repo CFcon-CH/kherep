@@ -12,7 +12,7 @@ increments the minor version; every other release increments the patch version.
 ### Added
 
 - Stall watch for red pull requests (#744). The scheduled workflow
-  `.github/workflows/stall-watch.yml` runs `bootstrap/stall-watch.mts` from
+  `.github/workflows/stall-watch.yml` runs `bootstrap/stall-watch-main.mts` from
   `main` every ten minutes. It reads the required checks of `main` live from the
   branch rules, matching each by name and app id. When the latest run of a
   required check on an open pull request's head commit has stayed red

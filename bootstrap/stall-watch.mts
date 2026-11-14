@@ -23,11 +23,8 @@
 // Exit codes: 0 done, 2 a read or write failed or a cap was hit. A failed read
 // is never reported as "nothing stalled".
 
-import fs from "node:fs";
-import { pathToFileURL } from "node:url";
-
 import { errorMessage, field } from "./shape.mts";
-import { githubClient, type GithubClient } from "./stall-watch-github.mts";
+import type { GithubClient } from "./stall-watch-github.mts";
 
 export const BOT = "github-actions[bot]";
 export const BASE = "main";
@@ -238,13 +235,4 @@ export async function run(env: NodeJS.ProcessEnv, gh: GithubClient, now: number)
   const allErrors = [...errors, ...decision.errors];
   lines.push(...allErrors.map((e) => `error: ${e}`));
   return { code: allErrors.length ? 2 : 0, lines };
-}
-
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const token = process.env.GITHUB_TOKEN || "";
-  const gh = githubClient({ api: process.env.GITHUB_API_URL || "https://api.github.com", token, fetch });
-  const result = token ? await run(process.env, gh, Date.now()) : { code: 2, lines: ["GITHUB_TOKEN is missing"] };
-  for (const line of result.lines) console.log(line);
-  if (process.env.GITHUB_STEP_SUMMARY) fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `## Stall watch\n\n${result.lines.map((l) => `- ${l}`).join("\n")}\n`);
-  process.exitCode = result.code;
 }
