@@ -9,7 +9,8 @@ import { findTrustedExecutable, requireTrustedExecutable } from "../claude/hooks
 
 test("native executable in cwd cannot run through empty, relative or absolute-cwd PATH entries", (t) => {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "trusted-native-")));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  // Windows can hold the copied executable briefly after its run ends: retry, as test-route.test.mts does (#914).
+  t.after(() => fs.rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }));
   const native = process.platform === "win32" ? "fixture-tool.exe" : "fixture-tool";
   const planted = path.join(root, native), marker = path.join(root, "ran");
   const nativeFile = (file: string) => process.platform === "win32"
