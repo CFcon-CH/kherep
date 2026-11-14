@@ -42,4 +42,4 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           STALL_WATCH_DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || 'false' }}
           STALL_WATCH_TIMEZONE: ${{ vars.STALL_WATCH_TIMEZONE || 'UTC' }}
-        run: node bootstrap/stall-watch.mts
+        run: node bootstrap/stall-watch-main.mts

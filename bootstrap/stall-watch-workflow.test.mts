@@ -51,7 +51,7 @@ test("no secret, no install, no pull request data; the script runs from the chec
   assert.ok(!/secrets\./.test(text), "no repository secret");
   assert.ok(!/\bnpm\b|\bnpx\b/.test(text), "no dependency install");
   assert.ok(!/github\.event\.pull_request|github\.head_ref/.test(text), "no pull request controlled value");
-  assert.ok(code.includes("        run: node bootstrap/stall-watch.mts"));
+  assert.ok(code.includes("        run: node bootstrap/stall-watch-main.mts"));
   assert.ok(code.includes("          GITHUB_TOKEN: ${{ github.token }}"));
 });
 
