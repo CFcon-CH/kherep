@@ -111,8 +111,15 @@ processes and, per thread, the processes holding `<codex home>/sessions/**/rollo
 The source maps that to `holder` (`<pid>:<start>`), `app`, `loaded` (true while
 held, decision D1) and `turn` from the hook record bound to the holder
 (decision D2: an event older than the holder's start is UNKNOWN; an ended Stop
-or a startup/resume/clear/fork SessionStart is idle unless the rollout's mtime
-is more than 30 seconds later; Interrupt, SessionEnd and compact are UNKNOWN).
+or a startup/resume/clear/fork SessionStart is idle when the rollout's mtime is
+at most 30 seconds later, without opening the file; Interrupt, SessionEnd and
+compact are UNKNOWN). When the rollout was written later than that,
+`codex-rollout-tail.mts` reads at most 1 MiB of its tail backwards to the
+boundary (issue #911): a `task_started` after the boundary, or any record later
+than 30 seconds that is not `thread_settings_applied` or an `item_completed` of
+`SubAgentActivity` or `CommandExecution`, is UNKNOWN/conflict; an unreadable
+tail is UNKNOWN/failed; otherwise the thread is idle. Only record types and
+timestamps are evaluated, and nothing is logged.
 Two holders are a conflict; a probe throw, timeout or abort is an UNKNOWN
 envelope, never `present: false`. On Windows (issue #899) the script embeds
 each rollout path as its own base64 literal decoded by `ForEach-Object`, because

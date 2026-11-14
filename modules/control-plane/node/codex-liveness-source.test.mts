@@ -154,7 +154,7 @@ const rec = (fields: Partial<CodexSessionRecord>): CodexSessionRecord => ({ sess
 const at = (ms: number) => new Date(ms).toISOString();
 const turn = (o: Observation<string>) => (o.status === "value" ? o.value : `unknown:${o.reasonCode}`);
 
-test("turnFor follows the hook record table, with the rollout mtime guard at 29 s and 31 s", () => {
+test("turnFor follows the hook record table, with the rollout mtime gate at 29 s and 31 s and the late-write verdicts", () => {
   const h = holder(), stop = T - 120_000;
   const stopped = rec({ lastEvent: "Stop", lastEventAt: at(stop), lastStopAt: at(stop), lastStopEnded: true });
   assert.equal(turn(turnFor(null, h, stop, T)), "unknown:missing");
@@ -173,6 +173,20 @@ test("turnFor follows the hook record table, with the rollout mtime guard at 29 
   assert.equal(turn(turnFor(rec({ lastEvent: "Interrupt", lastEventAt: at(stop) }), h, stop, T)), "unknown:incomplete");
   assert.equal(turn(turnFor(rec({ lastEvent: "SessionEnd", lastEventAt: at(stop) }), h, stop, T)), "unknown:incomplete");
   assert.equal(turn(turnFor(rec({ lastEvent: "Stop", lastEventAt: at(T + 1) }), h, stop, T)), "unknown:future");
+  // Issue #911: past the gate the reader decides; inside it the reader is never asked.
+  const late = stop + 31_000;
+  assert.equal(turn(turnFor(stopped, h, late, T, () => "non-turn")), "idle");
+  assert.equal(turn(turnFor(stopped, h, late, T, () => "turn")), "unknown:conflict");
+  assert.equal(turn(turnFor(stopped, h, late, T, () => "unreadable")), "unknown:failed");
+  assert.equal(turn(turnFor(stopped, h, stop + 29_000, T, () => { throw new Error("read inside the gate"); })), "idle");
+  assert.equal(turn(turnFor(stopped, h, undefined, T, () => "non-turn")), "unknown:failed");
+  const asked: number[] = [];
+  const reader = (boundary: number) => { asked.push(boundary); return "non-turn" as const; };
+  const started = rec({ lastEvent: "SessionStart", lastEventAt: at(stop + 500), lastStartSource: "startup" });
+  assert.equal(turn(turnFor(started, h, late, T, reader)), "idle");
+  const restopped = rec({ lastEvent: "Stop", lastEventAt: at(stop + 500), lastStopAt: at(stop), lastStopEnded: true });
+  assert.equal(turn(turnFor(restopped, h, late, T, reader)), "idle");
+  assert.deepEqual(asked, [stop + 500, stop], "the SessionStart's event time, then the Stop's lastStopAt");
 });
 
 test("an Interrupt or SessionEnd after an ended Stop leaves a held thread reachable-probable", async (t) => {
@@ -188,4 +202,29 @@ test("an Interrupt or SessionEnd after an ended Stop leaves a held thread reacha
   fs.writeFileSync(path.join(paths.codexSessions, `${ID}.json`), "{");
   const malformed = evidence(await observe(paths, probe))[0]!;
   assert.deepEqual([malformed.turn?.status, malformed.turn?.reasonCode], ["unknown", "malformed"]);
+});
+
+// Issue #911, acceptance: rollout tails of record types and timestamps only.
+const row = (ms: number, type: string, payload: Record<string, unknown> = {}) => `${JSON.stringify({ timestamp: at(ms), type, payload })}\n`;
+const event = (ms: number, type: string, itemType?: string) => row(ms, "event_msg", itemType ? { type, item: { type: itemType } } : { type });
+
+test("a late sub-agent completion reads idle-loaded; an unhooked turn or a torn tail stays reachable-probable", async (t) => {
+  const { paths, rollout } = node(t);
+  const stop = T - 900_000;
+  recordCodexSession(paths, ID, undefined, stop, "default", "Stop");
+  markStopEnded(paths, ID);
+  const probe: HolderProbe = async () => scanOf({ [ID]: [{ ...holder(4242, stop - 60_000), file: rollout }] });
+  const write = (content: string, mtimeMs: number) => { fs.writeFileSync(rollout, content); setMtime(rollout, mtimeMs); };
+  const ended = row(stop - 600_000, "session_meta") + event(stop - 300_000, "task_started")
+    + row(stop - 200_000, "response_item", { type: "message" }) + event(stop + 150, "task_complete");
+  const subAgent = event(stop + 721_000, "item_completed", "SubAgentActivity");
+  write(ended + subAgent, stop + 721_000);
+  assert.equal(await verdictOf(paths, probe), "idle-loaded");
+  const unhooked = event(stop + 800_000, "thread_settings_applied") + event(stop + 800_001, "task_started") + row(stop + 800_002, "world_state")
+    + row(stop + 800_003, "turn_context") + event(stop + 800_004, "item_completed", "UserMessage");
+  write(ended + subAgent + unhooked, stop + 800_004);
+  assert.equal(await verdictOf(paths, probe), "reachable-probable");
+  write(ended + subAgent + subAgent.slice(0, 40), stop + 721_000);
+  const torn = evidence(await observe(paths, probe))[0]!;
+  assert.deepEqual([judgeSession(torn, T).state, torn.turn?.reasonCode], ["reachable-probable", "failed"]);
 });
