@@ -132,8 +132,20 @@ or `turn`, while the other threads keep their verdicts. The source
 writes the probe problem (`scan: <last stderr line>` or the sorted
 `<thread>: <stage> <code>` list) to the daemon log only when it changes, and
 one `recovered` line; an abort writes nothing. `judgeSession` is unchanged.
-When the native Queue producer refuses for liveness it marks the messages
-`waiting` / `awaiting-user-turn`.
+When the native Queue producer refuses, it records the cause per owner in memory
+for 60 seconds (`DISPLAY_TTL_MS`) and writes it for the refused messages that have
+no attempt file; `queueFor` writes the same cause where it otherwise writes plain
+`waiting` / `awaiting-user-turn`, so the CP and native writers share one value and
+the progress does not flip between rounds (issue #919). Refusal table: liveness
+admission null, a missing or unreadable record, or a record older than twelve hours
+whose verdict is not `idle-loaded` give `awaiting-user-turn` with `target-not-idle`
+and the observed state; no Codex executable or no approved local producer gives
+`awaiting-user-turn` with `runtime-pending`; budget `spacing` or `locked` gives
+`retry-pending` with `turn-spacing` or `budget-lock-unavailable`; `exhausted` gives
+`budget-exhausted`; a missing grant gives `wake-not-authorized`. Policy, enrollment,
+kill switch, task and permission refusals store nothing, because `queueFor` reports
+them itself; every message already attempted, a held owner reservation and a full
+attempt store (one log line per owner and process) leave plain `awaiting-user-turn`.
 
 `session-lifecycle.mts` retains bounded authoritative archive/delete tombstones
 by runtime/full ID, even after directory exclusion. Hooks, names and scan misses
@@ -750,6 +762,7 @@ flowchart LR
   accepted[CP Inbox accepted] --> admission[Guarded CP admission]
   admission --> ticket[Bounded immutable hint ticket]
   admission --> native["Exact-owner native Queue pointer (wake.nativeQueue)"]
+  held["Held idle-loaded thread past 12 h with a waiting message (#919)"] --> admission
   native --> turn[Native runtime: wait while active, start when eligible]
   turn --> receive
   ticket --> hook[Originalowner PostToolUse additionalContext]
@@ -774,8 +787,9 @@ authorized generation during its TTL and unchanged policy on existing polls. Pol
 drift or expiry invalidates retry. Restart can recover valid CP metadata; losing
 it requires a fresh authorized admission. These hint paths never book a real turn.
 Legacy `.queued.json` and bindings are neither read as CP success nor changed. Progress uses existing waiting codes:
-`awaiting-user-turn`, `retry-pending` or, after actual offer,
-`awaiting-turn-confirmation`. No turn-start claim or new wire code is introduced.
+`awaiting-user-turn`, `retry-pending`, `budget-exhausted`, `wake-not-authorized` or, after actual offer,
+`awaiting-turn-confirmation`, with the existing v1 diagnostics `target-not-idle`, `runtime-pending`,
+`turn-spacing` and `budget-lock-unavailable` for native producer refusals. No turn-start claim or new wire code is introduced.
 
 The native producer admits exact-addressed accepted records independently of
 hint generations. It rechecks current enrollment, policy fingerprint, owner
@@ -794,6 +808,19 @@ unreadable record is retained. The 1,024-record owner limit fails closed while
 CP hints continue. When opted in, this path adds native Queue cards and leaves
 legacy artifacts alone; the native runtime dispatches its cards. It never resumes or replaces an
 unloaded owner, opens a transcript, or carries peer text in the Queue pointer.
+
+Candidates (issue #919): `pollCodexQueue` takes the Codex sessions seen within
+`CODEX_ACTIVE_MS` and adds, from `node/codex-queue-stale.mts`, non-task threads
+outside that window that an accepted message addresses by id or unique name, whose
+`sessions.json` row is `idle-loaded` and whose hook record is valid. Other such
+threads are parked with `target-not-idle` and their observed state. The Inbox is
+read only when an in-window candidate or a Codex row outside the window exists,
+and `sessions.json` only when an accepted message lies outside the window.
+Discovery is no authorization: the producer admits a record older than twelve hours
+only when `livenessAdmissionVerdict` returns `idle-loaded` from this daemon's own
+authority, and `currentCodexApp` still ranks only in-window threads. The bound is
+the seven-day record retention. Windows probes only threads seen within the window,
+so there a stale thread shows the cause but is not delivered.
 
 `node/codex-native-attempts.mts` binds each successful native attempt to the
 complete batch, exact owner, Queue ID, expected input and captured producer.

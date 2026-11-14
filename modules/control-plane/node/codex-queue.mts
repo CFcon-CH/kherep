@@ -19,7 +19,8 @@ import { explicitlyListed, wakeAllowed } from "./policy.mts";
 import type { RunnerDeps } from "./session-runner.mts";
 import { listTasks } from "./task-records.mts";
 import { killSwitch } from "./wake-hook.mts";
-import { nativeQueueIdle, scheduleNativeQueue, scheduleNativeReconciliation } from "./codex-queue-producer.mts";
+import { nativeParkedProgress, nativeQueueIdle, scheduleNativeQueue, scheduleNativeReconciliation } from "./codex-queue-producer.mts";
+import { codexRowsOutside, markParked, staleCodexTargets } from "./codex-queue-stale.mts";
 import { forkReplyIdle } from "./codex-fork-reply.mts";
 import { relayBookkeeping } from "./codex-fork-relay-pass.mts";
 
@@ -63,15 +64,21 @@ export function pollCodexQueue(deps: RunnerDeps, log: (line: string) => void = (
     log(`kherep-node: could not list Codex sessions: ${String((error as Error).message ?? error)}`);
     return;
   }
-  const candidates = live.filter((id) => !tasks.has(id) && isPlainSessionId(id));
-  if (candidates.length === 0) return;
-  let selectInbox: CodexInboxSelector;
-  try {
-    selectInbox = codexInboxRound(deps.paths, inboxOf(deps));
-  } catch (error) {
+  const inWindow = live.filter((id) => !tasks.has(id) && isPlainSessionId(id));
+  if (inWindow.length === 0 && !codexRowsOutside(deps.paths, live, tasks)) return;
+  let records: InboxRecord[];
+  try { records = inboxOf(deps); } catch (error) {
     log(`kherep-node: could not scan Codex Inbox: ${String((error as Error).message ?? error)}`);
     return;
   }
+  // Issue #919: held, idle-loaded threads past the 12 h window join while a message waits for them.
+  let stale: ReturnType<typeof staleCodexTargets> = { idle: [], parked: [] };
+  try { stale = staleCodexTargets(deps.paths, records, live, tasks, now); } catch (error) {
+    log(`kherep-node: could not list held Codex sessions: ${String((error as Error).message ?? error)}`);
+  }
+  const population = [...live, ...stale.idle], candidates = [...inWindow, ...stale.idle];
+  if (candidates.length === 0 && stale.parked.length === 0) return;
+  const selectInbox = codexInboxRound(deps.paths, records);
   const home = deps.codex?.home ?? codexHome();
   const probe = deps.codex?.loadedThreads ?? (() => loadedThreads(daemonSocket(home), { platform: deps.codex?.platform }));
   const reachable = tuiReachability(home, probe, now);
@@ -83,7 +90,7 @@ export function pollCodexQueue(deps: RunnerDeps, log: (line: string) => void = (
     app = null;
     if (!deps.policy.wake?.codexApp) return app;
     try {
-      app = currentCodexApp(deps.paths, candidates, home, reachable);
+      app = currentCodexApp(deps.paths, inWindow, home, reachable); // in-window threads only (#919, A1)
     } catch (error) {
       log(`kherep-node: could not find the current Codex app session: ${String((error as Error).message ?? error)}`);
     }
@@ -92,10 +99,13 @@ export function pollCodexQueue(deps: RunnerDeps, log: (line: string) => void = (
   for (const sessionId of candidates) {
     try {
       scheduleNativeReconciliation(deps, sessionId, log);
-      queueFor(deps, sessionId, live, selectInbox, now, log, appSession, home, reachable);
+      queueFor(deps, sessionId, population, selectInbox, now, log, appSession, home, reachable);
     } catch (error) {
       log(`kherep-node: could not wake Codex session ${sessionId}: ${String((error as Error).message ?? error)}`);
     }
+  }
+  try { markParked(deps.paths, stale.parked, selectInbox, now); } catch (error) {
+    log(`kherep-node: could not mark held Codex sessions: ${String((error as Error).message ?? error)}`);
   }
 }
 
@@ -179,10 +189,7 @@ function queueFor(deps: RunnerDeps, sessionId: string, live: string[], selectInb
       || now - item.lastPublishedAt >= REOFFER_AFTER_MS;
   });
   const pending = valid && hintDue.length === 0;
-  if (pending) {
-    progressRecords(paths, due, "waiting", "awaiting-user-turn", now);
-    return;
-  }
+  if (pending) return nativeParkedProgress(deps, sessionId, due, now);
   // Failed publication retries the same authorized generation. Policy/TTL drift
   // requires fresh admission; native queue history cannot authorize a retry.
   let admission: BusyAdmission;
@@ -226,7 +233,8 @@ function queueFor(deps: RunnerDeps, sessionId: string, live: string[], selectInb
     }
     const observedAt = deps.now?.() ?? Date.now();
     const checked = new Set(published ? [] : admission.ticket.messages.slice(0, 8).map(message => message.messageId));
-    progressRecords(paths, due.filter(record => !checked.has(record.messageId)), "waiting", published ? "awaiting-user-turn" : "retry-pending", observedAt);
+    if (published) nativeParkedProgress(deps, sessionId, due, observedAt);
+    else progressRecords(paths, due.filter(record => !checked.has(record.messageId)), "waiting", "retry-pending", observedAt);
     progressRecords(paths, due.filter(record => checked.has(record.messageId)), "waiting", "retry-pending", observedAt, undefined,
       blockerDiagnostic(result === "invalid" ? "hint-invalidated" : result === "busy" ? "hint-lock-busy" : "hint-storage-failed", observedAt));
     if (published) decide(due, "wake");

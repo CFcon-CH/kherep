@@ -12,7 +12,7 @@ import { codexLivenessSource } from "./codex-liveness-source.mts";
 import { codexQueueIdle, pollCodexQueue } from "./codex-queue.mts";
 import { listCodexSessions, markStopEnded, recordCodexSession } from "./codex-sessions.mts";
 import { recordingSessions } from "./exchange-sessions.mts";
-import { getMessageProgress, storeMessage } from "./inbox.mts";
+import { getMessageDiagnostic, getMessageProgress, storeMessage } from "./inbox.mts";
 import { attachLiveness, createLivenessPass } from "./liveness-pass.mts";
 import { createAdmissionAuthority } from "./session-authority.mts";
 import { livenessAdmission, sessionVerdict } from "./session-lifecycle.mts";
@@ -111,4 +111,6 @@ test("a failed probe is unknown, submits nothing and marks the message awaiting-
   assert.equal(fs.existsSync(s.attempt(id)), false);
   const progress = getMessageProgress(s.node.paths.inbox, id);
   assert.deepEqual([progress?.phase, progress?.code], ["waiting", "awaiting-user-turn"]);
+  const diagnostic = getMessageDiagnostic(s.node.paths.inbox, id);
+  assert.deepEqual([diagnostic?.kind === "blocker" && diagnostic.code, diagnostic?.observedState], ["target-not-idle", "unknown"]);
 });

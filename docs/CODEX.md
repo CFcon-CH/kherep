@@ -275,6 +275,15 @@ turns waking off, as for `codexApp`:
 "wake": { "enabled": true, "sessions": ["<full thread id>"], "nativeQueue": true }
 ```
 
+A held, idle-loaded thread stays reachable on this route after its last hook event
+is more than twelve hours old, while a message waits for it (issue #919): the
+daemon's own liveness evidence, at most 60 seconds old, must show one live process
+holding the rollout and an ended turn. The bound is the seven-day retention of the
+hook record. Such a thread is never the `codexApp` selection, which considers only
+threads seen within twelve hours, so it needs full-id authorization. On Windows the
+probe covers only threads seen within twelve hours, so a stale thread there shows
+its cause but is not delivered.
+
 The Composer's Queue or Steer default is an independent user preference and does
 not control this route. Kherep does not change that setting.
 
@@ -524,7 +533,12 @@ Policy drift or expiry invalidates that retry. Restart recovers valid CP metadat
 missing or unreadable metadata requires a fresh authorized admission. Native
 attempts remain independent of hint retries. Progress is `waiting/awaiting-user-turn` while intake is
 pending, `waiting/retry-pending` after publication failure and
-`waiting/awaiting-turn-confirmation` after an actual offer.
+`waiting/awaiting-turn-confirmation` after an actual offer. A native producer refusal
+of the last 60 seconds names its cause instead (issue #919): `target-not-idle` with
+the observed state when the thread is not admitted as running or idle-loaded, or is
+older than twelve hours and not idle-loaded; `runtime-pending` without a usable
+Codex executable; `retry-pending` with `turn-spacing` or `budget-lock-unavailable`;
+`budget-exhausted`; or `wake-not-authorized`.
 
 Reinstall projects this separate PostToolUse definition even when the three older
 intake hooks are externally owned. Review and trust the exact new definition in

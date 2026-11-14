@@ -4,7 +4,7 @@ import fs from "node:fs";
 import type { NodePaths } from "./config.mts";
 import { readJson, writeJsonAtomic } from "./inbox.mts";
 import { autonomousEligibility, DISPLAY_TTL_MS, judgeSession, observationReason, targetKey, validIdentity,
-  type AutonomousRoute, type LifecycleEvent, type SessionEvidence, type SessionTarget, type SessionVerdict } from "./session-liveness.mts";
+  type AutonomousRoute, type LifecycleEvent, type LivenessState, type SessionEvidence, type SessionTarget, type SessionVerdict } from "./session-liveness.mts";
 
 interface Tombstone extends SessionTarget { state: LifecycleEvent["state"]; generation: number; observedAt: number }
 export interface LivenessSnapshot { version: 1; generation: number; sessions: SessionVerdict[]; tombstones: Tombstone[]; capped?: true }
@@ -128,12 +128,17 @@ export function closedFallbackGeneration(paths: NodePaths, target: SessionTarget
 // A second read at the existing final admission seam detects any publication
 // during an await. This is only a veto; policy/attempt/permission guards remain.
 export function livenessAdmission(paths: NodePaths, target: SessionTarget, route: AutonomousRoute, now: number, expectedGeneration?: number, authority?: AdmissionAuthority): number | null {
+  return livenessAdmissionVerdict(paths, target, route, now, expectedGeneration, authority)?.generation ?? null;
+}
+// Issue #919: the same admission with the admitted state, for a caller whose rule depends on it.
+export function livenessAdmissionVerdict(paths: NodePaths, target: SessionTarget, route: AutonomousRoute, now: number, expectedGeneration?: number,
+  authority?: AdmissionAuthority): { generation: number; state: LivenessState } | null {
   const snapshot = readLivenessSnapshot(paths);
   if (!snapshot || !authorityAllows(authority, paths, target, snapshot.generation, now) || !publicationMatches(paths, snapshot) || expectedGeneration !== undefined && snapshot.generation !== expectedGeneration) return null;
   const verdict = verdictFrom(snapshot, target, now);
   const local = readJson<{ sessions: SessionVerdict[] }>(paths.sessions);
   if (!local?.sessions.some(s => targetKey(s) === targetKey(target) && s.state === verdict.state)) return null;
-  return autonomousEligibility(verdict, route) ? snapshot.generation : null;
+  return autonomousEligibility(verdict, route) ? { generation: snapshot.generation, state: verdict.state } : null;
 }
 export function terminalReference(paths: NodePaths, ref: string, runtime?: string, now = Date.now()): boolean {
   const snapshot = readLivenessSnapshot(paths);

@@ -21,6 +21,19 @@ increments the minor version; every other release increments the patch version.
 
 ### Fixed
 
+- A held, idle-loaded Codex thread whose last hook event is more than twelve
+  hours old no longer misses its native Queue pointer (#919). The poll now takes
+  such a thread as a candidate while an accepted message waits for it, and the
+  producer admits it only on fresh `idle-loaded` evidence from the daemon's own
+  liveness authority, up to the seven-day hook record retention. Every other
+  native producer refusal now shows its cause in `msg status` with an existing
+  code and diagnostic (`target-not-idle` with the observed state,
+  `runtime-pending`, `turn-spacing`, `budget-lock-unavailable`,
+  `budget-exhausted`, `wake-not-authorized`) instead of a bare wait. Unchanged:
+  `wake.codexApp` still selects only threads seen within twelve hours, and on
+  Windows a stale thread shows the cause but is not delivered, because the probe
+  covers only that window. Operator action: none.
+
 - Regular expressions with super-linear backtracking (#906): the 49 sites
   SonarQube flags with `typescript:S8786`, among them the secret-output and
   clq-accept guards, the hook inventory, the Codex hook-integrity and
