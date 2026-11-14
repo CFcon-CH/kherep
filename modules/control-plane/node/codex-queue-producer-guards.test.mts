@@ -10,7 +10,7 @@ import { MAX_NATIVE_ATTEMPTS, nativeAttemptDir } from "./codex-queue-producer.mt
 import { nativeQueueNode } from "./codex-queue-producer-fixture.mts";
 import { recordCodexSession } from "./codex-sessions.mts";
 import { deliverForCodex } from "./deliver-codex.mts";
-import { getMessage, markOffered, MAX_REPLY_DEPTH, writeJsonAtomic } from "./inbox.mts";
+import { getMessage, getMessageDiagnostic, getMessageProgress, markOffered, MAX_REPLY_DEPTH, writeJsonAtomic } from "./inbox.mts";
 import { T0, TASK } from "./task-fixture.mts";
 import { writeTask } from "./task-records.mts";
 
@@ -144,6 +144,10 @@ test("unknown or terminal liveness vetoes an already scheduled queue before the 
     await codexQueueIdle();
     assert.equal(node.fake.runs().length, 0);
     assert.equal(getMessage(node.paths.inbox, id)?.state, "accepted");
+    // Issue #919: the veto carries its cause.
+    assert.equal(getMessageProgress(node.paths.inbox, id)?.code, "awaiting-user-turn");
+    const diagnostic = getMessageDiagnostic(node.paths.inbox, id);
+    assert.deepEqual([diagnostic?.kind === "blocker" && diagnostic.code, diagnostic?.observedState], ["target-not-idle", state]);
   });
 });
 
