@@ -24,7 +24,7 @@ const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "kherep-issue
 const home = path.join(root, "home");
 const claudeHome = path.join(home, ".claude");
 const env = {
-  PATH: process.env.PATH, HOME: slash(home), CLAUDE_HOME: slash(claudeHome), KHEREP_PROFILE: "mac",
+  PATH: process.env.PATH, HOME: slash(home), CLAUDE_HOME: slash(claudeHome), KHEREP_PROFILE: process.platform === "win32" ? "win" : "mac",
   KHEREP_WORKSPACE: slash(path.join(root, "workspace")), KHEREP_CREDENTIALS_ROOT: slash(path.join(root, "creds")),
   KHEREP_INSTALL_PREVIEW: "1", SKIP_SECRETS: "1", SKIP_DEPS: "1",
   GIT_CONFIG_GLOBAL: path.join(root, "gitconfig-global"), GIT_CONFIG_SYSTEM: path.join(root, "gitconfig-system"),
