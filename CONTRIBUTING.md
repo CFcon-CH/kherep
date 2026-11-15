@@ -86,11 +86,14 @@ LH 15 to 1, BRF 14 to 3 and BRH 4 to 2, raising branch coverage 28.57% to 66.67%
 metric-policy discontinuity is not real execution gain or a conservative
 percentage guarantee. Undeclared external temp-copy code remains uncredited.
 
-Bootstrap-rest alone has prospective runtime cap 1.6 * 449 = 718.4 seconds.
-Other caps, including functional Codex 2085, remain unchanged; its coverage
-removal does not prove a future runtime pass. Historical results remain bound
-to their old caps/source; new policy needs a new run and actual measurements.
-See the CI contract for strict 14-producer rerun provenance and metric limits.
+All 14 coverage-producing jobs have prospective runtime cap 1.6 * their
+same-three-main-run median B: Ubuntu/macOS unit, nine Windows suites,
+TypeScript, Ubuntu probe and Worker. Functional Codex remains uninstrumented
+with cap 2085 seconds. Coverage-report consumes reports without collecting its
+own coverage, so its assembly cap remains 164 seconds. Preserve historical
+baselines and evaluations; label a new-policy evaluation of an existing run
+with its versioned overlay. No performance gain is implied. New source still
+needs its own run. See the CI contract for provenance and metric limits.
 
 See [the CI coverage contract](.github/coverage.md) for producer identities,
 validation, reruns, copy-helper limits and required native/runtime evidence.

@@ -85,7 +85,7 @@ async function main(args: string[]): Promise<void> {
 }
 function verify(output: string, root: string, identity: Identity): void {
   const value: unknown = JSON.parse(readNonempty(output, "manifest.json"));
-  if (!value || typeof value !== "object" || Object.keys(value).sort().join() !== "attempt,checkoutSha,producers,runId" || !Array.isArray((value as { producers: unknown }).producers)) throw new Error("malformed final manifest");
+  if (!value || typeof value !== "object" || Object.keys(value).sort((a, b) => a < b ? -1 : a > b ? 1 : 0).join() !== "attempt,checkoutSha,producers,runId" || !Array.isArray((value as { producers: unknown }).producers)) throw new Error("malformed final manifest");
   for (const key of ["runId", "attempt", "checkoutSha"] as const) if ((value as Identity)[key] !== identity[key]) throw new Error(`final manifest ${key} mismatch`);
   validateProducers((value as { producers: unknown[] }).producers, identity);
   for (const family of ["node", "worker"]) {
