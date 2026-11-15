@@ -166,7 +166,7 @@ export function buildCatalogSupport(raw: unknown): CatalogSupport {
     }
     if (!entry.hidden) {
       byAlias.set(entry.id, entry); byAlias.set(entry.model, entry);
-      supportedModels[entry.model] = Object.freeze(entry.supportedReasoningEfforts.map(row => row.reasoningEffort).sort());
+      supportedModels[entry.model] = Object.freeze(entry.supportedReasoningEfforts.map(row => row.reasoningEffort).sort((a, b) => a < b ? -1 : a > b ? 1 : 0));
     }
   }
   const canonical = { complete: true, models: [...catalog.models].sort((a, b) => a.model < b.model ? -1 : a.model > b.model ? 1 : 0)
@@ -248,7 +248,7 @@ export function resolveEffectiveSelections(input: ResolutionInputs): EffectiveRe
   }
   const agents = inventory.agents.map(agent => {
     const previous = retained?.agents.get(agent.bindingId);
-    if (previous && (previous.sourceAgentId !== agent.sourceAgentId || previous.role !== agent.role
+    if (!input.refresh && previous && (previous.sourceAgentId !== agent.sourceAgentId || previous.role !== agent.role
       || previous.bindingId !== agent.bindingId || previous.sourcePath !== agent.sourcePath
       || previous.sourceProvider !== agent.sourceProvider || previous.securityPolicyDigest !== agent.securityPolicyDigest)) conflict("retained-binding-conflict");
     const old = !input.refresh && previous;

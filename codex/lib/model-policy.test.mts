@@ -60,6 +60,22 @@ test("V2 metadata narrows eligibility but cannot manufacture catalog support", (
     () => resolveEffectiveSelections({ ...input, user: parseUserModelPolicy(text, inventoryV2) }), /model-resolution:/);
 });
 
+test("F4 explicit refresh discards incompatible retained agent classification while normal upgrades refuse", () => {
+  const original = inventoryV2.agents[0]!, { sourceAgentId: _id, bindingId: _binding, ...source } = original;
+  const retained = { selectionId: identityHash, roles: new Map([["observer" as const, { model: "gpt-6-luna", effort: "low" }]]),
+    agents: new Map([[original.bindingId, { ...original, defaultRealization: { model: "gpt-6-luna", effort: "low" } }]]) };
+  for (const change of [{ role: "builder" as const }, { securityPolicyDigest: "b".repeat(64) }]) {
+    const current = buildAgentInventory([{ ...source, ...change }]);
+    const input = { policy: parseModelPolicy(policyText), inventory: current, user: parseUserModelPolicy(undefined, current), catalog: supportV2(), retained };
+    assert.throws(() => resolveEffectiveSelections(input), /retained-binding-conflict/);
+    const refreshed = resolveEffectiveSelections({ ...input, refresh: true });
+    assert.equal(refreshed.agents[0]!.role, current.agents[0]!.role);
+    assert.equal(refreshed.agents[0]!.securityPolicyDigest, current.agents[0]!.securityPolicyDigest);
+    assert.equal(refreshed.agents[0]!.provenance.model.origin, "shipped-role");
+    assert.deepEqual(refreshed.agents[0]!.effective, refreshed.roles[current.agents[0]!.role].effective);
+  }
+});
+
 test("V2 alias renames preserve source-bound retention and new agents use current defaults", () => {
   const original = inventoryV2.agents[0]!;
   const { sourceAgentId: _sourceAgentId, bindingId: _bindingId, ...source } = original;

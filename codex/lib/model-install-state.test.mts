@@ -26,7 +26,7 @@ function installedV2() {
     policyText: low, inventory: inventoryV2, user: parseUserModelPolicy(undefined, inventoryV2), catalog: catalogV2(),
     capturedAt: "2026-01-01T00:00:00Z", runtimeVersion: null, collectorVersion: null };
   const outputs = fresh.writes.map(row => ({ target: row.target, kind: row.kind, sourceBinding: row.sourceBinding, content: row.content }));
-  return { state: verifyInstalledModelState({ kind: "v2", receiptText: text, expectedReceiptSha256: createHash("sha256").update(text).digest("hex"), evidence, actualOutputs: outputs }), outputs };
+  return { state: verifyInstalledModelState({ kind: "v2", receiptText: text, expectedReceiptSha256: createHash("sha256").update(text).digest("hex"), evidence: { sourceRevision: evidence.context.sourceRevision, policyText: evidence.policyText, inventory: evidence.inventory }, actualOutputs: outputs }), outputs };
 }
 
 test("V2 planner retains managed pair, applies explicit same-default effort and refreshes only deliberately", () => {
@@ -69,6 +69,45 @@ test("V2 unchanged offline install is a no-op and never invokes a renderer", () 
   assert.equal(plan.writes.length, 0); assert.equal(plan.deletions.length, 0);
 });
 
+test("F5 verified-snapshot catalog evidence must equal the actually verified installed support", () => {
+  const { state, outputs } = installedV2();
+  const catalog = buildCatalogSupport({ complete: true, models: [...fixtureModels,
+    { ...fixtureModels[0]!, id: "visible-new-model", model: "visible-new-model" }] });
+  const input = { intent: "install" as const, policyText, inventory: inventoryV2, sourceRevision: "2".repeat(40),
+    existing: state, currentOutputs: outputs, userText: undefined, capturedAt: null, runtimeVersion: null, collectorVersion: null, renderOutputs: renderV2 };
+  assert.throws(() => planModelSelection({ ...input, catalog, supportSource: "verified-snapshot" }), /snapshot-catalog-conflict/);
+  // A forged digest must not sneak through the no-op shortcut either.
+  const sameSource = { ...input, policyText: policyText.replace(/(\[roles\.observer\][\s\S]*?reasoning = )"medium"/, '$1"low"'), sourceRevision: sourceV2 };
+  for (const supportSource of ["verified-snapshot", "fresh-catalog"] as const) {
+    assert.throws(() => planModelSelection({ ...sameSource, catalog: { ...catalog, digest: state.catalog.digest }, supportSource }), /catalog-evidence-conflict/);
+  }
+  assert.equal(planModelSelection({ ...input, catalog: state.catalog, supportSource: "verified-snapshot" }).receipt.catalog.digest, state.catalog.digest);
+  assert.equal(planModelSelection({ ...input, catalog, supportSource: "fresh-catalog" }).receipt.catalog.digest, catalog.digest);
+});
+
+test("F4 planner refresh uses current trusted classification rather than the incompatible retained agent", () => {
+  const { state, outputs } = installedV2();
+  const current = buildAgentInventory(inventoryV2.agents.map(({ sourceAgentId: _id, bindingId: _binding, ...source }) =>
+    ({ ...source, role: "builder" as const, securityPolicyDigest: "b".repeat(64) })));
+  const input = { intent: "install" as const, policyText, inventory: current, sourceRevision: "2".repeat(40),
+    existing: state, currentOutputs: outputs, userText: undefined, catalog: catalogV2(), supportSource: "fresh-catalog" as const,
+    capturedAt: null, runtimeVersion: null, collectorVersion: null, renderOutputs: renderV2 };
+  assert.throws(() => planModelSelection(input), /retained-binding-conflict/);
+  const refreshed = planModelSelection({ ...input, intent: "refresh" });
+  assert.equal(refreshed.receipt.resolution.agents[0]!.role, "builder");
+  assert.equal(refreshed.receipt.resolution.agents[0]!.securityPolicyDigest, "b".repeat(64));
+  assert.deepEqual(refreshed.receipt.resolution.agents[0]!.effective, refreshed.receipt.resolution.roles.builder.effective);
+});
+
+test("F6 cross-generation case-only destination changes refuse before producing write-delete rollback plans", () => {
+  const { state, outputs } = installedV2();
+  const renamed = buildAgentInventory(inventoryV2.agents.map(({ sourceAgentId: _id, bindingId: _binding, ...source }) =>
+    ({ ...source, installedName: source.installedName.toUpperCase() })));
+  assert.throws(() => planModelSelection({ intent: "install", policyText, inventory: renamed, sourceRevision: "2".repeat(40),
+    existing: state, currentOutputs: outputs, userText: undefined, capturedAt: null, runtimeVersion: null, collectorVersion: null,
+    renderOutputs: renderV2 }), /case-only-output-transition/);
+});
+
 test("V2 override deletion returns the recorded default and drift never substitutes a pair", () => {
   const { state, outputs } = installedV2();
   const userText = '{"agents":{"codex-obs":{"effort":"high"}}}';
@@ -81,7 +120,7 @@ test("V2 override deletion returns the recorded default and drift never substitu
     context: { sourceRevision: sourceV2, previousSelectionId: state.selectionId, supportSource: "fresh-catalog" },
     policyText, inventory: inventoryV2, user: parseUserModelPolicy(userText, inventoryV2), catalog: catalogV2(), retained: state.retained, predecessor: state,
     capturedAt: input.capturedAt, runtimeVersion: null, collectorVersion: null };
-  const updated = verifyInstalledModelState({ kind: "v2", receiptText: text, expectedReceiptSha256: createHash("sha256").update(text).digest("hex"), evidence, actualOutputs: current });
+  const updated = verifyInstalledModelState({ kind: "v2", receiptText: text, expectedReceiptSha256: createHash("sha256").update(text).digest("hex"), evidence: { sourceRevision: evidence.context.sourceRevision, policyText: evidence.policyText, inventory: evidence.inventory }, actualOutputs: current });
   assert.equal(planModelSelection({ ...input, existing: updated, currentOutputs: current, userText: undefined }).receipt.resolution.agents[0]!.effective.effort, "low");
   const drift = buildCatalogSupport({ complete: true, models: fixtureModels.map(row => row.model.endsWith("-luna")
     ? { ...row, supportedReasoningEfforts: [{ reasoningEffort: "medium" }] } : row) });

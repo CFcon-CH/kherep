@@ -37,8 +37,9 @@ export function buildAgentInventory(inputs: readonly AgentSourceInput[]): AgentI
       || (input.capabilityKey !== undefined && !token(input.capabilityKey))) fail("invalid-source-classification");
     const bindingId = `${input.sourceProvider}:${input.sourcePath}`;
     if (bindings.has(bindingId)) fail("duplicate-source-binding");
-    if (aliases.has(input.installedName)) fail("duplicate-installed-name");
-    bindings.add(bindingId); aliases.add(input.installedName);
+    // Destination names must be unique on case-insensitive NTFS/APFS too.
+    if (aliases.has(input.installedName.toLowerCase())) fail("duplicate-installed-name");
+    bindings.add(bindingId); aliases.add(input.installedName.toLowerCase());
     agents.push(Object.freeze({ sourceAgentId, bindingId, sourcePath: input.sourcePath,
       sourceProvider: input.sourceProvider, installedName: input.installedName, role: input.role,
       securityPolicyDigest: input.securityPolicyDigest, sourceSha256: input.sourceSha256,
