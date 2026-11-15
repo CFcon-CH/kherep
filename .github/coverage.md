@@ -130,14 +130,19 @@ that verdict is requested; never remove Codex markers to bypass its refusal.
 | Native CI | Full Ubuntu/macOS and all ten Windows functional jobs; nine Windows coverage artifacts, fourteen producers total, platform outcomes |
 | Hosted failed-only rerun | Same run/SHA, actual selected attempts (all fourteen earlier artifacts allowed after Codex-only rerun), final identity and successful scan |
 | Coverage measurements | Comparable before/after metrics for `service-platform-windows.mts` and `service-platform-mac.mts`, with source SHA and metric definition |
-| Runtime | Same three-main-run medians B; bootstrap-rest A <= 1.6 * B; other bounded unit jobs A <= min(1.15 * B, B + 180 seconds); successful assembly A <= B + 120 seconds |
+| Runtime | Same three-main-run medians B; all 14 coverage-producing jobs A <= 1.6 * B; uninstrumented functional Codex cap unchanged; successful assembly A <= B + 120 seconds |
 
-Bootstrap-rest's approved prospective cap is 449 * 1.6 = 718.4 seconds, not 629.
-All other caps remain, including functional Codex 2085 seconds and successful
-assembly 164 seconds. Historical bootstrap-rest 687 failed its then-valid 516.35
-cap; comparing 687 <= 718.4 does not rewrite that result. Removing Codex coverage
-does not prove its future runtime passes. Preserve old runs/baselines and mark
-new-policy results with a new source/run; no timeout or Sonar-threshold change.
+All 14 coverage-producing jobs use the approved prospective cap 1.6 * B,
+without a B + 180 term: Ubuntu/macOS unit, nine Windows suites, TypeScript,
+Ubuntu probe and Worker. For example, Ubuntu 854 * 1.6 = 1366.4 seconds and
+macOS 1350 * 1.6 = 2160 seconds. The same three historical main runs give
+TypeScript B = 1222, Ubuntu probe B = 22 and Worker B = 122 seconds.
+Functional Codex has no coverage and keeps its 2085-second cap. Coverage-report
+assembles and verifies reports without collecting its own coverage; its
+164-second cap remains. Preserve immutable baselines and earlier overlays;
+label a new-policy evaluation of an existing run with its versioned overlay
+and keep the prior evaluation unchanged. No performance gain is implied;
+new source still needs its own run. No timeout or Sonar-threshold change.
 
 Measure job wall time including setup/collection/upload and assembly I/O; do not
 average Windows shards or assign zero duration to reused jobs. Preserve artifact
