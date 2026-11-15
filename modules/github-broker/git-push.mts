@@ -10,8 +10,9 @@ import { pushSession, recordBrokerPush } from './attribution.mts';
 import type { PushSession } from './attribution.mts';
 const MAX_COMMITS = 256;
 // Dropped from every git child: tracing, injected configuration, askpass programs,
-// alternative repositories, ambient tokens and the search path. Prompts are switched off.
-const DROPPED = /^(?:PATH|GIT_TRACE.*|GIT_CURL_VERBOSE|GIT_REDACT_COOKIES|GIT_CONFIG.*|GIT_ASKPASS|SSH_ASKPASS|GIT_DIR|GIT_WORK_TREE|GIT_COMMON_DIR|GIT_INDEX_FILE|GIT_OBJECT_DIRECTORY|GIT_ALTERNATE_OBJECT_DIRECTORIES|GIT_SSH.*|GIT_PROXY_COMMAND|GH_TOKEN|GITHUB_TOKEN|GH_ENTERPRISE_TOKEN|GITHUB_ENTERPRISE_TOKEN|GCM_TRACE.*)$/i;
+// alternative repositories, helper program locations, ambient tokens and the search
+// path. Prompts are switched off.
+const DROPPED = /^(?:PATH|GIT_EXEC_PATH|GIT_TRACE.*|GIT_CURL_VERBOSE|GIT_REDACT_COOKIES|GIT_CONFIG.*|GIT_ASKPASS|SSH_ASKPASS|GIT_DIR|GIT_WORK_TREE|GIT_COMMON_DIR|GIT_INDEX_FILE|GIT_OBJECT_DIRECTORY|GIT_ALTERNATE_OBJECT_DIRECTORIES|GIT_SSH.*|GIT_PROXY_COMMAND|GH_TOKEN|GITHUB_TOKEN|GH_ENTERPRISE_TOKEN|GITHUB_ENTERPRISE_TOKEN|GCM_TRACE.*)$/i;
 // Git and the programs it starts come from fixed system locations, never from the caller's PATH.
 const GIT_CANDIDATES = {win32:['C:\\Program Files\\Git\\cmd\\git.exe','C:\\Program Files\\Git\\bin\\git.exe'], posix:['/usr/bin/git','/usr/local/bin/git']};
 const GIT_PATH = {win32:'C:\\Program Files\\Git\\cmd;C:\\Windows\\System32;C:\\Windows', posix:'/usr/bin:/bin'};
