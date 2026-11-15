@@ -243,7 +243,8 @@ await import(pathToFileURL(process.argv[2]).href);`);
 
 test("four native Node invocation forms keep recorder argv fallback distinct from main not entered", t => {
   const f = fixture(t, "claude/hooks/obs-handback-record.mts", false, false), url = pathToFileURL(f.entry).href;
-  const observe = `process.stderr.write(JSON.stringify({argv1Present:typeof process.argv[1]==="string"&&process.argv[1].length>0,argv1Type:typeof process.argv[1],equalsEntry:process.argv[1]===${JSON.stringify(f.entry)}})+"\\n");await import(${JSON.stringify(url)});`;
+  // Snapshot the native argument once for a consistent diagnostic, not a main guard.
+  const observe = `const entry=process.argv[1];process.stderr.write(JSON.stringify({argv1Present:typeof entry==="string"&&entry.length>0,argv1Type:typeof entry,equalsEntry:entry===${JSON.stringify(f.entry)}})+"\\n");await import(${JSON.stringify(url)});`;
   const forms = [
     { name: "direct", args: [f.entry], main: true },
     { name: "eval-import", args: ["--input-type=module", "--eval", observe], main: false },
@@ -262,7 +263,9 @@ test("four native Node invocation forms keep recorder argv fallback distinct fro
     assert.equal(child.status, 0, child.stderr);
     assert.equal(child.stdout, "");
     const native = form.name.startsWith("eval-") ? JSON.parse(child.stderr.trim().split("\n").find(line => line.startsWith("{"))!) : null;
-    if (native) assert.equal(native.argv1Present, form.main);
+    if (native) assert.deepEqual(native, {
+      argv1Present: form.main, argv1Type: form.main ? "string" : "undefined", equalsEntry: form.main,
+    });
     let ranges: { main: number; isMainModule: number; fallback: number | null; raw: string[] } | null = null;
     if (process.env.NODE_V8_COVERAGE) {
       const raw = fs.readdirSync(process.env.NODE_V8_COVERAGE).filter(name => name.startsWith(`coverage-${child.pid}-`) && name.endsWith(".json"));
