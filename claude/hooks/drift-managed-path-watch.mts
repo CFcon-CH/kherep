@@ -117,9 +117,9 @@ function finding(payload: WatchPayload | null): Match | null {
   return matchFor(filePath, [...fixedPairs(home, workspace), ...manifestPairs(home, workspace)]);
 }
 
-function main(): void {
+async function main(): Promise<void> {
   try {
-    const match = finding(JSON.parse(fs.readFileSync(0, "utf8")) as WatchPayload | null);
+    const match = finding(JSON.parse((await (await import("./lib/stdin-reader.mts")).readStdinBytes({ maxBytes: null })).toString("utf8")) as WatchPayload | null);
     if (!match) return;
     process.stdout.write(
       JSON.stringify({
@@ -146,4 +146,4 @@ function isMainModule(): boolean {
   }
 }
 
-if (isMainModule()) main();
+if (isMainModule()) await main();

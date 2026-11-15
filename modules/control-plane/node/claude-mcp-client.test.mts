@@ -92,11 +92,12 @@ test("stages and verifies the complete closed public graph", (t) => {
     "protocol.mts", "protocol-mcp.mts", "protocol-messages.mts", "protocol-diagnostics.mts", "protocol-loop-brake.mts", "protocol-session-identity.mts", "protocol-message-binding.mts", "protocol-task-control.mts",
     "protocol-tasks.mts", "node/config.mts", "node/inbox.mts", "node/inbox-storage.mts", "node/inbox-selected-read.mts", "node/inbox-record-lock.mts", "node/mcp-local.mts",
     "node/mcp-credential-file.mts", "node/guarded-replies.mts", "node/message-owner.mts", "node/session-publication.mts", "node/policy.mts",
-    "node/session-policy.mts", "node/mcp-intent-hook.mts", "node/mcp-stdio-bridge.mts",
+    "node/session-policy.mts", "node/mcp-intent-hook.mts", "node/mcp-stdio-bridge.mts", "node/stdin-reader.mts",
   ]);
   for (const relative of CLAUDE_CLIENT_GRAPH) {
     assert.equal(fs.readFileSync(path.join(outputRoot, "control-plane", relative), "utf8"),
-      fs.readFileSync(path.join(import.meta.dirname, "..", relative), "utf8"), relative);
+      fs.readFileSync(relative === "node/stdin-reader.mts" ? path.resolve(import.meta.dirname, "../../../claude/hooks/lib/stdin-reader.mts")
+        : path.join(import.meta.dirname, "..", relative), "utf8"), relative);
   }
   assert.deepEqual(verifyClaudeClient(outputRoot), result);
   fs.writeFileSync(path.join(outputRoot, "unmanaged.txt"), "extra");

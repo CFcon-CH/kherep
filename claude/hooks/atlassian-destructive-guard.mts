@@ -50,12 +50,12 @@ export function decide(payload: ToolPayload, runtime: string): string | null {
   });
 }
 
-function main(): void {
+async function main(): Promise<void> {
   const flag = process.argv.indexOf("--runtime");
   const runtime = flag >= 0 ? String(process.argv[flag + 1] || "") : "claude";
   let payload: ToolPayload;
   try {
-    const parsed: unknown = JSON.parse(fs.readFileSync(0, "utf8") || "{}");
+    const parsed: unknown = JSON.parse((await (await import("./lib/stdin-reader.mts")).readStdinBytes({ maxBytes: null })).toString("utf8") || "{}");
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return;
     payload = parsed as ToolPayload;
   } catch {
@@ -77,4 +77,4 @@ function isMainModule(): boolean {
   }
 }
 
-if (isMainModule()) main();
+if (isMainModule()) await main();

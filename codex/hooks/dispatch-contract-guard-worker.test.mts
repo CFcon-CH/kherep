@@ -85,6 +85,7 @@ function installed(t: { after: (fn: () => void) => void }, libs: string[], edit:
   fs.mkdirSync(path.join(root, "hooks", "parity"));
   const guard = path.join(hookDir, "codex-dispatch-contract-guard.mts");
   fs.copyFileSync(GUARD, guard);
+  fs.copyFileSync(path.join(REPO, "claude/hooks/lib/stdin-reader.mts"), path.join(hookDir, "stdin-reader.mts"));
   declareCopy(GUARD, guard);
   for (const lib of libs) {
     const original = path.join(REPO, "claude", "hooks", "lib", lib), copy = path.join(hookDir, "lib", lib);
@@ -140,6 +141,7 @@ test("actual installed hook processes enforce build routes for both roles and to
   fs.mkdirSync(path.join(root, "hooks", "parity"));
   const hook = path.join(hookDir, "codex-dispatch-contract-guard.mts");
   fs.copyFileSync(GUARD, hook);
+  fs.copyFileSync(path.join(REPO, "claude/hooks/lib/stdin-reader.mts"), path.join(hookDir, "stdin-reader.mts"));
   declareCopy(GUARD, hook);
   for (const lib of ["worker-brief-policy.mts", "obs-brief-policy.mts"]) {
     const original = path.join(REPO, "claude", "hooks", "lib", lib), copy = path.join(hookDir, "lib", lib);

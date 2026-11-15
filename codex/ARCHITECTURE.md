@@ -4,6 +4,23 @@ For issue #808 Stage 1, `hook-adapter-run.mts` classifies native event fields fo
 
 The Codex adapter projects shared Kherep capabilities into a separate Codex configuration. It does not copy credentials into its receipt or managed native HTTP entries.
 
+## Hook stdin transport
+
+The 44 production readers enumerated by #914 use the asynchronous byte reader in
+`claude/hooks/lib/stdin-reader.mts`. Callers explicitly select `maxBytes: null`
+and retain their existing decoding, validation, deadlines and error boundaries.
+The helper's finite mode drains overflow to EOF before rejecting; it borrows the
+stream and does not destroy it. Existing deadline readers and the indirect
+`hook-integrity.mts` stdin read remain outside this migration.
+
+Source Codex and Control Plane sibling modules reexport the canonical reader.
+Installed copies contain canonical bytes: the managed Codex sibling, root hook
+sibling, shared `lib/`, and optional messaging client. Exact integrity source
+mappings cover both Codex siblings. The isolated Claude messaging client admits
+one additional canonical helper through one explicit source override, retaining
+its exact inventory and per-file hash checks. Installed copies never resolve a
+source shim through a checkout fallback.
+
 ## Memory backends
 
 Memory is unconfigured. The only accepted explicit `InstallOptions.memoryProvider` or `--memory-provider-config` selection is `{ "provider": "unconfigured" }`; the installer persists it in `orchestra/memory-provider.json`. Shared knowledge is the Central Brain: a dedicated Confluence space that `codex-obs` reaches through its narrow local service-account publication adapter (see turn-completion observations below). Invalid selections stop installation.

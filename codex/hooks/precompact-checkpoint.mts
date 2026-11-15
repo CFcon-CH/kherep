@@ -29,9 +29,9 @@ export function writeFallback(input: PreCompactInput): string | null {
   return target;
 }
 
-function main(): void {
+async function main(): Promise<void> {
   let input: PreCompactInput = {};
-  try { input = JSON.parse(fs.readFileSync(0, "utf8") || "{}"); } catch { return; }
+  try { input = JSON.parse((await (await import("./stdin-reader.mts")).readStdinBytes({ maxBytes: null })).toString("utf8") || "{}"); } catch { return; }
   const target = writeFallback(input);
   if (target) process.stdout.write(JSON.stringify({ systemMessage: "Local Codex pre-compact metadata recorded; the task transcript remains the continuity source." }));
 }
@@ -50,4 +50,4 @@ function isMainModule(): boolean {
   }
 }
 
-if (isMainModule()) main();
+if (isMainModule()) await main();

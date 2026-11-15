@@ -151,9 +151,9 @@ function warning(payload: TranslitPayload | null): Warning | null {
   };
 }
 
-function main(): void {
+async function main(): Promise<void> {
   try {
-    const found = warning(JSON.parse(fs.readFileSync(0, 'utf8')) as TranslitPayload | null);
+    const found = warning(JSON.parse((await (await import("./lib/stdin-reader.mts")).readStdinBytes({ maxBytes: null })).toString("utf8")) as TranslitPayload | null);
     if (found) process.stdout.write(JSON.stringify(found));
   } catch {
     // Fail-open: a hook that cannot answer says nothing and exits 0.
@@ -174,4 +174,4 @@ function isMainModule(): boolean {
   }
 }
 
-if (isMainModule()) main();
+if (isMainModule()) await main();

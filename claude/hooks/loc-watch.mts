@@ -41,9 +41,9 @@ function finding(payload: WatchPayload | null): string | null {
     + "Project rule: split candidates above 250 LOC. Consider extracting modules.\n";
 }
 
-function main(): void {
+async function main(): Promise<void> {
   try {
-    const message = finding(JSON.parse(fs.readFileSync(0, "utf8")) as WatchPayload | null);
+    const message = finding(JSON.parse((await (await import("./lib/stdin-reader.mts")).readStdinBytes({ maxBytes: null })).toString("utf8")) as WatchPayload | null);
     if (message) process.stdout.write(message);
   } catch {
     // Fail-open, like every nudge in this directory: a hook that cannot answer
@@ -65,4 +65,4 @@ function isMainModule(): boolean {
   }
 }
 
-if (isMainModule()) main();
+if (isMainModule()) await main();

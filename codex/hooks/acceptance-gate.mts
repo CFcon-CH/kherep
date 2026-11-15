@@ -6,9 +6,9 @@ import { decision } from "./acceptance-policy.mts";
 export { decision } from "./acceptance-policy.mts";
 export type { StopInput, StopDecision } from "./acceptance-policy.mts";
 
-function main(): void {
+async function main(): Promise<void> {
   let input = {};
-  try { input = JSON.parse(fs.readFileSync(0, "utf8") || "{}"); } catch { return; }
+  try { input = JSON.parse((await (await import("./stdin-reader.mts")).readStdinBytes({ maxBytes: null })).toString("utf8") || "{}"); } catch { return; }
   const result = decision(input);
   if (result) process.stdout.write(JSON.stringify(result));
 }
@@ -27,4 +27,4 @@ function isMainModule(): boolean {
   }
 }
 
-if (isMainModule()) main();
+if (isMainModule()) await main();

@@ -82,7 +82,7 @@ async function main(): Promise<void> {
   }
   let data: HookData;
   try {
-    data = JSON.parse(fs.readFileSync(0, "utf8") || "{}");
+    data = JSON.parse((await (await import("./stdin-reader.mts")).readStdinBytes({ maxBytes: null })).toString("utf8") || "{}");
   } catch {
     return;
   }

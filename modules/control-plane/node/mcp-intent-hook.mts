@@ -152,7 +152,7 @@ function originalCodexIngress(input: Record<string, unknown>): boolean {
   return true;
 }
 
-function main(argv: string[]): Promise<void> {
+async function main(argv: string[]): Promise<void> {
   const validRoot = argv[0] === "--config-root" && path.isAbsolute(argv[1] ?? "");
   let runtime: McpRuntime | null = null;
   if (argv.length === 2 && validRoot) runtime = "codex";
@@ -160,7 +160,7 @@ function main(argv: string[]): Promise<void> {
   if (!runtime) {
     return Promise.resolve(void process.stdout.write(JSON.stringify(deny("remote_mcp_invalid_arguments"))));
   }
-  const raw = fs.readFileSync(0);
+  const raw = (await (await import("./stdin-reader.mts")).readStdinBytes({ maxBytes: null }));
   if (raw.length > MAX_INPUT_BYTES) return Promise.resolve(void process.stdout.write(JSON.stringify(deny("remote_mcp_input_too_large"))));
   let input: unknown;
   try { input = JSON.parse(raw.toString("utf8")); } catch { input = null; }
@@ -174,5 +174,5 @@ const entry = process.argv[1] ?? "";
 if (entry) {
   let isMain = import.meta.url === pathToFileURL(path.resolve(entry)).href;
   try { isMain ||= import.meta.url === pathToFileURL(fs.realpathSync(entry)).href; } catch { /* invalid entry is not main */ }
-  if (isMain) void main(process.argv.slice(2));
+  if (isMain) await main(process.argv.slice(2));
 }

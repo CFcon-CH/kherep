@@ -103,7 +103,7 @@ function isMainModule(): boolean {
 if (isMainModule()) {
   let payload: HookPayload;
   try {
-    payload = JSON.parse(fs.readFileSync(0, "utf8")) as HookPayload;
+    payload = JSON.parse((await (await import("./stdin-reader.mts")).readStdinBytes({ maxBytes: null })).toString("utf8")) as HookPayload;
   } catch {
     process.stderr.write("post-edit-checks received malformed JSON input\n");
     process.exitCode = 1;

@@ -18,8 +18,11 @@ const githooks = path.resolve(import.meta.dirname, "..", "claude", "kherep", "gi
 const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "kherep-pre-push-")));
 after(() => fs.rmSync(root, { recursive: true, force: true }));
 const workspace = path.join(root, "ws");
-const hooks = path.join(root, "hooks");
-fs.mkdirSync(hooks);
+const hooks = path.join(root, "runtime", "kherep", "githooks");
+fs.mkdirSync(hooks, { recursive: true });
+const hookLib = path.join(root, "runtime", "hooks", "lib");
+fs.mkdirSync(hookLib, { recursive: true });
+fs.copyFileSync(path.resolve(githooks, "../../hooks/lib/stdin-reader.mts"), path.join(hookLib, "stdin-reader.mts"));
 for (const name of ["pre-push", "attribution-record.mts"]) fs.copyFileSync(path.join(githooks, name), path.join(hooks, name));
 fs.chmodSync(path.join(hooks, "pre-push"), 0o755);
 

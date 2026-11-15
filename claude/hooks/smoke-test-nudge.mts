@@ -211,10 +211,10 @@ const RUN_STARTED =
   "A run was started in the background just now (minutes, throwaway homes only); its result lands " +
   "in the report for the next session start.";
 
-function main(): void {
+async function main(): Promise<void> {
   let data: ScopePayload | null = {};
   try {
-    data = JSON.parse(fs.readFileSync(0, "utf8") || "{}") as ScopePayload | null;
+    data = JSON.parse((await (await import("./lib/stdin-reader.mts")).readStdinBytes({ maxBytes: null })).toString("utf8") || "{}") as ScopePayload | null;
   } catch {
     return;
   }
@@ -293,7 +293,7 @@ function main(): void {
 }
 
 try {
-  main();
+  await main();
 } catch {
   // never break session start
 }

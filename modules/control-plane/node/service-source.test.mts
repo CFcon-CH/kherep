@@ -5,6 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { pathToFileURL } from "node:url";
 
 import { SOURCE_MANIFEST, captureSourceIdentity } from "./daemon-source.mts";
 import { pinServiceSource, sourceArchiveExtractor } from "./service-source.mts";
@@ -21,6 +22,11 @@ function source(t: test.TestContext): string {
   git(root, "init", "-q");
   fs.mkdirSync(path.join(root, "modules", "control-plane", "node"), { recursive: true });
   fs.writeFileSync(path.join(root, "modules", "control-plane", "node", "cli.mts"), "export const value = 1;\n");
+  fs.mkdirSync(path.join(root, "claude", "hooks", "lib"), { recursive: true });
+  fs.copyFileSync(path.resolve(import.meta.dirname, "../../../claude/hooks/lib/stdin-reader.mts"),
+    path.join(root, "claude", "hooks", "lib", "stdin-reader.mts"));
+  fs.copyFileSync(path.join(import.meta.dirname, "stdin-reader.mts"),
+    path.join(root, "modules", "control-plane", "node", "stdin-reader.mts"));
   fs.writeFileSync(path.join(root, "package.json"), "{}\n");
   git(root, "add", ".");
   const tree = git(root, "write-tree");
@@ -37,11 +43,38 @@ test("a service source pin is immutable and verifies every archived file", (t) =
   const pin = pinServiceSource(root, serviceRoot);
   const pinnedBefore = captureSourceIdentity(pin.root);
   assert.deepEqual(pinnedBefore, pin.identity);
+  const helper = path.join(pin.root, "claude", "hooks", "lib", "stdin-reader.mts");
+  assert.deepEqual(fs.readFileSync(helper), fs.readFileSync(path.resolve(import.meta.dirname, "../../../claude/hooks/lib/stdin-reader.mts")));
+  const moved = `${root}-unavailable`;
+  fs.renameSync(root, moved);
+  try {
+    const child = spawnSync(process.execPath, ["--input-type=module", "-e",
+      `const {readStdinBytes}=await import(${JSON.stringify(pathToFileURL(path.join(pin.root, "modules/control-plane/node/stdin-reader.mts")).href)}); process.stdout.write(await readStdinBytes({maxBytes:null}));`],
+    { input: "synthetic pinned bytes", encoding: "utf8", timeout: 10_000 });
+    assert.equal(child.status, 0, child.stderr);
+    assert.equal(child.stdout, "synthetic pinned bytes");
+  } finally { fs.renameSync(moved, root); }
 
   fs.writeFileSync(path.join(root, "modules", "control-plane", "node", "cli.mts"), "export const value = 2;\n");
   assert.deepEqual(captureSourceIdentity(pin.root), pinnedBefore);
   fs.writeFileSync(path.join(pin.root, "package.json"), "{\"tampered\":true}\n");
   assert.throws(() => captureSourceIdentity(pin.root), /source pin drift/);
+});
+
+test("source pin rejects altered or omitted stdin implementation and sibling shim", t => {
+  const root = source(t);
+  const serviceRoot = fs.mkdtempSync(path.join(os.tmpdir(), "kherep-reader-pins-"));
+  t.after(() => fs.rmSync(serviceRoot, { recursive: true, force: true }));
+  const pin = pinServiceSource(root, serviceRoot);
+  for (const relative of ["claude/hooks/lib/stdin-reader.mts", "modules/control-plane/node/stdin-reader.mts"]) {
+    const file = path.join(pin.root, relative), bytes = fs.readFileSync(file);
+    fs.writeFileSync(file, "tampered");
+    assert.throws(() => captureSourceIdentity(pin.root), /source pin/);
+    fs.writeFileSync(file, bytes);
+    fs.rmSync(file);
+    assert.throws(() => captureSourceIdentity(pin.root));
+    fs.writeFileSync(file, bytes);
+  }
 });
 
 test("pinning refuses dirty tracked source and ignores untracked private files", (t) => {

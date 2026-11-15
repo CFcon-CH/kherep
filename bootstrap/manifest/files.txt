@@ -85,6 +85,8 @@ hooks/lib/forge-match.mts
 hooks/lib/forge-match.test.mts
 hooks/lib/tool-event-shape.mts
 hooks/lib/tool-event-shape.test.mts
+hooks/lib/stdin-reader.mts
+hooks/lib/stdin-reader.test.mts
 hooks/lib/deploy-transcript.mts
 hooks/lib/main-checkout.mts
 hooks/lib/module-label.mts

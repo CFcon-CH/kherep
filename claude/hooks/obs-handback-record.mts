@@ -61,10 +61,10 @@ export function decide(value: unknown, home: string): HookOutput | null {
   return check.status === "failed" ? { systemMessage: FAILED_MESSAGE } : null;
 }
 
-function main(): void {
+async function main(): Promise<void> {
   let output: HookOutput | null;
   try {
-    output = decide(JSON.parse(fs.readFileSync(0, "utf8")), homeOf(process.argv[1] || ""));
+    output = decide(JSON.parse((await (await import("./lib/stdin-reader.mts")).readStdinBytes({ maxBytes: null })).toString("utf8")), homeOf(process.argv[1] || ""));
   } catch {
     output = { systemMessage: ERROR_MESSAGE };
   }
@@ -82,4 +82,4 @@ function isMainModule(): boolean {
   }
 }
 
-if (isMainModule()) main();
+if (isMainModule()) await main();

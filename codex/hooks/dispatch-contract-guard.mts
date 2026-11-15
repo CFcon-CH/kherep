@@ -210,10 +210,10 @@ export function decide(raw: string, readPolicy: () => DispatchPolicy = loadPolic
   return validate(payload, policy);
 }
 
-function main(): void {
+async function main(): Promise<void> {
   let raw = "";
   let reason: string | null;
-  try { raw = fs.readFileSync(0, "utf8"); reason = decide(raw); } catch {
+  try { raw = (await (await import("./stdin-reader.mts")).readStdinBytes({ maxBytes: null })).toString("utf8"); reason = decide(raw); } catch {
     reason = "Kherep dispatch guard failed unexpectedly; refusing the agent dispatch.";
   }
   if (reason) return deny(reason);
@@ -236,4 +236,4 @@ function isMainModule(): boolean {
   }
 }
 
-if (isMainModule()) main();
+if (isMainModule()) await main();

@@ -46,9 +46,9 @@ export function promptContext(
   return lines.join("\n");
 }
 
-function main(): void {
+async function main(): Promise<void> {
   try {
-    const text = promptContext(JSON.parse(fs.readFileSync(0, "utf8") || "{}"));
+    const text = promptContext(JSON.parse((await (await import("./lib/stdin-reader.mts")).readStdinBytes({ maxBytes: null })).toString("utf8") || "{}"));
     if (!text) return;
     process.stdout.write(JSON.stringify({
       hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: text },
@@ -72,4 +72,4 @@ function isMainModule(): boolean {
   }
 }
 
-if (isMainModule()) main();
+if (isMainModule()) await main();

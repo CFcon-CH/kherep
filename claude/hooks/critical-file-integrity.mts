@@ -188,10 +188,10 @@ function emit(lines: string[]): void {
   );
 }
 
-function main(): void {
+async function main(): Promise<void> {
   let payload: ScopePayload | null = {};
   try {
-    payload = JSON.parse(fs.readFileSync(0, "utf8") || "{}") as ScopePayload | null;
+    payload = JSON.parse((await (await import("./lib/stdin-reader.mts")).readStdinBytes({ maxBytes: null })).toString("utf8") || "{}") as ScopePayload | null;
   } catch {
     payload = {};
   }
@@ -237,7 +237,7 @@ function main(): void {
 }
 
 try {
-  main();
+  await main();
 } catch (error) {
   try {
     const { code, name } = (error ?? {}) as { code?: unknown; name?: unknown }; // a code, else the class name; never a message (issue #576)

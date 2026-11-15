@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
-import fs from "node:fs";
 import { findTrustedExecutable } from "../../../claude/hooks/lib/trusted-executable.mts";
 
 import { commandSegments, gitSubcommand } from "../../../claude/hooks/lib/command-walk.mts";
@@ -152,11 +151,19 @@ export function handleAttributionHook(input: unknown, runtime: HookRuntime, deps
 }
 
 // Never fails the tool call: any error is one stderr line and exit 0.
+async function readStdinText(): Promise<string> {
+  try {
+    return (await (await import("./stdin-reader.mts")).readStdinBytes({ maxBytes: null })).toString("utf8");
+  } catch {
+    throw new Error("stdin reader unavailable");
+  }
+}
+
 if (isMainModule(import.meta.url)) {
   try {
     const runtime = hookRuntime(process.argv.slice(2));
     if (!runtime) throw new Error("unknown --runtime; expected codex");
-    const stdin = fs.readFileSync(0, "utf8");
+    const stdin = await readStdinText();
     if (stdin) handleAttributionHook(JSON.parse(stdin), runtime, { paths: nodePaths(), env: process.env });
   } catch (error) {
     process.stderr.write(`kherep attribution-hook: ${String((error as Error).message ?? error)}\n`);

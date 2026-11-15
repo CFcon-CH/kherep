@@ -50,9 +50,9 @@ function claimSession(sessionId: unknown): boolean {
   return true;
 }
 
-function main(): void {
+async function main(): Promise<void> {
   try {
-    const payload = JSON.parse(fs.readFileSync(0, "utf8")) as NudgePayload | null;
+    const payload = JSON.parse((await (await import("./lib/stdin-reader.mts")).readStdinBytes({ maxBytes: null })).toString("utf8")) as NudgePayload | null;
     if (!watched(payload)) return;
     if (!claimSession(payload?.session_id)) return;
     process.stdout.write(NUDGE);
@@ -75,4 +75,4 @@ function isMainModule(): boolean {
   }
 }
 
-if (isMainModule()) main();
+if (isMainModule()) await main();
