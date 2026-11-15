@@ -37,13 +37,18 @@ increments the minor version; every other release increments the patch version.
   pushes, commits authored or committed by anyone but the allowed bots (default:
   the runtime's own) and any change under `.github/workflows`; it pushes through
   a fixed `git push` whose only credential helper is the new per-runtime
-  `github-<runtime>-credential.mts`, which answers only while that push's
-  receipt is pending and locked, so the token never reaches argv, environment,
-  disk or output. There is still no merge, force-push, branch deletion, tag push
+  `github-<runtime>-credential.mts`, which answers one `get` only while that
+  push's receipt is pending and locked, so the token never reaches argv,
+  environment, disk or output. Preflight and push run in a broker-owned clean
+  temporary repository that borrows only the session's objects, with a
+  constructed environment: repository, user and system configuration, hooks,
+  replace refs, shallow files, commit-graphs, proxy and TLS variables of the
+  session never apply. Repository `pre-push` hooks do not run on a broker push,
+  and the push supports no proxy. There is still no merge, force-push, branch deletion, tag push
   or `workflows` permission. The attribution hook records broker-created PRs;
   the broker records each verified push itself in the attribution log
-  (`attributionRecorded` in its result), and the `pre-push` hook stands down for
-  it on `KHEREP_BROKER_PUSH`.
+  (`attributionRecorded` in its result); the push also carries
+  `KHEREP_BROKER_PUSH`, on which the `pre-push` hook would stand down.
   Policy schema 1 stays valid for issue operations. Session rules route GitHub
   writes in allowlisted repositories through the broker. Operator action: to use
   the new operations, move the host policy to version 2 and list the operations

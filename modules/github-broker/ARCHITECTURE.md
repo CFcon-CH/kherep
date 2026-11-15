@@ -18,8 +18,8 @@ flowchart LR
   route -->|verify| readback
   target --> intent[Durable write-ahead receipt]
   intent --> write[One fixed issue, pull request or run operation]
-  intent -->|branch.push| push[Fixed git push, configured helpers reset]
-  push --> helper[Runtime credential helper: pending locked receipt under 120 s]
+  intent -->|branch.push| push[Fixed git push from a clean temporary repository, constructed environment]
+  push --> helper[Runtime credential helper: pending locked receipt under 120 s, one grant]
   helper --> ctoken[Contents-write token to git's pipe only]
   ctoken --> ids
   write --> ids[Persist known IDs]
@@ -34,11 +34,17 @@ operation's handler for preflight, mutation, known IDs, readback and public IDs.
 `git-push.mts` also owns the local preflight (local commit, fast-forward, default
 and `v*` branches, bot authorship of every new commit, no `.github/workflows`
 path) and the fixed push command, run by system Git from a fixed path with a fixed
-child `PATH` (`git-unavailable` when absent). `credential.mts` is the git credential helper
+child `PATH` (`git-unavailable` when absent). Preflight and push each build a
+broker-owned clean bare repository (`mkdtemp`, removed in `finally`) that borrows
+only the checkout's objects through alternates, with commit-graph and bitmaps off,
+and run git there with a constructed environment, so no configuration, hook, ref,
+shallow file, proxy or TLS variable of the session or user applies. The bases of
+the fast-forward and authorship checks come from GitHub's readback only. `credential.mts` is the git credential helper
 behind `github-<runtime>-credential.mts`: it answers only `get` for an
 allowlisted `https://github.com/<slug>.git` while the broker holds the lock of
-that operation's pending `branch.push` receipt admitted within 120 s, and writes
-the `contents: write` token only to git's pipe. The broker process never sees that
+that operation's pending `branch.push` receipt admitted within 120 s, consumes
+the push's one grant file (created by `receipt.mts` under the lock for the push's
+duration), and writes the `contents: write` token only to git's pipe. The broker process never sees that
 token; the helper never sees the broker's.
 `contract.mts` owns strict input and fixed errors; `config.mts` selects canonical
 policy (schema 1 for issue operations, schema 2 for every operation and the
@@ -54,8 +60,19 @@ only in the run that mutated, so each verified push is recorded at most once, an
 a failed append returns `attributionRecorded:false` without touching the receipt.
 The projection admits only `node:` imports, so its config-root, marker-key,
 marker and trim rules are copies of the control-plane ones, pinned by
-`bootstrap/pre-push-hook.test.mts`. The push child carries `KHEREP_BROKER_PUSH=1`,
-on which the `pre-push` hook stands down; the variable only suppresses a record.
+`bootstrap/pre-push-hook.test.mts`. No repository hook runs in the clean
+repository; the push child still carries `KHEREP_BROKER_PUSH=1`, on which the
+`pre-push` hook would stand down; the variable only suppresses a record.
+
+Residuals of the push: a same-user process that knows the operationId can
+consume the single grant first, which leaves git without a credential and the
+push `outcome-unknown`, never a second token; after a crash mid-push the grant
+and the retained lock remain usable until the 120 s window ends. Operator
+`pre-push` hooks, including a system-level `core.hooksPath`, do not run on a
+broker push. The push supports no proxy and no system-level TLS settings (on Git
+for Windows the system `http.sslBackend` no longer applies). Commit-graph files
+are off because git trusts their parent data from an alternate object store.
+The clean repository lives under the broker's temporary directory.
 
 Configuration is trusted operator input, not authority supplied by the caller.
 Private repository content is never an admitted target. The runtime binding

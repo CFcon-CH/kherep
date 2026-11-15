@@ -12,7 +12,7 @@ export type Receipt = {version:1|2; kind?:'push'|'pull'|'run'; digest:string; op
 const KIND:Record<string,Receipt['kind']>={'branch.push':'push','pr.create':'pull','pr.update':'pull','pr.comment':'pull','run.rerun':'run','run.cancel':'run'};
 const hash = (value:unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 export class ReceiptStore {
-  directory:string; file:string; lock:string; root:string;
+  directory:string; file:string; lock:string; grant:string; root:string;
   constructor(root:string, runtime:Runtime, appId:number, repo:string, operationId:string, createDirectory=true) {
     protectedDirectory(root);this.root=root;
     this.directory=path.join(root,'receipts');
@@ -23,6 +23,7 @@ export class ReceiptStore {
     protectedDirectory(this.directory,root);
     this.file=path.join(this.directory,`${hash([runtime,appId,repo,operationId])}.json`);
     this.lock=`${this.file}.lock`;
+    this.grant=`${this.file}.grant`;
   }
   digest(request:Request): string {
     if ((ISSUE_OPERATIONS as readonly string[]).includes(request.operation)) return hash([request.operation,request.repository,request.issueNumber ?? null,payload(request)]);
@@ -32,12 +33,22 @@ export class ReceiptStore {
   fieldHashes(request:Request): Record<string,string> { return this.hashFields(payload(request)); }
   hashFields(fields:Record<string,unknown>): Record<string,string> { return Object.fromEntries(Object.entries(fields).map(([k,v])=>[k,hash(k==='labels'?[...v as string[]].sort(byCodeUnit):v)])); }
   acquire():()=>void {
-    try {
-      const fd=fs.openSync(this.lock,'wx',0o600);
-      try {if(process.platform==='win32') checkWindowsAccess(this.lock,this.root);fs.fsyncSync(fd);}finally{fs.closeSync(fd);}
-    }
-    catch { return fail('operation-busy'); }
+    try { exclusive(this.lock,this.root); } catch { return fail('operation-busy'); }
     return ()=>{fs.unlinkSync(this.lock);};
+  }
+  /**
+   * The one credential grant of a push, created exclusively while this broker holds the lock.
+   * The helper's first valid `get` consumes it; the returned remover revokes an unused one.
+   */
+  permit():()=>void {
+    const revoke=()=>{try {fs.rmSync(this.grant,{force:true});} catch { /* A remaining grant still expires with the 120 s window. */ }};
+    if (!fs.lstatSync(this.lock,{throwIfNoEntry:false})?.isFile()) fail('operation-busy');
+    try { exclusive(this.grant,this.root); } catch { revoke();return fail('operation-busy'); }
+    return revoke;
+  }
+  /** True only for the caller that removed the grant. */
+  consume():boolean {
+    try { fs.unlinkSync(this.grant);return true; } catch { return false; }
   }
   read():Receipt | undefined {
     try {
@@ -69,6 +80,11 @@ export class ReceiptStore {
       if (process.platform !== 'win32') { const dir=fs.openSync(this.directory,'r'); try{fs.fsyncSync(dir);}finally{fs.closeSync(dir);} }
     } catch { if (fs.existsSync(temp)) fs.unlinkSync(temp);fail('receipt-invalid'); }
   }
+}
+// Created with O_EXCL and mode 0600, on Windows ACL-checked, and synced; throws when it exists or is unsafe.
+function exclusive(file:string, root:string):void {
+  const fd=fs.openSync(file,'wx',0o600);
+  try {if(process.platform==='win32') checkWindowsAccess(file,root);fs.fsyncSync(fd);}finally{fs.closeSync(fd);}
 }
 // A settled receipt names its target: issue and PR number with target ID, branch with sha, or run with attempt.
 function known(r:Receipt):boolean {

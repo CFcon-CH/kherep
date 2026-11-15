@@ -37,7 +37,7 @@ export async function execute(runtime:Runtime, text:string, deps:Dependencies={}
     const labels=isVerify?Object.hasOwn(receipt!.fieldHashes,'labels'):!!request.labels;
     let auth:{token:string; target:Record<string,unknown>};
     try {auth=await authenticateRepository(http,key,identity,repo,now,permissionsFor(operation,labels));}finally{key.fill(0);}
-    const context:Context={http,token:auth.token,target:auth.target,request,identity,repo,runtime,now,deps};
+    const context:Context={http,token:auth.token,target:auth.target,request,identity,repo,runtime,now,deps,permit:()=>store.permit()};
     let mutated=false;
     if (!isVerify && !receipt) {
       mutated=true;

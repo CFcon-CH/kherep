@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
@@ -12,12 +13,14 @@ import { run as codex } from './github-codex-credential.mts';
 stubWindowsAcl();
 type T = {after:(fn:()=>void)=>void};
 const input = 'capability[]=authtype\ncapability[]=state\nprotocol=https\nhost=github.com\npath=example/project.git\nwwwauth[]=Basic realm="GitHub"\n';
-function pending(t:T, runtime:'claude'|'codex', receipt:Partial<Receipt>={}, lock=true) {
+/** A pending push receipt, its lock held and, as the broker's push does, its one credential grant created. */
+function pending(t:T, runtime:'claude'|'codex', receipt:Partial<Receipt>={}, lock=true, grant=lock) {
   const root=brokerRoot(t,runtime),id=randomUUID(),now=Date.now();
   const store=new ReceiptStore(root,runtime,runtime==='claude'?11:12,'example/project',id);
   store.write({version:2,kind:'push',digest:'0'.repeat(64),operation:'branch.push',status:'pending',fieldHashes:{},branch:'feat/x',sha:'a'.repeat(40),admittedAt:now,...receipt} as Receipt);
   if (lock) store.acquire();
-  return {root,id,now};
+  if (grant) store.permit();
+  return {root,id,now,store};
 }
 for (const [runtime,run] of [['claude',claude],['codex',codex]] as const) test(`${runtime} helper answers get only for its locked, fresh, pending push`,async t=>{
   const p=pending(t,runtime),api=fakeGithub(runtime);
@@ -27,6 +30,24 @@ for (const [runtime,run] of [['claude',claude],['codex',codex]] as const) test(`
   assert.deepEqual(exchange?.body,{repository_ids:[55],permissions:{contents:'write'}});
   assert.equal(api.calls.length<=10,true);
   for (const action of ['store','erase']) assert.equal(await run([p.id,action],`${input}username=x-access-token\npassword=${TOKEN}\n`,{root:p.root,fetch:api.fetch}),'');
+});
+test('helper answers one get per push: the first valid get consumes the grant',async t=>{
+  const p=pending(t,'claude'),api=fakeGithub('claude'),deps={root:p.root,fetch:api.fetch,now:()=>p.now+1000},grant=`${p.store.file}.grant`;
+  // A refused get never burns the grant.
+  await assert.rejects(claude([p.id,'get'],input,{...deps,now:()=>p.now+PUSH_WINDOW_MS+1}),{message:'auth-refused'});
+  await assert.rejects(claude([p.id,'get'],input.replace('github.com','example.com'),deps),{message:'target-refused'});
+  assert.equal(fs.existsSync(grant),true);assert.equal(api.calls.length,0);
+  assert.equal(await claude([p.id,'get'],input,deps),`username=x-access-token\npassword=${TOKEN}\n`);
+  assert.equal(fs.existsSync(grant),false);const calls=api.calls.length;
+  await assert.rejects(claude([p.id,'get'],input,deps),{message:'auth-refused'},'a second get within the window');
+  assert.equal(api.calls.length,calls,'the second get reached no provider');
+});
+test('helper without a grant is refused without a provider call, and a grant needs the held lock',async t=>{
+  const p=pending(t,'claude',{},true,false),api=fakeGithub('claude');
+  await assert.rejects(claude([p.id,'get'],input,{root:p.root,fetch:api.fetch,now:()=>p.now}),{message:'auth-refused'});
+  assert.equal(api.calls.length,0);
+  const unlocked=pending(t,'claude',{},false,false);
+  assert.throws(()=>unlocked.store.permit(),{message:'operation-busy'});assert.equal(fs.existsSync(`${unlocked.store.file}.grant`),false);
 });
 test('helper refuses wrong argv, host, protocol, path and repository without a provider call',async t=>{
   const p=pending(t,'claude'),api=fakeGithub('claude'),deps={root:p.root,fetch:api.fetch,now:()=>p.now};

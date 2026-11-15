@@ -1,45 +1,21 @@
 import assert from 'node:assert/strict';
-import test, { after } from 'node:test';
+import test from 'node:test';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { execFile, execFileSync } from 'node:child_process';
 import { promisify } from 'node:util';
 import { randomUUID } from 'node:crypto';
-import { checkCommits, gitEnv, helperCommand, pushArgs, trustedGit } from './git-push.mts';
+import { checkCommits as check, cleanEnv, cleanRepo, gitEnv, helperCommand, pushArgs, trustedGit } from './git-push.mts';
 import { gitServer } from './git-http.fixture.mts';
 import { BOTS, TOKEN, brokerRoot, email, fakeGithub, stubWindowsAcl } from './flow.fixture.mts';
+import { g, isolateProcess, pushSetup, repos, setEnv } from './git-push.fixture.mts';
+import type { T } from './git-push.fixture.mts';
 import { run as claude } from './github-claude.mts';
 import { run as codex } from './github-codex.mts';
 import { nodePaths } from '../control-plane/node/config.mts';
 import { writePendingMarker } from '../control-plane/node/attribution.mts';
 stubWindowsAcl();
-type T = {after:(fn:()=>void)=>void; diagnostic?:(message:string)=>void};
-// No broker push in this file may reach the operator's attribution log.
-const configHome=fs.mkdtempSync(path.join(os.tmpdir(),'github-broker-attribution-'));after(()=>fs.rmSync(configHome,{recursive:true,force:true}));
-process.env.KHEREP_CONFIG_DIR=configHome;
-const savedEnv=new WeakMap<T,Map<string,string|undefined>>();
-/** Sets process variables for one test (undefined removes one) and restores each original once afterwards. */
-function setEnv(t:T, vars:Record<string,string|undefined>):void {
-  let saved=savedEnv.get(t);
-  if (!saved) {const s=new Map<string,string|undefined>();saved=s;savedEnv.set(t,s);t.after(()=>{for (const [k,v] of s) if (v===undefined) delete process.env[k]; else process.env[k]=v;});}
-  for (const [k,v] of Object.entries(vars)) {if (!saved.has(k)) saved.set(k,process.env[k]);if (v===undefined) delete process.env[k]; else process.env[k]=v;}
-}
-const g = (cwd:string, ...args:string[]) => execFileSync('git',args,{cwd,encoding:'utf8',windowsHide:true}).trim();
-/** A bare remote that already holds main, and a work clone with commits on top. */
-function repos(t:T) {
-  const base=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'github-broker-git-')));t.after(()=>fs.rmSync(base,{recursive:true,force:true}));
-  const projects=path.join(base,'remote'), bare=path.join(projects,'example','project.git'), work=path.join(base,'work');
-  fs.mkdirSync(path.dirname(bare),{recursive:true});g(base,'init','-q','--bare','-b','main',bare);
-  fs.mkdirSync(work);g(work,'init','-q','-b','main');
-  const commit=(file:string, author=email(0), committer=author)=>{
-    fs.mkdirSync(path.dirname(path.join(work,file)),{recursive:true});fs.writeFileSync(path.join(work,file),randomUUID());g(work,'add','-A');
-    execFileSync('git',['-c','user.name=synthetic','-c',`user.email=${committer}`,'commit','-q','-m','synthetic',`--author=synthetic <${author}>`],{cwd:work,windowsHide:true});
-    return g(work,'rev-parse','HEAD');
-  };
-  const main=commit('README.md','operator@example.com');g(work,'push','-q',bare,'main');
-  return {base,projects,bare,work,main,commit,remote:(ref:string)=>{try{return g(bare,'rev-parse','--verify','-q',`refs/heads/${ref}`);}catch{return undefined;}}};
-}
+isolateProcess();
 test('helper command single-quotes forward-slash paths and refuses a quote',()=>{
   const id=randomUUID();
   assert.equal(helperCommand('/usr/bin/node','/opt/k tools/github-claude-credential.mts',id),`!'/usr/bin/node' '/opt/k tools/github-claude-credential.mts' ${id}`);
@@ -52,8 +28,15 @@ test('helper command single-quotes forward-slash paths and refuses a quote',()=>
 });
 test('git child environment drops ambient tokens, tracing and injected configuration',()=>{
   const input={PATH:'p',Path:'evil',GH_TOKEN:'x',GITHUB_TOKEN:'x',GIT_TRACE:'1',GIT_TRACE_CURL:'1',GIT_CURL_VERBOSE:'1',GIT_CONFIG_COUNT:'1',GIT_CONFIG_KEY_0:'http.extraHeader',GIT_CONFIG_PARAMETERS:'x',GIT_ASKPASS:'x',SSH_ASKPASS:'x',GIT_DIR:'x',GIT_EXEC_PATH:'evil',GIT_TERMINAL_PROMPT:'1',LANG:'C'};
-  assert.deepEqual(gitEnv(input,'win32'),{LANG:'C',PATH:'C:\\Program Files\\Git\\cmd;C:\\Windows\\System32;C:\\Windows',GIT_TERMINAL_PROMPT:'0',GCM_INTERACTIVE:'never'});
-  assert.deepEqual(gitEnv(input,'linux'),{LANG:'C',PATH:'/usr/bin:/bin',GIT_TERMINAL_PROMPT:'0',GCM_INTERACTIVE:'never'});
+  assert.deepEqual(gitEnv(input,'win32'),{LANG:'C',PATH:'C:\\Program Files\\Git\\cmd;C:\\Windows\\System32;C:\\Windows',GIT_TERMINAL_PROMPT:'0',GCM_INTERACTIVE:'never',GIT_NO_REPLACE_OBJECTS:'1'});
+  assert.deepEqual(gitEnv(input,'linux'),{LANG:'C',PATH:'/usr/bin:/bin',GIT_TERMINAL_PROMPT:'0',GCM_INTERACTIVE:'never',GIT_NO_REPLACE_OBJECTS:'1'});
+});
+test('git child environment is constructed, not inherited',t=>{
+  // The broker's own environment carries proxy, TLS, toolchain and Node settings; none may reach a git child.
+  setEnv(t,{HTTPS_PROXY:'http://127.0.0.1:9',GIT_SSL_NO_VERIFY:'1',DEVELOPER_DIR:'/attacker',NODE_OPTIONS:'--require=/attacker.js',SSL_CERT_FILE:'/attacker.pem'});
+  const dir=path.resolve('clean'), common={HOME:dir,GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:path.join(dir,'gitconfig'),GIT_ATTR_NOSYSTEM:'1',GIT_NO_REPLACE_OBJECTS:'1',GIT_TERMINAL_PROMPT:'0',GCM_INTERACTIVE:'never'};
+  assert.deepEqual(cleanEnv(dir,'win32'),{PATH:'C:\\Program Files\\Git\\cmd;C:\\Windows\\System32;C:\\Windows',...common,SystemRoot:'C:\\Windows',WINDIR:'C:\\Windows'});
+  for (const platform of ['linux','darwin'] as const) assert.deepEqual(cleanEnv(dir,platform),{PATH:'/usr/bin:/bin',...common},platform);
 });
 test('trusted git comes from fixed system paths only, never from PATH',()=>{
   type Entry={file?:boolean; uid?:number; mode?:number};
@@ -79,14 +62,15 @@ test('trusted git comes from fixed system paths only, never from PATH',()=>{
   } finally {if (saved===undefined) delete process.env.PATH; else process.env.PATH=saved;}
 });
 test('author preflight admits own-bot commits and refuses foreign authors, committers and workflow paths',t=>{
-  const r=repos(t),own=[email(0).toLowerCase()];
-  const good=r.commit('src/a.txt');assert.doesNotThrow(()=>checkCommits(r.work,good,r.main,own));
-  const workflow=r.commit('.github/workflows/ci.yml');assert.throws(()=>checkCommits(r.work,workflow,r.main,own),{message:'target-refused'});
+  const r=repos(t),own=[email(0).toLowerCase()],repo=cleanRepo(r.work);t.after(repo.dispose);
+  const checkCommits=(sha:string,base:string,emails:string[])=>check(repo.git,sha,base,emails);
+  const good=r.commit('src/a.txt');assert.doesNotThrow(()=>checkCommits(good,r.main,own));
+  const workflow=r.commit('.github/workflows/ci.yml');assert.throws(()=>checkCommits(workflow,r.main,own),{message:'target-refused'});
   g(r.work,'reset','-q','--hard',good);
-  const other=r.commit('src/b.txt',email(1));assert.throws(()=>checkCommits(r.work,other,r.main,own),{message:'target-refused'});
-  assert.doesNotThrow(()=>checkCommits(r.work,other,r.main,[...own,email(1).toLowerCase()]));
+  const other=r.commit('src/b.txt',email(1));assert.throws(()=>checkCommits(other,r.main,own),{message:'target-refused'});
+  assert.doesNotThrow(()=>checkCommits(other,r.main,[...own,email(1).toLowerCase()]));
   g(r.work,'reset','-q','--hard',good);
-  const operator=r.commit('src/c.txt',email(0),'operator@example.com');assert.throws(()=>checkCommits(r.work,operator,r.main,own),{message:'target-refused'});
+  const operator=r.commit('src/c.txt',email(0),'operator@example.com');assert.throws(()=>checkCommits(operator,r.main,own),{message:'target-refused'});
 });
 test('Windows-safe helper quoting reaches a credential helper, and no configured personal helper answers',async t=>{
   const r=repos(t),sha=r.commit('src/a.txt'),id=randomUUID(),log=path.join(r.base,'helper.log'),personal=path.join(r.base,'personal.log');
@@ -146,19 +130,6 @@ test('branch.push refusals happen before any push',async t=>{
 });
 const githooks=path.resolve(import.meta.dirname,'..','..','claude','kherep','githooks');
 const sh=(p:string)=>p.split(path.sep).join('/');
-/** One runtime's broker and loopback remote. `password` is what the helper answers; `lie` makes the readback see another commit. */
-async function pushSetup(t:T, runtime:'claude'|'codex', options:{password?:string; lie?:boolean}={}) {
-  const r=repos(t), root=brokerRoot(t,runtime), sha=r.commit('src/one.txt',email(runtime==='claude'?0:1));
-  const api=fakeGithub(runtime,b=>options.lie && b==='feat/x' && r.remote(b) ? 'f'.repeat(40) : r.remote(b));
-  const fake=path.join(r.base,'helper.mjs'), config=path.join(r.base,'config'), log=path.join(config,'control-plane','attribution.jsonl');
-  fs.writeFileSync(fake,`for await (const c of process.stdin);if(process.argv[3]==='get')process.stdout.write('username=x-access-token\\npassword=${options.password ?? TOKEN}\\n');`);
-  const server=await gitServer(r.projects,TOKEN);t.after(()=>server.close());
-  setEnv(t,{KHEREP_CONFIG_DIR:config,CLAUDE_CODE_SESSION_ID:undefined,KHEREP_SESSION_ID:undefined});
-  const request={operationId:randomUUID(),repository:'example/project',operation:'branch.push',branch:'feat/x',sha};
-  const push=()=>(runtime==='claude'?claude:codex)(JSON.stringify(request),{root,fetch:api.fetch,cwd:r.work,push:{url:server.url('example/project'),helperScript:fake}});
-  const records=():Record<string,unknown>[]=>fs.existsSync(log)?fs.readFileSync(log,'utf8').split('\n').filter(Boolean).map(l=>JSON.parse(l)):[];
-  return {r,sha,config,log,request,push,records};
-}
 /**
  * The real pre-push hook beside its recorder, as the installer places them, wired into the work clone,
  * and a node shim the hook finds on the fixed git PATH (Git for Windows adds $HOME/bin). Returns the shim's run log.
@@ -173,7 +144,7 @@ function installHook(t:T, r:ReturnType<typeof repos>):string {
   setEnv(t,{HOME:home,KHEREP_WORKSPACE:r.base});
   return runs;
 }
-test('a verified broker push leaves exactly one attribution record, and the pre-push hook stands down',async t=>{
+test('a verified broker push leaves exactly one attribution record, and no repository hook runs',async t=>{
   const p=await pushSetup(t,'claude'), shimLog=installHook(t,p.r);
   setEnv(t,{CLAUDE_CODE_SESSION_ID:'synthetic-claude-780'});
   const runs=()=>fs.existsSync(shimLog)?fs.readFileSync(shimLog,'utf8').split('\n').filter(Boolean).length:0;

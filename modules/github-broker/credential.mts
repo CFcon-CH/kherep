@@ -29,7 +29,8 @@ function parse(input:string):Map<string,string> {
  * argv is `<operationId> <action>`. It answers `get` for exactly
  * https://github.com/<allowlisted slug>.git, and only while the broker holds the
  * lock of a pending branch.push receipt for that operation admitted less than
- * 120 s ago. The contents-scoped token goes to git's pipe and nowhere else.
+ * 120 s ago, and once: the first such `get` consumes the push's grant, checked last
+ * so a refused get never burns it. The contents-scoped token goes to git's pipe and nowhere else.
  * `store` and `erase` get no answer: nothing is ever persisted.
  */
 export async function credential(runtime:Runtime, argv:string[], input:string, deps:Dependencies={}):Promise<string> {
@@ -42,7 +43,7 @@ export async function credential(runtime:Runtime, argv:string[], input:string, d
   const repo=identity.repositories.find(r=>r.slug===repository)!;
   const store=new ReceiptStore(root,runtime,identity.appId,repo.slug,request.operationId,false);
   const receipt=store.read(), now=(deps.now??Date.now)(), lock=fs.lstatSync(store.lock,{throwIfNoEntry:false});
-  if (receipt?.operation!=='branch.push' || receipt.status!=='pending' || !receipt.admittedAt || now-receipt.admittedAt>PUSH_WINDOW_MS || receipt.admittedAt-now>5000 || !lock?.isFile()) fail('auth-refused');
+  if (receipt?.operation!=='branch.push' || receipt.status!=='pending' || !receipt.admittedAt || now-receipt.admittedAt>PUSH_WINDOW_MS || receipt.admittedAt-now>5000 || !lock?.isFile() || !store.consume()) fail('auth-refused');
   const key=await readProtected(path.join(root,'keys'),identity.keyRef,16384,root);
   let token:string;
   try { token=await authenticate(transport(deps.fetch),key,identity,repo,now,{contents:'write'}); } finally { key.fill(0); }
