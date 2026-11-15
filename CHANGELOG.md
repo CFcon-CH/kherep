@@ -40,7 +40,10 @@ increments the minor version; every other release increments the patch version.
   `github-<runtime>-credential.mts`, which answers only while that push's
   receipt is pending and locked, so the token never reaches argv, environment,
   disk or output. There is still no merge, force-push, branch deletion, tag push
-  or `workflows` permission. The attribution hook records broker-created PRs.
+  or `workflows` permission. The attribution hook records broker-created PRs;
+  the broker records each verified push itself in the attribution log
+  (`attributionRecorded` in its result), and the `pre-push` hook stands down for
+  it on `KHEREP_BROKER_PUSH`.
   Policy schema 1 stays valid for issue operations. Session rules route GitHub
   writes in allowlisted repositories through the broker. Operator action: to use
   the new operations, move the host policy to version 2 and list the operations

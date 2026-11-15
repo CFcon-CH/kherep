@@ -24,6 +24,8 @@ export type Handler = {
   readback:(c:Context, receipt:Receipt)=>Promise<void>;
   ids:(receipt:Receipt)=>Record<string,unknown>;
   attribution:(receipt:Receipt)=>string;
+  /** After a verified write of this run only: records it in the attribution log; false when nothing was written. */
+  recorded?:(c:Context, receipt:Receipt)=>boolean;
 };
 export const HANDLERS: Record<Operation, Handler> = {
   'issue.create':issueHandler, 'issue.comment':issueHandler, 'issue.update':issueHandler,

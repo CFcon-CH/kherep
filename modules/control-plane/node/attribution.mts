@@ -8,7 +8,9 @@ import { ensureDir, type NodePaths } from "./config.mts";
 // Issue #325, PR-A. The local attribution log: which session pushed a branch or
 // opened a PR. One JSON object per line in nodePaths().attribution, mode 0600,
 // written by the pre-push git hook (claude/kherep/githooks/attribution-record.mts,
-// a self-contained copy of the rules below) and by attribution-hook.mts, read
+// a self-contained copy of the rules below), by attribution-hook.mts and, for its
+// own verified pushes, by the GitHub App broker (modules/github-broker/
+// attribution.mts, another copy; issue #780), read
 // only by `kherep-node attribution`. The daemon protocol, the Worker and
 // sessions.json never read it. A record names ids, paths, refs and SHAs, never
 // message text, commit subjects, PR titles or bodies, tokens or environments.

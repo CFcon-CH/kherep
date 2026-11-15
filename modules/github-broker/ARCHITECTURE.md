@@ -48,6 +48,14 @@ selected files. The Windows gate's per-level decision is one PowerShell function
 payloads and checks targets, fields and bot authors. `receipt.mts` owns atomic
 write-ahead state and non-stealing locks. `broker.mts` composes this production
 path. `cli.mts` owns bounded stdin/output and imports without side effects.
+`attribution.mts` appends the push record of a verified `branch.push` to the
+host-local attribution log; `broker.mts` calls the handler's optional `recorded`
+only in the run that mutated, so each verified push is recorded at most once, and
+a failed append returns `attributionRecorded:false` without touching the receipt.
+The projection admits only `node:` imports, so its config-root, marker-key,
+marker and trim rules are copies of the control-plane ones, pinned by
+`bootstrap/pre-push-hook.test.mts`. The push child carries `KHEREP_BROKER_PUSH=1`,
+on which the `pre-push` hook stands down; the variable only suppresses a record.
 
 Configuration is trusted operator input, not authority supplied by the caller.
 Private repository content is never an admitted target. The runtime binding

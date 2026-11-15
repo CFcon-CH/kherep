@@ -10,6 +10,7 @@ import path from "node:path";
 import { after, test } from "node:test";
 
 import * as record from "../claude/kherep/githooks/attribution-record.mts";
+import * as broker from "../modules/github-broker/attribution.mts";
 import { appendAttribution, readAttribution, repoSlug, writePendingMarker } from "../modules/control-plane/node/attribution.mts";
 import { configRoot, nodePaths } from "../modules/control-plane/node/config.mts";
 
@@ -108,6 +109,14 @@ test("a push without any session source, or with a stale marker, records unknown
   assertPushRecord(c, { sessionId: "unknown", runtime: "unknown", sessionSource: "none" });
 });
 
+// Issue #780: the GitHub App broker records its own verified pushes.
+test("a broker push (KHEREP_BROKER_PUSH) records nothing and still succeeds", () => {
+  const c = setup();
+  push(c, { CLAUDE_CODE_SESSION_ID: "synthetic-claude-6", KHEREP_BROKER_PUSH: "1" });
+  assert.equal(fs.existsSync(logOf(c)), false);
+  assert.equal(git(c.repo, ["ls-remote", "origin", c.branch]).split(/\s/)[0], git(c.repo, ["rev-parse", "HEAD"]));
+});
+
 test("nothing is recorded for a repository outside the workspace", () => {
   const c = setup(path.join(root, "outside"));
   push(c, { CLAUDE_CODE_SESSION_ID: "synthetic-claude-2" });
@@ -152,7 +161,10 @@ test("the hook's config-root rule equals configRoot in config.mts on win32, darw
   const envs: NodeJS.ProcessEnv[] = [{}, { KHEREP_CONFIG_DIR: path.join(root, "explicit") },
     { APPDATA: path.join(root, "appdata") }, { XDG_CONFIG_HOME: path.join(root, "xdg") }];
   for (const platform of ["win32", "darwin", "linux"] as const) {
-    for (const env of envs) assert.equal(record.configRoot(env, platform), configRoot(env, platform), `${platform} ${JSON.stringify(env)}`);
+    for (const env of envs) {
+      assert.equal(record.configRoot(env, platform), configRoot(env, platform), `${platform} ${JSON.stringify(env)}`);
+      assert.equal(broker.configRoot(env, platform), configRoot(env, platform), `broker ${platform} ${JSON.stringify(env)}`);
+    }
   }
 });
 
@@ -169,4 +181,5 @@ test("the hook's repo slug and marker key equal the node module's", () => {
   writePendingMarker(paths, "C:/Synthetic/Repo", "synthetic-codex-4", "codex", Date.now());
   const [file] = fs.readdirSync(paths.attributionPending);
   assert.equal(file, `${record.markerKey("C:/Synthetic/Repo", process.platform)}.json`);
+  assert.equal(file, `${broker.markerKey("C:/Synthetic/Repo", process.platform)}.json`);
 });

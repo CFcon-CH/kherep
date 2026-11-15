@@ -1367,8 +1367,10 @@ refusal needs a capture independent of the parent chain, such as a job object or
 process table.
 
 The attribution log (`attribution.jsonl`, issue #325) is host-local. The git
-`pre-push` hook (`claude/kherep/githooks/attribution-record.mts`) and
-`node/attribution-hook.mts` write it; only `kherep-node attribution` reads it.
+`pre-push` hook (`claude/kherep/githooks/attribution-record.mts`),
+`node/attribution-hook.mts` and, for its own verified pushes, the GitHub App
+broker (`modules/github-broker/attribution.mts`, issue #780) write it; only
+`kherep-node attribution` reads it.
 The daemon protocol, the Worker and `sessions.json` never read it, and nothing
 in it leaves the host. A record holds a session id and its source, the runtime,
 owner/name of the repository, the toplevel path, branch, remote ref, SHA and PR
