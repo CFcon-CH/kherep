@@ -1,12 +1,16 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, realpathSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { relocateV8Report } from "./coverage-paths.mts";
+function fixtureRoot(prefix: string, parent = tmpdir()): string {
+  return realpathSync(mkdtempSync(join(parent, prefix)));
+}
+
 test("foreign native producer roots relocate scripts and nested map sources without changing V8 counts", t => {
-  const root = mkdtempSync(join(tmpdir(), "coverage-urls-")); t.after(() => rmSync(root, { recursive: true, force: true }));
+  const root = fixtureRoot("coverage-urls-"); t.after(() => rmSync(root, { recursive: true, force: true }));
   mkdirSync(join(root, "src")); writeFileSync(join(root, "src/typed.mts"), "export const n: number = 1;\n");
   for (const producer of ["file:///D:/a/kherep/", "file:///Users/runner/work/kherep/", "file:///home/runner/kherep/"]) {
     const url = producer + "src/typed.mts"; const functions = [{ functionName: "", isBlockCoverage: true, ranges: [{ startOffset: 0, endOffset: 20, count: 3 }] }];
@@ -36,7 +40,7 @@ for (const path of ["file://host/share/x.mts", "file:////host/share/x.mts", "fil
   assert.throws(() => canonicalFileUrl(path));
 });
 test("retained script rejects absent local files and unsupported mapped sources", t => {
-  const root = mkdtempSync(join(tmpdir(), "coverage-url-negative-")); t.after(() => rmSync(root, { recursive: true, force: true }));
+  const root = fixtureRoot("coverage-url-negative-"); t.after(() => rmSync(root, { recursive: true, force: true }));
   writeFileSync(join(root, "x.mts"), "export const n = 1;\n");
   const producer = "file:///D:/a/repo/", url = producer + "x.mts";
   assert.throws(() => relocateV8Report({ result: [{ url: producer + "absent.mts", functions: [] }] }, producer, root));
@@ -46,7 +50,7 @@ test("retained script rejects absent local files and unsupported mapped sources"
 });
 
 test("nested source map location and sourceRoot resolve before relocation", t => {
-  const root = mkdtempSync(join(tmpdir(), "coverage-nested-map-")); t.after(() => rmSync(root, { recursive: true, force: true }));
+  const root = fixtureRoot("coverage-nested-map-"); t.after(() => rmSync(root, { recursive: true, force: true }));
   for (const dir of ["src", "build"]) mkdirSync(join(root, dir));
   writeFileSync(join(root, "src/typed.mts"), "export const n: number = 1;\n");
   writeFileSync(join(root, "build/run.mjs"), "export const n = 1;\n");
@@ -60,8 +64,26 @@ test("nested source map location and sourceRoot resolve before relocation", t =>
 });
 
 test("retained scripts refuse cached maps without usable parsed data", t => {
-  const root = mkdtempSync(join(tmpdir(), "coverage-bad-map-")); t.after(() => rmSync(root, { recursive: true, force: true }));
+  const root = fixtureRoot("coverage-bad-map-"); t.after(() => rmSync(root, { recursive: true, force: true }));
   writeFileSync(join(root, "x.mts"), "export const n = 1;\n");
   const producer = "file:///D:/a/repo/", url = producer + "x.mts";
   for (const entry of [{ data: null }, { data: {} }, { url: 42, data: { version: 3, sources: ["x.mts"] } }, { data: { version: 2, sources: ["x.mts"] } }]) assert.throws(() => relocateV8Report({ result: [{ url, functions: [] }], "source-map-cache": { [url]: entry } }, producer, root), /source map/);
+});
+
+
+test("fixture relocation and cached maps use canonical roots through a directory alias", t => {
+  const parent = realpathSync(mkdtempSync(join(tmpdir(), "coverage-url-alias-")));
+  t.after(() => rmSync(parent, { recursive: true, force: true }));
+  const physical = join(parent, "physical"), alias = join(parent, "alias");
+  mkdirSync(physical);
+  symlinkSync(physical, alias, process.platform === "win32" ? "junction" : "dir");
+  const root = fixtureRoot("workspace-", alias);
+  writeFileSync(join(root, "x.mts"), "export const x: number = 1;\n");
+  const producer = "file:///D:/a/repo/", url = producer + "x.mts";
+  const value = { result: [{ url, functions: [] }], "source-map-cache": { [url]: { url: "x.mts.map", data: { version: 3, sources: ["x.mts"], names: [], mappings: "AAAA" } } } };
+  const result = relocateV8Report(value, producer, root), local = pathToFileURL(join(root, "x.mts")).href;
+  assert.equal(result.report.result[0].url, local);
+  const entry = result.report["source-map-cache"]![local] as { url: string; data: { sources: string[] } };
+  assert.equal(entry.url, pathToFileURL(join(root, "x.mts.map")).href);
+  assert.deepEqual(entry.data.sources, [local]);
 });
