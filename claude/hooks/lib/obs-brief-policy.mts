@@ -68,6 +68,9 @@ function findings(brief: string): Finding[] {
 function measuredIssue(text: string): string | null {
   const span = codeSpan(text);
   if (!span || !span.content.trim()) return "has no command in an inline code span";
+  if (prefixWords(text)[0] === "refused" && !/^check-ref: [a-z0-9][a-z0-9._-]{0,63}#[a-z0-9][a-z0-9._-]{0,63}$/.test(span.content)) {
+    return "has no safe check reference in the inline code span";
+  }
   const rest = text.slice(span.end);
   const arrow = rest.indexOf("->");
   if (arrow < 0) return "has no -> after the command";
@@ -112,7 +115,8 @@ const DIRTY_TREE = "was measured on a dirty tree";
 const MALFORMED = "has a malformed repository or revision";
 const BOUND_ADVICE = "The observation agent files each as assumed: no exact binding to the measured code. "
   + "Give <name>@<sha> after `code`, the SHA from `git rev-parse HEAD` of the checkout the command ran in, "
-  + "add -dirty only when that tree had uncommitted changes, or drop `code` when the finding is not about repository code.";
+  + "add -dirty only when that tree had uncommitted changes. For an installed public copy, bind the exercised bytes and dependency closure to that source. "
+  + "Use explicit live/doc/tracker only for genuinely non-code claims; a scope marker never proves execution or bypasses code binding.";
 // Issue #693. Each binding may be followed by `--` and the repo-relative paths the finding rests on, the
 // path grammar of modules/atl-jira-brokers/confluence-claim-text.mts (copied: this hook is installed alone).
 const PATH = /^(?!-)(?:(?!\.{1,2}(?:\/|$))[A-Za-z0-9._-]+)(?:\/(?!\.{1,2}(?:\/|$))[A-Za-z0-9._-]+)*$/;
@@ -189,10 +193,25 @@ export function observationBriefNotice(brief: string): string | null {
   const bound: string[] = [];
   const scoped: string[] = [];
   const unmarked: string[] = [];
+  const refusals: string[] = [];
   for (const [index, finding] of findings(brief).entries()) {
     if (finding.kind !== "measured") continue;
     const position = `finding ${index + 1} (measured:)`;
     const words = prefixWords(finding.text);
+    // Explicit scope is one exact prefix, never an exemption for a mixed declaration.
+    if (words.length === 1 && ["live", "doc", "tracker"].includes(words[0])) continue;
+    if (words.length === 1 && words[0] === "refused") {
+      const span = codeSpan(finding.text)!;
+      const excerpt = finding.text.slice(span.end).split("->").slice(1).join("->").trim();
+      if (!/^guard=[a-z0-9][a-z0-9._-]{0,79} decision=deny event=[a-z0-9][a-z0-9._-]{0,79}$/.test(excerpt)) {
+        refusals.push(`${position} has incomplete refusal evidence; the refusal stays assumed`);
+      }
+      continue;
+    }
+    if (["live", "doc", "tracker", "refused"].includes(words[0])) {
+      unmarked.push(`${position} has an ambiguous claim scope`);
+      continue;
+    }
     if (words[0] !== "code") {
       // Without the declaration, a word with @ is a named binding: the finding
       // is silent only when it names one and every one it names is complete.
@@ -209,6 +228,7 @@ export function observationBriefNotice(brief: string): string | null {
     bound.length ? `${bound.join("; ")}. ${BOUND_ADVICE}` : "",
     scoped.length ? `${scoped.join("; ")}. ${PATHS_ADVICE}` : "",
     unmarked.length ? `${unmarked.join("; ")}. ${UNMARKED_ADVICE}` : "",
+    refusals.length ? `${refusals.join("; ")}. Supply the actual same-turn denial event and safe check reference; never infer the unexecuted result.` : "",
   ].filter(Boolean);
   return parts.length ? `Observation brief revision: ${parts.join(" Also, ")}` : null;
 }

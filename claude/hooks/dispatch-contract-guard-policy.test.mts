@@ -97,3 +97,19 @@ test("a user-declared per-model effort table cannot widen the vocabulary and onl
   const widened = dispatch(home(JSON.stringify({ models: { haiku: { efforts: ["ultra"] } } })), builder("haiku", { effort: "ultra" }));
   assert.match(widened.reason, /DISPATCH_POLICY_INVALID.*key models\.haiku\.efforts/);
 });
+
+// #731: actual isolated installed dependency closure, no source-checkout fallback.
+test("copied observation helper recognizes scoped/refusal evidence without bypassing denials", () => {
+  const root = home();
+  const observer = (prompt: string) => ({ subagent_type: "claude-obs", model: "haiku", prompt });
+  for (const brief of ["measured: live `public-check` -> sampled=27", "measured: refused `check-ref: public-policy#safe-check` -> guard=public-policy decision=deny event=safe-event-1"]) {
+    assert.deepEqual(dispatch(root, observer(brief)), { decision: null, reason: "", context: "" });
+  }
+  const gap = dispatch(root, observer("measured: refused `check-ref: public-policy#safe-check` -> denied"));
+  assert.equal(gap.decision, null);
+  assert.match(gap.context, /refusal stays assumed/);
+  const unsafe = dispatch(root, observer("measured: refused `check-ref: ../unsafe` -> denied"));
+  assert.equal(unsafe.decision, "deny");
+  assert.match(unsafe.reason, /safe check reference/);
+  assert.ok(!unsafe.reason.includes("../unsafe"));
+});
