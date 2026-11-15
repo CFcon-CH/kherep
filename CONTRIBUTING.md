@@ -46,9 +46,10 @@ Keep production configuration out of tests. Tests that need an unavailable platf
 ## SonarQube Cloud coverage
 
 CI collects raw Node V8 coverage in the existing Ubuntu and macOS unit tests,
-all ten Windows shards, TypeScript suites and Ubuntu binding probe. Worker
+nine Windows suites (all except Codex), TypeScript suites and Ubuntu binding probe. Worker
 `src/` uses Istanbul in workerd. The `coverage-report` job requires all
-contributing jobs to succeed, validates the complete 15-producer set and converts
+contributing functional jobs, including Windows Codex, to succeed, validates the
+complete 14-producer coverage set and converts
 one V8 union with c8 `--all`. Unexecuted maintained Node source contributes zero.
 Worker configuration and shared protocol code remain in the Node population.
 Existing source/test classification, exclusions and the 80% new-code threshold
@@ -66,11 +67,30 @@ PRs skip that scan and therefore cannot satisfy the required
 
 Foreign Windows/macOS/Linux script URLs and nested cached source maps are
 relocated to contained repository source. Exact declared copy URLs retain
-SHA-256 verification; unused declarations are logged as no data. V8 ranges and
+SHA-256 verification; unused declarations are logged as no data. Retained V8 ranges and
 counts remain intact. The pinned TypeScript parser omits a whole LCOV record
 only when every statement is an erased type-only import, interface or type alias;
 mixed/runtime/unknown files keep their records. The summary lists omitted paths.
-No new Sonar exclusion is added.
+No new Sonar exclusion is added. All ten Windows functional members and all
+15 required checks remain; Codex alone loses coverage env/manifest/upload, while
+its guard, assertions, 60-minute timeout and maintained c8 --all source stay.
+
+Two exact script discard policies allow numeric isolated queries only outside
+the canonical producer root and reserved numeric node-test-mock queries only
+inside. Structural/raw URL validation and full/base copy collision refusal run
+before discard. All other queries, ambiguous/cross-dialect paths and every
+query-bearing cache/map/declaration/manifest input still fail. The reserved key
+is not proof of Node-generated code: genuine code using it loses coverage.
+A measured paired c8 --all example retained LF 15/the SF universe but changed
+LH 15 to 1, BRF 14 to 3 and BRH 4 to 2, raising branch coverage 28.57% to 66.67%. This
+metric-policy discontinuity is not real execution gain or a conservative
+percentage guarantee. Undeclared external temp-copy code remains uncredited.
+
+Bootstrap-rest alone has prospective runtime cap 1.6 * 449 = 718.4 seconds.
+Other caps, including functional Codex 2085, remain unchanged; its coverage
+removal does not prove a future runtime pass. Historical results remain bound
+to their old caps/source; new policy needs a new run and actual measurements.
+See the CI contract for strict 14-producer rerun provenance and metric limits.
 
 See [the CI coverage contract](.github/coverage.md) for producer identities,
 validation, reruns, copy-helper limits and required native/runtime evidence.

@@ -116,7 +116,10 @@ test("real type-stripped V8 union maps typed lines, unexecuted branch and spawne
     const result = run(["assemble", "--artifacts", input, "--output", output, "--root", root, ...identity()]);
     assert.equal(result.status, 0, result.stderr);
     const summary = JSON.parse(readFileSync(join(output, "summary.json"), "utf8"));
-    assert.equal(summary.producers.length, 15);
+    assert.equal(summary.producers.length, 14);
+    assert(!summary.producers.some((p: { producer: string }) => p.producer === "unit-windows-codex"));
+    const finalManifest = JSON.parse(readFileSync(join(output, "manifest.json"), "utf8"));
+    assert.equal(finalManifest.producers.length, 14); assert(!finalManifest.producers.some((p: { producer: string }) => p.producer === "unit-windows-codex"));
     for (const producer of ["unit", "unit-macos"]) assert(summary.producers.find((p: { producer: string; retained: number }) => p.producer === producer).retained > 0);
     const lcov = readFileSync(join(output, "node/lcov.info"), "utf8");
     const typed = lcov.split("end_of_record").find(s => s.includes("SF:src/typed.mts"))!;

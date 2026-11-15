@@ -4,6 +4,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { SHARDS } from "./ci-shard.mts";
 import { producers, readArtifacts } from "./coverage-artifacts.mts";
 
 const identity = { runId: "123", attempt: "2", checkoutSha: "a".repeat(40) };
@@ -11,9 +12,10 @@ const ci = readFileSync(new URL("../.github/workflows/ci.yml", import.meta.url),
 const blocks = ci.split(/\n      - name: /);
 const uploads = blocks.filter(block => /^Upload coverage \(/.test(block));
 // A bounded interpreter of the terminal upload condition, not an Actions runner.
-function uploadAllowed(block: string, outcome: string, cancelled = false): boolean {
+function uploadAllowed(block: string, outcome: string, cancelled = false, suite = "hooks"): boolean {
   const expression = /\n        if: ([^\n]+)/.exec(block)![1];
   return expression.split(" && ").every(term => {
+    if (term === "matrix.suite != 'codex'") return suite !== "codex";
     if (term === "always()") return true;
     if (term === "!cancelled()") return !cancelled;
     if (term === "matrix.os == 'ubuntu-latest'") return true;
@@ -60,7 +62,7 @@ test("failed manifest payload is not uploaded and a later attempt recovers witho
   assert.equal(uploadAllowed(uploads[0], "failure"), false);
   rmSync(partial, { recursive: true });
   const selected = readArtifacts(root, identity);
-  assert.equal(selected.length, 15);
+  assert.equal(selected.length, 14);
   assert.equal(selected.find(a => a.manifest.producer === "unit")!.manifest.attempt, "2");
 });
 
@@ -72,4 +74,20 @@ test("a successful manifest still uploads failure provenance after tests fail", 
   assert.equal(result.status, 0, result.stderr);
   assert.equal(JSON.parse(readFileSync(join(root, "manifest.json"), "utf8")).testOutcome, "failure");
   for (const block of uploads) assert.equal(uploadAllowed(block, "success"), true);
+});
+
+test("Windows manifest and upload exclude Codex but retain all functional gating", () => {
+  const upload = uploads.find(block => block.startsWith("Upload coverage (Windows shard)"))!;
+  const manifest = blocks.find(block => block.startsWith("Coverage manifest (Windows shard)"))!;
+  for (const suite of ["hooks", "control-plane", ...SHARDS, "codex"]) {
+    assert.equal(uploadAllowed(manifest, "success", false, suite), suite !== "codex");
+    for (const outcome of ["success", "failure", "skipped"]) assert.equal(uploadAllowed(upload, outcome, false, suite), suite !== "codex" && outcome === "success");
+    assert.equal(uploadAllowed(upload, "success", true, suite), false);
+  }
+  const codex = blocks.find(block => block.startsWith("Codex projection suites and run guard (Windows"))!;
+  assert.match(codex, /timeout-minutes: 60/);
+  assert.match(codex, /node codex\/scripts\/codex-run-guard\.mts run --platform win32 --tap/);
+  assert.doesNotMatch(codex, /NODE_V8_COVERAGE/);
+  assert.match(ci, /needs: unit-windows\n    if: always\(\)/);
+  assert.match(ci, /test "\$\{\{ needs\.unit-windows\.result \}\}" = "success"/);
 });

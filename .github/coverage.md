@@ -2,16 +2,22 @@
 
 CI keeps one raw V8 union and converts it once with c8 `--all`. Worker `src/`
 is covered by Istanbul in workerd and remains outside the Node population.
-No native test command, timeout, sanitizer, exclusion or required check is
-changed to collect coverage. Coverage is enabled only on existing test steps.
+Native test commands, timeouts, sanitizers, maintained source inclusion/exclusion
+configuration and required checks stay unchanged. Coverage is step-local; the
+Windows Codex suite remains functional-only.
 
 ## Producers and identities
 
-The 15 required producers are Ubuntu `unit`, `unit-macos`, the ten
-`unit-windows-<suite>` matrix members, `typescript`, `probe` and `worker`.
-The Windows bootstrap members come from `SHARDS` in `bootstrap/ci-shard.mts`;
-`hooks`, `control-plane` and `codex` are the existing additional matrix suites.
-The coverage workflow contract fixture compares those populations.
+The 14 required coverage producers are Ubuntu `unit`, `unit-macos`, nine
+`unit-windows-<suite>` members, `typescript`, `probe` and `worker`: thirteen V8
+producers plus one Worker producer. Windows coverage derives from `SHARDS` in
+`bootstrap/ci-shard.mts` plus `hooks` and `control-plane`. All ten functional
+Windows members, including `codex`, remain in the matrix. Codex emits no coverage
+manifest or artifact; its guard command, assertions and 60-minute timeout remain.
+Its functional failure still blocks both the required Windows aggregate and
+coverage-report through the complete unit-windows dependency. The 15 required
+checks remain a separate unchanged set; c8 --all still includes maintained
+Codex source. An unexpected Codex coverage artifact is rejected.
 
 Each raw artifact is named `coverage-<producer>-<runId>-<attempt>` and contains
 `manifest.json` plus `raw/` for V8 or `lcov.info` for Worker. Its exact manifest
@@ -40,20 +46,43 @@ LCOV families use unique repository-relative slash-separated `SF:` paths.
 Producer URLs are interpreted independently of the assembler's operating system.
 Only contained repository source and exact byte-verified copy declarations receive
 attribution. Drive-letter case can differ; the rest of each path retains its case.
-Authorities/UNC paths, queries, fragments, backslashes, encoded separators and
-traversal are rejected. Missing contained source and symlink escapes fail.
+Authorities/UNC paths, fragments, backslashes, encoded separators and traversal
+are rejected before parser normalization. Missing retained source and symlink
+escapes fail. Queries remain forbidden in all attribution interfaces.
 
-V8 ranges and counts are preserved. Cached map keys, map locations, nested
+Two script-only discard policies recognize the entire ASCII numeric query:
+`?isolated=[0-9]+` only for true outside-root scripts, and reserved
+`?node-test-mock=[0-9]+` only for true in-root scripts. Raw canonical validation
+precedes namespace comparison; ambiguous root case, mixed path dialects, empty
+segments/filename and wrong-side membership refuse. Neither extension nor
+node_modules exclusion proves membership. Exact full/base copy collisions
+refuse before either discard. Each discarded script counts once and supplies
+no credit, copy use or map; every other query form fails.
+
+The reserved key is a policy spelling, not proof that Node generated the code.
+Genuine code using it loses hits and observed branch structure. In a measured
+paired c8 --all synthetic example, the SF universe and LF 15 stayed fixed while
+LH 15 fell to 1, BRF 14 to 3 and BRH 4 to 2: branch coverage rose from 28.57% to 66.67%.
+This deliberate metric discontinuity is not execution gain or a monotonically
+conservative percentage. Compare source identities and LF/LH/BRF/BRH; a Sonar
+combined percentage requires its own server measurement.
+
+Retained V8 ranges and counts are preserved. Cached map keys, map locations, nested
 `sources` and `sourceRoot` are relocated using their original URL locations;
 mappings, names, line lengths and `sourcesContent` are retained. Unsupported
-maps for retained scripts fail. No producer path or map URL is fetched.
+maps for retained scripts fail. Every query-bearing cache key, location, sourceRoot,
+source, declaration or manifest still fails, even a cache key matching a discarded
+script. The observed CP zero-cache result is producer-specific, not a full-union
+guarantee. No producer path or map URL is fetched.
 
 Tests can declare unchanged copies with `declareCopy(original, copy)` from
 `bootstrap/coverage-copy-fixture.mts`. The helper verifies bytes and writes a
 sidecar only when coverage is already enabled. Exact copy URLs and original
 SHA-256 values are checked during assembly. An unused declaration is logged as
 no data, which permits a child killed before flushing; it does not invent hits.
-The helper does not track changes made to a copy after declaration.
+The helper does not track changes made to a copy after declaration. Undeclared
+external temporary test copies, including runtime-imports copies, receive no
+coverage credit as before; this intentional loss is not a measured percentage gain.
 
 The local `--source-root` flag is only a consistency assertion: every selected
 manifest root must equal that canonical directory URL. It cannot override
@@ -65,7 +94,10 @@ After a failed producer is rerun, successful earlier producer artifacts from the
 same run/SHA can be reused. A new successful assembly emits
 `sonar-coverage-<runId>-<assemblyAttempt>` and passes that name and attempt through
 job outputs to the reusable scanner. Outputs are emitted only after validation
-and upload succeed.
+and upload succeed. If only functional Codex failed, its successful rerun may
+reuse all fourteen earlier producer artifacts; no fake Codex report is created.
+Historical fifteen-producer runs retain their old source contract and are not
+reinterpreted as fourteen-producer successes.
 
 A scanner-only rerun uses the preserved assembly outputs. Before the scan uses
 the Sonar secret, it checks the exact artifact name, final manifest identity,
@@ -95,10 +127,17 @@ that verdict is requested; never remove Codex markers to bypass its refusal.
 | Evidence | Acceptance requirement |
 | --- | --- |
 | Focused fixtures | Complete-set and negative manifests; numeric attempt selection; foreign URLs/maps and exact copy hashes; real typed/child hits, zero lines and untaken branches; scanner-only rerun |
-| Native CI | Full Ubuntu/macOS jobs and all ten Windows shards, with raw reports and platform outcomes |
-| Hosted failed-only rerun | Same run/SHA, mixed selected producer attempts, final artifact identity and successful scan |
+| Native CI | Full Ubuntu/macOS and all ten Windows functional jobs; nine Windows coverage artifacts, fourteen producers total, platform outcomes |
+| Hosted failed-only rerun | Same run/SHA, actual selected attempts (all fourteen earlier artifacts allowed after Codex-only rerun), final identity and successful scan |
 | Coverage measurements | Comparable before/after metrics for `service-platform-windows.mts` and `service-platform-mac.mts`, with source SHA and metric definition |
-| Runtime | Per unit job median baseline B from three green main runs; candidate A <= min(1.15 * B, B + 180 seconds); assembly A <= B + 120 seconds |
+| Runtime | Same three-main-run medians B; bootstrap-rest A <= 1.6 * B; other bounded unit jobs A <= min(1.15 * B, B + 180 seconds); successful assembly A <= B + 120 seconds |
+
+Bootstrap-rest's approved prospective cap is 449 * 1.6 = 718.4 seconds, not 629.
+All other caps remain, including functional Codex 2085 seconds and successful
+assembly 164 seconds. Historical bootstrap-rest 687 failed its then-valid 516.35
+cap; comparing 687 <= 718.4 does not rewrite that result. Removing Codex coverage
+does not prove its future runtime passes. Preserve old runs/baselines and mark
+new-policy results with a new source/run; no timeout or Sonar-threshold change.
 
 Measure job wall time including setup/collection/upload and assembly I/O; do not
 average Windows shards or assign zero duration to reused jobs. Preserve artifact

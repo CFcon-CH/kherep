@@ -5,7 +5,7 @@ import { containedFile } from "./coverage-paths.mts";
 import { copyDeclarationsFile } from "./coverage-copies.mts";
 import { canonicalFileUrl } from "./coverage-source-urls.mts";
 
-export const producers = ["unit", "unit-macos", ...["hooks", "control-plane", ...SHARDS, "codex"].map(s => `unit-windows-${s}`), "typescript", "probe", "worker"];
+export const producers = ["unit", "unit-macos", ...["hooks", "control-plane", ...SHARDS].map(s => `unit-windows-${s}`), "typescript", "probe", "worker"];
 export type Manifest = { producer: string; runId: string; attempt: string; checkoutSha: string; testOutcome: string; sourceRootUrl: string };
 export type Identity = Pick<Manifest, "runId" | "attempt" | "checkoutSha">;
 export function readNonempty(root: string, filename: string): string {
