@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
+import type { SessionInfo } from "../protocol.mts";
 import { listenerDir, listenerLock, listenerScope, rememberMode } from "./autonomy.mts";
 import { nodePaths, type NodePaths } from "./config.mts";
 import { checkWakeReadiness } from "./doctor-local.mts";
@@ -11,6 +12,7 @@ import { writeLocalSessions } from "./exchange.mts";
 import { writeJsonAtomic } from "./inbox.mts";
 import { markUnseen } from "./known-sessions.mts";
 import type { NodePolicy } from "./policy.mts";
+import { policyStamp, recordLocalLabels } from "./session-labels.mts";
 
 const NOW = Date.parse("2026-10-15T12:00:00.000Z");
 const LIVE_PID = 4242;
@@ -190,4 +192,22 @@ test("snapshot completeness is preserved and legacy or partial listings never im
   assert.equal((legacyResult.snapshot as Record<string, unknown>).completeness, "unknown");
   assert.equal(legacyResult.observedIdle, 1);
   assert.equal("currentIdle" in legacyResult, false);
+});
+
+test("#828 after a rename the bound session stays eligible and a session that takes the old name does not", (t) => {
+  const paths = fixture(t);
+  fs.mkdirSync(paths.dir, { recursive: true });
+  fs.writeFileSync(paths.policy, JSON.stringify(policy(["review"])));
+  const label = (sessionId: string, name: string, at: number): SessionInfo => ({ sessionId, name, runtime: "claude-code", state: "unknown",
+    canonicalIdentity: { version: 1, source: "claude-list", runtime: "claude-code", sessionId, observedAt: at, lifecycleGeneration: 0 } });
+  recordLocalLabels(paths, [label(A, "review", NOW - 3_000)], NOW - 3_000, true, policyStamp(paths));
+  recordLocalLabels(paths, [label(A, "analysis", NOW - 2_000), label(B, "review", NOW - 2_000)], NOW - 2_000, true, policyStamp(paths));
+  snapshot(paths, [{ sessionId: A, name: "analysis", state: "idle" }, { sessionId: B, name: "review", state: "idle" }]);
+  rememberMode(paths, A, "default");
+  listener(paths, A);
+  const result = check(paths, policy(["review"]));
+  assert.equal(result.observedPolicyEligible, 1);
+  assert.equal(result.observedExplicitRestartAuthorized, 1);
+  assert.deepEqual(result.rememberedPermission, { allowed: 1, restricted: 0, unknown: 0 });
+  assert.deepEqual(result.liveListedListeners, { verified: 1, missing: 0, unreadable: 0, stale: 0, mismatched: 0 });
 });

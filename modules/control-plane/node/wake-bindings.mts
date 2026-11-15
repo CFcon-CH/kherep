@@ -9,6 +9,9 @@ export interface LabelRow {
     lifecycleGeneration: number;
     revision: number;
     current?: boolean;
+    // Issue #828: the name before the last rename, one level deep, and when it changed.
+    previousName?: string;
+    renamedAt?: number;
 }
 export interface NameBinding {
     token: string;
@@ -17,7 +20,8 @@ export interface NameBinding {
     firstName: string;
     boundAt: number;
     sourceGeneration: number;
-    provenance: "policy-co-list";
+    // first-sight (issue #828, D1 A): the unique holder when the name alone was listed.
+    provenance: "policy-co-list" | "first-sight";
 }
 export interface IdentityVeto {
     runtime: string;
@@ -72,7 +76,8 @@ export function resolveWakeSelection(tokens: readonly string[], { target, view, 
                 return result(true, "bound-name");
             continue;
         }
-        const matches = view.local.filter(r => r.name === token && r.current !== false);
+        // Codex rows carry a display title, never a wake name (issue #828).
+        const matches = view.local.filter(r => r.name === token && r.current !== false && r.runtime === "claude-code");
         if (exact.length === 1 && !(view.ambiguousNames ?? []).includes(token) && view.complete && view.observedAt <= now && now - view.observedAt <= LABEL_FRESH_MS && matches.length === 1
             && matches[0].sessionId === target.sessionId && matches[0].runtime === target.runtime && matches[0].observedAt <= now && now - matches[0].observedAt <= LABEL_FRESH_MS
             && !view.local.some(r => r.sessionId === token))

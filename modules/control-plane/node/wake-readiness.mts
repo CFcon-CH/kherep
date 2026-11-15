@@ -4,7 +4,9 @@ import {
   bypassesPermissions, isPlainSessionId, listenerLock, listenerScope, modeFile, type ListenerLock, type ListenerScope,
 } from "./autonomy.mts";
 import type { NodePaths } from "./config.mts";
-import { explicitlyListed, wakeAllowed, type NodePolicy } from "./policy.mts";
+import type { NodePolicy } from "./policy.mts";
+import { readBindingView } from "./session-labels.mts";
+import { resolveWakeSelection } from "./wake-bindings.mts";
 import { WAKE_MAX_WAIT_MS } from "./wake-hook.mts";
 
 import { at, readWakeSnapshot, snapshotObject as object, type Clock, type WakeSession } from "./wake-snapshot.mts";
@@ -74,9 +76,13 @@ export function checkWakeReadiness(paths: NodePaths, policy: NodePolicy | null,
   }
   const idle = sessions.filter(s => s.runtime === "claude-code" && ["idle", "idle-loaded"].includes(s.state));
   if (!wakeEnabled) return disabledEvidence({ ...snapshot }, idle.length);
-  const refs = (session: WakeSession) => [session.sessionId, ...(session.name ? [session.name] : [])];
-  const eligible = idle.filter((session) => wakeAllowed(policy, refs(session)));
-  const authorized = eligible.filter((session) => explicitlyListed(policy, refs(session)));
+  // The wake hook's own selection (issue #828): a name counts through its id binding, not as an exact string.
+  const view = readBindingView(paths, at(now));
+  const tokens = policy.wake!.sessions; // wakeEnabled above
+  const select = (session: WakeSession) => resolveWakeSelection(tokens,
+    { target: { runtime: session.runtime, sessionId: session.sessionId }, view, now: at(now) });
+  const eligible = idle.filter((session) => select(session).allowed);
+  const authorized = eligible.filter((session) => select(session).explicit);
   const rememberedPermission = { allowed: 0, restricted: 0, unknown: 0 };
   const liveListedListeners = { verified: 0, missing: 0, unreadable: 0, stale: 0, mismatched: 0 };
 

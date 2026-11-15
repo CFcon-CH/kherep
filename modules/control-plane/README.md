@@ -1350,16 +1350,18 @@ or accepted local work. See the
 
 ### Claude wake-name bindings (#828)
 
-Every first name pin requires a complete fresh unique Claude listing and the exact current holder's full ID co-listed in `wake.sessions`. This applies to all tokens. Policy bytes stay unchanged. A healthy unique fresh bare name remains allowed and explicitly listed as `unbound-name`, and can follow a future holder until pinned.
+Every first name pin requires a complete fresh listing with a unique Claude holder of the name. A name co-listed with its holder's full ID pins with provenance `policy-co-list`; a name listed alone pins at that first complete sight with provenance `first-sight` (lead decision D1 A). Policy bytes stay unchanged. Until a name is pinned, a healthy unique fresh bare name remains allowed as `unbound-name`; after a complete listing that leaves only ambiguous or held-out names unbound.
 
-A pinned name selects its stored runtime and full ID through rename. Reusing that name gives another ID no name grant. Removing only the bootstrap ID leaves the bound-name grant active; removing the name disables it. Readding the name restores the original reservation, even when another ID is co-listed. Missing labels or proof alone do not revoke a healthy binding. Actual accepted duplicate/runtime/lifecycle contradictions remain deny-only vetoes. Clearing needs advancing accepted identity or lifecycle evidence, not a label or UNKNOWN availability hint. Existing independent grants and permission, launch and budget gates remain.
+A pinned name selects its stored runtime and full ID through rename. Reusing that name gives another ID no name grant. Removing only the bootstrap ID leaves the bound-name grant active. Removing the name from a readable `wake.sessions` releases the binding at the next complete listing; a disabled or malformed wake section releases nothing. Readding the name pins whoever then uniquely holds it. A Codex thread title never matches `wake.sessions` and never holds a binding. Missing labels or proof alone do not revoke a healthy binding. Actual accepted duplicate/runtime/lifecycle contradictions remain deny-only vetoes. Clearing needs advancing accepted identity or lifecycle evidence, not a label or UNKNOWN availability hint. Existing independent grants and permission, launch and budget gates remain.
 
-A received incomplete snapshot immediately disables unbound fallback; partial evidence can add or retain actual vetoes but cannot clear them or bind. A thrown listing failure changes no state or freshness. After partial invalidation, unreadable policy keeps fallback disabled until policy is readable. `session-labels.json` stores bounded bindings, local label revisions, known-token history and accepted generations. It is scoped to node identity and policy path, with a witness in `sessions.json` written before first authority exposure. Known missing/corrupt/mismatched history fails closed. Simultaneous whole-state loss across restart or rollback remains undetectable; no recovery/reset API is supplied.
+A received incomplete snapshot immediately disables unbound fallback; partial evidence can add or retain actual vetoes but cannot clear them or bind. A thrown listing failure changes no state or freshness. After partial invalidation, unreadable policy keeps fallback disabled until policy is readable. `session-labels.json` stores bounded bindings, local label revisions (Claude by name, Codex by thread title; a missing Codex title keeps the old row, and a session absent from the listing, including a carried Codex row, turns noncurrent and is not refreshed) with the previous name one level deep (`previousName`, `renamedAt`), known-token history and accepted generations. The file holds at most 2048 label rows and 512 KiB as written (indented JSON): over either bound, the oldest noncurrent rows that no binding references are removed first, then every `previousName`; a row a binding references is never removed. A state that still does not fit is refused, so the last readable file stays and the listing's publication fails, instead of a file being written that could not be read back. It is scoped to node identity and policy path, with a witness in `sessions.json` written before first authority exposure. Known missing/corrupt/mismatched history fails closed. Simultaneous whole-state loss across restart or rollback remains undetectable; no recovery/reset API is supplied.
 
-Existing Claude `UserPromptSubmit` and `PostToolUse` hooks compare stored local
-sessions and the already authenticated cached Directory for rename display hints.
-First sight seeds silently; later changes use fixed node/full-ID/JSON-quoted
-old/new data lines. Self, subagents, bypass mode and non-Claude rows are excluded.
+Existing Claude `UserPromptSubmit` and `PostToolUse` hooks and the Codex
+`UserPromptSubmit` hook compare stored local sessions and the already authenticated
+cached Directory for rename display hints. First sight seeds silently; later changes
+use fixed node/full-ID/JSON-quoted old/new data lines. A Claude session is compared
+by name, a Codex session by thread title, and a Codex line names the runtime and says
+a title is not an address. Self, subagents, bypass mode and other runtimes are excluded.
 Each hook output permits at most five rename lines, then
 `and N more, see msg sessions` for omitted valid changes when byte room permits. Peer context has
 priority within the existing UTF-8 budget. `msg sessions` remains the current lookup.
@@ -1370,6 +1372,7 @@ are pruned; missing/corrupt cache restarts silently. Inactivity, incomplete
 metadata, A-B-A between snapshots, byte/line limits, cache failures and lost stdout
 can lose hints. There is no delivery, native-turn or comprehension guarantee,
 retry, pending history, confirmation, message or wake. Stop/StopFailure do no rename
-cache work. Binding authority and all wake gates remain unchanged; #828 stays open.
+cache work, and Codex fork helpers do none either. The Codex hint shares the 6 KiB
+Codex budget after peer context and is dropped first. All wake gates remain unchanged.
 
-Ordinary Directory/session listing retains its existing behavior and live authenticated admission. `doctor` readiness and Codex sessions still use the original policy check, so they can disagree with the wake hook for a renamed session whose name is the only listed token. Native acceptance on the supported platforms is outstanding.
+Ordinary Directory/session listing retains its existing behavior and live authenticated admission. `doctor` reports `wakeNames`: for each name in `wake.sessions` (not ids or `*`), `bound` with the bound id, runtime, current and previous name, `unbound`, `no-holder` or `history-unavailable`. `doctor` `wakeReadiness` counts sessions through the same binding-aware selection as the wake hook. `messaging.accept` still matches a session's current name (follow-up on #828). Native acceptance on the supported platforms is outstanding.

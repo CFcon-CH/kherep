@@ -6,7 +6,9 @@ import { codexSessionRefs, isCodexSessionId, markStopEnded, recordCodexSession, 
 import {
   contextOutput, deliveryContext, sessionInbox, type HookDeps,
 } from "./deliver-core.mts";
+import { withMidTurnLock } from "./deliver-midturn.mts";
 import { nodeWakeBudget } from "./policy.mts";
+import { appendRenameHint, renameOwner } from "./rename-notices.mts";
 import { hookCommand } from "./session-command.mts";
 
 // The delivery hook under Codex (issue #31, step 4), started with
@@ -75,7 +77,13 @@ export function deliverForCodex(input: unknown, deps: HookDeps): string {
         + receiveRecipe);
     }
     const maxBytes = CODEX_CONTEXT_BYTES - Buffer.byteLength(receiveRecipe) - 1;
-    const context = deliveryContext(event, refs, { maxBytes, ...deps, replyCommand: cli, replyFrom: sessionId, offeredBy: "codex-prompt", codexOwner: sessionId, owner: { sessionId, runtime: "codex" } });
+    let context = deliveryContext(event, refs, { maxBytes, ...deps, replyCommand: cli, replyFrom: sessionId, offeredBy: "codex-prompt", codexOwner: sessionId, owner: { sessionId, runtime: "codex" } });
+    // Issue #828: the passive rename line, after peer context and inside the same budget, so it is dropped first.
+    const owner = renameOwner(input as Record<string, unknown>);
+    if (owner) {
+      try { context = withMidTurnLock(deps.paths, owner, () => appendRenameHint(deps.paths, owner, context, maxBytes)) ?? context; }
+      catch { /* Optional display work cannot suppress ordinary prompt context. */ }
+    }
     return contextOutput(event, context ? `${context}\n${receiveRecipe}` : receiveRecipe);
   }
   const mine = sessionInbox(deps.paths, refs, { sessionId, runtime: "codex" });

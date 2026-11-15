@@ -206,7 +206,9 @@ separate permanent capacity latch or automatic reset is introduced.
 A listing keeps a prior row it lacks as a carried UNKNOWN row, up to 128 of them
 per round (`CARRY_LIMIT`, `exchange-sessions.mts`). Protected rows are always
 carried: a session with any file in `listeners/`, the target of an inbox record
-(by ID or name), a session bound in `session-labels.json`, and a session the
+(by ID or name), a session bound in `session-labels.json` (by `policy-co-list` or
+`first-sight` provenance; a binding goes when its name leaves a readable
+`wake.sessions` in a complete listing), and a session the
 policy's `wake.sessions` names literally (by ID or name; `*` names none, and a
 disabled wake section protects nothing). If protected rows
 alone exceed 128, all of them are carried and nothing else. The remaining places
@@ -1832,13 +1834,18 @@ cause reconstruction, new identifiers or message content is added.
 
 `wake-bindings.mts` is the single pure selector. The Claude wake hook and delivery progress call it directly with the captured validated view; the shared policy parser and staged MCP graph retain their original interface and closure. Authorization target and refreshed delivery aliases stay separate. Actual accepted identity/lifecycle vetoes update independently of policy binding commits; partial data cannot clear vetoes or bind. UNKNOWN availability or missing labels/proof alone is not contradiction, and labels establish no liveness or permission. Async version checks and existing task/reply, launch, permission and budget gates remain.
 
-The binding stage contains no event feed, remote rename reducer or cursors. The display snapshots below are separate from binding authority, and #828 stays open. `doctor` readiness and Codex sessions still use the original policy check. Native acceptance is outstanding.
+`session-labels.mts` binds a name at its first complete sight with a unique Claude holder: `policy-co-list` when the holder's full ID is also listed, otherwise `first-sight` (lead decision D1 A, stricter than the earlier unbound fallback, never wider). A binding is released when its token is absent from a parsed `wake.sessions` in a complete listing; an unparsed wake section releases nothing. Codex rows enter the label rows by `SessionInfo.title` from `session_index.jsonl` (`codex-titles.mts`), never the `codex-<8>` handle; a missing title is unknown and keeps the old row. Only a Codex row of the raw listing is labelled: a row the listing only carried turns noncurrent and keeps its time, like an absent Claude row. Codex rows never hold a binding, and the selector's unbound-name path matches Claude rows only. Each row keeps `previousName` and `renamedAt` one level deep. `save` bounds the state by the bytes `writeJsonAtomic` writes (indented JSON plus newline), the measure `readLabelState` applies: over 2048 rows or 512 KiB it removes the oldest noncurrent rows no binding references, then every `previousName`, and refuses a state that still does not fit (`label-state-bound`), so no unreadable file is written. `session-label-vetoes.mts` holds the identity-veto reducer. `doctor-wake-names.mts` reports per name `bound`, `unbound`, `no-holder` or `history-unavailable`; `wake-readiness.mts` uses `resolveWakeSelection`.
 
-### Claude rename display snapshots (#828)
+The binding stage contains no event feed, remote rename reducer or cursors. The display snapshots below are separate from binding authority. An A-B-A rename between two listings gives no line (lead decision D3). Native acceptance is outstanding.
+
+### Rename display snapshots (#828)
 
 `rename-notices.mts` uses stored local sessions and authenticated Directory data
 inside existing prompt/tool hooks under the existing owner lock. A validated
-Claude owner keeps one bounded node/ID-to-name snapshot. New IDs seed silently;
+Claude or Codex owner keeps one bounded node/ID-to-name snapshot; Claude subjects
+are compared by name, Codex subjects by thread title (`title` in `sessions.json`
+and the Directory), and a Codex line names the runtime. `deliver-codex.mts` calls
+it on `UserPromptSubmit` only, after peer context and inside the Codex budget. New IDs seed silently;
 conflicting duplicates are dropped, local rows override same-node Directory echoes,
 and self is excluded. JSON-quoted names are bounded and reject Unicode controls.
 Up to five fixed rename data lines per output share the existing UTF-8 budget,

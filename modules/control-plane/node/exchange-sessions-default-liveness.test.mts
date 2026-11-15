@@ -230,3 +230,46 @@ for (const kind of ["duplicate", "runtime"] as const)
         assert.equal(autonomousEligibility(verdict, "wake"), false);
         assert.equal(autonomousEligibility(verdict, "queue"), false);
     });
+
+test("#828 D1 A: a name listed alone pins its holder at first sight and an old-name takeover is refused", async (t) => {
+    const f = fixture(t);
+    f.policy(["review"]);
+    await f.publish([row()]);
+    assert.deepEqual(readLabelState(f.paths)!.bindings.map(({ token, sessionId, provenance }) => ({ token, sessionId, provenance })),
+        [{ token: "review", sessionId: S, provenance: "first-sight" }]);
+    f.advance();
+    await f.publish([row(S, "analysis", f.now()), row(T, "review", f.now())]);
+    assert.deepEqual(f.select("review", T), { allowed: false, explicit: false, reason: "not-listed" });
+    assert.deepEqual(f.select("review", S), { allowed: true, explicit: true, reason: "bound-name" });
+});
+
+test("#828 D1 A: a binding is released when its token leaves wake.sessions in a complete listing", async (t) => {
+    const f = fixture(t);
+    await f.publish([row()]);
+    assert.equal(readLabelState(f.paths)!.bindings.length, 1);
+    f.policy([S]);
+    f.advance();
+    await f.publish([row(S, "review", f.now())], ["claude-code"]);
+    assert.equal(readLabelState(f.paths)!.bindings.length, 1, "a partial listing releases nothing");
+    f.advance();
+    await f.publish([row(S, "analysis", f.now()), row(T, "review", f.now())]);
+    assert.deepEqual(readLabelState(f.paths)!.bindings, []);
+    f.policy(["review"]);
+    f.advance();
+    await f.publish([row(S, "analysis", f.now()), row(T, "review", f.now())]);
+    assert.equal(f.select("review", T).reason, "bound-name", "a re-added token pins its current holder");
+    assert.equal(f.select("review", S).allowed, false);
+});
+
+test("#828 a Codex row carried after it leaves the listing turns noncurrent and is not refreshed", async (t) => {
+    const f = fixture(t);
+    const C = "019a2b3c-4d5e-7f60-8123-456789abcdef";
+    await f.publish([{ sessionId: C, runtime: "codex", kind: "codex", name: "codex-89abcdef", title: "plan", state: "unknown" }]);
+    const first = readLabelState(f.paths)!.local.find(r => r.sessionId === C)!;
+    assert.deepEqual([first.current, first.observedAt], [true, f.now()]);
+    f.advance();
+    await f.publish([]);
+    assert.equal(readJson<Projection>(f.paths.sessions)?.sessions.some(s => s.sessionId === C), true, "the row is carried");
+    const carried = readLabelState(f.paths)!.local.find(r => r.sessionId === C)!;
+    assert.deepEqual([carried.current, carried.observedAt, carried.name], [false, first.observedAt, "plan"]);
+});
