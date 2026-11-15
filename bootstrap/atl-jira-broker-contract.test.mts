@@ -300,14 +300,48 @@ for (const broker of confluenceBrokers) {
   });
 }
 
+// #760 contract A: the Claude broker's create is observation-only, the Codex
+// broker's stays generic. Exactly three line regions may differ for that: the
+// validator import, the FLAGS.create row and the cmdCreate prologue up to the
+// session; everything from createSession on stays parity-checked.
+function withoutCreateGate(source: string): { rest: string; regions: string[] } {
+  const lines = source.split("\n"), regions: string[] = [];
+  const cut = (start: (line: string) => boolean, end: (line: string) => boolean): void => {
+    const from = lines.findIndex(start);
+    assert.ok(from >= 0, "a #760 create region is missing");
+    let to = from + 1;
+    while (to < lines.length && !end(lines[to])) to += 1;
+    regions.push(lines.splice(from, to - from, "<#760 create region>").join("\n"));
+  };
+  cut((line) => line.startsWith("import { cmdValidate") && line.endsWith(" from './confluence-observation-validate.mts';"), () => true);
+  cut((line) => line.startsWith("  create: {"), (line) => line.startsWith("  update: {"));
+  cut((line) => line.startsWith("async function cmdCreate("), (line) => line === "  const session = createSession(ctx);");
+  return { rest: lines.join("\n"), regions };
+}
+
 // The parity assertion in its strongest form: after neutralising which runtime
-// a file belongs to, the two sources must be byte-identical. A verb, a guard or
-// a readback added to one and forgotten in the other fails here.
+// a file belongs to and the #760 create regions, the two sources must be
+// byte-identical. A verb, a guard or a readback added to one and forgotten in
+// the other fails here.
 test("the two Confluence brokers differ only in which runtime they belong to", () => {
   const neutral = (name: string): string => fs.readFileSync(path.join(sourceRoot, name), "utf8")
     .replace(/KHEREP_ATL_CRED_FILE_(?:CLAUDE|CODEX)/g, "KHEREP_ATL_CRED_FILE")
     .replace(/\b(?:Claude|Codex)\b/g, "RUNTIME");
-  assert.equal(neutral("atl-confluence-ccoder.mts"), neutral("atl-confluence.mts"));
+  const claude = withoutCreateGate(neutral("atl-confluence-ccoder.mts"));
+  const codex = withoutCreateGate(neutral("atl-confluence.mts"));
+  assert.equal(claude.rest, codex.rest);
+  // The divergence is exactly the #760 gate: Claude's create calls the
+  // observation gate and requires its flags; Codex's create does neither.
+  const [claudeImport, claudeFlags, claudeCreate] = claude.regions;
+  const [codexImport, codexFlags, codexCreate] = codex.regions;
+  assert.match(claudeImport, /\bobservationCreateBody\b/);
+  assert.match(claudeFlags, /format: "<storage>", "body-file": "<path>", labels: "<a,b>"/);
+  assert.doesNotMatch(claudeFlags, /oneOf|wiki|adf/);
+  assert.match(codeOnly(claudeCreate), /const value = await observationCreateBody\(ctx, args, fail\);/);
+  assert.doesNotMatch(codeOnly(claudeCreate), /bodyOf\(/);
+  assert.doesNotMatch([codexImport, codexFlags, codexCreate, codex.rest].join("\n"), /observationCreateBody/);
+  assert.match(codexFlags, /oneOf: \[BODY\]/);
+  assert.match(codeOnly(codexCreate), /const value = await bodyOf\(ctx, args\);/);
 });
 
 test("the Confluence transport uses the shared credential parser without a Jira broker dependency", () => {

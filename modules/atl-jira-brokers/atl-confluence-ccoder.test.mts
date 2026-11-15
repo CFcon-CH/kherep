@@ -28,6 +28,11 @@ const AUTHOR = "service-account-for-tests";
 const VERBS = ["create", "update", "get", "delete", "purge", "labels", "move", "space", "children", "related",
   "search", "list", "context", "orphans", "stitch", "drainage", "evidence", "validate", "selftest"];
 const USAGE = `Usage: ${VERBS.join(" | ")}. Run help for the flags of each verb.`;
+// #760 contract A: this broker's create files observations only, from a validated body file.
+const BODY_FILE = "C:/assigned/observation.xml";
+const OBS_LABELS = "type-observation,evidence-assumed,status-author-model";
+const OBS_BODY = "<p>Finding: x</p><p>Origin: synthetic turn.</p><p>Source: fixture.</p><p>Timestamp: now.</p>";
+const OBS_CREATE = ["--format", "storage", "--body-file", BODY_FILE, "--labels", OBS_LABELS];
 
 interface Call {
   url: string;
@@ -66,6 +71,7 @@ function harness(options: { env?: Record<string, string | undefined>; api?: (cal
       if (path !== CRED_PATH) throw new Error("no such file");
       return CRED_TEXT;
     },
+    async readBodyBytes(file) { return file === BODY_FILE ? Buffer.from(OBS_BODY) : fs.promises.readFile(file); },
     async fetch(url, requestOptions) {
       calls.push({ url, options: requestOptions });
       if (url.startsWith("https://auth.atlassian.com")) {
@@ -108,7 +114,7 @@ test(`${BROKER} names its own variable even when the foreign one points at a rea
 test(`${BROKER} refuses an unsupported --format before sending anything`, async () => {
   for (const format of ["markdown", "html", undefined]) {
     const { err, calls, injected } = harness({ api: defaultApi });
-    const argv = ["create", "--space", "KB", "--title", "T", "--body", "x"];
+    const argv = ["create", "--space", "KB", "--title", "T", "--body-file", BODY_FILE, "--labels", OBS_LABELS];
     if (format !== undefined) argv.push("--format", format);
     assert.equal(await runCli(argv, injected), 1);
     assert.deepEqual(calls, [], `--format ${format} still sent a request`);
@@ -116,10 +122,10 @@ test(`${BROKER} refuses an unsupported --format before sending anything`, async 
   }
 });
 
-test(`${BROKER} creates a page and proves the author by reading it back`, async () => {
+test(`${BROKER} creates an observation page and proves the author by reading it back`, async () => {
   const { out, calls, injected } = harness({ api: defaultApi });
   const code = await runCli(
-    ["create", "--space", "KB", "--title", "New page", "--body", "<p>x</p>", "--format", "storage"],
+    ["create", "--space", "KB", "--title", "New page", ...OBS_CREATE],
     injected,
   );
   assert.equal(code, 0);
@@ -131,7 +137,7 @@ test(`${BROKER} creates a page and proves the author by reading it back`, async 
     spaceId: "9001",
     status: "current",
     title: "New page",
-    body: { representation: "storage", value: "<p>x</p>" },
+    body: { representation: "storage", value: OBS_BODY },
   });
   // The readback is a second, separate GET on the created page.
   assert.ok(calls.some((call) => call.options?.method === "GET" && call.url.includes("/wiki/api/v2/pages/5001")));
@@ -146,7 +152,7 @@ test(`${BROKER} reports UNVERIFIED authorship rather than a silent success`, asy
     },
   });
   const code = await runCli(
-    ["create", "--space", "KB", "--title", "T", "--body", "x", "--format", "storage"],
+    ["create", "--space", "KB", "--title", "T", ...OBS_CREATE],
     injected,
   );
   assert.equal(code, 1);
@@ -165,7 +171,7 @@ test(`${BROKER} surfaces a 413 on create as a size failure`, async () => {
     api: (call) => (call.url.includes("/spaces?keys=") ? response(200, SPACE) : response(413, { message: "too large" })),
   });
   assert.equal(await runCli(
-    ["create", "--space", "KB", "--title", "T", "--body", "x", "--format", "storage"],
+    ["create", "--space", "KB", "--title", "T", ...OBS_CREATE],
     injected,
   ), 1);
   assert.match(err.join("\n"), /5 MB/);
@@ -298,7 +304,7 @@ test(`${BROKER} search with a malformed call is unavailable, not a measured no m
 
 test(`${BROKER} never prints the secret or the bearer token`, async () => {
   const runs: string[][] = [
-    ["create", "--space", "KB", "--title", "T", "--body", "x", "--format", "storage"],
+    ["create", "--space", "KB", "--title", "T", ...OBS_CREATE],
     ["get", "--id", "5001"],
     ["update", "--id", "5001", "--body", "x", "--format", "wiki"],
     ["delete", "--id", "5001"],
@@ -552,20 +558,17 @@ test(`${BROKER} a successful PUT followed by readback failure is safely UNVERIFI
   }
 });
 
-// #760 B: generic create remains supported, including byte-exact quoted file bodies.
-test(`${BROKER} generic file create transports UTF-8 quotes byte for byte`, async (t) => {
+// #760 A: observation create transports a quoted UTF-8 body file byte for byte.
+test(`${BROKER} observation file create transports UTF-8 quotes byte for byte`, async (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "kherep-760-bytes-"));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const file = path.join(dir, "body 'quoted'.xml");
-  const bytes = Buffer.from('<p>It\'s "plain", ‘single’ and “double”, C:/assigned/file.</p>\n');
+  const bytes = Buffer.from('<p>Finding: It\'s "plain", ‘single’ and “double”, C:/assigned/file.</p>\n' + OBS_BODY.slice(OBS_BODY.indexOf("<p>Origin")));
   fs.writeFileSync(file, bytes);
-  const h = harness({ api: defaultApi }), accountRead = h.injected.readFile!;
+  const h = harness({ api: defaultApi });
   let bodyReads = 0;
-  h.injected.readFile = async (name, encoding) => {
-    if (name !== file) return accountRead(name, encoding);
-    bodyReads++; return fs.readFileSync(file, encoding);
-  };
-  assert.equal(await runCli(["create", "--space", "KB", "--title", "Quotes", "--format", "storage", "--body-file", file], h.injected), 0);
+  h.injected.readBodyBytes = async (name) => { assert.equal(name, file); bodyReads++; return fs.readFileSync(file); };
+  assert.equal(await runCli(["create", "--space", "KB", "--title", "Quotes", "--format", "storage", "--body-file", file, "--labels", OBS_LABELS], h.injected), 0);
   const creates = h.calls.filter(c => c.options?.method === "POST" && c.url.endsWith("/wiki/api/v2/pages"));
   assert.equal(creates.length, 1); assert.equal(bodyReads, 1);
   assert.deepEqual(Buffer.from(JSON.parse(String(creates[0].options?.body)).body.value), bytes);

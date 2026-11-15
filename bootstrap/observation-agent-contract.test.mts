@@ -203,7 +203,7 @@ test("the Claude source declares Write and validates a literal body file before 
   assert.match(CLAUDE_OBS, /do not enforce a filesystem sandbox/); assert.match(CLAUDE_OBS, /UTF-8/); assert.match(CLAUDE_OBS, /literal forward-slash paths/i);
   assert.match(CLAUDE_OBS, /validate --format storage --body-file/);
   assert.match(CLAUDE_OBS, /stitch decisions[^.]{0,160}Write tool/i);
-  assert.match(CLAUDE_OBS, /mechanical gate missing; agent instruction is not a guarantee/);
+  assert.match(CLAUDE_OBS, /Mechanical gate: the broker's create is observation-only/); assert.doesNotMatch(CLAUDE_OBS, /gate missing/);
   assert.doesNotMatch(CLAUDE_OBS, /mktemp|heredoc[^.]*use|--body-file "\$f"|--decisions "\$d"/);
   assert.match(CLAUDE_OBS, /never[^.]{0,180}inline `--body`/i);
   assert.match(CLAUDE_OBS, /diagnostics[^.]{0,150}validate[^.]{0,150}selftest/i);

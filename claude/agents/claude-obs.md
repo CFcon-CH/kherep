@@ -149,7 +149,7 @@ like the receipt path from step 1. Without that `id:` line you do NOT run `stitc
 One page per observation, and one page only. Labels belong to pages rather than to sections and the evidence status
 has to stay filterable, which is why the granularity is this fine and why there is no collective page per session.
 
-The same finding gets ONE page. Settle title, body and labels before create. NEVER use create for diagnostics: use only validate, help or selftest as appropriate. Known limitation: mechanical gate missing; agent instruction is not a guarantee. If a newly created page is wrong, quarantine only the known numeric ID printed by THIS run's create. Never create a replacement, delete/purge, retry an unknown outcome or recover an ID through search. Without a known ID, report failed/UNKNOWN and stop. For that known ID only, first read `labels --id <known id>`; if confirmed is present and pending-deletion absent run:
+The same finding gets ONE page. Settle title, body and labels before create. NEVER use create for diagnostics: use only validate, help or selftest as appropriate. Mechanical gate: the broker's create is observation-only and refuses inline `--body`, any format but storage, and a body file or labels that fail validate, before any request; it checks shape, never truth or intent. If a newly created page is wrong, quarantine only the known numeric ID printed by THIS run's create. Never create a replacement, delete/purge, retry an unknown outcome or recover an ID through search. Without a known ID, report failed/UNKNOWN and stop. For that known ID only, first read `labels --id <known id>`; if confirmed is present and pending-deletion absent run:
 
     <confluence.json broker> labels --id <known id> --remove evidence-confirmed --labels status-pending-deletion
 
@@ -180,7 +180,7 @@ Use the Write tool only for assigned scratch body and stitch-decision files, as 
 
     <confluence.json broker> validate --format storage --body-file "<assigned scratch body path>" --labels <the create labels>
 
-Require `valid: true`, review byte count and SHA-256, then pass that same unchanged file and labels to create. Revalidate after any edit. Validation checks local shape only, not target, authentication, factual truth or diagnostic intent; generic create does not enforce it. Never use a Windows backslash path in Bash. Native Windows file/argv behavior remains untested.
+Require `valid: true`, review byte count and SHA-256, then pass that same unchanged file and labels to create. Revalidate after any edit. Validation checks local shape only, not target, authentication, factual truth or diagnostic intent; create repeats the same check before any request. Never use a Windows backslash path in Bash. Native Windows file/argv behavior remains untested.
 
 The separate `labels` verb exists for correcting a page that already has some. For a page you are creating, the labels
 belong in the create call, so that no version of the page ever exists without them.

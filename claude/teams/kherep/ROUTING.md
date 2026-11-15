@@ -296,7 +296,9 @@ its permissions; on Claude, only a wrong page created in this run with a known I
 quarantine fails explicitly with the known ID; an unknown ID stays failed/UNKNOWN without retry or search recovery.
 The agent hands one deletion request and quarantine result to the Maestro. Only the Director authorizes deletion.
 Claude authors UTF-8 bodies and decisions with the file tool and uses offline `validate` before create.
-Known limitation: mechanical gate missing; agent instruction is not a guarantee. Generic broker create remains available.
+Mechanical gate: Claude broker create is observation-only (`--body-file`, storage, labels, the validate check,
+before any request); it checks shape, not truth. Other durable pages are not creatable through the Claude broker;
+the Codex CLI create stays generic.
 Labels are written in the call that creates the page, never afterwards: a page that exists without
 them is either a draft nobody cleaned up or a page nobody can filter, and from the outside the two
 are the same thing. Measured on 2026-09-22, a single run left seventeen pages for nine findings -
