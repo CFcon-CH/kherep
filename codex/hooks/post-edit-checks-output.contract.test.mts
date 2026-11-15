@@ -29,6 +29,8 @@ function materialize(destination = INSTALLED): string {
     fs.copyFileSync(path.join(HERE, dependency), path.join(destination, dependency));
   }
   copyAdapter(destination);
+  declareCopy(SOURCE, path.join(destination, "post-edit-checks.mts"));
+  declareCopy(path.join(SHARED, "lib", "stdin-reader.mts"), path.join(destination, "stdin-reader.mts"));
   for (const watcher of WATCHERS) {
     fs.copyFileSync(path.join(SHARED, `${watcher}.mts`), path.join(destination, `${watcher}.mts`));
     if (watcher === "manifest-watch" && destination === INSTALLED) {
@@ -53,7 +55,9 @@ function run(payload: Record<string, unknown>, hook: string) {
     input: JSON.stringify(payload),
     encoding: "utf8",
     windowsHide: true,
-    env: { ...process.env, KHEREP_WORKSPACE: REPO },
+    env: { PATH: process.env.PATH, SYSTEMROOT: process.env.SYSTEMROOT, KHEREP_WORKSPACE: REPO,
+      CLAUDE_HOME: path.join(TEMP, "claude-home"), CODEX_HOME: path.join(TEMP, "codex-home"),
+      ...(process.env.NODE_V8_COVERAGE === undefined ? {} : { NODE_V8_COVERAGE: process.env.NODE_V8_COVERAGE }) },
   });
 }
 

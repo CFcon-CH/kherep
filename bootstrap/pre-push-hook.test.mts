@@ -13,6 +13,7 @@ import * as record from "../claude/kherep/githooks/attribution-record.mts";
 import * as broker from "../modules/github-broker/attribution.mts";
 import { appendAttribution, readAttribution, repoSlug, writePendingMarker } from "../modules/control-plane/node/attribution.mts";
 import { configRoot, nodePaths } from "../modules/control-plane/node/config.mts";
+import { declareCopy } from "./coverage-copy-fixture.mts";
 
 const githooks = path.resolve(import.meta.dirname, "..", "claude", "kherep", "githooks");
 const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "kherep-pre-push-")));
@@ -24,13 +25,20 @@ const hookLib = path.join(root, "runtime", "hooks", "lib");
 fs.mkdirSync(hookLib, { recursive: true });
 fs.copyFileSync(path.resolve(githooks, "../../hooks/lib/stdin-reader.mts"), path.join(hookLib, "stdin-reader.mts"));
 for (const name of ["pre-push", "attribution-record.mts"]) fs.copyFileSync(path.join(githooks, name), path.join(hooks, name));
+declareCopy(path.resolve(githooks, "../../hooks/lib/stdin-reader.mts"), path.join(hookLib, "stdin-reader.mts"));
+declareCopy(path.join(githooks, "attribution-record.mts"), path.join(hooks, "attribution-record.mts"));
 fs.chmodSync(path.join(hooks, "pre-push"), 0o755);
 
 const DAY = 24 * 60 * 60_000;
 const SUBJECT = "synthetic secret subject do-not-record";
 // The host's own session and Kherep variables must not leak into a case.
-const hostEnv = Object.fromEntries(Object.entries(process.env)
-  .filter(([key]) => !key.startsWith("KHEREP_") && key !== "CLAUDE_CODE_SESSION_ID"));
+const globalConfig = path.join(root, "gitconfig-global");
+fs.writeFileSync(globalConfig, "");
+const hostEnv = {
+  PATH: process.env.PATH, SYSTEMROOT: process.env.SYSTEMROOT,
+  GIT_CONFIG_GLOBAL: globalConfig, GIT_CONFIG_NOSYSTEM: "1",
+  ...(process.env.NODE_V8_COVERAGE === undefined ? {} : { NODE_V8_COVERAGE: process.env.NODE_V8_COVERAGE }),
+};
 
 let seq = 0;
 

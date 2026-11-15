@@ -11,6 +11,7 @@ import { renderAgent } from "../lib/component-render.mts";
 import type { Capabilities } from "../lib/contracts.mts";
 import { agentSourcePath } from "../lib/parity-projection.mts";
 import { advise, CAPABILITIES_FILE, decide, dispatchPins, dispatchPolicy, loadPolicy, validate } from "./dispatch-contract-guard.mts";
+import { declareCopy } from "../../bootstrap/coverage-copy-fixture.mts";
 
 const REPO = path.resolve(import.meta.dirname, "..", "..");
 const GUARD = path.join(import.meta.dirname, "dispatch-contract-guard.mts");
@@ -19,6 +20,10 @@ const capabilities = resolveCapabilities(JSON.parse(fs.readFileSync(MANIFEST, "u
 const POLICY = dispatchPolicy(capabilities);
 const PINS = POLICY.pins;
 const OBS_MODEL = PINS.get("codex-obs") ?? "";
+const childEnv = (): NodeJS.ProcessEnv => ({
+  PATH: process.env.PATH, SYSTEMROOT: process.env.SYSTEMROOT,
+  ...(process.env.NODE_V8_COVERAGE === undefined ? {} : { NODE_V8_COVERAGE: process.env.NODE_V8_COVERAGE }),
+});
 // Issue #331: a codex-obs message must be a well-formed observation brief.
 // Issue #505: the finding names the commit it was measured against, so an
 // allowed dispatch of this brief is silent. Issue #701: the default message is
@@ -38,10 +43,11 @@ function runGuard(stdin: string): string {
     fs.mkdirSync(path.join(root, "hooks", "parity"));
     const guard = path.join(hookDir, "codex-dispatch-contract-guard.mts");
     fs.copyFileSync(GUARD, guard);
+    declareCopy(GUARD, guard);
   fs.copyFileSync(path.join(REPO, "claude/hooks/lib/stdin-reader.mts"), path.join(hookDir, "stdin-reader.mts"));
     fs.copyFileSync(path.join(REPO, "claude", "hooks", "lib", "obs-brief-policy.mts"), path.join(hookDir, "lib", "obs-brief-policy.mts"));
     fs.writeFileSync(path.join(root, "hooks", "parity", "capabilities.json"), JSON.stringify(capabilities));
-    const result = spawnSync(process.execPath, [guard], { encoding: "utf8", input: stdin });
+    const result = spawnSync(process.execPath, [guard], { encoding: "utf8", input: stdin, env: childEnv() });
     assert.equal(result.status, 0, result.stderr);
     return result.stdout;
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
@@ -167,9 +173,11 @@ test("the installed guard loads the brief check from its lib sibling and fails c
   fs.mkdirSync(path.join(root, "hooks", "parity"));
   const guard = path.join(hookDir, "codex-dispatch-contract-guard.mts");
   fs.copyFileSync(GUARD, guard);
+  declareCopy(GUARD, guard);
   fs.copyFileSync(path.join(REPO, "claude/hooks/lib/stdin-reader.mts"), path.join(hookDir, "stdin-reader.mts"));
   fs.writeFileSync(path.join(root, "hooks", "parity", "capabilities.json"), JSON.stringify(capabilities));
   const run = (message: string) => spawnSync(process.execPath, [guard], {
+    env: childEnv(),
     encoding: "utf8", input: JSON.stringify(spawnDispatch({ agent_type: "codex-obs", model: OBS_MODEL, message })),
   }).stdout;
   assert.match(denied(run(BRIEF)), /failed unexpectedly/, "no lib: the observation dispatch is refused");
@@ -329,10 +337,12 @@ test("the installed guard writes the notice as context and a system message, and
   fs.mkdirSync(path.join(root, "hooks", "parity"));
   const guard = path.join(hookDir, "codex-dispatch-contract-guard.mts");
   fs.copyFileSync(GUARD, guard);
+  declareCopy(GUARD, guard);
   fs.copyFileSync(path.join(REPO, "claude/hooks/lib/stdin-reader.mts"), path.join(hookDir, "stdin-reader.mts"));
   fs.writeFileSync(path.join(root, "hooks", "parity", "capabilities.json"), JSON.stringify(capabilities));
   const lib = fs.readFileSync(path.join(REPO, "claude", "hooks", "lib", "obs-brief-policy.mts"), "utf8");
   const run = (message: string, model = OBS_MODEL) => spawnSync(process.execPath, [guard], {
+    env: childEnv(),
     encoding: "utf8", input: JSON.stringify(spawnDispatch({ agent_type: "codex-obs", model, message })),
   }).stdout;
   fs.writeFileSync(path.join(hookDir, "lib", "obs-brief-policy.mts"), lib);
