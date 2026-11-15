@@ -21,7 +21,7 @@ test("foreign native producer roots relocate scripts and nested map sources with
     assert.deepEqual(entry.data.sources, [local]); assert.equal(entry.data.sourceRoot, "");
   }
 });
-import { canonicalFileUrl, repositoryPathFromUrl } from "./coverage-source-urls.mts";
+import { canonicalFileUrl, classifyV8ScriptUrl, repositoryPathFromUrl, repositoryRelativeUrlPath } from "./coverage-source-urls.mts";
 
 test("URL containment preserves filename case, spaces, Unicode and drive-only case folding", () => {
   for (const root of ["file:///D:/a/repo/", "file:///Users/runner/repo/", "file:///home/runner/repo/"]) {
@@ -218,4 +218,43 @@ test("reserved discard validates functions and ranges before policy classificati
 
 test("reserved policy refuses mixed dialect and ambiguous POSIX namespace", () => {
   for (const [root, url] of [["file:///a/repo/", reservedUrl], ["file:///a/repo/", "file:///A/REPO/file.mts?node-test-mock=1"], ["file:///a//repo/", "file:///a/repo/file.mts?node-test-mock=1"], [isolatedProducer + "?node-test-mock=1", reservedUrl]]) assert.throws(() => relocateV8Report({ result: [v8Script(url)] }, root, process.cwd()));
+});
+
+const P = "file:///D:/a/repo/";
+test("source map cache entries outside the repository are dropped without counting", () => {
+  const cache = { "node:internal/x": null, "https://example.org/x.mjs": 7, "file:///D:/elsewhere/x.mts": [], [P + "node_modules/d/x.js"]: "s", [P + "readme.md"]: null };
+  const result = relocateV8Report({ result: [], "source-map-cache": cache }, P, process.cwd());
+  assert.deepEqual(result.report["source-map-cache"], {}); assert.equal(result.ignored, 0);
+});
+test("retained cache keys refuse malformed entries and map locations outside the repository", t => {
+  const root = fixtureRoot("coverage-map-location-"); t.after(() => rmSync(root, { recursive: true, force: true }));
+  writeFileSync(join(root, "x.mts"), "export const n = 1;\n");
+  const url = P + "x.mts", data = { version: 3, names: [], mappings: "AAAA" };
+  for (const entry of [null, "text", 7, []]) assert.throws(() => relocateV8Report({ result: [], "source-map-cache": { [url]: entry } }, P, root), /malformed source map entry/);
+  for (const entry of [{ url: "../elsewhere/x.map", data: { ...data, sources: ["../repo/x.mts"] } }, { url: "node_modules/p/x.map", data: { ...data, sources: ["../../x.mts"] } }]) {
+    assert.throws(() => relocateV8Report({ result: [], "source-map-cache": { [url]: entry } }, P, root), /unsupported source map location outside repository/);
+  }
+});
+test("verified copy cache keys relocate maps without a usable map location", t => {
+  const f = isolatedFixture(t), local = pathToFileURL(join(f.root, "module.mts")).href, dataUrl = "data:application/json;base64,e30=";
+  for (const extra of [{}, { url: dataUrl }]) {
+    const value = { result: [], "source-map-cache": { [f.copyUrl]: { ...extra, data: { version: 3, names: [], mappings: "AAAA", sources: ["verified.mts"] } } } };
+    const cache = relocateV8Report(value, isolatedProducer, f.root, f.copies).report["source-map-cache"]!;
+    assert.deepEqual(Object.keys(cache), [local]);
+    const entry = cache[local] as { url?: string; data: { sources: string[]; sourceRoot: string } };
+    assert.deepEqual(entry.data.sources, [local]); assert.equal(entry.data.sourceRoot, ""); assert.equal(entry.url, "url" in extra ? dataUrl : undefined);
+    assert.equal("url" in entry, "url" in extra);
+  }
+});
+test("URL helpers refuse noncanonical spellings and accept the filesystem root", () => {
+  for (const url of ["file:///repo/a b.mts", "file:///repo/ü.mts", "file:///repo/a\tb.mts", "file:///C|/repo/x.mts"]) assert.throws(() => canonicalFileUrl(url), /noncanonical file URL/, url);
+  assert.throws(() => repositoryPathFromUrl("file:///a/repo/x.mts", "file:///a/repo"), /source root must be a directory URL/);
+  assert.equal(repositoryPathFromUrl("node:internal/x.mts", "file:///a/repo/"), null);
+  assert.equal(repositoryRelativeUrlPath("https://example.org/x.mts", "file:///a/repo/"), null);
+  assert.equal(repositoryPathFromUrl("file:///x.mts", "file:///"), "x.mts");
+  assert.equal(repositoryPathFromUrl("file:///D:/x.mts", "file:///"), null);
+  assert.equal(repositoryRelativeUrlPath("file:///tmp/x.map", "file:///"), "tmp/x.map");
+  assert.deepEqual(classifyV8ScriptUrl("file:///tmp/module.mts?node-test-mock=1", "file:///"), { kind: "reserved-in-root-query", baseUrl: "file:///tmp/module.mts" });
+  assert.throws(() => classifyV8ScriptUrl("file:///tmp/module.mts?isolated=1", "file:///"), /root membership policy/);
+  assert.throws(() => classifyV8ScriptUrl("file:///D:/x.mts?node-test-mock=1", "file:///"), /mixed script path dialect/);
 });

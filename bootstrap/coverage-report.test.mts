@@ -242,3 +242,42 @@ for (const producer of ["probe", "unit-windows-project-rules-install"]) {
     } finally { rmSync(root, { recursive: true, force: true }); }
   });
 }
+
+const c8Gate = { skip: existsSync(resolve("node_modules/c8/bin/c8.js")) ? false : "c8 dependency unavailable in this dependency-free compatibility job" };
+test("assembly refuses a producer whose source root differs from --source-root", () => {
+  const root = fixture();
+  try {
+    const input = artifacts(root), file = join(input, "coverage-worker-123-2/manifest.json");
+    const m = JSON.parse(readFileSync(file, "utf8")); m.sourceRootUrl = "file:///D:/a/elsewhere/"; writeFileSync(file, JSON.stringify(m));
+    const output = join(root, "coverage"), result = run(["assemble", "--artifacts", input, "--output", output, "--root", root, "--source-root", root, ...identity()]);
+    assert.equal(result.status, 1, result.stderr);
+    assert.match(result.stderr, /coverage: per-producer source root mismatch: worker/);
+    assert.equal(existsSync(output), false, "refused assembly must not create output");
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+test("assembly accepts a matching --source-root", c8Gate, () => {
+  const root = fixture();
+  try {
+    const input = artifacts(root), output = join(root, "coverage");
+    const result = run(["assemble", "--artifacts", input, "--output", output, "--root", root, "--source-root", root, ...identity()]);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(JSON.parse(readFileSync(join(output, "summary.json"), "utf8")).producers.length, 14);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+test("verify refuses a malformed final manifest", () => {
+  const root = fixture();
+  try {
+    const output = join(root, "coverage"); mkdirSync(output);
+    for (const value of [null, 7, [], { runId: "123", attempt: "2", checkoutSha: sha }, { runId: "123", attempt: "2", checkoutSha: sha, producers: {} }]) {
+      writeFileSync(join(output, "manifest.json"), JSON.stringify(value));
+      const result = run(["verify", "--output", output, "--root", root, ...identity()]);
+      assert.equal(result.status, 1, JSON.stringify(value)); assert.match(result.stderr, /coverage: malformed final manifest/);
+    }
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+test("LCOV function records may repeat a function name", () => {
+  const root = fixture();
+  try {
+    assert.deepEqual(validateLcov("SF:src/typed.mts\nDA:3,1\nFN:1,f\nFN:2,f\nFNDA:1,f\nFNDA:0,f\nFNF:2\nFNH:1\nend_of_record\n", root), { files: 1, lines: 1, hit: 1 });
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});

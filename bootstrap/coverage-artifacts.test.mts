@@ -200,3 +200,32 @@ test("selected producer order is stable under forced root enumeration and revers
     assert.equal(result.status, 0, result.stderr); assert.deepEqual(JSON.parse(result.stdout), expected, mode);
   }
 });
+
+test("manifest and assembly attempts refuse noncanonical roots and invalid or future attempts", t => {
+  assert.throws(() => validateManifest({ ...manifest("unit"), sourceRootUrl: "file:///D:/a/kherep" }, { ...identity, attempt: "1" }), /noncanonical sourceRootUrl directory/);
+  assert.throws(() => validateProducers([manifest("unit", "11")], identity), /manifest future attempt mismatch/);
+  for (const attempt of ["0", "x"]) assert.throws(() => validateProducers([manifest("unit")], { ...identity, attempt }), /manifest future attempt mismatch/);
+  const f = fixture(t);
+  for (const attempt of ["0", "02", "x"]) assert.throws(() => readArtifacts(f.root, { ...identity, attempt }), /invalid assembly attempt/);
+});
+test("a repeated directory entry is refused as a duplicate producer attempt", t => {
+  const f = fixture(t);
+  const script = [
+    'import fs from "node:fs"; import { syncBuiltinESMExports } from "node:module";',
+    'const root = process.argv[1], original = fs.readdirSync;',
+    'fs.readdirSync = (path, ...args) => { const entries = original(path, ...args); return path === root ? entries.concat(entries[0]) : entries; };',
+    'syncBuiltinESMExports();',
+    'try { const { readArtifacts } = await import(' + JSON.stringify(pathToFileURL(resolve("bootstrap/coverage-artifacts.mts")).href) + ');',
+    'readArtifacts(root, ' + JSON.stringify(identity) + '); console.log("accepted");',
+    '} catch (error) { console.log(error.message); } finally { fs.readdirSync = original; syncBuiltinESMExports(); }',
+  ].join("\n");
+  const result = spawnSync(process.execPath, ["--input-type=module", "-e", script, f.root], { encoding: "utf8" });
+  assert.equal(result.status, 0, result.stderr); assert.equal(result.stdout.trim(), "duplicate producer attempt");
+});
+test("selected artifacts reject a symlinked manifest", t => {
+  const f = fixture(t), manifestFile = join(f.root, "coverage-unit-123-1/manifest.json");
+  rmSync(manifestFile);
+  try { symlinkSync(join(f.root, "coverage-probe-123-1/manifest.json"), manifestFile); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === "EPERM") return t.skip("file symlink unavailable"); throw error; }
+  assert.throws(() => readArtifacts(f.root, identity), /symlink manifest/);
+});
