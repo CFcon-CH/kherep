@@ -33,12 +33,9 @@ After it: one line per written page (id, title). For quarantine add exactly one 
 A single, self-contained finding. Findings, hypotheses, failed attempts and intermediate states are all admissible.
 What did not occur in this turn, you do not invent.
 
-**An empty result is a valid result.** If the turn produced nothing new, you write nothing and
-report `OBS-RESULT: empty <reason>`. Filling a turn so that something is there is the most
-expensive mistake you can make.
+**An empty result is a valid result.** If the turn produced nothing new, you write nothing and report `OBS-RESULT: empty <reason>`. Filling a turn so that something is there is the most expensive mistake you can make.
 
-A title states the finding as it stands at filing time, the end of the turn: if the turn refuted a hypothesis, the
-title says what was found, not what was first suspected, and it never contradicts its own body.
+A title states the finding as it stands at filing time, the end of the turn: if the turn refuted a hypothesis, the title says what was found, not what was first suspected, and it never contradicts its own body.
 
 ## Evidence status
 
@@ -47,39 +44,41 @@ Every observation carries two statements, and they are not the same thing:
 - `evidence`: `confirmed` | `assumed` | `refuted` | `superseded`
 - `status-author`: who assigned that status. You always assign `model`.
 
-You set `confirmed` only when the turn contains actual evidence: a measurement, a tool output, a file that was read.
-An agent's own claim is not evidence. When in doubt, `assumed`.
+You set `confirmed` only when the turn contains actual evidence: a measurement, a tool output, a file that was read. An agent's own claim is not evidence. When in doubt, `assumed`.
 
-The brief marks each finding. `measured:` means the dispatching session ran it in this turn; with both the command and
-the deciding output excerpt it is `confirmed`, and the command and excerpt go into the page body. A finding about
-repository code, tests or a build is code-bound, whether the brief marks it with `code` after `measured:`, describes
-it, or supplies it as a tool result. A code-bound finding is `confirmed` only when it binds the measured code exactly:
-every repository named as `<name>@<sha>` with the full 40-hex commit SHA the command ran against, and no `-dirty`.
-Without a repository, without a full SHA, or measured on a dirty tree it has no exact binding to the measured code and
-is `assumed`; you never guess a repository or a SHA. The body carries only validated `<name>@<sha>` tokens and
-otherwise the fixed line "no exact binding: <no repository | no full commit SHA | dirty tree | malformed repository or
-revision>", never a raw value. Each validated token gets a body line beside the origin line,
-`<p>Revision: <name>@<sha></p>`, with ` (no exact binding: dirty tree)` before `</p>` on a dirty one; without one the
-line is `<p>Revision: none (no exact binding: <reason>)</p>`. A valid `<name>` has letters, digits, `.`, `_`, `-` and
-single `/`, a valid `<sha>` is 40 lowercase hex; any other value (a URL, a path, a short or symbolic revision) is
-never copied into a page, a title or a notice. Paths the brief gives after a token as ` -- <paths>` make the line `<p>Revision: <name>@<sha> -- <paths></p>` only when all are valid (1 to 16 distinct repo-relative paths of letters, digits, `.`, `_`, `-` and single `/`, no leading `/` or `-`, no `.` or `..` segment, no glob or `:`);
-else the line stays unscoped and the list is never copied. Without brief paths, only a tool result in the turn that shows the touched files may supply them, verbatim; never guess a path. Paths never change the label.
-A finding that is not about repository code is labelled exactly as today. A finding marked `relayed:` is `assumed`, and the body names its source. A finding marked `measured:` without
-the command or the excerpt, or with no marker, is `assumed`.
+The brief marks each finding. `measured:` means the dispatching session ran it in this turn; with both the command and the deciding output excerpt it is `confirmed`, and the command and excerpt go into the page body. A finding about repository code, tests or a build is code-bound, whether the brief marks it with `code` after `measured:`,
+describes it, or supplies it as a tool result. A code-bound finding is `confirmed` only when it binds the measured code exactly: every repository named as `<name>@<sha>` with the full 40-hex commit SHA the command ran against, and no `-dirty`. Without a repository, without a full SHA, or measured on a dirty tree it has no exact binding to
+the measured code and is `assumed`; you never guess a repository or a SHA. The body carries only validated `<name>@<sha>` tokens and otherwise the fixed line "no exact binding: <no repository | no full commit SHA | dirty tree | malformed repository or revision>", never a raw value. Each validated token gets a body line beside the origin
+line, `<p>Revision: <name>@<sha></p>`, with ` (no exact binding: dirty tree)` before `</p>` on a dirty one; without one the line is `<p>Revision: none (no exact binding: <reason>)</p>`. A valid `<name>` has letters, digits, `.`, `_`, `-` and single `/`, a valid `<sha>` is 40 lowercase hex; any other value (a URL, a path, a short or
+symbolic revision) is never copied into a page, a title or a notice. Paths the brief gives after a token as ` -- <paths>` make the line `<p>Revision: <name>@<sha> -- <paths></p>` only when all are valid (1 to 16 distinct repo-relative paths of letters, digits, `.`, `_`, `-` and single `/`, no leading `/` or `-`, no `.` or `..` segment, no
+glob or `:`); else the line stays unscoped and the list is never copied. Without brief paths, only a tool result in the turn that shows the touched files may supply them, verbatim; never guess a path. Paths never change the label. A finding that is not about repository code is labelled exactly as today. A finding marked `relayed:` is
+`assumed`, and the body names its source. A finding marked `measured:` without the command or the excerpt, or with no marker, is `assumed`.
 
-A work item, report or page that describes a measurement made in another turn or session is second-hand: reading that
-text measures the text, not the thing. Such a finding is `assumed`, even when its prose says "measured"; only the
-`measured:` marker with command and excerpt says otherwise. You never upgrade a label on your own reading of the
-prose.
+A work item, report or page that describes a measurement made in another turn or session is second-hand: reading that text measures the text, not the thing. Such a finding is `assumed`, even when its prose says "measured"; only the `measured:` marker with command and excerpt says otherwise. You never upgrade a label on your own reading of
+the prose.
 
-A title never claims more than its evidence label. Words such as "confirmed", "verified", "proven", "measured" or
-"works" appear in a title only on a page labelled `evidence-confirmed`. On an `assumed` page the title states the
-finding neutrally or names its source, and says "(operator-reported)" only when the operator is the source. The
-dispatching session is never called the operator. Search hits and links carry the title without the label, so a reader
-who sees only the title takes it for a measurement, as happened on 2026-09-28.
+A title never claims more than its evidence label. Words such as "confirmed", "verified", "proven", "measured" or "works" appear in a title only on a page labelled `evidence-confirmed`. On an `assumed` page the title states the finding neutrally or names its source, and says "(operator-reported)" only when the operator is the source. The
+dispatching session is never called the operator. Search hits and links carry the title without the label, so a reader who sees only the title takes it for a measurement, as happened on 2026-09-28.
 
-You NEVER set an existing observation to `superseded` or `refuted`. You record a contradiction by naming the
-contradicted page in your new observation. Resolving it belongs to the working runtime, not to you.
+You NEVER set an existing observation to `superseded` or `refuted`. You record a contradiction by naming the contradicted page in your new observation. Resolving it belongs to the working runtime, not to you.
+
+<!-- observation-claim-scopes:start -->
+### Claim scopes and bounded evidence (#731 PR-A)
+
+Use `measured: live|doc|tracker` before the inline command for a genuinely non-code claim, `measured: code <bindings>` for code, or `measured: refused` before a safe reference. Legacy briefs remain supported. Syntax is not execution evidence: #309 still requires the actual same-turn tool evidence supplied by the dispatching session; never rerun or infer it.
+
+| Scope | Confirm only the evidenced claim |
+| --- | --- |
+| `live` | The concrete target, time and sample. The 27 sampled served image bodies may match the compared artifact; this proves neither general code correctness nor deployment provenance. Mentioning code or a commit for comparison does not change the scope. |
+| `doc` / `tracker` | The content/state actually read at that time; reading a report confirms its content, not the reported measurement. A second-hand test result stays `assumed`. |
+| `code` | Source, test/build result or implementation behavior, only with #309 evidence and every contributing repository's full clean SHA under #505. |
+| `refused` | The refusal itself, only with an actual same-turn guard/native event tied unambiguously to a known safe check reference and sanitized denial excerpt. |
+
+Code correctness, test/build results or general implementation behavior remain code-bound under #505 even when marked live/doc/tracker: a marker cannot launder a code claim. Split mixed claims or keep the unsupported code assertion `assumed`. Do not classify a narrow live claim as code merely because its prose mentions a commit.
+An installed public copy remains `code`: supply full source revision and repo-relative paths, measured SHA-256 equality of exact installed/source bytes, and identity of the artifact actually exercised. Hash before and after the bounded behavior measurement, or use an immutable verified fixture; bind the relevant executable dependency closure, not just a similarly named entrypoint. Source proof is a clean exact checkout or immutable Git object evidence, never a fabricated clean verdict for dirty working files. Dirty, unbound or mismatched proof stays `assumed`; incomplete closure narrows the claim or leaves it assumed. No private scan, absolute host paths or source-copy search is authorized.
+For refusal use only a literal identifier, e.g. ``measured: refused `check-ref: public-policy#safe-host-check` -> guard=secret-output-guard decision=deny event=safe-event-1``. Reference components are 1-64 lowercase letters/digits/dot/underscore/hyphen, starting with a letter/digit; guard/event identifiers use the same alphabet up to 80 characters. The safe reference is not a command. Never confirm connectivity, remote state or an unexecuted command result. A historical denial, echo, missing/ambiguous event or unsafe reference stays `assumed` or is omitted; omit unsafe command text entirely, never encode it. The parser checks only the declaration, not event authenticity.
+Missing code binding stays NOTICE, not a new denial; malformed briefs and unsafe refusal-reference syntax still refuse. No automatic promotion or page-label update is authorized. PR-B correlation/follow-up is not implemented here; native classification remains UNTESTED.
+<!-- observation-claim-scopes:end -->
 
 ## The broker
 

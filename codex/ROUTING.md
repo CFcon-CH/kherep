@@ -275,6 +275,24 @@ contract. The denies above (issue #331) are unchanged. That a filed page carries
 line stays unproven at the target: the pure pre-publication candidate validator verifies the shape of a `Revision:`
 line a `confirmed` candidate carries, not completeness or its association with the finding.
 
+<!-- observation-claim-scopes:start -->
+### Claim scopes and bounded evidence (#731 PR-A)
+
+Use `measured: live|doc|tracker` before the inline command for a genuinely non-code claim, `measured: code <bindings>` for code, or `measured: refused` before a safe reference. Legacy briefs remain supported. Syntax is not execution evidence: #309 still requires the actual same-turn tool evidence supplied by the dispatching session; never rerun or infer it.
+
+| Scope | Confirm only the evidenced claim |
+| --- | --- |
+| `live` | The concrete target, time and sample. The 27 sampled served image bodies may match the compared artifact; this proves neither general code correctness nor deployment provenance. Mentioning code or a commit for comparison does not change the scope. |
+| `doc` / `tracker` | The content/state actually read at that time; reading a report confirms its content, not the reported measurement. A second-hand test result stays `assumed`. |
+| `code` | Source, test/build result or implementation behavior, only with #309 evidence and every contributing repository's full clean SHA under #505. |
+| `refused` | The refusal itself, only with an actual same-turn guard/native event tied unambiguously to a known safe check reference and sanitized denial excerpt. |
+
+Code correctness, test/build results or general implementation behavior remain code-bound under #505 even when marked live/doc/tracker: a marker cannot launder a code claim. Split mixed claims or keep the unsupported code assertion `assumed`. Do not classify a narrow live claim as code merely because its prose mentions a commit.
+An installed public copy remains `code`: supply full source revision and repo-relative paths, measured SHA-256 equality of exact installed/source bytes, and identity of the artifact actually exercised. Hash before and after the bounded behavior measurement, or use an immutable verified fixture; bind the relevant executable dependency closure, not just a similarly named entrypoint. Source proof is a clean exact checkout or immutable Git object evidence, never a fabricated clean verdict for dirty working files. Dirty, unbound or mismatched proof stays `assumed`; incomplete closure narrows the claim or leaves it assumed. No private scan, absolute host paths or source-copy search is authorized.
+For refusal use only a literal identifier, e.g. ``measured: refused `check-ref: public-policy#safe-host-check` -> guard=secret-output-guard decision=deny event=safe-event-1``. Reference components are 1-64 lowercase letters/digits/dot/underscore/hyphen, starting with a letter/digit; guard/event identifiers use the same alphabet up to 80 characters. The safe reference is not a command. Never confirm connectivity, remote state or an unexecuted command result. A historical denial, echo, missing/ambiguous event or unsafe reference stays `assumed` or is omitted; omit unsafe command text entirely, never encode it. The parser checks only the declaration, not event authenticity.
+Missing code binding stays NOTICE, not a new denial; malformed briefs and unsafe refusal-reference syntax still refuse. No automatic promotion or page-label update is authorized. PR-B correlation/follow-up is not implemented here; native classification remains UNTESTED.
+<!-- observation-claim-scopes:end -->
+
 The runtime label carries the host as well as the runtime, because there are four hosts and not two:
 both runtimes run on Windows and on macOS, the two service accounts are shared across machines, and
 the author of a page therefore no longer says which one wrote it. Both halves are computed by the

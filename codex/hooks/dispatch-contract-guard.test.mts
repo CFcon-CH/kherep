@@ -333,6 +333,9 @@ test("the installed guard writes the notice as context and a system message, and
     encoding: "utf8", input: JSON.stringify(spawnDispatch({ agent_type: "codex-obs", model, message })),
   }).stdout;
   fs.writeFileSync(path.join(hookDir, "lib", "obs-brief-policy.mts"), lib);
+  assert.equal(run("measured: live `public-check` -> sampled=27"), "", "copied helper recognizes live scope");
+  assert.equal(run("measured: refused `check-ref: public-policy#safe-check` -> guard=public-policy decision=deny event=safe-event-1"), "", "copied helper recognizes refusal-only form");
+  assert.match(denied(run("measured: refused `check-ref: ../unsafe` -> denied")), /safe check reference/);
   const output = JSON.parse(run(BARE_CODE)) as { hookSpecificOutput: Record<string, unknown>; systemMessage: unknown };
   assert.equal(output.hookSpecificOutput.hookEventName, "PreToolUse");
   assert.match(String(output.hookSpecificOutput.additionalContext), /^Observation brief revision: finding 1 \(measured:\) is code-bound/);
@@ -345,4 +348,21 @@ test("the installed guard writes the notice as context and a system message, and
   fs.writeFileSync(path.join(hookDir, "lib", "obs-brief-policy.mts"), stale);
   assert.equal(run(BARE_CODE), "", "a stale lib: allowed, no notice, no deny");
   assert.match(denied(run("All green.")), /Observation brief format/, "a stale lib keeps the format deny");
+});
+
+// #731: the same shared declaration check reaches Codex's real validation/advice boundary.
+test("explicit scopes and refusal references preserve Codex dispatch denials and notice-only gaps", () => {
+  for (const scope of ["live", "doc", "tracker"]) {
+    const call = obsDispatch(`measured: ${scope} \`public-check\` -> sampled=27`);
+    assert.equal(validate(call, POLICY), null);
+    assert.equal(advise(call, POLICY), null);
+  }
+  const brief = "measured: refused `check-ref: public-policy#safe-check` -> guard=public-policy decision=deny event=safe-event-1";
+  assert.equal(validate(obsDispatch(brief), POLICY), null);
+  assert.equal(advise(obsDispatch(brief), POLICY), null);
+  const missingEvent = obsDispatch(brief.replace(" event=safe-event-1", ""));
+  assert.equal(validate(missingEvent, POLICY), null);
+  assert.match(advise(missingEvent, POLICY) ?? "", /refusal stays assumed/);
+  assert.match(validate(obsDispatch(brief.replace("public-policy#safe-check", "../unsafe")), POLICY) ?? "", /safe check reference/);
+  assert.match(validate(obsDispatch(brief, { model: "gpt-6.10-sol" }), POLICY) ?? "", /pinned/);
 });

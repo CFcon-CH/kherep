@@ -230,5 +230,15 @@ check("privacy validation remains ahead of missing model policy", {
   KHEREP_AGENT_MODEL_POLICY: "",
 });
 
+// #731: exercise the actual wrapper, preserving deny-before-notice semantics.
+for (const scope of ["live", "doc", "tracker"]) {
+  noticeCheck(`claude-obs ${scope} scope is silent`, obs(`measured: ${scope} \`public-check\` -> sampled=27`), "silent");
+}
+const REFUSED = "measured: refused `check-ref: public-policy#safe-check` -> guard=public-policy decision=deny event=safe-event-1";
+noticeCheck("claude-obs actual refusal declaration is silent", obs(REFUSED), "silent");
+noticeCheck("claude-obs missing refusal event is notice only", obs(REFUSED.replace(" event=safe-event-1", "")), "notice");
+check("claude-obs unsafe refusal reference denied", obs(REFUSED.replace("public-policy#safe-check", "../unsafe")), true, "safe check reference");
+check("claude-obs scope never overrides model denial", obs(REFUSED, "Record observations", "operator-model"), true, "DISPATCH_MODEL_UNKNOWN");
+
 console.log(`\n=== ${pass} pass, ${fail} fail ===`);
 process.exit(fail === 0 ? 0 : 1);
