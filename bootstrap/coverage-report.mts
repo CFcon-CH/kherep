@@ -54,6 +54,7 @@ async function main(args: string[]): Promise<void> {
           ignored += result.ignored; producerIgnored += result.ignored; retained += result.report.result.length; raw++;
           writeFileSync(join(union, `${manifest.producer}-${name}`), JSON.stringify(result.report));
         }
+        if (retained === 0) throw new Error("no retained V8 scripts for producer: " + manifest.producer);
         provenance.push({ producer: manifest.producer, attempt: manifest.attempt, name: artifactName, retained, ignored: producerIgnored });
         if (usedCopies.size !== copies.size) console.log(`coverage: ${copies.size - usedCopies.size} declared copies without a report in ${manifest.producer}`);
       }

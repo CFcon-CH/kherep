@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, symlinkSync, openSync, closeSync, ftruncateSync, existsSync, realpathSync, readdirSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, symlinkSync, openSync, closeSync, ftruncateSync, existsSync, realpathSync, readdirSync, cpSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { producers, readArtifacts, rawFiles, validateManifest, validateProducers } from "./coverage-artifacts.mts";
@@ -177,4 +177,26 @@ test("reserved real-source deletion preserves file universe but can raise branch
   assert(sum(after, "BRH") <= sum(before, "BRH"));
   assert(sum(after, "BRH") / sum(after, "BRF") > sum(before, "BRH") / sum(before, "BRF"));
   console.log(JSON.stringify({ metricPolicyDiscontinuity: true, before: { LF: sum(before, "LF"), LH: sum(before, "LH"), BRF: sum(before, "BRF"), BRH: sum(before, "BRH") }, after: { LF: sum(after, "LF"), LH: sum(after, "LH"), BRF: sum(after, "BRF"), BRH: sum(after, "BRH") } }));
+});
+
+test("selected producer order is stable under forced root enumeration and reverse creation", t => {
+  const f = fixture(t); f.add("unit", "2"); f.add("unit", "10");
+  const reverse = mkdtempSync(join(tmpdir(), "coverage-reverse-")); t.after(() => rmSync(reverse, { recursive: true, force: true }));
+  for (const name of readdirSync(f.root).reverse()) cpSync(join(f.root, name), join(reverse, name), { recursive: true });
+  const expected = [...producers].sort((a, b) => a < b ? -1 : a > b ? 1 : 0).map(p => [p, p === "unit" ? "10" : "1"]);
+  const script = [
+    'import fs from "node:fs"; import { syncBuiltinESMExports } from "node:module";',
+    'const root = process.argv[1], order = process.argv[2], original = fs.readdirSync;',
+    'fs.readdirSync = (path, ...args) => { const entries = original(path, ...args); if (path !== root) return entries;',
+    'entries.sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0);',
+    'return order === "reverse" ? entries.reverse() : order === "rotate" ? entries.slice(3).concat(entries.slice(0, 3)) : entries; };',
+    'syncBuiltinESMExports();',
+    'try { const { readArtifacts } = await import(' + JSON.stringify(pathToFileURL(resolve("bootstrap/coverage-artifacts.mts")).href) + ');',
+    'console.log(JSON.stringify(readArtifacts(root, ' + JSON.stringify(identity) + ').map(a => [a.manifest.producer, a.manifest.attempt])));',
+    '} finally { fs.readdirSync = original; syncBuiltinESMExports(); }',
+  ].join("\n");
+  for (const root of [f.root, reverse]) for (const mode of ["forward", "reverse", "rotate"]) {
+    const result = spawnSync(process.execPath, ["--input-type=module", "-e", script, root, mode], { encoding: "utf8" });
+    assert.equal(result.status, 0, result.stderr); assert.deepEqual(JSON.parse(result.stdout), expected, mode);
+  }
 });

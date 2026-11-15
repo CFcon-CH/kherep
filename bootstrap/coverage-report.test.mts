@@ -26,13 +26,19 @@ function fixture() {
   return root;
 }
 function artifacts(root: string) {
+  const sentinel = join(root, "src/sentinel.mts"), captured = join(root, "sentinel-raw");
+  writeFileSync(sentinel, "export function sentinel() { return 1; }\n");
+  const executed = spawnSync(process.execPath, [sentinel], { cwd: root, encoding: "utf8", env: { ...process.env, NODE_V8_COVERAGE: captured } });
+  assert.equal(executed.status, 0, executed.stderr);
+  const scripts = readdirSync(captured).flatMap(name => JSON.parse(readFileSync(join(captured, name), "utf8")).result);
+  const retained = scripts.find((value: { url: string }) => value.url === pathToFileURL(sentinel).href); assert(retained);
   const input = join(root, "inputs"); mkdirSync(input);
   for (const producer of producers) {
     const dir = join(input, `coverage-${producer}-123-2`); mkdirSync(dir);
     writeFileSync(join(dir, "manifest.json"), JSON.stringify({ producer, runId: "123", attempt: "2", checkoutSha: sha, testOutcome: "success", sourceRootUrl: pathToFileURL(root + "/").href }));
     if (producer === "worker") {
       writeFileSync(join(dir, "lcov.info"), "SF:src/first/same.mts\nDA:1,1\nLF:1\nLH:1\nend_of_record\nSF:src/second/same.mts\nDA:1,0\nLF:1\nLH:0\nend_of_record\n");
-    } else { mkdirSync(join(dir, "raw")); writeFileSync(join(dir, "raw/report.json"), JSON.stringify({ result: [] })); }
+    } else { mkdirSync(join(dir, "raw")); writeFileSync(join(dir, "raw/report.json"), JSON.stringify({ result: [retained] })); }
   }
   return input;
 }
@@ -120,7 +126,8 @@ test("real type-stripped V8 union maps typed lines, unexecuted branch and spawne
     assert(!summary.producers.some((p: { producer: string }) => p.producer === "unit-windows-codex"));
     const finalManifest = JSON.parse(readFileSync(join(output, "manifest.json"), "utf8"));
     assert.equal(finalManifest.producers.length, 14); assert(!finalManifest.producers.some((p: { producer: string }) => p.producer === "unit-windows-codex"));
-    for (const producer of ["unit", "unit-macos"]) assert(summary.producers.find((p: { producer: string; retained: number }) => p.producer === producer).retained > 0);
+    for (const producer of producers.filter(p => p !== "worker")) assert(summary.producers.find((p: { producer: string; retained: number }) => p.producer === producer).retained > 0);
+    assert.equal(summary.producers.find((p: { producer: string }) => p.producer === "worker").retained, 0);
     const lcov = readFileSync(join(output, "node/lcov.info"), "utf8");
     const typed = lcov.split("end_of_record").find(s => s.includes("SF:src/typed.mts"))!;
     const child = lcov.split("end_of_record").find(s => s.includes("SF:src/child.mts"))!;
@@ -131,6 +138,12 @@ test("real type-stripped V8 union maps typed lines, unexecuted branch and spawne
     assert.match(typed, /BRDA:\d+,[^,]+,[^,]+,0/);
     const verification = run(["verify", "--output", output, "--root", root, ...identity()]);
     assert.equal(verification.status, 0, verification.stderr);
+    const reverse = join(root, "reverse-inputs"); mkdirSync(reverse);
+    for (const producer of [...producers].reverse()) cpSync(join(input, "coverage-" + producer + "-123-2"), join(reverse, "coverage-" + producer + "-123-2"), { recursive: true });
+    const reverseOutput = join(root, "reverse-output");
+    const reversed = run(["assemble", "--artifacts", reverse, "--output", reverseOutput, "--root", root, ...identity()]);
+    assert.equal(reversed.status, 0, reversed.stderr);
+    for (const name of ["manifest.json", "summary.json"]) assert.deepEqual(readFileSync(join(output, name)), readFileSync(join(reverseOutput, name)));
     console.log("typed mapping: typed.mts line 3 hit; line 5 zero; spawned child.mts line 1 hit; assemble/verify exit 0");
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
@@ -213,3 +226,19 @@ test("scanner verification rejects identity mismatch and absent or empty reports
     }
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
+
+for (const producer of ["probe", "unit-windows-project-rules-install"]) {
+  for (const mode of ["empty", "external", "reserved"]) test("assembly refuses " + mode + "-only retained data for " + producer, () => {
+    const root = fixture();
+    try {
+      const input = artifacts(root), raw = join(input, "coverage-" + producer + "-123-2/raw/report.json");
+      const script = JSON.parse(readFileSync(raw, "utf8")).result[0];
+      const result = mode === "empty" ? [] : [{ ...script, url: mode === "external" ? pathToFileURL(join(root, "..", "external.mts")).href : script.url + "?node-test-mock=1" }];
+      writeFileSync(raw, JSON.stringify({ result }));
+      const output = join(root, "new-output"), assembled = run(["assemble", "--artifacts", input, "--output", output, "--root", root, ...identity()]);
+      assert.notEqual(assembled.status, 0, mode + " " + producer);
+      assert.match(assembled.stderr, new RegExp("no retained V8 scripts for producer: " + producer));
+      assert.equal(existsSync(output), false, "failed assembly must not create accepted output");
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+}

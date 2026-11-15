@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, readdirSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { test } from "node:test";
@@ -20,6 +20,12 @@ function fixture(t: import("node:test").TestContext) {
   t.after(() => { rmSync(root, { recursive: true, force: true }); rmSync(external, { recursive: true, force: true }); });
   mkdirSync(join(root, "src")); writeFileSync(join(root, "src/original.mts"), source);
   const copy = join(external, "copy.mts"); copyFileSync(join(root, "src/original.mts"), copy);
+  const sentinel = join(root, "src/sentinel.mts"), captured = join(root, "sentinel-raw");
+  writeFileSync(sentinel, "export function sentinel() { return 1; }\n");
+  const executed = spawnSync(process.execPath, [sentinel], { cwd: root, encoding: "utf8", env: { ...process.env, NODE_V8_COVERAGE: captured } });
+  assert.equal(executed.status, 0, executed.stderr);
+  const scripts = readdirSync(captured).flatMap(name => JSON.parse(readFileSync(join(captured, name), "utf8")).result);
+  const retained = scripts.find((value: { url: string }) => value.url === pathToFileURL(sentinel).href); assert(retained);
   const input = join(root, "inputs");
   for (const producer of producers) {
     const dir = join(input, `coverage-${producer}-792-1`); mkdirSync(dir, { recursive: true });
@@ -28,7 +34,7 @@ function fixture(t: import("node:test").TestContext) {
       mkdirSync(join(root, "modules/control-plane/worker/src"), { recursive: true });
       writeFileSync(join(root, "modules/control-plane/worker/src/fixture.mts"), "export const fixture = 1;\n");
       writeFileSync(join(dir, "lcov.info"), "SF:src/fixture.mts\nDA:1,1\nend_of_record\n");
-    } else { mkdirSync(join(dir, "raw")); writeFileSync(join(dir, "raw/report.json"), JSON.stringify({ result: [] })); }
+    } else { mkdirSync(join(dir, "raw")); writeFileSync(join(dir, "raw/report.json"), JSON.stringify({ result: [retained] })); }
   }
   const raw = join(input, "coverage-unit-792-1/raw"), declaration = { copyUrl: pathToFileURL(copy).href, original: "src/original.mts", sha256: digest(source) };
   const declare = (value = declaration) => writeFileSync(join(raw, sidecar), JSON.stringify(value) + "\n");
@@ -81,6 +87,7 @@ for (const failure of ["sha mismatch", "traversal"]) {
 
 test("an undeclared same-basename URL stays ignored and cannot consume a declaration", t => {
   const f = fixture(t); f.declare();
+  copyFileSync(join(f.raw, "report.json"), join(f.raw, "retained.json"));
   const other = join(f.copy, "..", "elsewhere", "copy.mts");
   const raw = { result: [{ url: pathToFileURL(other).href, functions: [] }] };
   writeFileSync(join(f.raw, "report.json"), JSON.stringify(raw));
@@ -89,7 +96,7 @@ test("an undeclared same-basename URL stays ignored and cannot consume a declara
   const relocated = relocateV8Report(raw, pathToFileURL(f.root + "/").href, f.root, declarations, used);
   assert.equal(relocated.ignored, 1); assert.deepEqual(relocated.report.result, []); assert.equal(used.size, 0);
   // A declared copy without a report is no data, not a failure: a killed child must not block every merge.
-  const result = f.assemble(); assert.match(result.stdout, /1 declared copies without a report/); assert.doesNotMatch(result.stderr, /declar/);
+  const result = f.assemble(); assert.equal(result.status, 0, result.stderr); assert.match(result.stdout, /1 declared copies without a report/); assert.doesNotMatch(result.stderr, /declar/);
 });
 
 test("malformed and conflicting declaration lines fail visibly", t => {
@@ -111,4 +118,22 @@ test("foreign Windows copy URLs retain exact mapping, hashes and no-data semanti
   assert.deepEqual(mapped.report.result[0].functions, functions);
   assert.equal(relocateV8Report({ result: [{ url: "file:///D:/other/copied%20source.mts", functions }] }, "file:///D:/a/repo/", f.root, copies).ignored, 1);
   for (const unsafe of ["file:///D:/temp/../copy.mts", "file://server/copy.mts", "file:///D:/temp/%2fcopy.mts"]) assert.throws(() => readCopyDeclarations(JSON.stringify({ ...f.declaration, copyUrl: unsafe }), f.root));
+});
+
+for (const mode of ["mixed empty child", "zero-count retained script"]) test("producer presence accepts " + mode + " and Worker LCOV exemption", t => {
+  const f = fixture(t), path = join(f.raw, "report.json");
+  if (mode === "mixed empty child") writeFileSync(join(f.raw, "empty.json"), JSON.stringify({ result: [] }));
+  else {
+    const report = JSON.parse(readFileSync(path, "utf8"));
+    report.result[0].functions = report.result[0].functions.filter((fn: { ranges: { count: number }[] }) => fn.ranges.every(range => range.count === 0));
+    assert(report.result[0].functions.length > 0); writeFileSync(path, JSON.stringify(report));
+  }
+  const result = f.assemble(); assert.equal(result.status, 0, result.stderr);
+  const summary = JSON.parse(readFileSync(join(f.root, "coverage/summary.json"), "utf8"));
+  assert(summary.producers.find((p: { producer: string }) => p.producer === "unit").retained > 0);
+  assert.equal(summary.producers.find((p: { producer: string }) => p.producer === "worker").retained, 0);
+});
+test("Worker empty LCOV still fails its own validation", t => {
+  const f = fixture(t); writeFileSync(join(f.input, "coverage-worker-792-1/lcov.info"), "");
+  const result = f.assemble(); assert.notEqual(result.status, 0); assert.match(result.stderr, /empty|LCOV/);
 });
