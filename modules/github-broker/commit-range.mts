@@ -17,7 +17,7 @@ function verified(read:Read, shas:string[], type:'commit'|'tree'):Map<string,Buf
     const eol=data.indexOf(10,at), header=eol<0 ? undefined : /^([0-9a-f]{40}) ([a-z]+) (\d{1,10})$/.exec(data.toString('latin1',at,eol));
     if (!header || header[1]!==sha || header[2]!==type) fail('target-refused');
     const size=Number(header[3]), body=data.subarray(eol+1,eol+1+size);
-    if (body.length!==size || data[eol+1+size]!==10 || createHash('sha1').update(`${type} ${size}\0`).update(body).digest('hex')!==sha) fail('target-refused');
+    if (body.length!==size || data[eol+1+size]!==10 || createHash('sha1').update(`${type} ${size}\0`).update(body).digest('hex')!==sha) fail('target-refused'); // NOSONAR S4790: git object id format is SHA-1 (collision resistance assumed and documented)
     out.set(sha,body);at=eol+2+size;
   }
   if (at!==data.length) fail('target-refused');
@@ -77,7 +77,7 @@ export function checkRange(git:Git, read:Read, {sha, base, current, emails}:{sha
   // A non-tree `.github` entry counts with its own sha.
   const signature=(c:string)=>github(c).flatMap(([mode,name,s])=>mode==='40000'
     ? entries(subtrees.get(s)!).filter(([,n])=>n.toLowerCase()==='workflows').map(([m,n,x])=>`${name}/${n} ${m} ${x}`)
-    : [`${name} ${mode} ${s}`]).sort().join('\n');
+    : [`${name} ${mode} ${s}`]).sort((a,b)=>a<b ? -1 : a>b ? 1 : 0).join('\n');
   for (const c of added) {
     const own=signature(c), parents=commit(c).parents;
     if ((parents.length ? parents.map(signature) : ['']).some(s=>s!==own)) fail('target-refused');
