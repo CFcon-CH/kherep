@@ -45,7 +45,7 @@ export function relocateV8Report(value: unknown, sourceRootUrl: string, reposito
       }
     }
     const classification = classifyV8ScriptUrl(script.url, sourceRootUrl);
-    if (classification.kind === "external-isolated") {
+    if (classification.kind !== "ordinary") {
       if (copies.has(script.url) || copies.has(classification.baseUrl)) throw new Error("unsupported query-bearing copy reference");
       ignored++; continue;
     }

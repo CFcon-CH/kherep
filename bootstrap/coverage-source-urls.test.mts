@@ -116,12 +116,12 @@ function isolatedFixture(t: import("node:test").TestContext) {
   const map = { data: { version: 3, sources: ["module.mts"], names: ["value"], mappings: "AAAA", sourcesContent: [source] }, lineLengths: [31] };
   return { root, url, copyUrl, declaration, copies, map };
 }
-test("isolated external scripts cannot alter retained ranges, maps or verified copy attribution", t => {
+test("discard policies cannot alter retained ranges, maps or verified copy attribution", t => {
   const f = isolatedFixture(t), baseline = { result: [v8Script(f.url), v8Script(f.copyUrl)], "source-map-cache": { [f.url]: f.map } };
-  const input = { ...baseline, result: [...baseline.result, v8Script(isolatedUrl)] }, before = structuredClone(input);
+  const input = { ...baseline, result: [...baseline.result, v8Script(isolatedUrl), v8Script(f.url + "?node-test-mock=1")] }, before = structuredClone(input);
   const expectedUsed = new Set<string>(), used = new Set<string>();
   const expected = relocateV8Report(baseline, isolatedProducer, f.root, f.copies, expectedUsed), actual = relocateV8Report(input, isolatedProducer, f.root, f.copies, used);
-  assert.deepEqual(actual.report, expected.report); assert.equal(actual.ignored, expected.ignored + 1);
+  assert.deepEqual(actual.report, expected.report); assert.equal(actual.ignored, expected.ignored + 2);
   assert.deepEqual(used, expectedUsed); assert.deepEqual([...used], [f.copyUrl]); assert.deepEqual(input, before);
   assert.equal(actual.report.result.length, 2); assert.deepEqual(actual.report.result[0].functions, baseline.result[0].functions);
 });
@@ -174,4 +174,48 @@ test("query-free encoded filenames and strict manifest roots retain their contra
   }
   const identity = { runId: "1", attempt: "1", checkoutSha: "a".repeat(40) };
   assert.throws(() => validateManifest({ producer: "unit", ...identity, testOutcome: "success", sourceRootUrl: isolatedProducer + "?isolated=1" }, identity), /file URL/);
+});
+
+const reservedUrl = isolatedProducer + "module.mts?node-test-mock=1";
+test("reserved numeric mock spelling discards genuine in-root source without credit", t => {
+  const f = isolatedFixture(t);
+  for (const [root, base] of [[isolatedProducer, f.url], ["file:///home/runner/repo/", "file:///home/runner/repo/source.mts"], ["file:///Users/runner/repo/", "file:///Users/runner/repo/source.mts"], [isolatedProducer, "file:///d:/a/repo/source.mts"], [isolatedProducer, isolatedProducer + "node_modules/x.mts"], [isolatedProducer, isolatedProducer + "missing.txt"], [isolatedProducer, isolatedProducer + "Spaced%20%C3%BC.mts"], [isolatedProducer, isolatedProducer + "double%252e.mts"]]) {
+    const used = new Set<string>(), input = { result: [v8Script(base + "?node-test-mock=001")] }, before = structuredClone(input);
+    const output = relocateV8Report(input, root, f.root, new Map(), used);
+    assert.equal(output.ignored, 1); assert.deepEqual(output.report.result, []); assert.equal(used.size, 0);
+    assert.deepEqual(input, before); assert.equal(output.report["source-map-cache"], undefined);
+    assert.throws(() => canonicalFileUrl(base + "?node-test-mock=001"));
+  }
+});
+const reservedBadBases = [
+  "file:///D:/temporary/module.mts", "file:///E:/a/repo/module.mts", "file:///D:/a/repo-other/module.mts",
+  "file:///D:/A/REPO/module.mts", "file:///tmp/module.mts", isolatedProducer, isolatedProducer.slice(0, -1),
+  ...queryRefusals.slice(8).map(url => url.replace("D:/temporary", "D:/a/repo")),
+];
+for (const [i, base] of reservedBadBases.entries()) test("reserved query refuses non-inside or unsafe base " + i, () => {
+  assert.throws(() => relocateV8Report({ result: [v8Script(base + "?node-test-mock=1")] }, isolatedProducer, process.cwd()));
+});
+for (const [i, suffix] of ["", "x", "-1", "+1", "1.0", "%31", "1&other=2", "1&node-test-mock=2", "1?", "1#fragment", "1 ", "1\n"].entries()) test("reserved query grammar refuses nonnumeric or extra form " + i, () => {
+  assert.throws(() => relocateV8Report({ result: [v8Script(isolatedProducer + "module.mts?node-test-mock=" + suffix)] }, isolatedProducer, process.cwd()));
+});
+test("reserved spelling keeps exact copy, manifest, cache and map interfaces strict", t => {
+  const f = isolatedFixture(t), query = f.url + "?node-test-mock=1";
+  for (const key of [f.url, query]) {
+    const used = new Set<string>();
+    assert.throws(() => relocateV8Report({ result: [v8Script(query)] }, isolatedProducer, f.root, new Map([[key, pathToFileURL(join(f.root, "module.mts")).href]]), used), /copy/);
+    assert.equal(used.size, 0);
+  }
+  assert.throws(() => readCopyDeclarations(JSON.stringify({ ...f.declaration, copyUrl: query }), f.root), /file URL/);
+  for (const result of [[], [v8Script(query)], [v8Script(f.url)]]) assert.throws(() => relocateV8Report({ result, "source-map-cache": { [query]: f.map } }, isolatedProducer, f.root), /file URL/);
+  for (const map of [{ ...f.map, url: query }, { data: { ...f.map.data, sources: [query] } }, { data: { ...f.map.data, sourceRoot: query } }]) assert.throws(() => relocateV8Report({ result: [v8Script(f.url), v8Script(query)], "source-map-cache": { [f.url]: map } }, isolatedProducer, f.root), /source map|file URL/);
+  const id = { runId: "1", attempt: "1", checkoutSha: "a".repeat(40) };
+  assert.throws(() => validateManifest({ ...id, producer: "unit", testOutcome: "success", sourceRootUrl: isolatedProducer + "?node-test-mock=1" }, id), /file URL/);
+  for (const bad of ["?%6eode-test-mock=1", "?node-test-mock=%30"]) assert.throws(() => relocateV8Report({ result: [v8Script(f.url + bad)] }, isolatedProducer, f.root));
+});
+test("reserved discard validates functions and ranges before policy classification", () => {
+  for (const functions of [null, [null], [{ ranges: [] }], [{ ranges: [{ startOffset: 2, endOffset: 1, count: 1 }] }]]) assert.throws(() => relocateV8Report({ result: [{ url: reservedUrl, functions }] }, isolatedProducer, process.cwd()), /malformed V8/);
+});
+
+test("reserved policy refuses mixed dialect and ambiguous POSIX namespace", () => {
+  for (const [root, url] of [["file:///a/repo/", reservedUrl], ["file:///a/repo/", "file:///A/REPO/file.mts?node-test-mock=1"], ["file:///a//repo/", "file:///a/repo/file.mts?node-test-mock=1"], [isolatedProducer + "?node-test-mock=1", reservedUrl]]) assert.throws(() => relocateV8Report({ result: [v8Script(url)] }, root, process.cwd()));
 });

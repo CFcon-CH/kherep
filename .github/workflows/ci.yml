@@ -198,8 +198,6 @@ jobs:
         # a failure instead of the 360-minute job default. Green runs take 36-39
         # minutes on windows-latest, so 40 minutes failed a run that did not hang.
         timeout-minutes: 60
-        env:
-          NODE_V8_COVERAGE: ${{ runner.temp }}/kherep-coverage/unit-windows-${{ matrix.suite }}/raw
         run: node codex/scripts/codex-run-guard.mts run --platform win32 --tap "${{ runner.temp }}/codex-run.tap"
       - name: Bootstrap shard (TypeScript on Node, no build)
         if: matrix.suite != 'hooks' && matrix.suite != 'control-plane' && matrix.suite != 'codex'
@@ -209,7 +207,7 @@ jobs:
 
       - name: Coverage manifest (Windows shard)
         id: coverage-manifest
-        if: always() && !cancelled()
+        if: always() && !cancelled() && matrix.suite != 'codex'
         shell: bash
         env:
           TEST_OUTCOME: ${{ job.status }}
@@ -219,7 +217,7 @@ jobs:
           --run-id "${{ github.run_id }}" --attempt "${{ github.run_attempt }}"
           --checkout-sha "$(git rev-parse HEAD)" --test-outcome "$TEST_OUTCOME"
       - name: Upload coverage (Windows shard)
-        if: always() && !cancelled() && steps.coverage-manifest.outcome == 'success'
+        if: always() && !cancelled() && matrix.suite != 'codex' && steps.coverage-manifest.outcome == 'success'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: coverage-unit-windows-${{ matrix.suite }}-${{ github.run_id }}-${{ github.run_attempt }}
