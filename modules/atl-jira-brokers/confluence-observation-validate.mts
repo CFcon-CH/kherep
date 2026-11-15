@@ -169,8 +169,9 @@ export async function observationCreateBody(
 ): Promise<string> {
   if (args.format !== "storage") fail("create takes --format storage only.");
   const { problem, value } = await validateObservation(args, { readBodyBytes: ctx.readBodyBytes ?? readFile }, fail);
-  if (problem !== null || value === undefined) return fail(problem ?? "Body is not valid UTF-8.");
-  return value;
+  if (problem !== null) return fail(problem);
+  // validateObservation leaves value undefined only together with a problem.
+  return value as string;
 }
 
 export async function cmdValidate(

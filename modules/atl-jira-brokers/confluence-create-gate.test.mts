@@ -2,6 +2,7 @@
 // network call. The Codex broker keeps generic create. Synthetic values only.
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { runCli as claude, type Injected } from "./atl-confluence-ccoder.mts";
@@ -111,4 +112,17 @@ test("texts state the create gate instead of a missing one", () => {
     assert.match(text, /create is observation-only/i, parts.join("/"));
   }
   assert.match(read("claude", "agents", "atlassian-broker.md"), /`create` nur fuer Beobachtungen/);
+});
+
+test("the create gate reads a real body file through the default byte reader", async () => {
+  const { observationCreateBody } = await import("./confluence-observation-validate.mts");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "kherep-760-gate-"));
+  try {
+    const file = path.join(dir, "body.xml");
+    fs.writeFileSync(file, BODY);
+    const fail = (message: string): never => { throw new Error(message); };
+    assert.equal(await observationCreateBody({}, { format: "storage", "body-file": file, labels: LABELS }, fail), BODY);
+    fs.writeFileSync(file, Buffer.from([0xff, 0xfe, 0x00]));
+    await assert.rejects(observationCreateBody({}, { format: "storage", "body-file": file, labels: LABELS }, fail), /Body is not valid UTF-8\./);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
