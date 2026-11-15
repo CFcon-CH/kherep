@@ -51,7 +51,7 @@ test('helper command single-quotes forward-slash paths and refuses a quote',()=>
   assert.equal(args.some(a=>/force|delete|tags|mirror|^\+/.test(a)),false);
 });
 test('git child environment drops ambient tokens, tracing and injected configuration',()=>{
-  const input={PATH:'p',Path:'evil',GH_TOKEN:'x',GITHUB_TOKEN:'x',GIT_TRACE:'1',GIT_TRACE_CURL:'1',GIT_CURL_VERBOSE:'1',GIT_CONFIG_COUNT:'1',GIT_CONFIG_KEY_0:'http.extraHeader',GIT_CONFIG_PARAMETERS:'x',GIT_ASKPASS:'x',SSH_ASKPASS:'x',GIT_DIR:'x',GIT_TERMINAL_PROMPT:'1',LANG:'C'};
+  const input={PATH:'p',Path:'evil',GH_TOKEN:'x',GITHUB_TOKEN:'x',GIT_TRACE:'1',GIT_TRACE_CURL:'1',GIT_CURL_VERBOSE:'1',GIT_CONFIG_COUNT:'1',GIT_CONFIG_KEY_0:'http.extraHeader',GIT_CONFIG_PARAMETERS:'x',GIT_ASKPASS:'x',SSH_ASKPASS:'x',GIT_DIR:'x',GIT_EXEC_PATH:'evil',GIT_TERMINAL_PROMPT:'1',LANG:'C'};
   assert.deepEqual(gitEnv(input,'win32'),{LANG:'C',PATH:'C:\\Program Files\\Git\\cmd;C:\\Windows\\System32;C:\\Windows',GIT_TERMINAL_PROMPT:'0',GCM_INTERACTIVE:'never'});
   assert.deepEqual(gitEnv(input,'linux'),{LANG:'C',PATH:'/usr/bin:/bin',GIT_TERMINAL_PROMPT:'0',GCM_INTERACTIVE:'never'});
 });
