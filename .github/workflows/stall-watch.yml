@@ -7,7 +7,7 @@ name: Stall watch
 # as GitHub advises for schedule load. A manual dispatch defaults to a dry run.
 on:
   schedule:
-    - cron: "7-59/10 * * * *"
+    - cron: "7,17,27,37,47,57 * * * *"
   workflow_dispatch:
     inputs:
       dry_run:

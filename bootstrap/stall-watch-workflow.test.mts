@@ -26,7 +26,7 @@ function block(header: string, indent: string): string[] {
 
 test("triggers: schedule off the hour and manual dispatch, never a pull request event", () => {
   assert.deepEqual(block("on:", ""), [
-    "schedule:", '- cron: "7-59/10 * * * *"', "workflow_dispatch:", "inputs:", "dry_run:",
+    "schedule:", '- cron: "7,17,27,37,47,57 * * * *"', "workflow_dispatch:", "inputs:", "dry_run:",
     "description: Print what would be posted instead of posting it", "type: boolean", "default: true",
   ]);
   assert.ok(!/pull_request/.test(code.join("\n")), "no pull_request or pull_request_target trigger");
