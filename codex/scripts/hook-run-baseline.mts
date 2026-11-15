@@ -56,6 +56,11 @@ export function replayHooks(render: Renderer = projection.renderHooks, baselineR
       copySource(path.join(repo, "codex/hooks", name), path.join(hooks, name));
       copySource(path.join(repo, "codex/hooks", name), path.join(hooks, "codex-" + name));
     }
+    // A flat installed fixture needs canonical bytes, not the source-tree reexport.
+    const stdinSource = path.join(repo, "claude/hooks/lib/stdin-reader.mts");
+    const stdinTarget = path.join(hooks, "stdin-reader.mts");
+    fs.copyFileSync(stdinSource, stdinTarget);
+    assert.deepEqual(fs.readFileSync(stdinTarget), fs.readFileSync(stdinSource));
     const trace = path.join(node.root, "trace.jsonl");
     const preload = path.join(node.root, "trace.mjs");
     fs.writeFileSync(preload, `import cp from 'node:child_process'; import fs from 'node:fs'; import path from 'node:path'; import {syncBuiltinESMExports} from 'node:module';

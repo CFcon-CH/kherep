@@ -35,7 +35,7 @@ function materialize(destination = INSTALLED): string {
       declareCopy(path.join(SHARED, `${watcher}.mts`), path.join(destination, `${watcher}.mts`));
     }
   }
-  for (const library of ["workspace-scope.mts", "trusted-executable.mts"]) {
+  for (const library of ["workspace-scope.mts", "trusted-executable.mts", "stdin-reader.mts"]) {
     const original = path.join(SHARED, "lib", library), copy = path.join(destination, "lib", library);
     fs.copyFileSync(original, copy);
     if (library === "trusted-executable.mts" && destination === INSTALLED) declareCopy(original, copy);

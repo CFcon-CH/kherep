@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { constants as bufferConstants } from "node:buffer";
+import { spawnSync } from "node:child_process";
 import { PassThrough, Readable } from "node:stream";
 import test from "node:test";
 
@@ -181,3 +182,231 @@ test("a throwing error-code accessor cannot escape the fixed read failure or ret
   assert.deepEqual(counts(input), before);
   input.destroy();
 });
+
+test("stdin reader starts a caller-paused source without requiring an owner resume", async () => {
+  const read = await reader();
+  const input = new PassThrough({ autoDestroy: false });
+  input.pause();
+  const before = counts(input);
+  let settled = false;
+  const result = read({ maxBytes: null }, input).finally(() => { settled = true; });
+  input.end("paused bytes");
+  await new Promise(resolve => setImmediate(resolve));
+  const completedWithoutOwnerResume = settled;
+  // Release a broken candidate so the regression fails promptly instead of hanging.
+  if (!settled) input.resume();
+  try {
+    assert.equal((await result).toString(), "paused bytes");
+    assert.equal(completedWithoutOwnerResume, true);
+    assert.deepEqual(counts(input), before);
+    assert.equal(input.destroyed, false);
+  } finally { input.destroy(); }
+});
+
+for (const initiallyPaused of [false, true]) test(`a resume failure on ${initiallyPaused ? "paused" : "fresh"} input rejects privately and permits a later read`, async () => {
+  const read = await reader();
+  const input = new PassThrough({ autoDestroy: false });
+  if (initiallyPaused) input.pause();
+  const before = counts(input);
+  const originalResume = input.resume;
+  let calls = 0;
+  let countsAtResume: number[] | undefined;
+  input.resume = function () {
+    calls++;
+    countsAtResume = counts(input);
+    throw new Error("SYNTHETIC_PRIVATE_RESUME");
+  };
+  const result = read({ maxBytes: null }, input).then(() => undefined, error => error as Error & { code: string });
+  try {
+    await new Promise(resolve => setImmediate(resolve));
+    // Settle an old candidate that never attempts resume; keep the verdict below.
+    if (calls === 0) input.emit("error", new Error("SYNTHETIC_PRIVATE_NOT_STARTED"));
+    const value = await result;
+    assert.ok(value);
+    assert.equal(value.code, "STDIN_READ_FAILED");
+    assert.equal(value.message, "stdin could not be read");
+    assert.equal(Object.hasOwn(value, "cause"), false);
+    assert.doesNotMatch(String(value) + JSON.stringify(value), /SYNTHETIC_PRIVATE/);
+  } finally { input.resume = originalResume; }
+  try {
+    assert.equal(calls, 1);
+    assert.deepEqual(countsAtResume, before.map(count => count + 1), "all listeners precede explicit resume");
+    assert.deepEqual(counts(input), before);
+    assert.equal(input.destroyed, false);
+    const again = read({ maxBytes: null }, input);
+    input.end("resumed later");
+    assert.equal((await again).toString(), "resumed later");
+    assert.deepEqual(counts(input), before);
+  } finally { input.destroy(); }
+});
+
+test("a synchronous startup error cannot resume the source after releasing it", async () => {
+  const read = await reader();
+  const input = new PassThrough({ autoDestroy: false });
+  const ownerError = () => {};
+  input.on("error", ownerError);
+  const before = counts(input);
+  const originalResume = input.resume;
+  let starts = 0;
+  input.resume = function () {
+    starts++;
+    if (starts === 1) {
+      input.emit("error", Object.assign(new Error("SYNTHETIC_PRIVATE_START"), { code: "EIO" }));
+      return this;
+    }
+    return Reflect.apply(originalResume, this, []);
+  };
+  try {
+    await assert.rejects(read({ maxBytes: null }, input), (error: unknown) => {
+      const value = error as Error & { code: string; systemCode?: string };
+      assert.equal(value.code, "STDIN_READ_FAILED");
+      assert.equal(value.systemCode, "EIO");
+      assert.equal(value.message, "stdin could not be read");
+      assert.equal(Object.hasOwn(value, "cause"), false);
+      assert.doesNotMatch(String(value) + JSON.stringify(value), /SYNTHETIC_PRIVATE/);
+      return true;
+    });
+  } finally { input.resume = originalResume; }
+  try {
+    assert.equal(starts, 1, "settlement must prevent a second startup resume");
+    assert.equal(input.readableFlowing, false);
+    assert.deepEqual(counts(input), before);
+    assert.equal(input.listeners("error")[0], ownerError);
+    assert.equal(input.destroyed, false);
+    const again = read({ maxBytes: null }, input);
+    input.end("recovered");
+    assert.equal((await again).toString(), "recovered");
+    assert.deepEqual(counts(input), before);
+  } finally { input.destroy(); }
+});
+
+// Allocation faults are confined to a child; normal stream events exercise the
+// real helper, including cleanup and a second read after the failure.
+const isolatedFailureProgram = String.raw`
+import assert from "node:assert/strict";
+import { PassThrough } from "node:stream";
+const { readStdinBytes: read } = await import(HELPER_URL);
+const scenario = SCENARIO;
+const input = new PassThrough({ autoDestroy: false });
+const marker = "SYNTHETIC_PRIVATE_ALLOCATION_PAYLOAD";
+const sentinel = Buffer.from(marker);
+const originalFrom = Buffer.from, originalConcat = Buffer.concat;
+const ownerError = () => {};
+input.on("error", ownerError);
+const counts = () => ["data", "end", "error", "close"].map(name => input.listenerCount(name));
+let eofReports = 0, failedAtEof = false, finalConcatsAfterFailure = 0;
+if (scenario === "settled-eof") input.on("end", () => {
+  eofReports++;
+  failedAtEof = true;
+  input.emit("error", Object.assign(new Error(marker), { code: "EIO" }));
+});
+const before = counts();
+const originalPause = input.pause;
+let pauses = 0, hits = 0;
+if (scenario === "settled-reject") input.pause = function () {
+  pauses++;
+  return Reflect.apply(originalPause, this, []);
+};
+const result = read({ maxBytes: null }, input).then(
+  value => ({ value }), error => ({ error }),
+);
+try {
+  if (scenario === "copy") {
+    Buffer.from = function (...args) {
+      if (args[0] === sentinel) { hits++; throw new Error(marker); }
+      return Reflect.apply(originalFrom, this, args);
+    };
+    try { input.write(sentinel); await result; }
+    finally { Buffer.from = originalFrom; }
+  } else if (scenario === "concat") {
+    input.write(sentinel);
+    Buffer.concat = function (...args) {
+      if (args[1] === sentinel.length && args[0].length === 1 && args[0][0].equals(sentinel)) {
+        hits++; throw new Error(marker);
+      }
+      return Reflect.apply(originalConcat, this, args);
+    };
+    try { input.end(); await result; }
+    finally { Buffer.concat = originalConcat; }
+  } else if (scenario === "settled-reject") {
+    const inner = Object.assign(new Error(marker), { code: "EIO" });
+    const outer = Object.defineProperty(new Error(marker), "code", { get() {
+      hits++;
+      assert.equal(hits, 1, "error accessor reenters exactly once");
+      input.emit("error", inner);
+      return "ENOMEM";
+    } });
+    try { assert.doesNotThrow(() => input.emit("error", outer)); await result; }
+    finally { input.pause = originalPause; }
+  } else {
+    Buffer.concat = function (...args) {
+      if (failedAtEof && args[1] === sentinel.length) finalConcatsAfterFailure++;
+      return Reflect.apply(originalConcat, this, args);
+    };
+    try { input.end(sentinel); await result; }
+    finally { Buffer.concat = originalConcat; }
+  }
+  assert.equal(Buffer.from, originalFrom);
+  assert.equal(Buffer.concat, originalConcat);
+  assert.equal(input.pause, originalPause);
+  const outcome = await result;
+  assert.ok(outcome.error, "the injected failure must reject, not return partial bytes");
+  const error = outcome.error;
+  assert.equal(error.code, "STDIN_READ_FAILED");
+  assert.equal(error.message, "stdin could not be read");
+  assert.equal(Object.hasOwn(error, "cause"), false);
+  assert.equal(Object.hasOwn(error, "limitBytes"), false);
+  assert.equal(error.systemCode, scenario.startsWith("settled-") ? "EIO" : undefined);
+  assert.doesNotMatch(String(error) + JSON.stringify(error), /SYNTHETIC_PRIVATE|ALLOCATION_PAYLOAD/);
+  assert.deepEqual(counts(), before);
+  assert.equal(input.listeners("error")[0], ownerError);
+  assert.equal(input.destroyed, false, "the helper never destroys its borrowed stream");
+  if (scenario === "settled-eof") {
+    assert.equal(eofReports, 1);
+    assert.equal(finalConcatsAfterFailure, 0, "a stale EOF callback must not concatenate after rejection");
+  } else assert.equal(hits, 1, "the fault must target the actual allocation or accessor");
+  if (scenario === "settled-reject") assert.equal(pauses, 1, "settlement releases the source only once");
+  if (scenario === "copy" || scenario === "settled-reject") {
+    assert.equal(input.readableFlowing, false);
+    const again = read({ maxBytes: null }, input);
+    input.end(Buffer.from("reused"));
+    assert.equal((await again).toString(), "reused");
+  } else assert.equal((await read({ maxBytes: null }, input)).length, 0);
+  assert.deepEqual(counts(), before);
+  process.stdout.write("OK " + scenario + "\n");
+} finally {
+  Buffer.from = originalFrom;
+  Buffer.concat = originalConcat;
+  input.pause = originalPause;
+  input.destroy();
+}
+`;
+
+for (const [scenario, name] of [
+  ["copy", "copy failure rejects with a fixed private-safe error and releases the borrowed reader"],
+  ["concat", "final allocation failure releases listeners without leaking partial bytes"],
+  ["settled-reject", "a reentrant error-code accessor cannot replace the first settled error"],
+  ["settled-eof", "an EOF observer's validation error wins over the pending EOF callback"],
+]) {
+  test(name!, () => {
+    const env: NodeJS.ProcessEnv = {};
+    for (const key of ["PATH", "SYSTEMROOT", "NODE_V8_COVERAGE"]) {
+      if (process.env[key] !== undefined) env[key] = process.env[key];
+    }
+    const program = isolatedFailureProgram
+      .replace("HELPER_URL", JSON.stringify(new URL("./stdin-reader.mts", import.meta.url).href))
+      .replace("SCENARIO", JSON.stringify(scenario));
+    const result = spawnSync(process.execPath, ["--input-type=module", "-e", program], {
+      env, encoding: "utf8", timeout: 15_000, killSignal: "SIGKILL", maxBuffer: 64 * 1024, windowsHide: true,
+    });
+    assert.equal(result.error, undefined, result.error?.message);
+    assert.equal(result.signal, null, result.stderr);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout, `OK ${scenario}\n`);
+    // Older supported Node releases warn about type stripping on stderr.
+    const diagnostics = result.stderr.replace(/\(node:\d+\) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time\r?\n/g, "")
+      .replace(/\(Use .+?--trace-warnings.+?\)\r?\n/g, "");
+    assert.equal(diagnostics, "");
+    assert.doesNotMatch(result.stdout + result.stderr, /SYNTHETIC_PRIVATE|ALLOCATION_PAYLOAD/);
+  });
+}

@@ -90,9 +90,14 @@ export async function readStdinBytes(options: StdinReadOptions, input: Readable 
     };
     const onError = (error: unknown): void => rejectRead(failure("STDIN_READ_FAILED", undefined, error));
     const onClose = (): void => rejectRead(failure("STDIN_PREMATURE_CLOSE"));
-    input.on("end", onEnd);
-    input.on("error", onError);
-    input.on("close", onClose);
-    input.on("data", onData);
+    try {
+      input.on("end", onEnd);
+      input.on("error", onError);
+      input.on("close", onClose);
+      input.on("data", onData);
+      if (!settled) input.resume();
+    } catch (error) {
+      rejectRead(failure("STDIN_READ_FAILED", undefined, error));
+    }
   });
 }
