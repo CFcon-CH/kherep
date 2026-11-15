@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { exact, fail, GITHUB_OPERATIONS, ISSUE_OPERATIONS, object, positive, payload, refName, SHA } from './contract.mts';
 import type { Operation, Request, Runtime } from './contract.mts';
 import { protectedDirectory, readProtectedSync } from './key-access.mts';
@@ -37,18 +37,26 @@ export class ReceiptStore {
     return ()=>{fs.unlinkSync(this.lock);};
   }
   /**
-   * The one credential grant of a push, created exclusively while this broker holds the lock.
-   * The helper's first valid `get` consumes it; the returned remover revokes an unused one.
+   * The one credential grant of a push, created exclusively while this broker holds the lock. The
+   * file holds only the SHA-256 of a fresh nonce, which the caller passes to its git child's
+   * environment alone. The helper's first `get` that presents the nonce redeems it; `revoke`
+   * removes an unused one.
    */
-  permit():()=>void {
+  permit():{nonce:string; revoke:()=>void} {
     const revoke=()=>{try {fs.rmSync(this.grant,{force:true});} catch { /* A remaining grant still expires with the 120 s window. */ }};
     if (!fs.lstatSync(this.lock,{throwIfNoEntry:false})?.isFile()) fail('operation-busy');
-    try { exclusive(this.grant,this.root); } catch { revoke();return fail('operation-busy'); }
-    return revoke;
+    const nonce=randomBytes(32).toString('hex');
+    try { exclusive(this.grant,this.root,sha256(nonce)); } catch { revoke();return fail('operation-busy'); }
+    return {nonce,revoke};
   }
-  /** True only for the caller that removed the grant. */
-  consume():boolean {
-    try { fs.unlinkSync(this.grant);return true; } catch { return false; }
+  /** True only for the caller that presented the grant's nonce and removed the grant; a wrong nonce leaves it. */
+  redeem(nonce:unknown):boolean {
+    try {
+      if (typeof nonce!=='string' || !HEX64.test(nonce)) return false;
+      const stored=readProtectedSync(this.directory,path.basename(this.grant),64,this.root).toString('latin1');
+      if (!HEX64.test(stored) || !timingSafeEqual(Buffer.from(sha256(nonce),'hex'),Buffer.from(stored,'hex'))) return false;
+      fs.unlinkSync(this.grant);return true;
+    } catch { return false; }
   }
   read():Receipt | undefined {
     try {
@@ -81,10 +89,12 @@ export class ReceiptStore {
     } catch { if (fs.existsSync(temp)) fs.unlinkSync(temp);fail('receipt-invalid'); }
   }
 }
-// Created with O_EXCL and mode 0600, on Windows ACL-checked, and synced; throws when it exists or is unsafe.
-function exclusive(file:string, root:string):void {
+const HEX64=/^[a-f0-9]{64}$/;
+const sha256=(value:string)=>createHash('sha256').update(value).digest('hex');
+// Created with O_EXCL and mode 0600, on Windows ACL-checked, filled with `content` and synced; throws when it exists or is unsafe.
+function exclusive(file:string, root:string, content=''):void {
   const fd=fs.openSync(file,'wx',0o600);
-  try {if(process.platform==='win32') checkWindowsAccess(file,root);fs.fsyncSync(fd);}finally{fs.closeSync(fd);}
+  try {if(process.platform==='win32') checkWindowsAccess(file,root);if (content) fs.writeFileSync(fd,content);fs.fsyncSync(fd);}finally{fs.closeSync(fd);}
 }
 // A settled receipt names its target: issue and PR number with target ID, branch with sha, or run with attempt.
 function known(r:Receipt):boolean {

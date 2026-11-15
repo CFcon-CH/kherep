@@ -10,9 +10,10 @@ import path from 'node:path';
 import http from 'node:http';
 import { execFileSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
+import { pathToFileURL } from 'node:url';
 import type { AddressInfo } from 'node:net';
 import { TOKEN, email, stubWindowsAcl } from './flow.fixture.mts';
-import { answering, g, isolateProcess, pushSetup, setEnv } from './git-push.fixture.mts';
+import { answering, g, isolateProcess, pushSetup, refused, setEnv } from './git-push.fixture.mts';
 import type { T } from './git-push.fixture.mts';
 stubWindowsAcl();
 isolateProcess();
@@ -28,12 +29,19 @@ async function sink(t:T, status:number) {
   t.after(()=>{server.closeAllConnections();server.close();});
   return {origin:`http://127.0.0.1:${(server.address() as AddressInfo).port}`,state};
 }
-/** A helper that answers like `answering` and first writes what it sees to `log`: config with scopes, env names, cwd and grants. */
-const probe=(log:string, receipts:string)=>`import fs from 'node:fs';import {execFileSync} from 'node:child_process';
+/**
+ * A helper that answers like `answering` and first writes what it sees to `log`: config with scopes, env names,
+ * cwd, grant contents, its push nonce and argv, and every file under receipts/ or its cwd that holds the nonce.
+ */
+const probe=(log:string, receipts:string)=>`import fs from 'node:fs';import path from 'node:path';import {execFileSync} from 'node:child_process';
 for await (const c of process.stdin);
 if(process.argv[3]==='get'){
   let config;try{config=execFileSync('git',['config','--list','--show-scope'],{encoding:'utf8'});}catch(e){config='error '+e.message;}
-  fs.writeFileSync(${JSON.stringify(log)},JSON.stringify({config,env:Object.keys(process.env),cwd:process.cwd(),grants:fs.readdirSync(${JSON.stringify(receipts)}).filter(n=>n.endsWith('.grant')).length}));
+  const receipts=${JSON.stringify(receipts)}, nonce=process.env.KHEREP_PUSH_GRANT??'';
+  const walk=d=>fs.readdirSync(d,{withFileTypes:true}).flatMap(e=>e.isDirectory()?walk(path.join(d,e.name)):[path.join(d,e.name)]);
+  const leaks=nonce?[...walk(receipts),...walk(process.cwd())].filter(f=>fs.readFileSync(f,'latin1').includes(nonce)):[];
+  const grants=fs.readdirSync(receipts).filter(n=>n.endsWith('.grant')).map(n=>fs.readFileSync(path.join(receipts,n),'utf8'));
+  fs.writeFileSync(${JSON.stringify(log)},JSON.stringify({config,env:Object.keys(process.env),cwd:process.cwd(),grants,nonce,argv:process.argv,leaks}));
   process.stdout.write('username=x-access-token\\npassword=${TOKEN}\\n');
 }`;
 async function probed(t:T) {
@@ -41,7 +49,7 @@ async function probed(t:T) {
   const log=path.join(base,'probe.json'), p=await pushSetup(t,'claude',{helper:''});
   // The probe needs the receipts path, known only after setup.
   fs.writeFileSync(path.join(p.r.base,'helper.mjs'),probe(log,path.join(p.root,'receipts')));
-  return {...p,seen:()=>JSON.parse(fs.readFileSync(log,'utf8')) as {config:string; env:string[]; cwd:string; grants:number}};
+  return {...p,seen:()=>JSON.parse(fs.readFileSync(log,'utf8')) as {config:string; env:string[]; cwd:string; grants:string[]; nonce:string; argv:string[]; leaks:string[]}};
 }
 test('a repository pre-push hook never runs under a broker push, and one grant exists while the push runs',async t=>{
   const p=await probed(t), hooks=path.join(p.r.base,'hooks'), sentinel=path.join(p.r.base,'hook-ran');
@@ -51,8 +59,17 @@ test('a repository pre-push hook never runs under a broker push, and one grant e
   const result=await p.push();
   assert.equal(fs.existsSync(sentinel),false,'the pre-push hook ran and saw the helper command');
   assert.equal(result.ok,true,JSON.stringify(result));assert.equal(p.r.remote('feat/x'),p.sha);
-  assert.equal(p.seen().grants,1,'exactly one grant while git asks for the credential');
+  assert.equal(p.seen().grants.length,1,'exactly one grant while git asks for the credential');
   assert.deepEqual(fs.readdirSync(path.join(p.root,'receipts')).filter(n=>n.endsWith('.grant')),[],'the grant is revoked after the push');
+});
+test('the push nonce reaches the helper only through the git child environment, and the grant holds only its hash',async t=>{
+  const p=await probed(t);
+  assert.equal((await p.push()).ok,true);
+  const {nonce,argv,grants,leaks}=p.seen();
+  assert.match(nonce,/^[a-f0-9]{64}$/);
+  assert.equal(argv.some(a=>a.includes(nonce)),false,'the nonce is in argv');
+  assert.deepEqual(grants,[createHash('sha256').update(nonce).digest('hex')]);
+  assert.deepEqual(leaks,[],'a file under receipts/ or the clean repository holds the nonce');
 });
 test('repo, user and environment TLS and proxy settings never reach the push',async t=>{
   const p=await probed(t), proxy=await sink(t,502), home=path.join(p.r.base,'home');
@@ -79,12 +96,6 @@ test('url.insteadOf in repo config cannot redirect the push or the credential',a
   assert.equal(trap.state.hits,0,`the push was redirected; credentials sent: ${trap.state.authorization.length}`);
   assert.equal(result.ok,true,JSON.stringify(result));assert.equal(p.r.remote('feat/x'),p.sha);
 });
-/** Refused before the receipt's push: target-refused, the remote never asked and the branch absent. */
-async function refused(p:Awaited<ReturnType<typeof pushSetup>>, sha:string) {
-  const result=await p.push({operationId:randomUUID(),sha});
-  assert.equal(result.error,'target-refused',JSON.stringify(result));
-  assert.equal(p.server.refused+p.server.authorized.length,0);assert.equal(p.r.remote('feat/x'),undefined);
-}
 test('a replace ref cannot fake bot authorship',async t=>{
   const p=await pushSetup(t,'claude'), foreign=p.r.commit('src/f.txt','operator@example.com');
   const twin=execFileSync('git',['-c','user.name=synthetic','-c',`user.email=${email(0)}`,'commit-tree',`${foreign}^{tree}`,'-p',p.sha,'-m','synthetic'],{cwd:p.r.work,encoding:'utf8',windowsHide:true}).trim();
@@ -130,20 +141,48 @@ function watchCleanRepos(t:T, mode?:number) {
   t.after(()=>{fs.mkdtempSync=original;});
   return created;
 }
-test('every clean repository is private and removed on success, refusal and push failure',async t=>{
-  const created=watchCleanRepos(t);
-  const ok=await pushSetup(t,'claude');assert.equal((await ok.push()).ok,true);
+test('every clean repository is private, under the broker root, and removed on success, refusal and push failure',async t=>{
+  const created=watchCleanRepos(t), elsewhere=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'github-broker-temp-')));
+  t.after(()=>fs.rmSync(elsewhere,{recursive:true,force:true}));
+  const ok=await pushSetup(t,'claude'), failing=await pushSetup(t,'claude',{helper:answering('wrong-synthetic')});
+  // The caller's temporary directory never decides where a clean repository lives.
+  setEnv(t,{TEMP:elsewhere,TMP:elsewhere,TMPDIR:elsewhere});
+  assert.equal((await ok.push()).ok,true);
   assert.equal(created.length,2,'one clean repository for the preflight and one for the push');
   const foreign=ok.r.commit('src/f.txt','operator@example.com');
   assert.equal((await ok.push({operationId:randomUUID(),branch:'feat/y',sha:foreign})).error,'target-refused');
   assert.equal(created.length,3);
-  const failing=await pushSetup(t,'claude',{helper:answering('wrong-synthetic')});assert.equal((await failing.push()).error,'outcome-unknown');
+  assert.equal((await failing.push()).error,'outcome-unknown');
   assert.equal(created.length,5);
-  for (const {dir,mode} of created) {
+  for (const [i,{dir,mode}] of created.entries()) {
     assert.equal(fs.existsSync(dir),false,`left behind: ${dir}`);
-    assert.ok(path.isAbsolute(dir) && dir.startsWith(fs.realpathSync(os.tmpdir())));
+    assert.equal(path.dirname(dir),i<3?ok.root:failing.root,dir);
     if (process.platform!=='win32') assert.equal(mode,0o700);
   }
+});
+test('a push removes clean repositories older than ten minutes from the broker root and keeps younger ones',async t=>{
+  const p=await pushSetup(t,'claude'), old=path.join(p.root,'kherep-push-old'), young=path.join(p.root,'kherep-push-young');
+  for (const dir of [old,young]) fs.mkdirSync(path.join(dir,'objects'),{recursive:true,mode:0o700});
+  const past=new Date(Date.now()-11*60000);fs.utimesSync(old,past,past);
+  assert.equal((await p.push()).ok,true);
+  assert.equal(fs.existsSync(old),false,'the stale clean repository is left behind');assert.equal(fs.existsSync(young),true);
+});
+const moduleUrl=(name:string)=>pathToFileURL(path.join(import.meta.dirname,name)).href;
+test('the real credential helper behind git answers the broker push once, with the nonce from its environment',async t=>{
+  const p=await pushSetup(t,'claude',{helper:''});
+  // Test-only translation: the loopback remote stands in for github.com, and this helper's synthetic key for the policy's.
+  fs.writeFileSync(path.join(p.r.base,'helper.mjs'),`import fs from 'node:fs';
+import {credential} from ${JSON.stringify(moduleUrl('credential.mts'))};
+import {fakeGithub,pair,stubWindowsAcl} from ${JSON.stringify(moduleUrl('flow.fixture.mts'))};
+stubWindowsAcl();
+fs.writeFileSync(${JSON.stringify(path.join(p.root,'keys','synthetic0.pem'))},pair.privateKey.export({type:'pkcs8',format:'pem'}));
+let input='';for await (const c of process.stdin) input+=c;
+input=input.replace(/^protocol=.*$/m,'protocol=https').replace(/^host=.*$/m,'host=github.com');
+try{process.stdout.write(await credential('claude',process.argv.slice(2),input,{root:${JSON.stringify(p.root)},fetch:fakeGithub('claude').fetch}));}catch{process.exitCode=1;}`);
+  const result=await p.push();
+  assert.equal(result.ok,true,JSON.stringify(result));assert.equal(p.r.remote('feat/x'),p.sha);
+  assert.ok(p.server.authorized.length>0);
+  assert.deepEqual(fs.readdirSync(path.join(p.root,'receipts')).filter(n=>n.endsWith('.grant')),[]);
 });
 test('a clean repository readable by group or others is refused and removed',{skip:process.platform==='win32'&&'POSIX modes only'},async t=>{
   const created=watchCleanRepos(t,0o755), p=await pushSetup(t,'claude');

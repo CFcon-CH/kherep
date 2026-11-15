@@ -8,9 +8,9 @@ import { issueHandler } from './issues.mts';
 import { pushHandler } from './git-push.mts';
 import { pullHandler } from './pulls.mts';
 import { runHandler } from './runs.mts';
-export type Dependencies = {root?:string; fetch?:typeof fetch; now?:()=>number; cwd?:string; push?:{url?:string; helperScript?:string}};
-/** Everything one operation needs after policy, admission and authentication; `permit` creates the operation's one credential grant (see ReceiptStore.permit) and returns its remover. */
-export type Context = {http:Http; token:string; target:Record<string,unknown>; request:Request; identity:Identity; repo:{slug:string; id:number}; runtime:Runtime; now:number; deps:Dependencies; permit:()=>()=>void};
+export type Dependencies = {root?:string; fetch?:typeof fetch; now?:()=>number; cwd?:string; push?:{url?:string; helperScript?:string}; env?:NodeJS.ProcessEnv};
+/** Everything one operation needs after policy, admission and authentication; `permit` creates the operation's one credential grant (see ReceiptStore.permit) and returns its nonce and remover. */
+export type Context = {http:Http; token:string; target:Record<string,unknown>; request:Request; identity:Identity; repo:{slug:string; id:number}; runtime:Runtime; now:number; deps:Dependencies; permit:()=>{nonce:string; revoke:()=>void}};
 export type Kind = 'issue'|'push'|'pull'|'run';
 export type Handler = {
   kind:Kind;

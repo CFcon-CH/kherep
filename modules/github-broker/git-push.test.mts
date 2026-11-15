@@ -5,7 +5,8 @@ import path from 'node:path';
 import { execFile, execFileSync } from 'node:child_process';
 import { promisify } from 'node:util';
 import { randomUUID } from 'node:crypto';
-import { checkCommits as check, cleanEnv, cleanRepo, gitEnv, helperCommand, pushArgs, trustedGit } from './git-push.mts';
+import { cleanEnv, cleanRepo, gitEnv, helperCommand, pushArgs, trustedGit } from './git-push.mts';
+import { checkRange } from './commit-range.mts';
 import { gitServer } from './git-http.fixture.mts';
 import { BOTS, TOKEN, brokerRoot, email, fakeGithub, stubWindowsAcl } from './flow.fixture.mts';
 import { g, isolateProcess, pushSetup, repos, setEnv } from './git-push.fixture.mts';
@@ -62,8 +63,8 @@ test('trusted git comes from fixed system paths only, never from PATH',()=>{
   } finally {if (saved===undefined) delete process.env.PATH; else process.env.PATH=saved;}
 });
 test('author preflight admits own-bot commits and refuses foreign authors, committers and workflow paths',t=>{
-  const r=repos(t),own=[email(0).toLowerCase()],repo=cleanRepo(r.work);t.after(repo.dispose);
-  const checkCommits=(sha:string,base:string,emails:string[])=>check(repo.git,sha,base,emails);
+  const r=repos(t),own=[email(0).toLowerCase()],repo=cleanRepo(r.work,brokerRoot(t,'claude'));t.after(repo.dispose);
+  const checkCommits=(sha:string,base:string,emails:string[])=>checkRange(repo.git,repo.read,{sha,base,emails});
   const good=r.commit('src/a.txt');assert.doesNotThrow(()=>checkCommits(good,r.main,own));
   const workflow=r.commit('.github/workflows/ci.yml');assert.throws(()=>checkCommits(workflow,r.main,own),{message:'target-refused'});
   g(r.work,'reset','-q','--hard',good);

@@ -18,8 +18,8 @@ flowchart LR
   route -->|verify| readback
   target --> intent[Durable write-ahead receipt]
   intent --> write[One fixed issue, pull request or run operation]
-  intent -->|branch.push| push[Fixed git push from a clean temporary repository, constructed environment]
-  push --> helper[Runtime credential helper: pending locked receipt under 120 s, one grant]
+  intent -->|branch.push| push[Fixed git push from a clean repository under the broker root, constructed environment, nonce in the git child only]
+  push --> helper[Runtime credential helper: pending locked receipt under 120 s, one grant redeemed by the nonce]
   helper --> ctoken[Contents-write token to git's pipe only]
   ctoken --> ids
   write --> ids[Persist known IDs]
@@ -34,17 +34,24 @@ operation's handler for preflight, mutation, known IDs, readback and public IDs.
 `git-push.mts` also owns the local preflight (local commit, fast-forward, default
 and `v*` branches, bot authorship of every new commit, no `.github/workflows`
 path) and the fixed push command, run by system Git from a fixed path with a fixed
-child `PATH` (`git-unavailable` when absent). Preflight and push each build a
-broker-owned clean bare repository (`mkdtemp`, removed in `finally`) that borrows
+child `PATH` (`git-unavailable` when absent). `commit-range.mts` makes the
+preflight's decisions from hash-verified bytes: git only lists and fetches
+objects, Node recomputes the SHA-1 of every commit and of the root and `.github`
+trees it decides on, and derives ancestry, authorship, the fast-forward and the
+workflow check itself, because git does not verify object hashes on read.
+Preflight and push each build a broker-owned clean bare repository (`mkdtemp`
+under the checked private root, removed in `finally`; leftovers older than ten
+minutes are swept) that borrows
 only the checkout's objects through alternates, with commit-graph and bitmaps off,
 and run git there with a constructed environment, so no configuration, hook, ref,
 shallow file, proxy or TLS variable of the session or user applies. The bases of
 the fast-forward and authorship checks come from GitHub's readback only. `credential.mts` is the git credential helper
 behind `github-<runtime>-credential.mts`: it answers only `get` for an
 allowlisted `https://github.com/<slug>.git` while the broker holds the lock of
-that operation's pending `branch.push` receipt admitted within 120 s, consumes
+that operation's pending `branch.push` receipt admitted within 120 s, redeems
 the push's one grant file (created by `receipt.mts` under the lock for the push's
-duration), and writes the `contents: write` token only to git's pipe. The broker process never sees that
+duration, holding only the SHA-256 of a nonce that the broker passes in its git
+child's environment alone) with the nonce it finds there, and writes the `contents: write` token only to git's pipe. The broker process never sees that
 token; the helper never sees the broker's.
 `contract.mts` owns strict input and fixed errors; `config.mts` selects canonical
 policy (schema 1 for issue operations, schema 2 for every operation and the
@@ -64,15 +71,24 @@ marker and trim rules are copies of the control-plane ones, pinned by
 repository; the push child still carries `KHEREP_BROKER_PUSH=1`, on which the
 `pre-push` hook would stand down; the variable only suppresses a record.
 
-Residuals of the push: a same-user process that knows the operationId can
-consume the single grant first, which leaves git without a credential and the
-push `outcome-unknown`, never a second token; after a crash mid-push the grant
-and the retained lock remain usable until the 120 s window ends. Operator
+Residuals of the push. The nonce closes class A only: A, a process that can only
+start the helper and knows the operationId, gets no token and cannot burn the
+grant. B, a same-account process that can write the receipt directory, can write
+its own grant, receipt and lock and still obtain a token. C, a process that reads
+the broker's git child's variables from process memory, gets the nonce and can
+still obtain a token; so can anything that can read the key. The permission rule
+that allows a runtime only the broker entry point follows in PR-B. Until then
+nothing stops a session from doing B or C. After a crash mid-push the grant and
+the retained lock remain usable until the 120 s window ends. Forged object bytes
+at push time cost the operation (`outcome-unknown`). The preflight is linear in
+history (refused above 256 MB of commit data) and relies on SHA-1 collision
+resistance in Node, without collision detection. Operator
 `pre-push` hooks, including a system-level `core.hooksPath`, do not run on a
 broker push. The push supports no proxy and no system-level TLS settings (on Git
 for Windows the system `http.sslBackend` no longer applies). Commit-graph files
 are off because git trusts their parent data from an alternate object store.
-The clean repository lives under the broker's temporary directory.
+The clean repository lives under the broker's private root; on Windows it is safe
+by inheriting the checked root's ACL, not by its own check.
 
 Configuration is trusted operator input, not authority supplied by the caller.
 Private repository content is never an admitted target. The runtime binding
