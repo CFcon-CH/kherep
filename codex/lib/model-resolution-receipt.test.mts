@@ -22,7 +22,7 @@ const outputs = [{ target: "agents/observer-alias.toml", kind: "agent-toml" as c
 const hash = (value: string): string => createHash("sha256").update(value).digest("hex");
 const installedSource = (e: ReceiptEvidence) => ({ sourceRevision: e.context.sourceRevision, policyText: e.policyText,
   inventory: e.inventory, ...(e.agentDefaults === undefined ? {} : { agentDefaults: e.agentDefaults }) });
-function coldRead(input: Parameters<typeof verifyInstalledModelState>[0]): void {
+function coldRead(input: Parameters<typeof verifyInstalledModelState>[0], expected: { selectionId: string; overlays: number }): void {
   const script = `import fs from 'node:fs';
     import {verifyInstalledModelState} from ${JSON.stringify(new URL("./model-resolution-receipt.mts", import.meta.url).href)};
     import {buildAgentInventory} from ${JSON.stringify(new URL("./model-agent-inventory.mts", import.meta.url).href)};
@@ -32,10 +32,13 @@ function coldRead(input: Parameters<typeof verifyInstalledModelState>[0]): void 
     if(holder.agentDefaults)holder.agentDefaults=new Map(holder.agentDefaults);
     const state=verifyInstalledModelState(input);
     process.stdout.write(JSON.stringify({selectionId:state.selectionId,overlays:state.recognizedOverlays.length}));`;
-  const result = spawnSync(process.execPath, ["--input-type=module", "-e", script], { input: JSON.stringify(input, (_key, value) => value instanceof Map ? [...value] : value), encoding: "utf8",
-    timeout: 10_000, maxBuffer: 2_097_152, env: Object.fromEntries(["PATH", "TMPDIR", "LANG"].filter(key => process.env[key] !== undefined).map(key => [key, process.env[key]!])) });
+  // Deliberate child arguments, never parent --test/coverage/loader execArgv.
+  const execArgv = ["--input-type=module", "-e", script];
+  const envKeys = ["PATH", "TMPDIR", "LANG", ...(process.platform === "win32" ? ["SystemRoot", "WINDIR", "TMP", "TEMP"] : [])];
+  const result = spawnSync(process.execPath, execArgv, { input: JSON.stringify(input, (_key, value) => value instanceof Map ? [...value] : value), encoding: "utf8",
+    timeout: 10_000, maxBuffer: 2_097_152, env: Object.fromEntries(envKeys.filter(key => process.env[key] !== undefined).map(key => [key, process.env[key]!])) });
   assert.equal(result.status, 0, result.stderr);
-  assert.match(JSON.parse(result.stdout).selectionId, /^[a-f0-9]{64}$/);
+  assert.deepEqual(JSON.parse(result.stdout), expected);
 }
 function evidence(): ReceiptEvidence {
   return { context, policyText, inventory, catalog: buildCatalogSupport({ complete: true, models: fixtureModels }),
@@ -85,11 +88,21 @@ test("F1 latest-only serialized receipt survives checkout B upgrade and repeated
     actual = renderPlan(plan.receipt.resolution, plan.selectionId);
     text = JSON.stringify(plan.receipt); pin = hash(text); // overwrite the entire persisted store
     state = restart(bSource); // no predecessor object, receipt, bytes or external historical catalog supplied
-    coldRead({ kind: "v2", receiptText: text, expectedReceiptSha256: pin, evidence: bSource, actualOutputs: actual });
+    coldRead({ kind: "v2", receiptText: text, expectedReceiptSha256: pin, evidence: bSource, actualOutputs: actual }, { selectionId: plan.selectionId, overlays: 0 });
     assert.equal(state.resolution.agents[0]!.effective.effort, intent === "refresh" || userText ? "medium" : "low");
     assert.equal(plan.receipt.persistenceVersion, 1);
   }
   assert.equal(state.recognizedOverlays.length, 0);
+  const latestRead = { kind: "v2" as const, receiptText: text, expectedReceiptSha256: pin, evidence: bSource, actualOutputs: actual };
+  for (const wrong of [{ selectionId: "0".repeat(64), overlays: 0 }, { selectionId: state.selectionId, overlays: 1 }]) {
+    assert.throws(() => coldRead(latestRead, wrong), error => {
+      assert.ok(error instanceof Error);
+      const comparison = error as Error & { operator?: string; actual?: unknown };
+      assert.equal(comparison.operator, "deepStrictEqual");
+      assert.deepEqual(comparison.actual, { selectionId: state.selectionId, overlays: 0 });
+      return true;
+    });
+  }
 });
 
 test("F2 latest cumulative checkpoint restarts beyond eight updates without old records or bytes", () => {
@@ -114,7 +127,7 @@ test("F2 latest cumulative checkpoint restarts beyond eight updates without old 
   }
   const latest = state.recognizedOverlays[0]!, latestText = JSON.stringify(latest);
   coldRead({ kind: "v2", receiptText: f.text, expectedReceiptSha256: hash(f.text), evidence: installedSource(f.e), actualOutputs: actual,
-    overlay: { authority: latest.identity.authority, overlayText: latestText, expectedOverlaySha256: hash(latestText) } });
+    overlay: { authority: latest.identity.authority, overlayText: latestText, expectedOverlaySha256: hash(latestText) } }, { selectionId: f.base.selectionId, overlays: 1 });
   const newInventory = buildAgentInventory(inventory.agents.map(({ sourceAgentId: _id, bindingId: _binding, ...row }) =>
     ({ ...row, sourceSha256: hash("new full selection source") })));
   const plan = planModelSelection({ intent: "install", sourceRevision: "ab".repeat(20), policyText, inventory: newInventory,
@@ -123,7 +136,7 @@ test("F2 latest cumulative checkpoint restarts beyond eight updates without old 
   const read = { kind: "v2" as const, receiptText: text, expectedReceiptSha256: hash(text),
     evidence: { sourceRevision: "ab".repeat(20), policyText, inventory: newInventory }, actualOutputs: renderPlan(plan.receipt.resolution, plan.selectionId) };
   assert.equal(verifyInstalledModelState(read).recognizedOverlays.length, 0);
-  coldRead(read);
+  coldRead(read, { selectionId: plan.selectionId, overlays: 0 });
 });
 
 test("F1 persisted read validates fixed pins, strict metadata and embedded support without old live evidence", () => {
@@ -184,7 +197,7 @@ test("F1 authenticated historical defaults may be absent from newer support whil
   e.agentDefaults = new Map([[inventory.agents[0]!.bindingId, { model: oldModel.model }]]);
   const original = rendered(e), originalText = JSON.stringify(createModelResolutionReceipt(e, original));
   const state = verifyInstalledModelState({ kind: "v2", receiptText: originalText, expectedReceiptSha256: hash(originalText), evidence: installedSource(e), actualOutputs: original });
-  coldRead({ kind: "v2", receiptText: originalText, expectedReceiptSha256: hash(originalText), evidence: installedSource(e), actualOutputs: original });
+  coldRead({ kind: "v2", receiptText: originalText, expectedReceiptSha256: hash(originalText), evidence: installedSource(e), actualOutputs: original }, { selectionId: state.selectionId, overlays: 0 });
   const plan = planModelSelection({ intent: "apply", sourceRevision: "2".repeat(40), policyText, inventory, existing: state,
     currentOutputs: original, userText: '{"agents":{"codex-obs":{"model":"gpt-6-luna"}}}', catalog: eCatalog(), supportSource: "fresh-catalog",
     capturedAt: null, runtimeVersion: null, collectorVersion: null, renderOutputs: renderPlan });
@@ -401,7 +414,7 @@ test("V1 migration requires independently pinned old evidence and never renders 
       overlay: { authority: latestAuthority, overlayText, expectedOverlaySha256: hash(overlayText) } };
     currentState = verifyInstalledModelState(latestOnly);
     assert.equal(currentState.recognizedOverlays.length, 1);
-    if (index === 9) coldRead(latestOnly);
+    if (index === 9) coldRead(latestOnly, { selectionId: legacy.selectionId, overlays: 1 });
   }
   const newInventory = buildAgentInventory(inventory.agents.map(({ sourceAgentId: _id, bindingId: _binding, ...row }) =>
     ({ ...row, sourceSha256: hash("full post-V1 checkout") })));
@@ -416,7 +429,7 @@ test("V1 migration requires independently pinned old evidence and never renders 
     currentState = verifyInstalledModelState(latestOnly); // no V1 record/catalog or predecessor passed
     assert.equal(currentState.recognizedOverlays.length, 0);
     assert.equal(currentState.resolution.agents[0]!.effective.effort, intent === "refresh" ? "medium" : "low");
-    coldRead(latestOnly);
+    coldRead(latestOnly, { selectionId: plan.selectionId, overlays: 0 });
   }
   const planned = planModelSelection({ intent: "install", policyText, inventory, userText: undefined, sourceRevision: context.sourceRevision,
     existing: legacy, currentOutputs: captured, catalog: eCatalog(), supportSource: "fresh-catalog", capturedAt: null,
@@ -460,7 +473,62 @@ function replayPlan(plan: ReturnType<typeof planModelSelection>, predecessor: Re
     (copy: typeof receipt) => { if (copy.migration.kind === "predecessor") copy.migration.oldCatalogSha256 = "0".repeat(64); },
     (copy: typeof receipt) => { if (copy.migration.kind === "predecessor") copy.migration.retainedValues.agents[0]!.effective.effort = "high"; },
     (copy: typeof receipt) => { if (copy.migration.kind === "predecessor") copy.migration.overlays = [{ overlayId: h, evidenceSha256: h }]; },
-  ]) { const copy = structuredClone(receipt); mutate(copy); assert.throws(() => verify(copy), /model-receipt:/); }
+  ]) { const copy = structuredClone(receipt); mutate(copy); assert.throws(() => verify(copy), { message: "model-receipt: receipt-byte-conflict" }); }
+  const structuralCases = [
+    { expected: "unknown-identity-field", mutate(copy: typeof receipt) { delete (copy as Partial<typeof receipt>).migration; } },
+    { expected: "invalid-migration-record", mutate(copy: typeof receipt) { copy.migration = { kind: "fresh", status: "not-required" }; } },
+    { expected: "incomplete-output-generation", mutate(copy: typeof receipt) { if (copy.migration.kind === "predecessor") copy.migration.outputs = []; } },
+    { expected: "invalid-migration-record", v2Catalog: true, mutate(copy: typeof receipt) {
+      if (copy.migration.kind === "predecessor") { assert.notEqual(copy.migration.catalogSupportDigest, "0".repeat(64)); copy.migration.oldCatalogSha256 = "0".repeat(64); }
+    } },
+    { expected: "invalid-migration-overlay", mutate(copy: typeof receipt) {
+      if (copy.migration.kind === "predecessor") {
+        assert.notEqual(copy.migration.evidenceSha256, "0".repeat(64));
+        copy.migration.overlays = [{ overlayId: h, evidenceSha256: "0".repeat(64) }];
+      }
+    } },
+  ];
+  for (const { mutate, expected, v2Catalog } of structuralCases) {
+    const copy = structuredClone(receipt);
+    if (v2Catalog && copy.migration.kind === "predecessor") {
+      // V1's recorded catalog hash may legitimately differ from normalized
+      // support. Reauthorize a coherent V2 attestation before breaking its link.
+      copy.migration.sourceVersion = 2;
+      copy.migration.oldCatalogSha256 = copy.migration.catalogSupportDigest;
+      assert.equal(verify(copy, hash(JSON.stringify(copy))).selectionId, receipt.selectionId);
+    }
+    mutate(copy);
+    assert.throws(() => verify(copy), { message: "model-receipt: receipt-byte-conflict" });
+    assert.throws(() => verify(copy, hash(JSON.stringify(copy))), { message: `model-receipt: ${expected}` });
+  }
+  type Historical = Extract<typeof receipt.migration, { kind: "predecessor" }>;
+  const reauthorize: ((migration: Historical) => void)[] = [
+    migration => { migration.sourceRevision = "f".repeat(40); },
+    migration => {
+      migration.originEvidenceSha256 = "0".repeat(64);
+      if (!migration.overlays.length) migration.evidenceSha256 = migration.originEvidenceSha256;
+    },
+    migration => {
+      migration.sourceVersion = migration.sourceVersion === 1 ? 2 : 1;
+      migration.oldCatalogSha256 = migration.sourceVersion === 2 ? migration.catalogSupportDigest
+        : resolveModels(parseModelPolicy(policyText), eCatalog().catalog).catalogSha256;
+    },
+    migration => { migration.retainedValues.agents[0]!.effective.effort = "high"; },
+  ];
+  for (const mutate of reauthorize) {
+    const copy = structuredClone(receipt);
+    if (copy.migration.kind !== "predecessor") assert.fail("fixture must have a predecessor");
+    mutate(copy.migration);
+    assert.throws(() => verify(copy), { message: "model-receipt: receipt-byte-conflict" });
+    // A new independently trusted pin authorizes a coherent historical claim;
+    // this is not reconstruction of deleted history. Defaults/current selection
+    // stay unchanged, and historical effective values are never defaults.
+    const accepted = verify(copy, hash(JSON.stringify(copy)));
+    assert.equal(accepted.selectionId, receipt.selectionId);
+    // Compare persisted JSON content; defensive capture normalizes null prototypes.
+    assert.deepEqual(accepted.resolution, JSON.parse(JSON.stringify(receipt.resolution)));
+  }
+
   assert.throws(() => createModelResolutionReceipt({ ...e, retained: { ...predecessor.retained, roles: new Map() } }, actual), /migration-retained-conflict/);
   assert.equal(hash(text), hash(JSON.stringify(receipt)));
 }
