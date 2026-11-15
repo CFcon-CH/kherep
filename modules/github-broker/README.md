@@ -73,7 +73,8 @@ remote branch exists and is not a local ancestor of sha (no fast-forward), the
 remote default branch tip is not available locally, or any commit in
 `sha --not <remote default>` (at most 256) has an author or committer email outside
 the allowed bot emails or touches `.github/workflows` (merge commits are diffed
-against every parent). Every git call uses system Git from a fixed path, never
+against every parent). Both bases, the remote branch and the remote default branch,
+come from GitHub's API readback, never from a ref of the checkout. Every git call uses system Git from a fixed path, never
 from `PATH`: `C:\Program Files\Git\cmd\git.exe` or `...\bin\git.exe` on
 Windows, `/usr/bin/git` or `/usr/local/bin/git` elsewhere (owned by root and its
 directory too, neither writable by group or others). Without one, `branch.push`
@@ -87,15 +88,33 @@ git -c credential.helper= -c credential.helper=!'<node>' '<tools>/github-<rt>-cr
     push --porcelain https://github.com/<slug>.git <sha>:refs/heads/<branch>
 ```
 
-The empty first helper resets every configured helper (manager, keychain, store),
-so no personal credential can answer. The child environment drops git tracing,
-`GIT_CONFIG*`, askpass, alternative repository variables and `GH_TOKEN`/`GITHUB_TOKEN`,
-replaces `PATH` with a fixed system list (`C:\Program Files\Git\cmd;C:\Windows\System32;C:\Windows`
-on Windows, `/usr/bin:/bin` elsewhere) and sets `GIT_TERMINAL_PROMPT=0` and
-`GCM_INTERACTIVE=never`. Repository hooks
-such as `pre-push` still run; the push alone also carries `KHEREP_BROKER_PUSH=1`,
-on which the Kherep `pre-push` hook records nothing, because the broker records
-the push itself. After the readback verifies the push, the broker appends one
+The checkout is only read once, to find its toplevel and object directory. The
+preflight and the push each run in their own clean bare repository under the
+broker's temporary directory (`mkdtemp`, prefix `kherep-push-`; on POSIX owned by
+the broker and mode 0700, else `target-refused`), removed in `finally` also on
+error. It borrows only the checkout's objects through `objects/info/alternates`
+and has no repository configuration beyond `core.bare`, `core.commitGraph=false`
+and `pack.useBitmaps=false`, no hooks, no refs and so no replace refs, no shallow
+file and no grafts. Commit-graph files of the alternate are off because git
+trusts their parent data during traversal: a crafted one could hide a foreign
+ancestor from `sha --not <base>`. Objects are content-addressed, so the preflight
+and the push read the same graph. Every git child in it gets a constructed
+environment, nothing copied from the broker's: the fixed `PATH`
+(`C:\Program Files\Git\cmd;C:\Windows\System32;C:\Windows` on Windows, `/usr/bin:/bin`
+elsewhere), `HOME` set to the clean repository (no `~/.gitconfig`, `~/.config/git`
+or `~/.netrc`), `GIT_CONFIG_NOSYSTEM=1`, an empty `GIT_CONFIG_GLOBAL`,
+`GIT_ATTR_NOSYSTEM=1`, `GIT_NO_REPLACE_OBJECTS=1`, `GIT_TERMINAL_PROMPT=0`,
+`GCM_INTERACTIVE=never`, on Windows `SystemRoot` and `WINDIR`. Proxy, TLS, CA,
+trace, toolchain and Node variables, `url.*.insteadOf`, `http.*` settings and
+`core.hooksPath` of the checkout, the user or the system never reach the push.
+The empty first helper also resets every configured helper (manager, keychain,
+store), so no personal credential can answer. No repository hook runs on a broker
+push, so operator `pre-push` hooks, including a system-level `core.hooksPath`,
+do not run for it; the push still carries `KHEREP_BROKER_PUSH=1`, on which the
+Kherep `pre-push` hook would record nothing, because the broker records the push
+itself. The discovery call in the checkout keeps the filtered environment (git
+tracing, `GIT_CONFIG*`, askpass, alternative repository variables and
+`GH_TOKEN`/`GITHUB_TOKEN` dropped, fixed `PATH`, `GIT_NO_REPLACE_OBJECTS=1`). After the readback verifies the push, the broker appends one
 `push` record to the host-local attribution log (`<config root>/control-plane/attribution.jsonl`,
 see the control-plane README): session, runtime, owner/name, toplevel, branch,
 `refs/heads/<branch>` and sha, never the URL, token, operationId or bot. The session
@@ -107,12 +126,24 @@ known receipt and `verify` record nothing and carry no such field. A push whose
 outcome is unknown and is settled later by `verify` therefore gets no record. The credential helper answers only `get` for
 `https://github.com/<allowlisted slug>.git`, and only while a pending, locked
 `branch.push` receipt for that runtime and operation, admitted less than 120 s
-earlier, exists; then it mints a `contents: write` token and writes it to git's
-pipe. `store` and `erase` get no answer and nothing is persisted. Any refusal is
+earlier, exists, and once: the broker creates one grant file beside the receipt
+(`O_EXCL`, mode 0600) while it holds the lock, right before the push, and removes
+it after; the first `get` that passes every other check consumes it, so a
+refused `get` never burns it and a second `get` is refused. Then it mints a
+`contents: write` token and writes it to git's pipe. `store` and `erase` get no answer and nothing is persisted. Any refusal is
 silent with exit 1. The token never appears in argv, environment, disk, git
 configuration, receipts or output. Readback compares the remote branch with sha.
 A failed push leaves the receipt pending (`outcome-unknown`); retry with a new
 operationId after checking the branch.
+
+Residuals of `branch.push`: a process of the same OS account that knows the
+operationId can consume the single grant before git does; git then gets no
+credential and the push ends `outcome-unknown`, never with a second token. After a
+crash mid-push the grant and the retained lock stay usable until the 120 s window
+ends. Operator `pre-push` hooks do not run on a broker push. The push supports no
+proxy and no system-level TLS setting (on Git for Windows the system
+`http.sslBackend` no longer applies). Commit-graph files are off for the reason
+above. The clean repository lives under the broker's temporary directory.
 
 `pr.create` verifies that the PR author is the bot, that the head branch is in the
 same repository and that title, body, base, head, draft and labels read back as
