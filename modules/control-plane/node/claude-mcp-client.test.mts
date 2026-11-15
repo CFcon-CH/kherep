@@ -104,6 +104,36 @@ test("stages and verifies the complete closed public graph", (t) => {
   assert.throws(() => verifyClaudeClient(outputRoot), /unmanaged client content/);
 });
 
+test("staging rejects a genuinely corrupted stdin copy and fresh staging still succeeds", (t) => {
+  const { root, outputRoot, clientRoot, configRoot } = fixture(t);
+  const canonical = path.resolve(import.meta.dirname, "../../../claude/hooks/lib/stdin-reader.mts");
+  const sourceBytes = fs.readFileSync(canonical);
+  const sourceHash = createHash("sha256").update(sourceBytes).digest("hex");
+  const target = path.join(outputRoot, "control-plane", "node", "stdin-reader.mts");
+  const originalCopy = fs.copyFileSync;
+  let faults = 0;
+  const copy = t.mock.method(fs, "copyFileSync", (...args: Parameters<typeof fs.copyFileSync>) => {
+    Reflect.apply(originalCopy, fs, args);
+    if (String(args[1]) === target) {
+      faults++;
+      fs.appendFileSync(target, "\n// synthetic copy corruption\n");
+    }
+  });
+  try {
+    assert.throws(() => stageClaudeClient({ outputRoot, clientRoot, configRoot, nodeCommand: process.execPath }),
+      /client stdin reader copy does not match canonical source/);
+    assert.equal(faults, 1);
+    assert.equal(fs.readFileSync(target).equals(sourceBytes), false);
+    assert.equal(fs.existsSync(path.join(outputRoot, "manifest.json")), false);
+    assert.equal(createHash("sha256").update(fs.readFileSync(canonical)).digest("hex"), sourceHash);
+  } finally { copy.mock.restore(); }
+  assert.equal(fs.copyFileSync, originalCopy);
+  const fresh = path.join(root, "fresh-candidate");
+  const staged = stageClaudeClient({ outputRoot: fresh, clientRoot, configRoot, nodeCommand: process.execPath });
+  assert.deepEqual(verifyClaudeClient(fresh), staged);
+  assert.deepEqual(fs.readFileSync(path.join(fresh, "control-plane", "node", "stdin-reader.mts")), sourceBytes);
+});
+
 test("verification binds the manifest to its rendered bytes and intended target", (t) => {
   const { outputRoot, clientRoot, configRoot } = fixture(t);
   stageClaudeClient({ outputRoot, clientRoot, configRoot, nodeCommand: process.execPath });

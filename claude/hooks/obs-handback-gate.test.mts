@@ -13,6 +13,7 @@ import test from "node:test";
 
 import { decide } from "./obs-handback-gate.mts";
 import { refusedReason } from "./lib/obs-handback-state.mts";
+import { declareCopy } from "../../bootstrap/coverage-copy-fixture.mts";
 
 const TMP = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "obs-handback-gate-test-")));
 const SECRET = "Example Corp host.example.com";
@@ -27,6 +28,7 @@ function fixture(name: string, ...hooks: string[]): { root: string; state: strin
   fs.mkdirSync(path.join(root, "hooks"), { recursive: true });
   for (const file of ["obs-handback-gate.mts", ...hooks]) {
     fs.copyFileSync(path.join(import.meta.dirname, file), path.join(root, "hooks", file));
+    declareCopy(path.join(import.meta.dirname, file), path.join(root, "hooks", file));
   }
   fs.cpSync(path.join(import.meta.dirname, "lib"), path.join(root, "hooks", "lib"), { recursive: true });
   return {
@@ -40,7 +42,10 @@ const MAIN = fixture("home");
 interface Run { stdout: string; status: number | null; output: Record<string, unknown> | null }
 
 function runRaw(stdin: string, hook = MAIN.hook()): Run {
-  const result = spawnSync(process.execPath, [hook], { input: stdin, encoding: "utf8" });
+  const result = spawnSync(process.execPath, [hook], { input: stdin, encoding: "utf8", env: {
+    PATH: process.env.PATH, SYSTEMROOT: process.env.SYSTEMROOT,
+    ...(process.env.NODE_V8_COVERAGE === undefined ? {} : { NODE_V8_COVERAGE: process.env.NODE_V8_COVERAGE }),
+  } });
   return { stdout: result.stdout, status: result.status, output: result.stdout ? JSON.parse(result.stdout) : null };
 }
 

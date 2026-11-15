@@ -15,6 +15,7 @@ import path from "node:path";
 import test, { describe } from "node:test";
 
 import { decide, OBS_RESULT_REASON } from "./obs-result-check.mts";
+import { declareCopy } from "../../bootstrap/coverage-copy-fixture.mts";
 
 const TMP = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "obs-result-check-test-")));
 const SECRET = "Example Corp host.example.com";
@@ -23,6 +24,7 @@ function fixture(name: string): { root: string; hook: string } {
   const root = path.join(TMP, name);
   fs.mkdirSync(path.join(root, "hooks"), { recursive: true });
   fs.copyFileSync(path.join(import.meta.dirname, "obs-result-check.mts"), path.join(root, "hooks", "obs-result-check.mts"));
+  declareCopy(path.join(import.meta.dirname, "obs-result-check.mts"), path.join(root, "hooks", "obs-result-check.mts"));
   fs.cpSync(path.join(import.meta.dirname, "lib"), path.join(root, "hooks", "lib"), { recursive: true });
   return { root, hook: path.join(root, "hooks", "obs-result-check.mts") };
 }
@@ -35,8 +37,12 @@ interface Run { stdout: string; status: number | null; output: { decision?: unkn
 
 const toRun = (stdout: string, status: number | null): Run => ({ stdout, status, output: stdout ? JSON.parse(stdout) : null });
 function runRaw(stdin: string, hook = HOOK): Run {
-  const { stdout, status } = spawnSync(process.execPath, [hook], { input: stdin, encoding: "utf8" });
+  const { stdout, status } = spawnSync(process.execPath, [hook], { input: stdin, encoding: "utf8", env: childEnv() });
   return toRun(stdout, status);
+}
+function childEnv(): NodeJS.ProcessEnv {
+  return { PATH: process.env.PATH, SYSTEMROOT: process.env.SYSTEMROOT,
+    ...(process.env.NODE_V8_COVERAGE === undefined ? {} : { NODE_V8_COVERAGE: process.env.NODE_V8_COVERAGE }) };
 }
 
 const fields = (extra: Record<string, unknown>) => ({ session_id: "00000000-0000-4000-8000-000000000000",
@@ -47,7 +53,7 @@ const run = (extra: Record<string, unknown>, hook = HOOK): Run => runRaw(payload
 // Asynchronous, so the cases that wait for the recorder run side by side.
 function runAsync(extra: Record<string, unknown>): Promise<Run> {
   return new Promise((resolve) => {
-    const child = spawn(process.execPath, [HOOK], { stdio: ["pipe", "pipe", "ignore"] });
+    const child = spawn(process.execPath, [HOOK], { stdio: ["pipe", "pipe", "ignore"], env: childEnv() });
     let stdout = "";
     child.stdout.on("data", (chunk) => { stdout += chunk; });
     child.on("close", (status) => resolve(toRun(stdout, status)));
