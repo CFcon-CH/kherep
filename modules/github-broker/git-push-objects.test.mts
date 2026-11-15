@@ -55,3 +55,22 @@ test('a forged ancestor of the base cannot remove a foreign commit from the rang
   assert.deepEqual(g(r.work,'log','--format=%H',bot,'--not',tip).split('\n'),[bot],'git itself drops the foreign commit from the range');
   await refused(p,bot);
 });
+/** A commit object on top of `parent` with its tree, bot author and committer, and `extra` header lines after the committer. */
+function literalCommit(work:string, parent:string, extra:string[]):string {
+  const ident=`synthetic <${email(0)}> 1700000000 +0000`;
+  const text=[`tree ${g(work,'rev-parse',`${parent}^{tree}`)}`,`parent ${parent}`,`author ${ident}`,`committer ${ident}`,...extra,'','synthetic',''].join('\n');
+  return execFileSync('git',['hash-object','-w','-t','commit','--literally','--stdin'],{cwd:work,input:text,encoding:'utf8',windowsHide:true}).trim();
+}
+test('a second author header after the committer cannot pass the preflight',async t=>{
+  const p=await pushSetup(t,'claude'), tip=literalCommit(p.r.work,p.sha,[`author Foreign <${OPERATOR}> 1700000000 +0000`]);
+  assert.equal(g(p.r.work,'log','-1','--format=%ae',tip),OPERATOR,'git itself shows the last author header');
+  await refused(p,tip);
+  const committer=literalCommit(p.r.work,p.sha,[`committer Foreign <${OPERATOR}> 1700000000 +0000`]);
+  await refused(p,committer);
+});
+test('a signed bot commit, its signature continued on space-led lines after the committer, is pushed',async t=>{
+  const p=await pushSetup(t,'claude');
+  const signed=literalCommit(p.r.work,p.sha,['gpgsig -----BEGIN PGP SIGNATURE-----',' ',' author synthetic',' -----END PGP SIGNATURE-----']);
+  const result=await p.push({sha:signed});
+  assert.equal(result.ok,true,JSON.stringify(result));assert.equal(p.r.remote('feat/x'),signed);
+});

@@ -23,7 +23,11 @@ function verified(read:Read, shas:string[], type:'commit'|'tree'):Map<string,Buf
   if (at!==data.length) fail('target-refused');
   return out;
 }
-/** Tree, then parents, then author, then committer, exactly; later headers (encoding, gpgsig, mergetag) and the message are not read. */
+/**
+ * Tree, then parents, then author, then committer, exactly. Git shows the last author and committer
+ * header, so any later one is refused; other later headers (encoding, gpgsig, mergetag, whose
+ * continuation lines start with a space) and the message are not read.
+ */
 function parseCommit(body:Buffer):Commit {
   const lines=body.toString('utf8').split('\n');
   const tree=/^tree ([0-9a-f]{40})$/.exec(lines[0] ?? '')?.[1] ?? fail('target-refused'), parents:string[]=[];
@@ -31,6 +35,7 @@ function parseCommit(body:Buffer):Commit {
   for (let m;(m=/^parent ([0-9a-f]{40})$/.exec(lines[i] ?? ''));i++) parents.push(m[1]);
   const author=IDENT.exec(lines[i] ?? ''), committer=IDENT.exec(lines[i+1] ?? '');
   if (author?.[1]!=='author' || committer?.[1]!=='committer') fail('target-refused');
+  for (let j=i+2;j<lines.length && lines[j]!=='';j++) if (/^(?:author|committer) /.test(lines[j])) fail('target-refused');
   return {tree,parents,author:author[2],committer:committer[2]};
 }
 /** `[mode, name, sha]` of every entry of a tree body. */
