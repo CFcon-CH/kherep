@@ -1,5 +1,3 @@
-import { observationReason, validIdentity, type SessionEvidence } from "./session-liveness.mts";
-import type { LivenessSnapshot } from "./session-lifecycle.mts";
 import fs from "node:fs";
 import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
@@ -8,6 +6,7 @@ import type { SessionInfo } from "../protocol.mts";
 import { ensureDir, readConfig, type NodePaths } from "./config.mts";
 import { readJson, writeJsonAtomic } from "./inbox.mts";
 import { readPolicy } from "./policy.mts";
+import { identityVetoes, type LabelIdentityObservation } from "./session-label-vetoes.mts";
 import { LABEL_FRESH_MS, type BindingView, type LabelRow, type NameBinding, type IdentityVeto } from "./wake-bindings.mts";
 export interface LabelState {
     schemaVersion: 1;
@@ -32,7 +31,8 @@ export function policyScope(p: NodePaths): string { const c = readConfig(p.confi
 const text = (s: unknown): s is string => typeof s === "string" && s.length > 0 && s.length <= 128 && !/[\p{Cc}\p{Cf}]/u.test(s);
 const label = (s: unknown): s is string => typeof s === "string" && s.length > 0 && s.length <= 128;
 const time = (n: unknown): n is number => typeof n === "number" && Number.isFinite(n) && n >= 0;
-const row = (v: LabelRow): boolean => !!v && text(v.nodeId) && text(v.runtime) && fullSessionId(v.sessionId) && label(v.name) && time(v.observedAt) && natural(v.lifecycleGeneration) && natural(v.revision) && (v.current === undefined || typeof v.current === "boolean");
+const row = (v: LabelRow): boolean => !!v && text(v.nodeId) && text(v.runtime) && fullSessionId(v.sessionId) && label(v.name) && time(v.observedAt) && natural(v.lifecycleGeneration) && natural(v.revision) && (v.current === undefined || typeof v.current === "boolean")
+    && (v.previousName === undefined || label(v.previousName)) && (v.renamedAt === undefined || time(v.renamedAt));
 export function validLabelState(v: unknown): v is LabelState {
     if (!v || typeof v !== "object")
         return false;
@@ -42,7 +42,7 @@ export function validLabelState(v: unknown): v is LabelState {
         && Array.isArray(s.knownTokens) && s.knownTokens.length <= MAX_BINDINGS && s.knownTokens.every(text) && new Set(s.knownTokens).size === s.knownTokens.length
         && Array.isArray(s.identityVetoes) && s.identityVetoes.length <= MAX_ROWS && s.identityVetoes.every(v => v && text(v.runtime) && fullSessionId(v.sessionId) && ["conflict", "terminal"].includes(v.kind) && natural(v.sourceGeneration) && v.sourceGeneration <= s.identityGeneration && time(v.observedAt) && natural(v.lifecycleGeneration))
         && new Set(s.identityVetoes.map(v => `${v.runtime}/${v.sessionId}`)).size === s.identityVetoes.length
-        && Array.isArray(s.bindings) && s.bindings.length <= MAX_BINDINGS && s.bindings.every(b => b && text(b.token) && b.token !== "*" && !fullSessionId(b.token) && text(b.runtime) && fullSessionId(b.sessionId) && text(b.firstName) && time(b.boundAt) && natural(b.sourceGeneration) && b.provenance === "policy-co-list")
+        && Array.isArray(s.bindings) && s.bindings.length <= MAX_BINDINGS && s.bindings.every(b => b && text(b.token) && b.token !== "*" && !fullSessionId(b.token) && text(b.runtime) && fullSessionId(b.sessionId) && text(b.firstName) && time(b.boundAt) && natural(b.sourceGeneration) && ["policy-co-list", "first-sight"].includes(b.provenance))
         && new Set(s.bindings.map(b => b.token)).size === s.bindings.length
         && Array.isArray(s.local) && s.local.length <= MAX_ROWS && s.local.every(row) && new Set(s.local.map(r => JSON.stringify([r.nodeId, r.runtime, r.sessionId]))).size === s.local.length;
 }
@@ -96,65 +96,28 @@ function initialize(p: NodePaths): LabelState | null {
     writeJsonAtomic(p.sessions, { ...projection, labelBindingEpoch: epoch }); // witness first, so any failed next write is detectable
     return { schemaVersion: 1, scope: policyScope(p), epoch, version: 1, bindings: [], identityVetoes: [], knownTokens: [], local: [], observedAt: 0, complete: false, ambiguousNames: [], localGeneration: 0, identityGeneration:0 };
 }
+// The bytes writeJsonAtomic writes, which readLabelState bounds.
+const written = (s: LabelState): number => Buffer.byteLength(`${JSON.stringify(s, null, 2)}\n`);
+// Issue #828: over the row or byte bound, the oldest noncurrent rows no binding references go
+// first, then previousName; a state that still does not fit is refused, never written unreadable.
+function bound(s: LabelState): void {
+    const prunable = s.local.filter(r => r.current === false && !s.bindings.some(b => b.sessionId === r.sessionId && b.runtime === r.runtime))
+        .sort((a, b) => a.observedAt - b.observedAt);
+    for (let size = written(s); prunable.length && (s.local.length > MAX_ROWS || size > MAX_BYTES); size = written(s)) {
+        const excess = Math.max(s.local.length - MAX_ROWS, Math.ceil((size - MAX_BYTES) / (size / s.local.length)));
+        const gone = new Set(prunable.splice(0, Math.max(1, excess)));
+        s.local = s.local.filter(r => !gone.has(r));
+    }
+    if (written(s) > MAX_BYTES)
+        s.local = s.local.map(({ previousName: _dropped, ...r }) => r);
+}
 function save(p: NodePaths, s: LabelState): void {
     s.version++;
-    if (!validLabelState(s) || Buffer.byteLength(JSON.stringify(s)) > MAX_BYTES)
+    bound(s);
+    if (!validLabelState(s) || written(s) > MAX_BYTES)
         throw new Error("label-state-bound");
     writeJsonAtomic(labelsFile(p), s);
     loaded.add(p.dir);
-}
-export interface LabelIdentityObservation {
-    snapshot: LivenessSnapshot;
-    listed: SessionInfo[];
-    evidence:SessionEvidence[];
-}
-function identityVetoes(state:LabelState, rows:SessionInfo[], source:LabelIdentityObservation, now:number, allowClear:boolean):IdentityVeto[] {
-    const {snapshot,listed,evidence}=source;
-    const key=(v:{runtime:string;sessionId:string})=>`${v.runtime}/${v.sessionId}`;
-    const retained=state.identityVetoes.filter(v=>{
-        if(!allowClear) return true;
-        const population=listed.filter(r=>r.sessionId===v.sessionId);
-        const proof=rows.find(r=>r.sessionId===v.sessionId && r.runtime===v.runtime)?.canonicalIdentity;
-        const restored=snapshot.tombstones.find(t=>key(t)===key(v) && t.state==="restored"
-            && t.generation>v.lifecycleGeneration && t.observedAt>=v.observedAt);
-        const advances=proof && (proof.observedAt>v.observedAt || restored && proof.observedAt>=restored.observedAt
-            && proof.lifecycleGeneration>=restored.generation);
-        return !(snapshot.generation>v.sourceGeneration && population.length===1 && population[0].runtime===v.runtime
-            && currentIdentity(proof,v,now) && now-proof.observedAt<=LABEL_FRESH_MS
-            && advances && proof.lifecycleGeneration>=v.lifecycleGeneration);
-    });
-    const vetoes=new Map(retained.map(v=>[key(v),v]));
-    const put=(target:{runtime:string;sessionId:string},kind:IdentityVeto["kind"],observedAt:number,lifecycleGeneration=0)=>{
-        if(!fullSessionId(target.sessionId) || !validIdentity(target)) return;
-        const prior=vetoes.get(key(target));
-        const accepted=snapshot.tombstones.find(t=>key(t)===key(target));
-        const verdict=snapshot.sessions.find(v=>key(v)===key(target));
-        vetoes.set(key(target),{runtime:target.runtime,sessionId:target.sessionId,
-            kind:prior?.kind==="terminal"?"terminal":kind, sourceGeneration:snapshot.generation,
-            observedAt:Math.max(prior?.observedAt??0,observedAt),
-            lifecycleGeneration:Math.max(prior?.lifecycleGeneration??0,lifecycleGeneration,accepted?.generation??0,verdict?.lifecycleGeneration??0)});
-    };
-    // Terminal facts come from the accepted lifecycle publication, never a label
-    // or an overloaded UNKNOWN availability reason code.
-    for(const verdict of snapshot.sessions) if(["closed","archived","deleted"].includes(verdict.state))
-        put(verdict,"terminal",verdict.observedAt,verdict.lifecycleGeneration??0);
-    for(const terminal of snapshot.tombstones) if(terminal.state!=="restored") put(terminal,"terminal",terminal.observedAt,terminal.generation);
-    for(const target of listed) if(listed.filter(r=>r.sessionId===target.sessionId).length>1) put(target,"conflict",now);
-    for(const binding of state.bindings) {
-        const population=listed.filter(r=>r.sessionId===binding.sessionId);
-        if(population.length>1 || population.some(r=>r.runtime!==binding.runtime)) put(binding,"conflict",now);
-    }
-    for(const target of evidence) {
-        if(!validIdentity(target)) continue;
-        if(evidence.filter(e=>validIdentity(e) && key(e)===key(target)).length>1) put(target,"conflict",now);
-        const event=target.lifecycle, accepted=snapshot.tombstones.find(t=>key(t)===key(target));
-        const verdict=snapshot.sessions.find(v=>key(v)===key(target));
-        if(accepted && verdict?.reasonCode==="conflict" && event?.status==="value" && event.source==="native-lifecycle"
-            && observationReason(event,now)===null && event.value.generation>=accepted.generation
-            && (event.value.state!==accepted.state || event.value.generation!==accepted.generation || event.observedAt<accepted.observedAt))
-            put(target,"conflict",Math.max(event.observedAt,accepted.observedAt),accepted.generation);
-    }
-    return [...vetoes.values()];
 }
 export function recordLocalLabels(p:NodePaths, rows:SessionInfo[], now:number, complete:boolean, stamp:string|null, generation?:number, identity?:LabelIdentityObservation):void {
     const established=fs.existsSync(labelsFile(p));
@@ -192,20 +155,34 @@ export function recordLocalLabels(p:NodePaths, rows:SessionInfo[], now:number, c
     if (tokens.length > MAX_BINDINGS || knownTokens.length > MAX_BINDINGS) { commitIdentity(); return; }
     s.knownTokens = knownTokens;
     const nodeId = readConfig(p.config)?.nodeId ?? "local";
-    const eligible = rows.filter(r => !s.identityVetoes.some(v => v.runtime === r.runtime && v.sessionId === r.sessionId) && r.runtime === "claude-code" && fullSessionId(r.sessionId) && label(r.name) && rows.filter(v => v.sessionId === r.sessionId).length === 1
-        && currentIdentity(r.canonicalIdentity, r, now) && now - r.canonicalIdentity!.observedAt <= LABEL_FRESH_MS && !["closed", "deleted", "archived"].includes(r.state));
-    const local: LabelRow[] = eligible.map(r => {
+    // Codex rows are labelled by their thread title (issue #828) and never hold a binding. Only a
+    // Codex row of this listing counts: a carried one turns noncurrent like an absent Claude row.
+    const eligible = rows.filter(r => !s.identityVetoes.some(v => v.runtime === r.runtime && v.sessionId === r.sessionId) && fullSessionId(r.sessionId) && rows.filter(v => v.sessionId === r.sessionId).length === 1
+        && !["closed", "deleted", "archived"].includes(r.state) && (r.runtime === "codex" && (!identity || identity.listed.some(l => l.runtime === r.runtime && l.sessionId === r.sessionId))
+        || r.runtime === "claude-code" && label(r.name) && currentIdentity(r.canonicalIdentity, r, now) && now - r.canonicalIdentity!.observedAt <= LABEL_FRESH_MS));
+    const relabel = (old: LabelRow | undefined, r: SessionInfo, name: string, observedAt: number, lifecycleGeneration: number): LabelRow => ({
+        nodeId, current: true, runtime: r.runtime, sessionId: r.sessionId, name, observedAt, lifecycleGeneration, revision: (old?.revision ?? 0) + (old?.name === name ? 0 : 1),
+        ...(old && old.name !== name ? { previousName: old.name, renamedAt: observedAt } : { previousName: old?.previousName, renamedAt: old?.renamedAt }) });
+    const local: LabelRow[] = eligible.flatMap(r => {
         const old = s.local.find(v => v.sessionId === r.sessionId && v.runtime === r.runtime);
+        // A missing Codex title is unknown: the old row stays, it is never a rename.
+        if (r.runtime === "codex")
+            return label(r.title) ? [relabel(old, r, r.title, now, 0)] : old ? [old] : [];
         if (old && (r.canonicalIdentity!.observedAt < old.observedAt || r.canonicalIdentity!.lifecycleGeneration < old.lifecycleGeneration || r.name !== old.name && r.canonicalIdentity!.observedAt === old.observedAt))
-            return { ...old, current: false };
-        return { nodeId, current: true, runtime: r.runtime, sessionId: r.sessionId, name: r.name!, observedAt: r.canonicalIdentity!.observedAt, lifecycleGeneration: r.canonicalIdentity!.lifecycleGeneration, revision: (old?.revision ?? 0) + (old?.name === r.name ? 0 : 1) };
+            return [{ ...old, current: false }];
+        return [relabel(old, r, r.name!, r.canonicalIdentity!.observedAt, r.canonicalIdentity!.lifecycleGeneration)];
     });
+    // D1 A (issue #828): a token gone from a parsed wake.sessions releases its binding, and a
+    // listed name pins its unique Claude holder at first complete sight.
+    if (policy.wake)
+        s.bindings = s.bindings.filter(b => tokens.includes(b.token));
     for (const token of new Set(policy.wake?.sessions ?? [])) {
         if (token === "*" || fullSessionId(token) || s.bindings.some(b => b.token === token) || s.bindings.length >= MAX_BINDINGS)
             continue;
-        const holder = local.filter(r => r.name === token && r.current !== false);
-        if (holder.length === 1 && rows.filter(r => r.name === token).length === 1 && policy.wake?.sessions.includes(holder[0].sessionId) && !rows.some(r => r.sessionId === token))
-            s.bindings.push({ token, runtime: holder[0].runtime, sessionId: holder[0].sessionId, firstName: token, boundAt: now, sourceGeneration: generation ?? s.version, provenance: "policy-co-list" });
+        const holder = local.filter(r => r.name === token && r.current !== false && r.runtime === "claude-code");
+        if (holder.length === 1 && rows.filter(r => r.name === token).length === 1 && !rows.some(r => r.sessionId === token))
+            s.bindings.push({ token, runtime: holder[0].runtime, sessionId: holder[0].sessionId, firstName: token, boundAt: now, sourceGeneration: generation ?? s.version,
+                provenance: tokens.includes(holder[0].sessionId) ? "policy-co-list" : "first-sight" });
     }
     for (const old of s.local)
         if (!local.some(r => r.sessionId === old.sessionId && r.runtime === old.runtime))

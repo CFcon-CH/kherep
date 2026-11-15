@@ -182,3 +182,32 @@ test("a prompt lock directory failure keeps already composed peer output", (t) =
   });
   assert.match(context(call(paths)), /ordinary peer/);
 });
+
+const codexLine = (node: string, session: string, old: string, title: string) =>
+  `Kherep session-label data: node ${node}, Codex id ${session}, previous title ${JSON.stringify(old)}, observed title ${JSON.stringify(title)}. Display hint only; a title is not an address, use msg sessions for current lookup. No reply required.`;
+
+test("#828 a Claude receiver gets a line for a local and for a remote Codex title change", (t) => {
+  const paths = setup(t);
+  const LOCAL_CODEX = id(9), REMOTE_CODEX = id(10);
+  const local = (title: string) => writeLocalSessions(paths, [row(OWNER, "self"), row(OTHER, "A"), { ...row(LOCAL_CODEX, "codex-00000009", "codex"), title }]);
+  const remote = (title: string) => writeDirectory(paths, { nodes: [], fetchedAt: new Date(0).toISOString(),
+    sessions: [{ ...row(REMOTE_CODEX, "codex-0000000a", "codex"), title, nodeId: REMOTE }] });
+  local("plan A");
+  remote("remote A");
+  assert.equal(call(paths), "");
+  local("plan B");
+  remote("remote B");
+  assert.equal(context(call(paths)), `${codexLine(NODE, LOCAL_CODEX, "plan A", "plan B")}\n\n${codexLine(REMOTE, REMOTE_CODEX, "remote A", "remote B")}`);
+  assert.equal(call(paths), "");
+});
+
+test("#828 a repeated id keeps its subject only while name and runtime agree", (t) => {
+  const paths = setup(t);
+  const SAME = id(11), MIXED = id(12);
+  const rows = (name: string) => [row(SAME, name), row(SAME, name), row(MIXED, name), { ...row(MIXED, "codex-0000000c", "codex"), title: name }];
+  writeLocalSessions(paths, rows("A"));
+  call(paths);
+  assert.deepEqual(Object.keys(JSON.parse(fs.readFileSync(cache(paths), "utf8")).names), [`${NODE}/${SAME}`]);
+  writeLocalSessions(paths, rows("B"));
+  assert.equal(context(call(paths)), line(NODE, SAME, "A", "B"));
+});

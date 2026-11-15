@@ -67,6 +67,33 @@ increments the minor version; every other release increments the patch version.
   longer be created through the Claude broker. The Codex broker's `create`, the
   Codex observation publisher and `update` are unchanged. Operator action: run
   the installer; until then the installed Claude broker keeps generic create.
+- Session renames, remaining stage (#828). A name listed alone in
+  `wake.sessions` now pins to its unique Claude holder at the first complete
+  listing (`provenance: "first-sight"`) and then follows that id only, so a
+  session that later takes the old name gets no wake grant. A binding is
+  released when its name leaves a readable `wake.sessions` in a complete
+  listing; re-adding the name pins whoever holds it then. Codex sessions get
+  label rows by thread title (a missing title keeps the old row and is no
+  rename); a title never matches `wake.sessions` and never holds a binding.
+  Label rows keep the previous name one level deep with `previousName` and
+  `renamedAt`. The passive rename line now covers Codex titles, naming the
+  runtime so a title is not read as an address, and reaches Codex sessions on
+  `UserPromptSubmit` inside the 6 KiB budget after peer context. Hints can be
+  missed while a session is idle; nothing runs on Stop and nothing wakes a
+  session. `doctor` gains `wakeNames` (bound, unbound, no-holder or
+  history-unavailable per name, with id, current and previous name), and
+  `wakeReadiness` counts names through the same binding-aware selection as the
+  wake hook. `session-labels.json` stays within 2048 label rows and 512 KiB as
+  written: the oldest noncurrent rows that no binding references go first,
+  then previous names, and a state that still does not fit is refused rather
+  than written unreadable. Operator action before a downgrade: the previous
+  release accepts only `policy-co-list` bindings and rejects the whole file
+  when it holds a `first-sight` binding, which turns name wake off. Before
+  downgrading, stop the daemon, remove `session-labels.json` from the node
+  directory and the `labelBindingEpoch` field from `sessions.json` in the same
+  directory. After the downgrade, name wake comes back only for names
+  co-listed with their session's full id in `wake.sessions`; full ids and `*`
+  keep working throughout.
 
 ### Removed
 

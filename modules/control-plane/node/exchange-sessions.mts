@@ -19,16 +19,16 @@ import { snapshotObject } from "./wake-snapshot.mts";
 // sessions.json, the node's sessions from the last successful listing, and the
 // listing wrapper that records it (moved here from exchange.mts, issue #487).
 
-// listed (issue #883), Claude rows only: whether the row was in a complete `claude agents` listing. Absent when that
+// title (issue #828): the Codex thread title, display data for the rename line. listed (issue #883), Claude rows only: whether the row was in a complete `claude agents` listing. Absent when that
 // listing was incomplete, or when the file is older than LISTED_FRESH_MS: a failed listing writes nothing.
-export interface LocalSession { sessionId: string; name?: string; runtime?: string; state?: string; listed?: boolean }
+export interface LocalSession { sessionId: string; name?: string; title?: string; runtime?: string; state?: string; listed?: boolean }
 const LISTED_FRESH_MS = 3 * 60_000; // As closed-delivery.mts LISTING_FRESH_MS.
 
 // claudeListed: the Claude session ids of a complete Claude listing; without it no row says listed.
 export function writeLocalSessions(paths: NodePaths, sessions: SessionInfo[], now: number = Date.now(), generation = readLivenessSnapshot(paths)?.generation,
   claudeListed?: ReadonlySet<string>): void {
   ensureDir(paths.dir);
-  const local: LocalSession[] = sessions.map((s) => ({ sessionId: s.sessionId, ...(s.name ? { name: s.name } : {}),
+  const local: LocalSession[] = sessions.map((s) => ({ sessionId: s.sessionId, ...(s.name ? { name: s.name } : {}), ...(s.title ? { title: s.title } : {}),
     runtime: s.runtime, state: s.state, ...(claudeListed && s.runtime === "claude-code" ? { listed: claudeListed.has(s.sessionId) } : {}) }));
   let witness:unknown;
   try { witness=readJson<{labelBindingEpoch?:unknown}>(paths.sessions)?.labelBindingEpoch; }

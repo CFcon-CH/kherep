@@ -41,7 +41,10 @@ function fixture(t: import("node:test").TestContext) {
         const context = { view: readBindingView(paths, now), target: { runtime: "claude-code", sessionId: id }, now };
         return { allowed: resolveWakeSelection(p.wake?.sessions ?? [], context).allowed, explicit: resolveWakeSelection(p.wake?.sessions ?? [], context).explicit };
     };
-    return { paths, policy, list, select, now: () => now };
+    // A view as state from before D1 A (issue #828) can hold it: no binding, so the unbound-name fallback decides.
+    const unbound = (p: ReturnType<typeof loadPolicy>, at = now) => resolveWakeSelection(p.wake?.sessions ?? [],
+        { view: { ...readBindingView(paths, at), bindings: [] }, target: { runtime: "claude-code", sessionId: S }, now: at });
+    return { paths, policy, list, select, unbound, now: () => now };
 }
 test("828 baseline: healthy unique bare name remains allowed and explicit", async (t) => {
     const f = fixture(t), p = f.policy(["review"]);
@@ -60,42 +63,36 @@ test("828 pin follows ID through rename, ID removal and restart; old-name reuse 
     await f.list([{ sessionId: S, name: "analysis" }, { sessionId: T, name: "review" }]);
     assert.deepEqual(f.select(p, S, "analysis"), { allowed: true, explicit: true });
 });
-test("828 Option A requires co-listed holder for every first binding, including new tokens", async (t) => {
+test("828 D1 A pins a listed name to its unique holder at first sight, without a co-listed id or a policy edit", async (t) => {
     const f = fixture(t);
     f.policy([]);
     await f.list([{ sessionId: S, name: "review" }]);
+    assert.equal(readBindingView(f.paths).bindings.length, 0);
     let p = f.policy(["review"]);
-    await f.list([{ sessionId: S, name: "review" }]);
-    assert.equal(readBindingView(f.paths).bindings.length, 0);
-    assert.deepEqual(f.select(p, S, "review"), { allowed: true, explicit: true });
-    p = f.policy(["review", T]);
-    await f.list([{ sessionId: S, name: "review" }]);
-    assert.equal(readBindingView(f.paths).bindings.length, 0);
-    p = f.policy(["review", "*"]);
-    await f.list([{ sessionId: S, name: "review" }]);
-    assert.equal(readBindingView(f.paths).bindings.length, 0);
-    p = f.policy(["review", S]);
     const bytes = fs.readFileSync(f.paths.policy);
     await f.list([{ sessionId: S, name: "review" }]);
-    assert.equal(readBindingView(f.paths).bindings.length, 1);
+    assert.deepEqual(readBindingView(f.paths).bindings.map(b => [b.token, b.sessionId, b.provenance]), [["review", S, "first-sight"]]);
+    assert.deepEqual(f.select(p, S, "review"), { allowed: true, explicit: true });
     assert.deepEqual(fs.readFileSync(f.paths.policy), bytes);
+    for (const tokens of [["review", T], ["review", "*"], ["review", S]]) {
+        p = f.policy(tokens);
+        await f.list([{ sessionId: S, name: "review" }]);
+        assert.deepEqual(readBindingView(f.paths).bindings.map(b => [b.token, b.sessionId, b.provenance]), [["review", S, "first-sight"]]);
+    }
 });
-test("828 removal and readd preserve reservation while exact IDs remain independent", async (t) => {
+test("828 D1 A removal releases the reservation, a re-added name pins its current holder, exact IDs stay independent", async (t) => {
     const f = fixture(t);
     f.policy(["review", S]);
     await f.list([{ sessionId: S, name: "review" }]);
     const rows = [{ sessionId: S, name: "analysis" }, { sessionId: T, name: "review" }];
     await f.list(rows);
-    for (const [tokens, sAllowed, tAllowed] of [[["review"], true, false], [[S], true, false], [[], false, false], [["review"], true, false], [["review", T], true, true]] as [
-        string[],
-        boolean,
-        boolean
-    ][]) {
+    for (const [tokens, sAllowed, tAllowed, holder] of [[["review"], true, false, S], [[S], true, false, undefined], [[], false, false, undefined],
+        [["review"], false, true, T], [["review", S], true, true, T]] as [string[], boolean, boolean, string | undefined][]) {
         const p = f.policy(tokens);
         await f.list(rows);
         assert.equal(f.select(p, S, "analysis").explicit, sAllowed);
         assert.equal(f.select(p, T, "review").explicit, tAllowed);
-        assert.equal(readBindingView(f.paths).bindings[0].sessionId, S);
+        assert.equal(readBindingView(f.paths).bindings[0]?.sessionId, holder);
     }
 });
 for (const damage of ["corrupt", "missing", "schema", "scope", "witness"] as const)
@@ -207,7 +204,8 @@ test("828 stale bare-name evidence denies while exact-ID authority remains indep
     f.policy(["review"]);
     await f.list([{ sessionId: S, name: "review" }]);
     const view = readBindingView(f.paths);
-    assert.equal(resolveWakeSelection(f.policy(["review"]).wake?.sessions ?? [], { target: { runtime: "claude-code", sessionId: S }, view, now: f.now() + 180001 }).allowed, false);
+    assert.equal(f.unbound(f.policy(["review"]), f.now() + 180001).allowed, false);
+    assert.equal(resolveWakeSelection(f.policy(["review"]).wake?.sessions ?? [], { target: { runtime: "claude-code", sessionId: S }, view, now: f.now() + 180001 }).reason, "bound-name", "a pinned name does not expire");
     assert.equal(resolveWakeSelection(f.policy([S]).wake?.sessions ?? [], { target: { runtime: "claude-code", sessionId: S }, view, now: f.now() + 180001 }).allowed, true);
 });
 test("828 overlapping discovery commits only the newest started listing", async (t) => {
@@ -227,18 +225,18 @@ test("828 B: a received partial immediately disables bare-name fallback; failed 
     const p = f.policy(["review"]);
     const rows = [{ sessionId: S, name: "review" }];
     await f.list(rows);
-    assert.equal(f.select(p, S, "review").explicit, true);
+    assert.equal(f.unbound(p).explicit, true);
     const acceptedAt = readLabelState(f.paths)!.observedAt;
     await f.list(rows, false);
-    assert.equal(f.select(p, S, "review").allowed, false);
+    assert.equal(f.unbound(p).allowed, false);
     assert.equal(readLabelState(f.paths)?.observedAt, acceptedAt);
     await assert.rejects(recordingSessions(f.paths, async () => { throw new Error("synthetic failed listing"); }, () => { }, () => f.now() + 1000)());
-    assert.equal(f.select(p, S, "review").allowed, false);
+    assert.equal(f.unbound(p).allowed, false);
     assert.equal(readLabelState(f.paths)?.complete, false);
+    assert.equal(f.select(p, S, "review").explicit, true, "the first-sight binding is independent of label completeness");
     await f.list(rows);
-    assert.equal(f.select(p, S, "review").explicit, true);
-
-    assert.equal(readLabelState(f.paths)?.bindings.length, 0);
+    assert.equal(f.unbound(p).explicit, true);
+    assert.equal(readLabelState(f.paths)?.bindings.length, 1);
 });
 test("828 B: failed complete listing retains only the existing unrefreshed three-minute window", async (t) => {
     const f = fixture(t);
@@ -249,7 +247,7 @@ test("828 B: failed complete listing retains only the existing unrefreshed three
     const after = readLabelState(f.paths)!;
     assert.deepEqual(after, before);
     assert.equal(f.select(p, S, "review").explicit, true);
-    assert.equal(resolveWakeSelection(p.wake?.sessions ?? [], { target: { runtime: "claude-code", sessionId: S }, view: readBindingView(f.paths), now: before.observedAt + 180001 }).allowed, false);
+    assert.equal(f.unbound(p, before.observedAt + 180001).allowed, false);
 });
 test("828 B: partial population leaves established binding and exact/wildcard grants independent", async (t) => {
     const f = fixture(t);
@@ -365,4 +363,18 @@ test("review C3 R2: equal-time proof does not clear a conflict; strictly newer p
 for(const reasonCode of ["malformed","identity","conflict"] as const) test(`review C3: UNKNOWN availability reason ${reasonCode} alone is not an identity contradiction`,async t=>{
  const f=fixture(t);f.policy(["review",S]);await f.list([{sessionId:S,name:"review"}]);const p=f.policy(["review"]);const at=f.now()+1000;const rows:SessionInfo[]=[{sessionId:S,runtime:"claude-code",state:"unknown",canonicalIdentity:{version:1,source:"claude-list",runtime:"claude-code",sessionId:S,observedAt:at,lifecycleGeneration:0}}];
  attachLiveness(rows,{status:"value",value:[{runtime:"claude-code",sessionId:S,holder:{status:"unknown",observedAt:at,complete:false,source:"native-holder",reasonCode}}],observedAt:at,complete:true,source:"native-app",reasonCode:"observed"});await recordingSessions(f.paths,async()=>rows,()=>{},()=>at)();assert.equal(f.select(p,S,"review").explicit,true);
+});
+
+test("#828 pin: a Codex title equal to a wake token grants nothing and creates no binding", async (t) => {
+    const f = fixture(t), p = f.policy(["review"]);
+    const C = "019a2b3c-4d5e-7f60-8123-456789abcdef";
+    const now = f.now() + 1000;
+    const rows: SessionInfo[] = [{ sessionId: C, runtime: "codex", kind: "codex", name: "codex-89abcdef", title: "review", state: "idle",
+        canonicalIdentity: { version: 1, source: "codex-hook", runtime: "codex", sessionId: C, observedAt: now, lifecycleGeneration: 0 } }];
+    attachLiveness(rows, { status: "value", value: [], observedAt: now, complete: true, source: "native-app", reasonCode: "observed" });
+    await recordingSessions(f.paths, async () => rows, () => { }, () => now)();
+    assert.equal(readLabelState(f.paths)?.local.some(r => r.runtime === "codex" && r.name === "review"), true, "the Codex title is a label row");
+    assert.equal(readLabelState(f.paths)?.bindings.length, 0);
+    const selection = resolveWakeSelection(p.wake?.sessions ?? [], { view: readBindingView(f.paths, now), target: { runtime: "codex", sessionId: C }, now });
+    assert.deepEqual(selection, { allowed: false, explicit: false, reason: "not-listed" });
 });

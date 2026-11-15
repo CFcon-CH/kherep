@@ -12,6 +12,7 @@ import { checkHooks } from "./doctor-hooks.mts";
 import { checkIntakeLatency } from "./doctor-intake.mts";
 import { checkIntercom } from "./doctor-intercom.mts";
 import { checkWakeBudget } from "./doctor-wake-budget.mts";
+import { checkWakeNames } from "./doctor-wake-names.mts";
 import {
   checkCodexForkAttempts, checkCodexSessions, checkDaemon, checkEnrollment, checkListeners, checkPolicy, checkWakeReadiness, daemonReadiness, type Check,
 } from "./doctor-local.mts";
@@ -82,6 +83,8 @@ export async function runDoctor(deps: DoctorDeps): Promise<DoctorReport> {
     listeners: checkListeners(deps.paths, alive, now),
     wakeReadiness: checkWakeReadiness(deps.paths, parsed, alive, clock),
     wakeBudget: checkWakeBudget(deps.paths, parsed, clock),
+    // Issue #828: each wake.sessions name, bound to an id or not, with its current and previous name.
+    wakeNames: checkWakeNames(deps.paths, parsed),
     codexSessions: checkCodexSessions(deps.paths, now),
     // Issue #441: control-plane accept to local store, last two hours; only messages that arrived.
     intakeLatency: checkIntakeLatency(deps.paths, now),
