@@ -77,7 +77,7 @@ export function readArtifacts(root: string, identity: Identity): { manifest: Man
     const current = selected.get(producer);
     if (!current || BigInt(attempt) > BigInt(current.manifest.attempt)) selected.set(producer, { directory, manifest, name: entry.name });
   }
-  const artifacts = [...selected.values()];
+  const artifacts = [...selected.values()].sort((a, b) => a.manifest.producer < b.manifest.producer ? -1 : a.manifest.producer > b.manifest.producer ? 1 : 0);
   validateProducers(artifacts.map(a => a.manifest), identity);
   for (const { directory, manifest } of artifacts) {
     const expected = manifest.producer === "worker" ? ["lcov.info", "manifest.json"] : ["manifest.json", "raw"];

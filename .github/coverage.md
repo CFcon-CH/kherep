@@ -41,6 +41,18 @@ producer attempt. `summary.json` records producer names, attempts, artifact name
 retained/ignored V8 counts and omitted wholly erased type-only files. Both final
 LCOV families use unique repository-relative slash-separated `SF:` paths.
 
+## Selected producer completeness and order
+
+Each selected V8 producer must retain at least one script after relocation and
+exclusion across all its raw reports. An empty individual child report is
+allowed; an entirely empty or excluded-only producer fails with its label
+before conversion or accepted-output creation. Worker uses LCOV and is exempt.
+Retained zero-count scripts are valid; the existing aggregate hit check remains,
+so this is not proof that every producer adds positive maintained-source hits.
+An unused copy declaration remains no data when its producer has another
+retained script. Selected artifacts and both provenance arrays use deterministic
+code-unit producer order; numeric latest-attempt selection and refusals remain.
+
 ## Foreign roots and copied scripts
 
 Producer URLs are interpreted independently of the assembler's operating system.
