@@ -11,6 +11,7 @@ import { readCopyDeclarations } from "./coverage-copies.mts";
 import { relocateV8Report } from "./coverage-paths.mts";
 
 const cli = resolve("bootstrap/coverage-report.mts"), sidecar = "coverage-copies.jsonl";
+const c8Skip = !existsSync(resolve("node_modules/c8/bin/c8.js")) && "c8 unavailable in dependency-free compatibility job";
 const identity = ["--run-id", "792", "--attempt", "1", "--checkout-sha", "a".repeat(40)];
 const source = "export function value(n: number): number {\n  if (n > 0) {\n    return n + 1;\n  }\n  return 0;\n}\nconsole.log(value(2));\n";
 const digest = (bytes: string | Buffer) => createHash("sha256").update(bytes).digest("hex");
@@ -63,7 +64,7 @@ test("declareCopy checks bytes with no coverage variable and appends only when a
   console.log(`different bytes: exit ${refused.status}, copy bytes differ; unset coverage: no declaration`);
 });
 
-test("real V8 copy hits land on the original and preserve zero lines and branches", { skip: !existsSync(resolve("node_modules/c8/bin/c8.js")) && "c8 unavailable in dependency-free compatibility job" }, t => {
+test("real V8 copy hits land on the original and preserve zero lines and branches", { skip: c8Skip }, t => {
   const f = fixture(t); f.declare();
   const execution = spawnSync(process.execPath, [f.copy], { env: { ...process.env, NODE_V8_COVERAGE: f.raw }, encoding: "utf8" });
   assert.equal(execution.status, 0, execution.stderr);
@@ -85,7 +86,7 @@ for (const failure of ["sha mismatch", "traversal"]) {
   });
 }
 
-test("an undeclared same-basename URL stays ignored and cannot consume a declaration", t => {
+test("an undeclared same-basename URL stays ignored and cannot consume a declaration", { skip: c8Skip }, t => {
   const f = fixture(t); f.declare();
   copyFileSync(join(f.raw, "report.json"), join(f.raw, "retained.json"));
   const other = join(f.copy, "..", "elsewhere", "copy.mts");
@@ -120,7 +121,7 @@ test("foreign Windows copy URLs retain exact mapping, hashes and no-data semanti
   for (const unsafe of ["file:///D:/temp/../copy.mts", "file://server/copy.mts", "file:///D:/temp/%2fcopy.mts"]) assert.throws(() => readCopyDeclarations(JSON.stringify({ ...f.declaration, copyUrl: unsafe }), f.root));
 });
 
-for (const mode of ["mixed empty child", "zero-count retained script"]) test("producer presence accepts " + mode + " and Worker LCOV exemption", t => {
+for (const mode of ["mixed empty child", "zero-count retained script"]) test("producer presence accepts " + mode + " and Worker LCOV exemption", { skip: c8Skip }, t => {
   const f = fixture(t), path = join(f.raw, "report.json");
   if (mode === "mixed empty child") writeFileSync(join(f.raw, "empty.json"), JSON.stringify({ result: [] }));
   else {
@@ -133,7 +134,7 @@ for (const mode of ["mixed empty child", "zero-count retained script"]) test("pr
   assert(summary.producers.find((p: { producer: string }) => p.producer === "unit").retained > 0);
   assert.equal(summary.producers.find((p: { producer: string }) => p.producer === "worker").retained, 0);
 });
-test("Worker empty LCOV still fails its own validation", t => {
+test("Worker empty LCOV still fails its own validation", { skip: c8Skip }, t => {
   const f = fixture(t); writeFileSync(join(f.input, "coverage-worker-792-1/lcov.info"), "");
   const result = f.assemble(); assert.notEqual(result.status, 0); assert.match(result.stderr, /empty|LCOV/);
 });
