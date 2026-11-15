@@ -37,3 +37,12 @@ test("inventory rejects unsafe paths, identity tokens and adapter-owned classifi
   }
   assert.throws(() => buildAgentInventory([{ ...observer, permissions: ["all"] } as AgentSourceInput]), /unknown-field/);
 });
+
+test("F6 installed aliases reject case-insensitive NTFS and APFS collisions", () => {
+  const other = { ...observer, sourcePath: "plugins/example/agents/other.md", sourceProvider: "example@plugins" };
+  for (const names of [["Observer", "observer"], ["OBSERVER", "Observer"]]) {
+    assert.throws(() => buildAgentInventory([{ ...observer, installedName: names[0]! },
+      { ...other, installedName: names[1]! }]), /duplicate-installed-name/);
+  }
+  assert.equal(buildAgentInventory([{ ...observer, installedName: "Observer" }, { ...other, installedName: "Observer-2" }]).agents.length, 2);
+});

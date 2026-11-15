@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { parseModelPolicy, record, resolveModels, resolveEffectiveSelections, type ModelResolution, type CatalogSupport, type EffectiveResolutionV2 } from "./model-policy.mts";
+import { parseModelPolicy, record, resolveModels, resolveEffectiveSelections, buildCatalogSupport, type ModelResolution, type CatalogSupport, type EffectiveResolutionV2 } from "./model-policy.mts";
 import { verifyAgentInventory, type AgentInventory } from "./model-agent-inventory.mts";
 import { parseUserModelPolicy, type ModelChoice } from "./model-policy-user.mts";
 import { assertVerifiedModelState, createModelResolutionReceipt, modelSelectionId, verifyModelOutputManifest,
@@ -67,6 +67,11 @@ export function planModelSelection(input: SelectionInputs): ModelSelectionPlan {
   const existing = input.existing;
   if (existing) assertVerifiedModelState(existing);
   const current = input.currentOutputs ?? [];
+  if (existing) for (const agent of inventory.agents) {
+    const next = `agents/${agent.installedName}.toml`;
+    if (existing.outputs.some(row => row.target !== next && row.target.toLowerCase() === next.toLowerCase()))
+      planFail("case-only-output-transition");
+  }
   if (existing) {
     if (!input.currentOutputs) planFail("missing-current-output-evidence");
     verifyModelOutputManifest(existing.outputs, current, existing.selectionId, existing.inventory);
@@ -77,7 +82,14 @@ export function planModelSelection(input: SelectionInputs): ModelSelectionPlan {
   const needsFresh = !existing || input.intent !== "install" || changedUser || newAgents;
   if (needsFresh && (!input.catalog || input.supportSource !== "fresh-catalog")) planFail("fresh-catalog-required");
   if (input.catalog && !input.supportSource) planFail("missing-catalog-source");
-  const catalog = input.catalog ?? existing?.catalog;
+  // The snapshot label is evidence of reuse, not authority to replace support.
+  // Rebuild caller-provided derived lookups and validate the raw catalog digest
+  // before the no-op shortcut can accept it.
+  const suppliedCatalog = input.catalog && buildCatalogSupport(input.catalog.catalog);
+  if (suppliedCatalog && suppliedCatalog.digest !== input.catalog!.digest) planFail("catalog-evidence-conflict");
+  if (suppliedCatalog && input.supportSource === "verified-snapshot" && suppliedCatalog.digest !== existing?.catalog.digest)
+    planFail("snapshot-catalog-conflict");
+  const catalog = suppliedCatalog ?? existing?.catalog;
   if (!catalog) planFail("catalog-required");
   const sameUserBytes = existing && user.byteSha256 === existing.user.byteSha256 && user.present === existing.user.present;
   if (existing?.receipt && input.intent === "install" && sameUserBytes && policy.sourceSha256 === existing.resolution.policySha256
@@ -87,8 +99,15 @@ export function planModelSelection(input: SelectionInputs): ModelSelectionPlan {
       preconditions: { user: existing.resolution.userIdentity, outputs: existing.outputs }, rollback: { userFile: "never-write", restore: [], removeCreated: [] } };
   }
   const lastOverlay = existing?.recognizedOverlays.at(-1);
-  if (lastOverlay && inventory.agents.find(agent => agent.bindingId === lastOverlay.identity.authority.bindingId)?.sourceSha256
-    !== lastOverlay.identity.authority.sourceSha256) planFail("overlay-source-evidence-required");
+  if (lastOverlay) {
+    const current = inventory.agents.find(agent => agent.bindingId === lastOverlay.identity.authority.bindingId);
+    // Source revision + inventory are independently adapter-trusted inputs.
+    // A different current revision may advance public prose without refreshing
+    // model defaults. SHA inequality is not a claim of Git ancestry/freshness.
+    if (!current || current.sourceSha256 !== lastOverlay.identity.authority.sourceSha256
+      && (input.sourceRevision === existing!.sourceRevision || input.sourceRevision === lastOverlay.identity.authority.sourceRevision))
+      planFail("overlay-source-evidence-required");
+  }
   const evidence: ReceiptEvidence = { context: { sourceRevision: input.sourceRevision, previousSelectionId: existing?.selectionId ?? null,
     supportSource: input.catalog ? input.supportSource! : "verified-snapshot" }, policyText: input.policyText, inventory,
     user, catalog, retained: existing?.retained, predecessor: existing, agentDefaults: input.agentDefaults, refresh: input.intent === "refresh",

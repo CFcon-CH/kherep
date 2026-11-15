@@ -60,7 +60,8 @@ function validateJsonStructure(text: string, maxDepth: number): void {
 
 // Shared strict JSON seam for the bounded user file and larger receipt document.
 // Both consumers retain duplicate-key evidence before reconstructing objects.
-export function parseModelPolicyJson(text: string, limits = { maxBytes: 65_536, maxDepth: 16 }): unknown {
+const DEFAULT_JSON_LIMITS: Readonly<{ maxBytes: number; maxDepth: number }> = Object.freeze({ maxBytes: 65_536, maxDepth: 16 });
+export function parseModelPolicyJson(text: string, limits = DEFAULT_JSON_LIMITS): unknown {
   if (!Number.isSafeInteger(limits.maxBytes) || limits.maxBytes < 1 || limits.maxBytes > 1_048_576
     || !Number.isSafeInteger(limits.maxDepth) || limits.maxDepth < 1 || limits.maxDepth > 32) fail("invalid-json-limits", "json");
   if (typeof text !== "string" || Buffer.byteLength(text, "utf8") > limits.maxBytes) fail("input-size", "json");
@@ -125,7 +126,7 @@ export function parseUserModelPolicy(text: string | undefined, inventory: AgentI
     models.set(id, metadata);
   }
   const semantics = { roles: [...roles].sort(compare), agents: [...agents].sort(compare),
-    models: [...models].sort(compare).map(([id, row]) => [id, { ...row, ...(row.efforts ? { efforts: [...row.efforts].sort() } : {}) }]) };
+    models: [...models].sort(compare).map(([id, row]) => [id, { ...row, ...(row.efforts ? { efforts: [...row.efforts].sort((a, b) => a < b ? -1 : a > b ? 1 : 0) } : {}) }]) };
   return { schemaVersion: 1, present: text !== undefined, byteSha256: text === undefined ? null : sha(text),
     semanticSha256: sha(JSON.stringify(semantics)), roles, agents, models };
 }
