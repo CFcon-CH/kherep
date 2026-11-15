@@ -3,7 +3,7 @@ import test from 'node:test';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { PUSH_WINDOW_MS } from './credential.mts';
 import { ReceiptStore } from './receipt.mts';
 import type { Receipt } from './receipt.mts';
@@ -13,18 +13,18 @@ import { run as codex } from './github-codex-credential.mts';
 stubWindowsAcl();
 type T = {after:(fn:()=>void)=>void};
 const input = 'capability[]=authtype\ncapability[]=state\nprotocol=https\nhost=github.com\npath=example/project.git\nwwwauth[]=Basic realm="GitHub"\n';
-/** A pending push receipt, its lock held and, as the broker's push does, its one credential grant created. */
+/** A pending push receipt, its lock held and, as the broker's push does, its one credential grant created; `env` carries the grant's nonce as the push's git child does. */
 function pending(t:T, runtime:'claude'|'codex', receipt:Partial<Receipt>={}, lock=true, grant=lock) {
   const root=brokerRoot(t,runtime),id=randomUUID(),now=Date.now();
   const store=new ReceiptStore(root,runtime,runtime==='claude'?11:12,'example/project',id);
   store.write({version:2,kind:'push',digest:'0'.repeat(64),operation:'branch.push',status:'pending',fieldHashes:{},branch:'feat/x',sha:'a'.repeat(40),admittedAt:now,...receipt} as Receipt);
   if (lock) store.acquire();
-  if (grant) store.permit();
-  return {root,id,now,store};
+  const nonce=grant ? store.permit().nonce : undefined;
+  return {root,id,now,store,env:{KHEREP_PUSH_GRANT:nonce}};
 }
 for (const [runtime,run] of [['claude',claude],['codex',codex]] as const) test(`${runtime} helper answers get only for its locked, fresh, pending push`,async t=>{
   const p=pending(t,runtime),api=fakeGithub(runtime);
-  const out=await run([p.id,'get'],input,{root:p.root,fetch:api.fetch,now:()=>p.now+1000});
+  const out=await run([p.id,'get'],input,{root:p.root,fetch:api.fetch,now:()=>p.now+1000,env:p.env});
   assert.equal(out,`username=x-access-token\npassword=${TOKEN}\n`);
   const exchange=api.calls.find(c=>c.url.endsWith('/access_tokens'));
   assert.deepEqual(exchange?.body,{repository_ids:[55],permissions:{contents:'write'}});
@@ -32,7 +32,7 @@ for (const [runtime,run] of [['claude',claude],['codex',codex]] as const) test(`
   for (const action of ['store','erase']) assert.equal(await run([p.id,action],`${input}username=x-access-token\npassword=${TOKEN}\n`,{root:p.root,fetch:api.fetch}),'');
 });
 test('helper answers one get per push: the first valid get consumes the grant',async t=>{
-  const p=pending(t,'claude'),api=fakeGithub('claude'),deps={root:p.root,fetch:api.fetch,now:()=>p.now+1000},grant=`${p.store.file}.grant`;
+  const p=pending(t,'claude'),api=fakeGithub('claude'),deps={root:p.root,fetch:api.fetch,now:()=>p.now+1000,env:p.env},grant=`${p.store.file}.grant`;
   // A refused get never burns the grant.
   await assert.rejects(claude([p.id,'get'],input,{...deps,now:()=>p.now+PUSH_WINDOW_MS+1}),{message:'auth-refused'});
   await assert.rejects(claude([p.id,'get'],input.replace('github.com','example.com'),deps),{message:'target-refused'});
@@ -48,6 +48,35 @@ test('helper without a grant is refused without a provider call, and a grant nee
   assert.equal(api.calls.length,0);
   const unlocked=pending(t,'claude',{},false,false);
   assert.throws(()=>unlocked.store.permit(),{message:'operation-busy'});assert.equal(fs.existsSync(`${unlocked.store.file}.grant`),false);
+});
+const sha256=(value:string)=>createHash('sha256').update(value).digest('hex');
+test('a grant without the push nonce is refused without a provider call and stays',async t=>{
+  const p=pending(t,'claude',{},true,false),api=fakeGithub('claude'),grant=`${p.store.file}.grant`;
+  fs.writeFileSync(grant,'',{mode:0o600});
+  for (const env of [{},{KHEREP_PUSH_GRANT:''}]) await assert.rejects(claude([p.id,'get'],input,{root:p.root,fetch:api.fetch,now:()=>p.now,env}),{message:'auth-refused'},JSON.stringify(env));
+  assert.equal(api.calls.length,0);assert.equal(fs.existsSync(grant),true);
+});
+test('a grant re-created after the push\'s get never answers a second get',async t=>{
+  const p=pending(t,'claude'),api=fakeGithub('claude'),deps={root:p.root,fetch:api.fetch,now:()=>p.now+1000,env:p.env},grant=`${p.store.file}.grant`;
+  assert.equal(await claude([p.id,'get'],input,deps),`username=x-access-token\npassword=${TOKEN}\n`);
+  const calls=api.calls.length;
+  for (const content of ['',sha256(randomUUID())]) {
+    fs.writeFileSync(grant,content,{mode:0o600});
+    await assert.rejects(claude([p.id,'get'],input,deps),{message:'auth-refused'},JSON.stringify(content));
+  }
+  assert.equal(api.calls.length,calls,'a re-created grant reached the provider');
+});
+test('a wrong nonce is refused and does not burn the grant; the right one answers once',async t=>{
+  const p=pending(t,'claude'),api=fakeGithub('claude'),deps={root:p.root,fetch:api.fetch,now:()=>p.now+1000},grant=`${p.store.file}.grant`;
+  const nonce=p.env.KHEREP_PUSH_GRANT!;
+  assert.equal(fs.readFileSync(grant,'utf8'),sha256(nonce),'the grant holds the nonce\'s hash, not the nonce');
+  for (const wrong of ['0'.repeat(64),nonce.toUpperCase(),nonce.slice(1),`${nonce}0`,sha256(nonce)]) {
+    await assert.rejects(claude([p.id,'get'],input,{...deps,env:{KHEREP_PUSH_GRANT:wrong}}),{message:'auth-refused'},wrong);
+    assert.equal(fs.existsSync(grant),true,wrong);
+  }
+  assert.equal(api.calls.length,0);
+  assert.equal(await claude([p.id,'get'],input,{...deps,env:p.env}),`username=x-access-token\npassword=${TOKEN}\n`);
+  await assert.rejects(claude([p.id,'get'],input,{...deps,env:p.env}),{message:'auth-refused'},'the right nonce a second time');
 });
 test('helper refuses wrong argv, host, protocol, path and repository without a provider call',async t=>{
   const p=pending(t,'claude'),api=fakeGithub('claude'),deps={root:p.root,fetch:api.fetch,now:()=>p.now};

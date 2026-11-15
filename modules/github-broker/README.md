@@ -90,15 +90,24 @@ git -c credential.helper= -c credential.helper=!'<node>' '<tools>/github-<rt>-cr
 
 The checkout is only read once, to find its toplevel and object directory. The
 preflight and the push each run in their own clean bare repository under the
-broker's temporary directory (`mkdtemp`, prefix `kherep-push-`; on POSIX owned by
-the broker and mode 0700, else `target-refused`), removed in `finally` also on
-error. It borrows only the checkout's objects through `objects/info/alternates`
+broker's private root, never under the caller's temporary directory: the root is
+checked as a protected directory first (its whole chain on POSIX, its ACL on
+Windows, where the new directory inherits it), then `mkdtemp` creates the
+repository (prefix `kherep-push-`; on POSIX owned by the broker and mode 0700,
+else `target-refused`), removed in `finally` also on error. Clean repositories
+older than ten minutes in the root, left by a crashed broker, are removed before
+a new one is created. The repository borrows only the checkout's objects through `objects/info/alternates`
 and has no repository configuration beyond `core.bare`, `core.commitGraph=false`
 and `pack.useBitmaps=false`, no hooks, no refs and so no replace refs, no shallow
 file and no grafts. Commit-graph files of the alternate are off because git
 trusts their parent data during traversal: a crafted one could hide a foreign
-ancestor from `sha --not <base>`. Objects are content-addressed, so the preflight
-and the push read the same graph. Every git child in it gets a constructed
+ancestor from `sha --not <base>`. Git does not verify object hashes on read, so
+git only lists and fetches objects for the preflight: it reads every commit
+reachable from sha and the base, and the root and `.github` trees it decides on,
+through `cat-file --batch`, recomputes each SHA-1 and derives ancestry, authorship,
+the fast-forward and the workflow check from those bytes alone. A forged loose
+object under a real commit's or tree's name is refused. The push needs no such
+check: GitHub names the objects it receives by their computed hash. Every git child in it gets a constructed
 environment, nothing copied from the broker's: the fixed `PATH`
 (`C:\Program Files\Git\cmd;C:\Windows\System32;C:\Windows` on Windows, `/usr/bin:/bin`
 elsewhere), `HOME` set to the clean repository (no `~/.gitconfig`, `~/.config/git`
@@ -128,22 +137,43 @@ outcome is unknown and is settled later by `verify` therefore gets no record. Th
 `branch.push` receipt for that runtime and operation, admitted less than 120 s
 earlier, exists, and once: the broker creates one grant file beside the receipt
 (`O_EXCL`, mode 0600) while it holds the lock, right before the push, and removes
-it after; the first `get` that passes every other check consumes it, so a
-refused `get` never burns it and a second `get` is refused. Then it mints a
+it after. The grant holds only the SHA-256 of a fresh 32-byte nonce, which the
+broker passes as `KHEREP_PUSH_GRANT` in its git child's environment alone, never
+in argv or a file. The first `get` that passes every other check and presents that
+nonce redeems the grant, so a refused `get` or a wrong nonce never burns it and a
+second `get` is refused. Then it mints a
 `contents: write` token and writes it to git's pipe. `store` and `erase` get no answer and nothing is persisted. Any refusal is
 silent with exit 1. The token never appears in argv, environment, disk, git
 configuration, receipts or output. Readback compares the remote branch with sha.
 A failed push leaves the receipt pending (`outcome-unknown`); retry with a new
 operationId after checking the branch.
 
-Residuals of `branch.push`: a process of the same OS account that knows the
-operationId can consume the single grant before git does; git then gets no
-credential and the push ends `outcome-unknown`, never with a second token. After a
+Residuals of `branch.push`. The grant holds only the SHA-256 of a nonce that
+exists only in the environment of the broker's git child, and the helper answers
+only a `get` that presents it. That closes one class of same-account process and
+no other:
+
+- A, a process that can only start the helper and knows the operationId: it gets
+  no token and cannot burn the grant. The nonce closes this class.
+- B, a same-account process that can write the receipt directory: it can write
+  its own grant, receipt and lock and still obtain a token.
+- C, a process that reads the broker's git child's variables from process memory
+  (`/proc/<pid>/environ`, the Windows process environment block): it gets the
+  nonce and can still obtain a token.
+
+The nonce closes A only; anything that can read the key can obtain a token as
+well. The permission rule that allows a runtime only the broker entry point
+follows in PR-B. Until then nothing stops a session from doing B or C. After a
 crash mid-push the grant and the retained lock stay usable until the 120 s window
-ends. Operator `pre-push` hooks do not run on a broker push. The push supports no
-proxy and no system-level TLS setting (on Git for Windows the system
-`http.sslBackend` no longer applies). Commit-graph files are off for the reason
-above. The clean repository lives under the broker's temporary directory.
+ends. Forged object bytes at push time cost the operation (`outcome-unknown`),
+never admit a foreign commit. The preflight reads every commit reachable from sha
+and the base, linear in history, and refuses above 256 MB of commit data; it
+relies on SHA-1 collision resistance in Node, without collision detection
+(GitHub's side has it). Operator `pre-push` hooks do not run on a broker push. The
+push supports no proxy and no system-level TLS setting (on Git for Windows the
+system `http.sslBackend` no longer applies). Commit-graph files are off for the
+reason above. The clean repository lives under the broker's private root; on
+Windows it is safe by inheriting the checked root's ACL, not by its own check.
 
 `pr.create` verifies that the PR author is the bot, that the head branch is in the
 same repository and that title, body, base, head, draft and labels read back as

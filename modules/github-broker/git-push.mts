@@ -1,5 +1,4 @@
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { execFile, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -9,7 +8,10 @@ import { ABSENT } from './transport.mts';
 import type { Context, Handler } from './operations.mts';
 import { pushSession, recordBrokerPush } from './attribution.mts';
 import type { PushSession } from './attribution.mts';
-const MAX_COMMITS = 256;
+import { canonicalRoot } from './config.mts';
+import { protectedDirectory } from './key-access.mts';
+import { checkRange } from './commit-range.mts';
+import type { Git, Read } from './commit-range.mts';
 // Dropped from every git child: tracing, injected configuration, askpass programs,
 // alternative repositories, helper program locations, ambient tokens and the search
 // path. Prompts are switched off.
@@ -60,25 +62,35 @@ function git(cwd:string, args:string[], env:NodeJS.ProcessEnv=gitEnv()):string|u
   try { return execFileSync(exe,args,{cwd,env,encoding:'utf8',windowsHide:true,timeout:30000,maxBuffer:16*1024*1024,stdio:['ignore','pipe','ignore']}).trim(); }
   catch { return undefined; }
 }
-export type Git = (args:string[])=>string|undefined;
-export type CleanRepo = {dir:string; toplevel:string; git:Git; dispose:()=>void};
+export type CleanRepo = {dir:string; toplevel:string; git:Git; read:Read; dispose:()=>void};
 // Commit-graph files of an alternate object store would be trusted for parents during
 // traversal, so a crafted one could hide a foreign ancestor; bitmaps likewise describe
-// reachability. Both are off: every commit is parsed from its content-addressed object.
+// reachability. Both are off. Git still does not verify object hashes on read, so the
+// preflight decides from bytes it hashed itself (commit-range.mts).
 const CLEAN_CONFIG='[core]\n\trepositoryformatversion = 0\n\tbare = true\n\tcommitGraph = false\n[pack]\n\tuseBitmaps = false\n';
+const STALE_MS = 10*60000;
 /**
  * A broker-owned bare repository that borrows only the session's objects through
  * objects/info/alternates: no repository configuration, hooks, refs (so no replace refs),
- * shallow file or grafts. Objects are content-addressed, so preflight and push read the same
- * immutable graph. The directory comes from mkdtemp (unpredictable, never pre-created; on POSIX
- * owned and private, else refused); the caller disposes of it in `finally`. Discovery is the
- * only git call in the session repository, and it has no credential capability.
+ * shallow file or grafts. It lives under the broker's private root, checked first (on Windows
+ * the new directory is safe by inheriting that root's ACL), from mkdtemp (unpredictable, never
+ * pre-created; on POSIX owned and private, else refused); the caller disposes of it in `finally`,
+ * and clean repositories a crashed broker left there are removed after ten minutes. Discovery is
+ * the only git call in the session repository, and it has no credential capability.
  */
-export function cleanRepo(cwd:string):CleanRepo {
+export function cleanRepo(cwd:string, root:string):CleanRepo {
   const [toplevel,objects,extra]=git(cwd,['rev-parse','--path-format=absolute','--show-toplevel','--git-path','objects'])?.split('\n') ?? [];
   // An alternates line starting with # or a quote is special; an absolute path starts with neither.
   if (!toplevel || !objects || extra!==undefined || /[\r\n]/.test(objects) || !path.isAbsolute(objects) || !fs.statSync(objects,{throwIfNoEntry:false})?.isDirectory()) fail('target-refused');
-  const dir=fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()),'kherep-push-'));
+  protectedDirectory(root);
+  // A live push's repository is younger than its timeouts; an older one is a crash leftover.
+  try {
+    for (const name of fs.readdirSync(root).filter(n=>n.startsWith('kherep-push-'))) {
+      const stale=path.join(root,name), s=fs.lstatSync(stale);
+      if (s.isDirectory() && Date.now()-s.mtimeMs>STALE_MS) fs.rmSync(stale,{recursive:true,force:true});
+    }
+  } catch { /* Best effort: a leftover holds no secret. */ }
+  const dir=fs.mkdtempSync(path.join(root,'kherep-push-'));
   const dispose=()=>{try {fs.rmSync(dir,{recursive:true,force:true,maxRetries:3});} catch { /* Best effort: the directory holds no secret. */ }};
   try {
     const s=fs.lstatSync(dir);
@@ -89,7 +101,12 @@ export function cleanRepo(cwd:string):CleanRepo {
     fs.writeFileSync(path.join(dir,'config'),CLEAN_CONFIG);
     fs.writeFileSync(path.join(dir,'gitconfig'),'');
   } catch (e) { dispose();throw e; }
-  return {dir,toplevel,dispose,git:args=>git(dir,['--git-dir',dir,...args],cleanEnv(dir))};
+  const read:Read=shas=>{
+    const exe=trustedGit();
+    try { return execFileSync(exe,['--git-dir',dir,'cat-file','--batch'],{cwd:dir,env:cleanEnv(dir),input:`${shas.join('\n')}\n`,windowsHide:true,timeout:30000,maxBuffer:256*1024*1024,stdio:['pipe','pipe','ignore']}); }
+    catch { return undefined; }
+  };
+  return {dir,toplevel,dispose,read,git:args=>git(dir,['--git-dir',dir,...args],cleanEnv(dir))};
 }
 /** One `!` helper command: single-quoted paths with forward slashes, then the operation ID. */
 export function helperCommand(node:string, script:string, operationId:string):string {
@@ -116,24 +133,6 @@ async function remoteSha(c:Context, branch:string, code:'target-refused'|'verifi
   if (ref.ref!==`refs/heads/${branch}` || object?.type!=='commit' || typeof object.sha!=='string' || !SHA.test(object.sha)) fail(code);
   return object.sha;
 }
-/**
- * Bot authorship is enforced here, independently of the runtime: every commit the
- * push would add beyond the remote default branch must carry an allowed bot email
- * as author and committer, and none may touch `.github/workflows`.
- */
-export function checkCommits(git:Git, sha:string, base:string, emails:string[]):void {
-  const log=git(['log','-z','-m','--no-renames','--name-only',`--max-count=${MAX_COMMITS+1}`,'--format=%x01%H%x09%ae%x09%ce',sha,'--not',base]);
-  if (log===undefined) fail('target-refused');
-  const commits=new Set<string>();
-  for (const token of log.split(/[\0\n]/)) {
-    if (token.startsWith('\x01')) {
-      const [hash,author,committer]=token.slice(1).split('\t');
-      commits.add(hash);
-      if (![author,committer].every(e=>typeof e==='string' && emails.includes(e.toLowerCase()))) fail('target-refused');
-    } else if (token.toLowerCase().startsWith('.github/workflows/')) fail('target-refused');
-  }
-  if (commits.size>MAX_COMMITS) fail('target-refused');
-}
 function run(dir:string, args:string[], env:NodeJS.ProcessEnv):Promise<boolean> {
   return new Promise(resolve=>{execFile(trustedGit(),args,{cwd:dir,env,timeout:120000,windowsHide:true,maxBuffer:1024*1024},error=>resolve(!error));});
 }
@@ -145,31 +144,28 @@ export const pushHandler: Handler = {
   async preflight(c) {
     const {branch,sha}=c.request as {branch:string; sha:string}, main=c.target.default_branch;
     if (typeof main!=='string' || !refName(main) || branch===main || branch.startsWith('v')) fail('target-refused');
-    const repo=cleanRepo(c.deps.cwd ?? process.cwd());
+    const repo=cleanRepo(c.deps.cwd ?? process.cwd(),c.deps.root ?? canonicalRoot());
     try {
-      const isCommit=(commit:string)=>repo.git(['cat-file','-t',commit])==='commit';
-      if (!isCommit(sha)) fail('target-refused');
       // Both bases come from GitHub's readback, never from a ref of the caller's checkout.
-      const current=await remoteSha(c,branch,'target-refused');
-      // Fast-forward only: the remote branch tip must be an ancestor of sha.
-      if (current && current!==sha && (!isCommit(current) || repo.git(['merge-base','--is-ancestor',current,sha])===undefined)) fail('target-refused');
-      const base=await remoteSha(c,main,'target-refused');
-      if (!base || !isCommit(base)) fail('target-refused');
-      checkCommits(repo.git,sha,base,c.identity.authorEmails ?? []);
+      const current=await remoteSha(c,branch,'target-refused'), base=await remoteSha(c,main,'target-refused');
+      if (!base) fail('target-refused');
+      // Bot authorship, workflows and fast-forward, enforced here independently of the runtime.
+      checkRange(repo.git,repo.read,{sha,base,current,emails:c.identity.authorEmails ?? []});
     } finally { repo.dispose(); }
     return {branch,sha,admittedAt:c.now};
   },
   async mutate(c, receipt) {
     const url=c.deps.push?.url ?? `https://github.com/${c.repo.slug}.git`;
     const helper=helperCommand(process.execPath,c.deps.push?.helperScript ?? helperScript(c.runtime),c.request.operationId);
-    const repo=cleanRepo(c.deps.cwd ?? process.cwd());
+    const repo=cleanRepo(c.deps.cwd ?? process.cwd(),c.deps.root ?? canonicalRoot());
     try {
       // Before the push: a Codex marker lives as long as the push may take.
       pushes.set(c,{session:pushSession(c.runtime,repo.toplevel,process.env,c.now),toplevel:repo.toplevel});
       // No repository hook runs here; KHEREP_BROKER_PUSH stays as a second stand-down for the pre-push hook.
-      const revoke=c.permit();
+      // The grant's nonce exists only in this child's environment, never in argv or a file.
+      const {nonce,revoke}=c.permit();
       try {
-        if (!await run(repo.dir,['--git-dir',repo.dir,...pushArgs(helper,url,receipt.sha!,receipt.branch!)],{...cleanEnv(repo.dir),KHEREP_BROKER_PUSH:'1'})) fail('outcome-unknown');
+        if (!await run(repo.dir,['--git-dir',repo.dir,...pushArgs(helper,url,receipt.sha!,receipt.branch!)],{...cleanEnv(repo.dir),KHEREP_BROKER_PUSH:'1',KHEREP_PUSH_GRANT:nonce})) fail('outcome-unknown');
       } finally { revoke(); }
     } finally { repo.dispose(); }
     return {};

@@ -1,5 +1,6 @@
 // Test fixture only: synthetic git repositories, per-test process variables and one
 // runtime's broker push against a loopback remote. No real key, token or gitconfig.
+import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -58,4 +59,10 @@ export async function pushSetup(t:T, runtime:'claude'|'codex', options:{password
   const push=(extra:Record<string,unknown>={})=>(runtime==='claude'?claude:codex)(JSON.stringify({...request,...extra}),{root,fetch:api.fetch,cwd:r.work,push:{url:server.url('example/project'),helperScript:fake}});
   const records=():Record<string,unknown>[]=>fs.existsSync(log)?fs.readFileSync(log,'utf8').split('\n').filter(Boolean).map(l=>JSON.parse(l)):[];
   return {r,root,sha,config,log,request,push,records,server};
+}
+/** Refused before the receipt's push: target-refused, the remote never asked and the branch absent. */
+export async function refused(p:Awaited<ReturnType<typeof pushSetup>>, sha:string):Promise<void> {
+  const result=await p.push({operationId:randomUUID(),sha});
+  assert.equal(result.error,'target-refused',JSON.stringify(result));
+  assert.equal(p.server.refused+p.server.authorized.length,0);assert.equal(p.r.remote('feat/x'),undefined);
 }
