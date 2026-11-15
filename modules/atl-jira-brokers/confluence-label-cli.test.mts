@@ -19,6 +19,10 @@ const BROKERS = [
 ];
 
 const SITE = "https://wiki.example.com";
+// #760 contract A: the Claude broker's create files observations only, from a validated body file.
+const OBS_FILE = "C:/assigned/observation.xml";
+const OBS_LABELS = ["type-observation", "evidence-assumed", "status-author-model"];
+const OBS_BODY = "<p>Finding: x</p><p>Origin: synthetic turn.</p><p>Source: fixture.</p><p>Timestamp: now.</p>";
 const CRED_PATH = "/nowhere/credentials-for-tests";
 const CRED_TEXT = "Client ID: client-id-for-tests\nSecret: secret-for-tests-1234\n";
 
@@ -69,6 +73,7 @@ function brokerHarness(ownEnv: string, options: HarnessOptions = {}) {
       if (path !== CRED_PATH) throw new Error("no such file");
       return CRED_TEXT;
     },
+    async readBodyBytes(file) { assert.equal(file, OBS_FILE); return Buffer.from(OBS_BODY); },
     async fetch(url, requestOptions) {
       calls.push({ url, options: requestOptions });
       if (new URL(url).origin === "https://auth.atlassian.com") return response(200, { access_token: "token", expires_in: 3600 });
@@ -129,6 +134,9 @@ function postedNames(calls: Call[]): string[] {
 
 for (const { name: BROKER, run: runCli, env: OWN_ENV } of BROKERS) {
   const harness = (options: HarnessOptions = {}) => brokerHarness(OWN_ENV, options);
+  const gated = BROKER === "atl-confluence-ccoder.mts", base = gated ? OBS_LABELS : [];
+  const createArgv = (labels: string[] = []) => ["create", "--space", "KB", "--title", "New page", "--format", "storage",
+    ...(gated ? ["--body-file", OBS_FILE] : ["--body", "<p>x</p>"]), ...(base.length + labels.length ? ["--labels", [...base, ...labels].join(",")] : [])];
   const LABEL_ENV = { KHEREP_ATL_SITE: SITE, [OWN_ENV]: CRED_PATH, KHEREP_PROFILE: "win" };
   const HERE = runtimeLabel(OWN_ENV, { KHEREP_PROFILE: "win" });
   const THERE = runtimeLabel(OWN_ENV, { KHEREP_PROFILE: "mac" });
@@ -201,20 +209,17 @@ for (const { name: BROKER, run: runCli, env: OWN_ENV } of BROKERS) {
     assert.match(err.join("\n"), /nothing to add/);
   });
 
-  test(`${BROKER} create without --labels still gets the computed runtime label`, async () => {
+  test(`${BROKER} create ${gated ? "with only observation labels" : "without --labels"} still gets the computed runtime label`, async () => {
     const { out, calls, injected } = harness({ env: LABEL_ENV, api: labelPage([]) });
-    const argv = ["create", "--space", "KB", "--title", "New page", "--body", "<p>x</p>", "--format", "storage"];
-    assert.equal(await runCli(argv, injected), 0);
-    assert.deepEqual(postedNames(calls), [HERE]);
+    assert.equal(await runCli(createArgv(), injected), 0);
+    assert.deepEqual(postedNames(calls), [...base, HERE]);
     assert.ok(out.includes(`runtime: added ${HERE}`), out.join("\n"));
   });
 
   test(`${BROKER} create with --labels posts them together with the computed runtime label`, async () => {
     const { calls, injected } = harness({ env: LABEL_ENV, api: labelPage([]) });
-    const argv = ["create", "--space", "KB", "--title", "New page", "--body", "<p>x</p>", "--format", "storage",
-      "--labels", "alpha,runtime-forged"];
-    assert.equal(await runCli(argv, injected), 0);
-    assert.deepEqual(postedNames(calls), ["alpha", HERE]);
+    assert.equal(await runCli(createArgv(["alpha", "runtime-forged"]), injected), 0);
+    assert.deepEqual(postedNames(calls), [...base, "alpha", HERE]);
   });
 
   test(`${BROKER} create says the page exists unlabelled when the runtime label write fails`, async () => {
@@ -222,8 +227,7 @@ for (const { name: BROKER, run: runCli, env: OWN_ENV } of BROKERS) {
     const api = (call: Call) => (call.options?.method === "POST" && call.url.endsWith("/label")
       ? response(500, { message: "label write failed" }) : page(call));
     const { out, err, injected } = harness({ env: LABEL_ENV, api });
-    const argv = ["create", "--space", "KB", "--title", "New page", "--body", "<p>x</p>", "--format", "storage"];
-    assert.equal(await runCli(argv, injected), 1);
+    assert.equal(await runCli(createArgv(), injected), 1);
     assert.ok(out.includes("id: 5001"), out.join("\n"));
     assert.match(err.join("\n"), /Page 5001 exists, but its runtime label could not be written/);
   });

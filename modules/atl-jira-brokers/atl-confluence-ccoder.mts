@@ -49,7 +49,7 @@ import {
 import { parseExpectedVersion } from './confluence-pagination.mts';
 import { cmdDrainage } from './confluence-drainage-cli.mts';
 import { cmdEvidence } from './confluence-evidence-cli.mts';
-import { cmdValidate } from './confluence-observation-validate.mts';
+import { cmdValidate, observationCreateBody } from './confluence-observation-validate.mts';
 
 const CRED_ENV = "KHEREP_ATL_CRED_FILE_CLAUDE";
 // An absent value is UNKNOWN and says so. A blank line here would read like an
@@ -85,11 +85,7 @@ function fail(message: string): never {
 // both generated from this table, so neither can drift from the other.
 const BODY = { body: "<text>", "body-file": "<path>" };
 export const FLAGS = {
-  create: {
-    required: { space: "<key>", title: "<title>", format: "<storage|wiki|adf>" },
-    oneOf: [BODY],
-    optional: { parent: "<id>", labels: "<a,b>" },
-  },
+  create: { required: { space: "<key>", title: "<title>", format: "<storage>", "body-file": "<path>", labels: "<a,b>" }, optional: { parent: "<id>" } },
   update: { required: { id: "<id>", format: "<storage|wiki|adf>" }, oneOf: [BODY], optional: { title: "<title>", message: "<text>", "expected-version": "<n>" } },
   get: { required: { id: "<id>" }, optional: { format: "<storage|adf>" }, valueless: ["body-only"] },
   delete: { required: { id: "<id>" } },
@@ -136,12 +132,12 @@ function printPage(ctx: CliContext, page: Page): void {
 }
 
 async function cmdCreate(ctx: CliContext, args: Args): Promise<number> {
-  // Before anything reaches the network: an unsupported representation is a
-  // caller error, not a site error.
+  // #760 contract A: create files observations only. The body file is read once and
+  // validated before anything reaches the network, and exactly those bytes are sent.
+  const value = await observationCreateBody(ctx, args, fail);
   const representation = representationFor(args.format);
   const title = (args.title ?? "").trim();
   if (!title) fail("--title is missing.");
-  const value = await bodyOf(ctx, args);
   const session = createSession(ctx);
   const space = await findSpace(session, args.space ?? "");
   if (!space) fail("No space with that key is visible to the service account.");

@@ -1,4 +1,4 @@
-// Local observation-shape preflight only. Generic create deliberately does not call it.
+// Local observation-shape check: the validate verb, and the gate the Claude broker's create runs before any request.
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { DIRTY_LINE, NO_BINDING_LINE, scopedRevision } from './confluence-claim-text.mts';
@@ -147,18 +147,30 @@ export async function validateObservation(
   args: Record<string, string | undefined>,
   ctx: { readBodyBytes: (file: string) => Promise<Uint8Array> },
   fail: (message: string) => never,
-): Promise<{ problem: string | null; bytes: Uint8Array; digest: string }> {
+): Promise<{ problem: string | null; bytes: Uint8Array; digest: string; value?: string }> {
   if (args.format !== "storage") fail("validate takes --format storage only.");
   let bytes: Uint8Array;
   try { bytes = await ctx.readBodyBytes(args["body-file"] ?? ""); }
   catch { fail("--body-file is not readable."); }
   const digest = createHash("sha256").update(bytes).digest("hex");
-  let problem: string | null;
+  let problem: string | null, value: string | undefined;
   try {
-    const value = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
+    value = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
     problem = observationProblem(value, args.labels ?? "");
   } catch { problem = "Body is not valid UTF-8."; }
-  return { problem, bytes, digest };
+  return { problem, bytes, digest, value };
+}
+
+// #760 contract A: the body create sends is exactly the bytes read once and validated here.
+export async function observationCreateBody(
+  ctx: Pick<NeighbourCliContext, "readBodyBytes">,
+  args: Record<string, string | undefined>,
+  fail: (message: string) => never,
+): Promise<string> {
+  if (args.format !== "storage") fail("create takes --format storage only.");
+  const { problem, value } = await validateObservation(args, { readBodyBytes: ctx.readBodyBytes ?? readFile }, fail);
+  if (problem !== null || value === undefined) return fail(problem ?? "Body is not valid UTF-8.");
+  return value;
 }
 
 export async function cmdValidate(

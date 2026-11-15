@@ -54,6 +54,20 @@ increments the minor version; every other release increments the patch version.
   the new operations, move the host policy to version 2 and list the operations
   per runtime; no installer creates policy or keys.
 
+### Changed
+
+- The Claude Confluence broker's `create` is observation-only (#760, contract
+  A). It requires `--format storage`, `--body-file` and `--labels`, refuses
+  inline `--body` and the wiki and ADF formats, and runs the `validate` check
+  (one evidence label, `type-observation`, `status-author-model`, one nonempty
+  Finding, Origin, Source and Timestamp paragraph) before any request; a refusal
+  exits 1 with the validator's fixed text and sends nothing. The file is read
+  once and exactly those bytes are sent. The check is on shape, not on truth or
+  intent. Breaking: other durable pages, such as type-knowledge pages, can no
+  longer be created through the Claude broker. The Codex broker's `create`, the
+  Codex observation publisher and `update` are unchanged. Operator action: run
+  the installer; until then the installed Claude broker keeps generic create.
+
 ### Removed
 
 - The stale pin `@openai/codex@0.152.1` in `bootstrap/manifest/npm-globals.txt`

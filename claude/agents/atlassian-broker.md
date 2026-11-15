@@ -24,8 +24,11 @@ Confluence ueber den Confluence-Broker im Workspace, ebenso exakt:
 
 Verben: `create`, `update`, `get`, `delete`, `purge`, `labels`, `move`, `space`, `children`,
 `related`, `search`, `list`, `context`, `orphans`, `stitch`, `selftest`. `help` listet jedes Verb
-mit seinen Flags. Seiteninhalte mit `--body-file <datei> --format storage|wiki|adf`; Markdown gibt
-es in dieser API nicht. `delete` und `purge` nur auf ausdruecklichen Auftrag.
+mit seinen Flags. `create` nur fuer Beobachtungen: `--body-file <datei> --format storage --labels`
+mit `type-observation`, einem `evidence-*` und `status-author-model`; der Broker prueft das wie
+`validate`, bevor er sendet. Andere dauerhafte Seiten legt der Claude-Broker nicht an. `update`
+nimmt `--body-file <datei> --format storage|wiki|adf`; Markdown gibt es in dieser API nicht.
+`delete` und `purge` nur auf ausdruecklichen Auftrag.
 
 Beide Broker schreiben als Claude-Service-Account. Nie `atl-jira.mts` oder `atl-confluence.mts`:
 das sind die Codex-Broker mit dem Service-Account der anderen Runtime. Nie `twg` zum Schreiben:
