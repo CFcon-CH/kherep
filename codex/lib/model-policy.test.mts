@@ -4,6 +4,111 @@ import { test } from "node:test";
 import { parseModelPolicy, resolveModels, resolveCapabilities, validateCatalog } from "./model-policy.mts";
 
 import { fixtureModels, fixtureResolution, policyText } from "./model-policy.fixture.mts";
+import { buildAgentInventory } from "./model-agent-inventory.mts";
+import { parseUserModelPolicy } from "./model-policy-user.mts";
+import { buildCatalogSupport, resolveEffectiveSelections } from "./model-policy.mts";
+
+const identityHash = "a".repeat(64);
+const inventoryV2 = buildAgentInventory([{ sourcePath: "codex/agents/codex-obs.md", sourceProvider: "kherep",
+  installedName: "custom-observer", role: "observer", sourceSha256: identityHash, securityPolicyDigest: identityHash,
+  codeBound: false, capabilityKey: "claude-obs" }]);
+const outside = { id: "runtime-alias", model: "visible-other", hidden: false,
+  supportedReasoningEfforts: [{ reasoningEffort: "medium" }, { reasoningEffort: "high" }] };
+const supportV2 = () => buildCatalogSupport({ complete: true, models: [...fixtureModels, outside] });
+
+test("V2 permits visible out-of-family aliases and resolves role/agent fields independently", () => {
+  const user = parseUserModelPolicy('{"roles":{"observer":{"model":"runtime-alias"}},"agents":{"codex-obs":{"effort":"high"}}}', inventoryV2);
+  const result = resolveEffectiveSelections({ policy: parseModelPolicy(policyText), inventory: inventoryV2, user, catalog: supportV2() });
+  assert.deepEqual(result.roles.observer.effective, { model: "visible-other", effort: "medium" });
+  assert.deepEqual(result.agents[0]!.effective, { model: "visible-other", effort: "high" });
+  assert.equal(result.agents[0]!.installedName, "custom-observer");
+  assert.equal(result.agents[0]!.provenance.model.origin, "user-role");
+  assert.equal(result.agents[0]!.provenance.effort.origin, "user-agent");
+  assert.equal(result.agents[0]!.defaultRealization.model, "gpt-6-luna");
+  assert.ok(result.supportedModels["visible-other"]);
+});
+
+test("V2 never substitutes inherited effort when an explicit model does not support it", () => {
+  const user = parseUserModelPolicy('{"roles":{"builder":{"model":"visible-other"}}}', inventoryV2);
+  const catalog = buildCatalogSupport({ complete: true, models: [...fixtureModels, { ...outside, supportedReasoningEfforts: [{ reasoningEffort: "medium" }] }] });
+  assert.throws(() => resolveEffectiveSelections({ policy: parseModelPolicy(policyText), inventory: inventoryV2, user, catalog }), /unsupported-effort/);
+  assert.throws(() => buildCatalogSupport({ complete: true, models: [...fixtureModels, { ...outside, id: fixtureModels[0]!.model }] }), /ambiguous-catalog-identity|duplicate/);
+});
+
+test("V2 retains both managed fields and separate defaults until refresh; explicit same-old fields stay explicit", () => {
+  const binding = inventoryV2.agents[0]!;
+  const previous = { selectionId: identityHash, roles: new Map([["observer" as const, { model: "gpt-6-luna", effort: "low" }]]),
+    agents: new Map([[binding.bindingId, { ...binding, defaultRealization: { model: "gpt-6-luna", effort: "low" } }]]) };
+  const user = parseUserModelPolicy('{"roles":{"observer":{"effort":"medium"}}}', inventoryV2);
+  const input = { policy: parseModelPolicy(policyText), inventory: inventoryV2, user, catalog: supportV2(), retained: previous };
+  const normal = resolveEffectiveSelections(input);
+  assert.equal(normal.roles.observer.defaultRealization.effort, "low");
+  assert.equal(normal.roles.observer.effective.effort, "medium");
+  assert.equal(normal.roles.observer.provenance.effort.origin, "user-role");
+  const deleted = resolveEffectiveSelections({ ...input, user: parseUserModelPolicy(undefined, inventoryV2) });
+  assert.equal(deleted.agents[0]!.effective.effort, "low");
+  assert.equal(resolveEffectiveSelections({ ...input, refresh: true }).roles.observer.defaultRealization.effort, "medium");
+  assert.throws(() => resolveEffectiveSelections({ ...input, retained: { ...previous, agents: new Map([[binding.bindingId,
+    { ...binding, role: "builder", defaultRealization: { model: "gpt-6-luna", effort: "low" } }]]) } }), /retained-binding-conflict/);
+});
+
+test("V2 metadata narrows eligibility but cannot manufacture catalog support", () => {
+  const input = { policy: parseModelPolicy(policyText), inventory: inventoryV2, catalog: supportV2() };
+  for (const text of ['{"models":{"not-visible":{"dispatchable":true}}}',
+    '{"roles":{"observer":{"model":"visible-other"}},"models":{"visible-other":{"dispatchable":false}}}',
+    '{"models":{"visible-other":{"efforts":["ultra"]}}}']) assert.throws(
+    () => resolveEffectiveSelections({ ...input, user: parseUserModelPolicy(text, inventoryV2) }), /model-resolution:/);
+});
+
+test("V2 alias renames preserve source-bound retention and new agents use current defaults", () => {
+  const original = inventoryV2.agents[0]!;
+  const { sourceAgentId: _sourceAgentId, bindingId: _bindingId, ...source } = original;
+  const inventory = buildAgentInventory([{ ...source, installedName: "renamed-observer" },
+    { sourcePath: "codex/agents/new-observer.md", sourceProvider: "kherep", installedName: "new-observer",
+      role: "observer", sourceSha256: identityHash, securityPolicyDigest: identityHash, codeBound: false }]);
+  const retained = { selectionId: identityHash, roles: new Map([["observer" as const, { model: "gpt-6-luna", effort: "low" }]]),
+    agents: new Map([[original.bindingId, { ...original, defaultRealization: { model: "gpt-6-luna", effort: "low" } }]]) };
+  const result = resolveEffectiveSelections({ policy: parseModelPolicy(policyText), inventory, retained, catalog: supportV2(), user: parseUserModelPolicy(undefined, inventory) });
+  assert.equal(result.agents.find(row => row.sourceAgentId === "codex-obs")!.effective.effort, "low");
+  assert.equal(result.agents.find(row => row.sourceAgentId === "new-observer")!.effective.effort, "medium");
+});
+
+test("V2 explicit choices need no family default and unresolved masked defaults remain unresolved", () => {
+  const roles = Object.fromEntries(["root", "designer", "builder", "support", "researcher", "observer", "broker"]
+    .map(role => [role, { model: "runtime-alias", effort: "medium" }]));
+  const user = parseUserModelPolicy(JSON.stringify({ roles }), inventoryV2);
+  const result = resolveEffectiveSelections({ policy: parseModelPolicy(policyText), inventory: inventoryV2, user,
+    catalog: buildCatalogSupport({ complete: true, models: [outside] }) });
+  assert.equal(result.roles.observer.effective.model, "visible-other");
+  assert.equal(result.roles.observer.defaultRealization.model, null);
+  const retained = { selectionId: identityHash, roles: new Map([["observer" as const, { model: null, effort: "medium" }]]), agents: new Map() };
+  assert.equal(resolveEffectiveSelections({ policy: parseModelPolicy(policyText), inventory: inventoryV2, user, catalog: supportV2(), retained }).roles.observer.defaultRealization.model, null);
+  assert.throws(() => resolveEffectiveSelections({ policy: parseModelPolicy(policyText), inventory: inventoryV2,
+    user: parseUserModelPolicy(undefined, inventoryV2), catalog: supportV2(), retained }), /unresolved-default-model/);
+});
+
+test("V2 never follows a reused catalog alias for a retained concrete model", () => {
+  const retained = { selectionId: identityHash,
+    roles: new Map([["observer" as const, { model: "retired-concrete", effort: "medium" }]]), agents: new Map() };
+  const input = { policy: parseModelPolicy(policyText), inventory: inventoryV2, retained,
+    catalog: buildCatalogSupport({ complete: true, models: [...fixtureModels, { ...outside, id: "retired-concrete" }] }) };
+  assert.throws(() => resolveEffectiveSelections({ ...input, user: parseUserModelPolicy(undefined, inventoryV2) }), /retained-model-not-visible/);
+  const explicit = parseUserModelPolicy('{"roles":{"observer":{"model":"retired-concrete"}}}', inventoryV2);
+  assert.equal(resolveEffectiveSelections({ ...input, user: explicit }).roles.observer.effective.model, "visible-other");
+});
+
+test("V2 shipped-agent alias defaults record a canonical model, with user role precedence above agent defaults", () => {
+  const binding = inventoryV2.agents[0]!.bindingId;
+  const input = { policy: parseModelPolicy(policyText), inventory: inventoryV2, catalog: supportV2(),
+    agentDefaults: new Map([[binding, { model: "runtime-alias", effort: "high" }]]) };
+  const base = resolveEffectiveSelections({ ...input, user: parseUserModelPolicy(undefined, inventoryV2) });
+  assert.equal(base.agents[0]!.defaultRealization.model, "visible-other");
+  assert.equal(base.agents[0]!.provenance.model.origin, "shipped-agent");
+  const user = parseUserModelPolicy('{"roles":{"observer":{"model":"gpt-6-luna","effort":"medium"}}}', inventoryV2);
+  const actual = resolveEffectiveSelections({ ...input, user }).agents[0]!;
+  assert.deepEqual(actual.effective, { model: "gpt-6-luna", effort: "medium" });
+  assert.equal(actual.defaultRealization.effort, "high");
+});
 
 test("versionless role policy chooses available exact families and numerically newest generations", () => {
   const resolved = fixtureResolution();
