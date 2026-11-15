@@ -29,7 +29,8 @@ export function trustedGit(platform:NodeJS.Platform=process.platform, stat:typeo
   for (const file of win?GIT_CANDIDATES.win32:GIT_CANDIDATES.posix) {
     try {
       const s=stat(file);
-      if (!s.isFile() || !win && !(rootOnly(s) && rootOnly(stat(path.posix.dirname(file))))) continue;
+      if (!s.isFile()) continue;
+      if (!win && !(rootOnly(s) && rootOnly(stat(path.posix.dirname(file))))) continue;
       if (isDefault) defaultGit=file;
       return file;
     } catch { /* Absent candidate: try the next one. */ }
@@ -37,6 +38,7 @@ export function trustedGit(platform:NodeJS.Platform=process.platform, stat:typeo
   return fail('git-unavailable');
 }
 function git(cwd:string, args:string[]):string|undefined {
+  // Outside the try: a missing trusted git must fail `git-unavailable`, not read as an empty answer.
   const exe=trustedGit();
   try { return execFileSync(exe,args,{cwd,env:gitEnv(),encoding:'utf8',windowsHide:true,timeout:30000,maxBuffer:16*1024*1024,stdio:['ignore','pipe','ignore']}).trim(); }
   catch { return undefined; }
