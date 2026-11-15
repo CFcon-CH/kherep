@@ -6,6 +6,8 @@ import { fail, pickIds, refName, SHA } from './contract.mts';
 import type { Runtime } from './contract.mts';
 import { ABSENT } from './transport.mts';
 import type { Context, Handler } from './operations.mts';
+import { pushSession, recordBrokerPush } from './attribution.mts';
+import type { PushSession } from './attribution.mts';
 const MAX_COMMITS = 256;
 // Dropped from every git child: tracing, injected configuration, askpass programs,
 // alternative repositories, ambient tokens and the search path. Prompts are switched off.
@@ -91,9 +93,11 @@ export function checkCommits(dir:string, sha:string, base:string, emails:string[
   }
   if (commits.size>MAX_COMMITS) fail('target-refused');
 }
-function run(dir:string, args:string[]):Promise<boolean> {
-  return new Promise(resolve=>{execFile(trustedGit(),args,{cwd:dir,env:gitEnv(),timeout:120000,windowsHide:true,maxBuffer:1024*1024},error=>resolve(!error));});
+function run(dir:string, args:string[], env:NodeJS.ProcessEnv):Promise<boolean> {
+  return new Promise(resolve=>{execFile(trustedGit(),args,{cwd:dir,env,timeout:120000,windowsHide:true,maxBuffer:1024*1024},error=>resolve(!error));});
 }
+// The session of a push in progress, resolved before the push, recorded after its readback.
+const pushes=new WeakMap<Context,{session:PushSession; toplevel:string}>();
 export const pushHandler: Handler = {
   kind:'push',
   fields:()=>({}),
@@ -111,8 +115,11 @@ export const pushHandler: Handler = {
   },
   async mutate(c, receipt) {
     const url=c.deps.push?.url ?? `https://github.com/${c.repo.slug}.git`;
-    const helper=helperCommand(process.execPath,c.deps.push?.helperScript ?? helperScript(c.runtime),c.request.operationId);
-    if (!await run(toplevel(c),pushArgs(helper,url,receipt.sha!,receipt.branch!))) fail('outcome-unknown');
+    const helper=helperCommand(process.execPath,c.deps.push?.helperScript ?? helperScript(c.runtime),c.request.operationId), dir=toplevel(c);
+    // Before the push: a Codex marker lives as long as the push may take.
+    pushes.set(c,{session:pushSession(c.runtime,dir,process.env,c.now),toplevel:dir});
+    // KHEREP_BROKER_PUSH tells the pre-push hook to stand down: the broker records this push itself once it is verified.
+    if (!await run(dir,pushArgs(helper,url,receipt.sha!,receipt.branch!),{...gitEnv(),KHEREP_BROKER_PUSH:'1'})) fail('outcome-unknown');
     return {};
   },
   known:receipt=>typeof receipt.branch==='string' && typeof receipt.sha==='string',
@@ -121,4 +128,9 @@ export const pushHandler: Handler = {
   },
   ids:receipt=>pickIds(receipt,['branch','sha']),
   attribution:()=>'authenticated-installation',
+  recorded(c, receipt) {
+    const push=pushes.get(c);
+    pushes.delete(c);
+    return !!push && recordBrokerPush({...push,runtime:c.runtime,repo:c.repo.slug,branch:receipt.branch!,sha:receipt.sha!},process.env,Date.now());
+  },
 };

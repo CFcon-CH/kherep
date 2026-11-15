@@ -93,7 +93,18 @@ so no personal credential can answer. The child environment drops git tracing,
 replaces `PATH` with a fixed system list (`C:\Program Files\Git\cmd;C:\Windows\System32;C:\Windows`
 on Windows, `/usr/bin:/bin` elsewhere) and sets `GIT_TERMINAL_PROMPT=0` and
 `GCM_INTERACTIVE=never`. Repository hooks
-such as `pre-push` still run. The credential helper answers only `get` for
+such as `pre-push` still run; the push alone also carries `KHEREP_BROKER_PUSH=1`,
+on which the Kherep `pre-push` hook records nothing, because the broker records
+the push itself. After the readback verifies the push, the broker appends one
+`push` record to the host-local attribution log (`<config root>/control-plane/attribution.jsonl`,
+see the control-plane README): session, runtime, owner/name, toplevel, branch,
+`refs/heads/<branch>` and sha, never the URL, token, operationId or bot. The session
+is resolved before the push in the hook's order (`CLAUDE_CODE_SESSION_ID`,
+`KHEREP_SESSION_ID`, a fresh Codex marker of this runtime for the toplevel, else
+`unknown`). The result of that run carries `attributionRecorded` (`true`, or `false`
+when the log could not be written; the push stays verified); a replay, a retry of a
+known receipt and `verify` record nothing and carry no such field. A push whose
+outcome is unknown and is settled later by `verify` therefore gets no record. The credential helper answers only `get` for
 `https://github.com/<allowlisted slug>.git`, and only while a pending, locked
 `branch.push` receipt for that runtime and operation, admitted less than 120 s
 earlier, exists; then it mints a `contents: write` token and writes it to git's

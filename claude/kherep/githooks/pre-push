@@ -6,6 +6,8 @@
 #
 # Arguments: remote name, remote URL. Only owner/name of the URL is recorded.
 drain() { cat >/dev/null 2>&1; exit 0; }
+# Issue #780: the GitHub App broker records its own pushes after verifying them.
+[ -z "${KHEREP_BROKER_PUSH:-}" ] || drain
 
 # The workspace as commit-msg reads it: a non-empty KHEREP_WORKSPACE, else the
 # workspace line of the commit-policy file next to this hook.

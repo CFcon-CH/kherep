@@ -38,7 +38,9 @@ export async function execute(runtime:Runtime, text:string, deps:Dependencies={}
     let auth:{token:string; target:Record<string,unknown>};
     try {auth=await authenticateRepository(http,key,identity,repo,now,permissionsFor(operation,labels));}finally{key.fill(0);}
     const context:Context={http,token:auth.token,target:auth.target,request,identity,repo,runtime,now,deps};
+    let mutated=false;
     if (!isVerify && !receipt) {
+      mutated=true;
       const admitted=await handler.preflight(context);
       receipt={version:handler.kind==='issue'?1:2,...(handler.kind!=='issue'?{kind:handler.kind}:{}),digest:store.digest(request),operation,status:'pending',fieldHashes:store.hashFields(handler.fields(request)),...admitted} as Receipt;
       store.write(receipt);
@@ -49,7 +51,8 @@ export async function execute(runtime:Runtime, text:string, deps:Dependencies={}
     if (!receipt || receipt.status==='pending') fail('outcome-unknown');
     await handler.readback(context,receipt);
     if(!isVerify) {receipt.status='verified';store.write(receipt);}
-    return done();
+    // Only the run that wrote records it: a replay, a known-receipt retry and verify never do.
+    return {...done(),...(mutated && handler.recorded ? {attributionRecorded:handler.recorded(context,receipt)} : {})};
   } catch(e) {return {ok:false,error:e instanceof BrokerError?e.code:'receipt-invalid',...publicIds};}
   finally {try{release?.();}catch{/* Retained lock remains fail closed. */}}
 }

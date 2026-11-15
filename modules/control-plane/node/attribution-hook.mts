@@ -26,7 +26,8 @@ import { hookRuntime, isMainModule, type HookRuntime } from "./deliver-hook.mts"
 // Issue #780, PR-A. The GitHub App broker (tools/github-broker/github-<rt>.mts)
 // opens pull requests and pushes on its own: its pr.create receipt on stdout
 // names the repository and PR number, and Codex gets the same pending marker,
-// because a broker push runs git push and so the pre-push hook.
+// which the broker consumes for its push record (the pre-push hook stands down
+// on KHEREP_BROKER_PUSH).
 
 export interface AttributionHookDeps {
   paths: NodePaths;
