@@ -4,7 +4,7 @@ import { pathToFileURL } from "node:url";
 
 import { canonicalFileUrl, classifyV8ScriptUrl, repositoryPathFromUrl, repositoryRelativeUrlPath } from "./coverage-source-urls.mts";
 
-const byCodeUnit = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
+export const byCodeUnit = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 
 export function containedFile(root: string, filename: string): string {
   const base = realpathSync(root), lexicalRoot = resolve(root);

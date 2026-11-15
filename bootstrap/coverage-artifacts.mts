@@ -1,7 +1,7 @@
 import { SHARDS } from "./ci-shard.mts";
 import { lstatSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { containedFile } from "./coverage-paths.mts";
+import { byCodeUnit, containedFile } from "./coverage-paths.mts";
 import { copyDeclarationsFile } from "./coverage-copies.mts";
 import { canonicalFileUrl } from "./coverage-source-urls.mts";
 
@@ -18,7 +18,7 @@ export function readNonempty(root: string, filename: string): string {
 export function validateManifest(value: unknown, identity: Identity): Manifest {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("malformed manifest");
   const m = value as Manifest;
-  if (Object.values(m).some(value => typeof value !== "string") || Object.keys(m).sort((a, b) => a < b ? -1 : a > b ? 1 : 0).join(",") !== "attempt,checkoutSha,producer,runId,sourceRootUrl,testOutcome" || !producers.includes(m.producer) || !/^\d+$/.test(m.runId) || !/^[1-9]\d*$/.test(m.attempt) || !/^[a-f0-9]{40}$/.test(m.checkoutSha) || !["success", "failure", "cancelled", "skipped"].includes(m.testOutcome)) throw new Error("malformed manifest fields");
+  if (Object.values(m).some(value => typeof value !== "string") || Object.keys(m).sort(byCodeUnit).join(",") !== "attempt,checkoutSha,producer,runId,sourceRootUrl,testOutcome" || !producers.includes(m.producer) || !/^\d+$/.test(m.runId) || !/^[1-9]\d*$/.test(m.attempt) || !/^[a-f0-9]{40}$/.test(m.checkoutSha) || !["success", "failure", "cancelled", "skipped"].includes(m.testOutcome)) throw new Error("malformed manifest fields");
   canonicalFileUrl(m.sourceRootUrl);
   if (!m.sourceRootUrl.endsWith("/")) throw new Error("noncanonical sourceRootUrl directory");
   for (const key of ["runId", "attempt", "checkoutSha"] as const) if (m[key] !== identity[key]) throw new Error(`manifest ${key} mismatch`);
@@ -77,7 +77,7 @@ export function readArtifacts(root: string, identity: Identity): { manifest: Man
     const current = selected.get(producer);
     if (!current || BigInt(attempt) > BigInt(current.manifest.attempt)) selected.set(producer, { directory, manifest, name: entry.name });
   }
-  const artifacts = [...selected.values()].sort((a, b) => a.manifest.producer < b.manifest.producer ? -1 : a.manifest.producer > b.manifest.producer ? 1 : 0);
+  const artifacts = [...selected.values()].sort((a, b) => byCodeUnit(a.manifest.producer, b.manifest.producer));
   validateProducers(artifacts.map(a => a.manifest), identity);
   for (const { directory, manifest } of artifacts) {
     const expected = manifest.producer === "worker" ? ["lcov.info", "manifest.json"] : ["manifest.json", "raw"];

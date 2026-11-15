@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawnSync } from "node:child_process";
-import { normalizeLcovPaths, relocateV8Report, validateLcov } from "./coverage-paths.mts";
+import { byCodeUnit, normalizeLcovPaths, relocateV8Report, validateLcov } from "./coverage-paths.mts";
 import { rawFiles, readArtifacts, readNonempty, validateManifest, validateProducers } from "./coverage-artifacts.mts";
 import type { Identity, Manifest } from "./coverage-artifacts.mts";
 import { copyDeclarationsFile, readCopyDeclarations } from "./coverage-copies.mts";
@@ -86,7 +86,7 @@ async function main(args: string[]): Promise<void> {
 }
 function verify(output: string, root: string, identity: Identity): void {
   const value: unknown = JSON.parse(readNonempty(output, "manifest.json"));
-  if (!value || typeof value !== "object" || Object.keys(value).sort((a, b) => a < b ? -1 : a > b ? 1 : 0).join() !== "attempt,checkoutSha,producers,runId" || !Array.isArray((value as { producers: unknown }).producers)) throw new Error("malformed final manifest");
+  if (!value || typeof value !== "object" || Object.keys(value).sort(byCodeUnit).join() !== "attempt,checkoutSha,producers,runId" || !Array.isArray((value as { producers: unknown }).producers)) throw new Error("malformed final manifest");
   for (const key of ["runId", "attempt", "checkoutSha"] as const) if ((value as Identity)[key] !== identity[key]) throw new Error(`final manifest ${key} mismatch`);
   validateProducers((value as { producers: unknown[] }).producers, identity);
   for (const family of ["node", "worker"]) {
