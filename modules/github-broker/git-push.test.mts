@@ -50,7 +50,8 @@ test('trusted git comes from fixed system paths only, never from PATH',()=>{
     const fn=((p:string)=>{seen.push(p);const e=entries[p];if (!e) throw new Error('ENOENT');return {isFile:()=>e.file ?? true,uid:e.uid ?? 0,mode:e.mode ?? 0o755};}) as unknown as typeof fs.statSync;
     return {fn,seen};
   };
-  const [cmd,bin]=['C:\\Program Files\\Git\\cmd\\git.exe','C:\\Program Files\\Git\\bin\\git.exe'];
+  const cmd='C:\\Program Files\\Git\\cmd\\git.exe';
+  const bin='C:\\Program Files\\Git\\bin\\git.exe';
   const saved=process.env.PATH;process.env.PATH='/attacker/bin';
   try {
     assert.equal(trustedGit('win32',stat({[cmd]:{},[bin]:{}}).fn),cmd);
@@ -63,7 +64,7 @@ test('trusted git comes from fixed system paths only, never from PATH',()=>{
     assert.equal(trustedGit('darwin',stat({'/usr/bin/git':{uid:501},'/usr/bin':{},'/usr/local/bin/git':{},'/usr/local/bin':{}}).fn),'/usr/local/bin/git');
     assert.throws(()=>trustedGit('linux',stat({'/usr/bin/git':{mode:0o775},'/usr/bin':{},'/usr/local/bin/git':{},'/usr/local/bin':{mode:0o777}}).fn),{message:'git-unavailable'});
     assert.throws(()=>trustedGit('linux',stat({'/usr/bin/git':{},'/usr/bin':{uid:1000},'/usr/local/bin/git':{mode:0o757},'/usr/local/bin':{}}).fn),{message:'git-unavailable'});
-  } finally {process.env.PATH=saved;}
+  } finally {if (saved===undefined) delete process.env.PATH; else process.env.PATH=saved;}
 });
 test('author preflight admits own-bot commits and refuses foreign authors, committers and workflow paths',t=>{
   const r=repos(t),own=[email(0).toLowerCase()];
