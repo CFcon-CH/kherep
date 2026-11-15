@@ -87,3 +87,91 @@ test("fixture relocation and cached maps use canonical roots through a directory
   assert.equal(entry.url, pathToFileURL(join(root, "x.mts.map")).href);
   assert.deepEqual(entry.data.sources, [local]);
 });
+
+import { createHash } from "node:crypto";
+import { readCopyDeclarations } from "./coverage-copies.mts";
+import { validateManifest } from "./coverage-artifacts.mts";
+const isolatedProducer = "file:///D:/a/repo/";
+const isolatedUrl = "file:///D:/temporary/module.mts?isolated=1";
+const v8Script = (url: string) => ({ url, functions: [{ functionName: "value", isBlockCoverage: true, ranges: [{ startOffset: 0, endOffset: 20, count: 3 }, { startOffset: 5, endOffset: 10, count: 0 }] }] });
+
+test("numeric isolated queries discard only true outside-root scripts once", () => {
+  for (const [producer, external] of [[isolatedProducer, isolatedUrl], ["file:///home/runner/repo/", "file:///tmp/module.mts?isolated=001"], ["file:///Users/runner/repo/", "file:///private/tmp/module.mts?isolated=9"], [isolatedProducer, "file:///E:/temporary/module.mts?isolated=1"], [isolatedProducer, "file:///D:/a/repo-other/module.mts?isolated=1"], [isolatedProducer, "file:///D:/temporary/Spaced%20%C3%BC.mts?isolated=1"]]) {
+    const input = { result: [v8Script(external), v8Script(external.slice(0, external.indexOf("?")))] }, used = new Set<string>();
+    input.result[0].functions.push(structuredClone(input.result[0].functions[0]));
+    const before = structuredClone(input);
+    const result = relocateV8Report(input, producer, process.cwd(), new Map(), used);
+    assert.equal(result.ignored, 2); assert.deepEqual(result.report.result, []); assert.equal(used.size, 0);
+    assert.equal(result.report["source-map-cache"], undefined); assert.deepEqual(input, before);
+    assert.throws(() => canonicalFileUrl(external));
+  }
+});
+
+function isolatedFixture(t: import("node:test").TestContext) {
+  const root = fixtureRoot("coverage-isolated-"); t.after(() => rmSync(root, { recursive: true, force: true }));
+  const source = "export const value: number = 1;\n"; writeFileSync(join(root, "module.mts"), source);
+  const url = isolatedProducer + "module.mts", copyUrl = "file:///D:/temporary/verified.mts";
+  const declaration = { copyUrl, original: "module.mts", sha256: createHash("sha256").update(source).digest("hex") };
+  const copies = readCopyDeclarations(JSON.stringify(declaration), root);
+  const map = { data: { version: 3, sources: ["module.mts"], names: ["value"], mappings: "AAAA", sourcesContent: [source] }, lineLengths: [31] };
+  return { root, url, copyUrl, declaration, copies, map };
+}
+test("isolated external scripts cannot alter retained ranges, maps or verified copy attribution", t => {
+  const f = isolatedFixture(t), baseline = { result: [v8Script(f.url), v8Script(f.copyUrl)], "source-map-cache": { [f.url]: f.map } };
+  const input = { ...baseline, result: [...baseline.result, v8Script(isolatedUrl)] }, before = structuredClone(input);
+  const expectedUsed = new Set<string>(), used = new Set<string>();
+  const expected = relocateV8Report(baseline, isolatedProducer, f.root, f.copies, expectedUsed), actual = relocateV8Report(input, isolatedProducer, f.root, f.copies, used);
+  assert.deepEqual(actual.report, expected.report); assert.equal(actual.ignored, expected.ignored + 1);
+  assert.deepEqual(used, expectedUsed); assert.deepEqual([...used], [f.copyUrl]); assert.deepEqual(input, before);
+  assert.equal(actual.report.result.length, 2); assert.deepEqual(actual.report.result[0].functions, baseline.result[0].functions);
+});
+const queryRefusals = [
+  isolatedProducer + "module.mts", isolatedProducer + "missing.mts", isolatedProducer + "readme.md", isolatedProducer + "node_modules/x.mts",
+  isolatedProducer, "file:///d:/a/repo/module.mts", "file:///D:/A/REPO/module.mts", "file:///tmp/module.mts",
+  "file://host/share/module.mts", "file:////host/share/module.mts", "file:/D:/temporary/module.mts",
+  "file:///D:/temporary/../module.mts", "file:///D:/temporary/./module.mts", "file:///D:/temporary/%2e%2e/module.mts",
+  "file:///D:/temporary/%2E/module.mts", "file:///D:/temporary/%2fmodule.mts", "file:///D:/temporary/%5Cmodule.mts",
+  "file:///D:/temporary/%00.mts", "file:///D:/temporary/back\\slash.mts", "file:///D:/temporary/raw\0.mts",
+  "file:///D:/temporary/%bad.mts", "file:///D:/temporary/module.mts#frag", "file:///D:/temporary//module.mts", "file:///D:/temporary/",
+];
+for (const [i, base] of queryRefusals.entries()) test("isolated query refuses unsafe or non-external path " + i, () => {
+  assert.throws(() => relocateV8Report({ result: [v8Script(base + "?isolated=1")] }, isolatedProducer, process.cwd()));
+  assert.throws(() => canonicalFileUrl(base + "?isolated=1"));
+});
+for (const [i, query] of ["?", "?isolated=", "?other=1", "?isolated=1&x=2", "?isolated=1&isolated=2", "?isolated=x", "?isolated=-1", "?isolated=+1", "?isolated=1.0", "?%69solated=1", "?isolated=%31", "?isolated=1 ", "?isolated=1\n", "?isolated=1?", "?isolated=1#frag"].entries()) test("isolated query grammar refuses extra or nonnumeric input " + i, () => {
+  const url = "file:///D:/temporary/module.mts" + query;
+  assert.throws(() => relocateV8Report({ result: [v8Script(url)] }, isolatedProducer, process.cwd())); assert.throws(() => canonicalFileUrl(url));
+});
+test("numeric query refuses mixed dialect, ambiguous directories and root spelling", () => {
+  for (const [root, url] of [["file:///a/repo/", "file:///D:/temporary/module.mts?isolated=1"], ["file:///a/repo/", "file:///A/REPO/module.mts?isolated=1"], ["file:///a//repo/", "file:///tmp/module.mts?isolated=1"], ["file:///a/repo", "file:///tmp/module.mts?isolated=1"], [isolatedProducer, isolatedProducer.slice(0, -1) + "?isolated=1"]]) assert.throws(() => relocateV8Report({ result: [v8Script(url)] }, root, process.cwd()));
+});
+test("numeric isolated copy references refuse exact full and base collisions without marking use", t => {
+  const f = isolatedFixture(t), query = f.copyUrl + "?isolated=1";
+  for (const copies of [f.copies, new Map([[query, pathToFileURL(join(f.root, "module.mts")).href]])]) {
+    const used = new Set<string>(); assert.throws(() => relocateV8Report({ result: [v8Script(query)] }, isolatedProducer, f.root, copies, used), /copy/); assert.equal(used.size, 0);
+  }
+  assert.throws(() => readCopyDeclarations(JSON.stringify({ ...f.declaration, copyUrl: query }), f.root), /file URL/);
+});
+test("numeric isolated cache keys and retained map references stay strict", t => {
+  const f = isolatedFixture(t);
+  for (const result of [[], [v8Script(isolatedUrl)], [v8Script(f.url)]]) {
+    assert.throws(() => relocateV8Report({ result, "source-map-cache": { [isolatedUrl]: f.map } }, isolatedProducer, f.root), /file URL/);
+    assert.throws(() => relocateV8Report({ result, "source-map-cache": { [f.url + "?isolated=1"]: f.map } }, isolatedProducer, f.root), /file URL/);
+  }
+  for (const map of [{ ...f.map, url: isolatedUrl }, { data: { ...f.map.data, sources: [isolatedUrl] } }, { data: { ...f.map.data, sourceRoot: isolatedUrl } }]) assert.throws(() => relocateV8Report({ result: [v8Script(f.url), v8Script(isolatedUrl)], "source-map-cache": { [f.url]: map } }, isolatedProducer, f.root), /source map|file URL/);
+});
+test("ignorable isolated script structure is validated before discard", () => {
+  for (const script of [{ url: isolatedUrl }, { url: isolatedUrl, functions: {} }, { url: isolatedUrl, functions: [null] }, { url: isolatedUrl, functions: [{ ranges: [] }] }, { url: isolatedUrl, functions: [{ ranges: [{ startOffset: 0, endOffset: 1, count: -1 }] }] }]) assert.throws(() => relocateV8Report({ result: [script] }, isolatedProducer, process.cwd()), /malformed V8/);
+});
+test("query-free encoded filenames and strict manifest roots retain their contracts", t => {
+  const root = fixtureRoot("coverage-query-ordinary-"); t.after(() => rmSync(root, { recursive: true, force: true }));
+  for (const [encoded, name] of [["Spaced%20%C3%BC.mts", "Spaced ü.mts"], ["literal%3Fname.mts", "literal?name.mts"], ["double%252e.mts", "double%2e.mts"]]) {
+    // Windows cannot create a literal question-mark filename; URL containment is still portable.
+    assert.equal(repositoryPathFromUrl(isolatedProducer + encoded, isolatedProducer), name);
+    if (name.includes("?")) continue;
+    writeFileSync(join(root, name), "export const n = 1;\n");
+    assert.equal(relocateV8Report({ result: [v8Script(isolatedProducer + encoded)] }, isolatedProducer, root).report.result.length, 1);
+  }
+  const identity = { runId: "1", attempt: "1", checkoutSha: "a".repeat(40) };
+  assert.throws(() => validateManifest({ producer: "unit", ...identity, testOutcome: "success", sourceRootUrl: isolatedProducer + "?isolated=1" }, identity), /file URL/);
+});

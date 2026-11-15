@@ -33,3 +33,24 @@ export function repositoryPathFromUrl(scriptUrl: string, sourceRootUrl: string):
   const path = repositoryRelativeUrlPath(scriptUrl, sourceRootUrl);
   return path && /\.(mts|ts|js|mjs|cjs|cts)$/.test(path) ? path : null;
 }
+
+function outsideScriptRoot(baseUrl: string, sourceRootUrl: string): boolean {
+  const root = segments(sourceRootUrl), source = segments(baseUrl);
+  if (!sourceRootUrl.endsWith("/")) throw new Error("source root must be a directory URL");
+  root.pop();
+  if (root.slice(1).includes("") || source.slice(1).includes("")) throw new Error("ambiguous isolated script path");
+  const windows = (parts: string[]) => /^[a-zA-Z]:$/.test(parts[1] ?? "");
+  if (windows(root) !== windows(source)) throw new Error("mixed isolated script path dialect");
+  const inside = root.every((part, i) => i === 1 && windows(root) ? part.toUpperCase() === source[i]?.toUpperCase() : part === source[i]);
+  const ambiguousCase = root.every((part, i) => part.toLowerCase() === source[i]?.toLowerCase());
+  return !inside && !ambiguousCase;
+}
+export function classifyV8ScriptUrl(value: string, sourceRootUrl: string): { kind: "ordinary" } | { kind: "external-isolated"; baseUrl: string } {
+  if (!value.startsWith("file:") || !value.includes("?")) return { kind: "ordinary" };
+  const queryAt = value.indexOf("?"), query = value.slice(queryAt);
+  const match = /^\?isolated=[0-9]+$/.exec(query);
+  if (!match || match[0] !== query) throw new Error("unsupported isolated script query");
+  const baseUrl = canonicalFileUrl(value.slice(0, queryAt));
+  if (!outsideScriptRoot(baseUrl, sourceRootUrl)) throw new Error("isolated script is inside or ambiguous to repository root");
+  return { kind: "external-isolated", baseUrl };
+}

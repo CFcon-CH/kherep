@@ -2,7 +2,7 @@ import { readFileSync, realpathSync, statSync } from "node:fs";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { canonicalFileUrl, repositoryPathFromUrl, repositoryRelativeUrlPath } from "./coverage-source-urls.mts";
+import { canonicalFileUrl, classifyV8ScriptUrl, repositoryPathFromUrl, repositoryRelativeUrlPath } from "./coverage-source-urls.mts";
 
 const byCodeUnit = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 
@@ -43,6 +43,11 @@ export function relocateV8Report(value: unknown, sourceRootUrl: string, reposito
       for (const range of fn.ranges) {
         if (![range.startOffset, range.endOffset, range.count].every(Number.isSafeInteger) || range.startOffset < 0 || range.endOffset < range.startOffset || range.count < 0) throw new Error("malformed V8 range");
       }
+    }
+    const classification = classifyV8ScriptUrl(script.url, sourceRootUrl);
+    if (classification.kind === "external-isolated") {
+      if (copies.has(script.url) || copies.has(classification.baseUrl)) throw new Error("unsupported query-bearing copy reference");
+      ignored++; continue;
     }
     const url = relocate(script.url);
     if (copies.has(script.url)) usedCopies.add(script.url);
