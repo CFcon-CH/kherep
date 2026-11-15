@@ -1340,7 +1340,9 @@ test("rolls combined observation and messaging targets back with bytes modes and
   const repo = path.join(here, "..");
   const groups = [
     ...CLAUDE_CLIENT_GRAPH.map((relative) => ({
-      source: path.join(repo, "modules", "control-plane", relative),
+      source: relative === "node/stdin-reader.mts"
+        ? path.join(repo, "claude", "hooks", "lib", "stdin-reader.mts")
+        : path.join(repo, "modules", "control-plane", relative),
       target: path.join(codexHome, "orchestra", "control-plane", relative),
     })),
     ...observationFiles(repo).map((relative) => ({
