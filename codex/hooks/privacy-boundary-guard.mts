@@ -90,9 +90,9 @@ export function evaluate(payload: unknown, env: NodeJS.ProcessEnv = process.env)
   return null;
 }
 
-function main(): void {
+async function main(): Promise<void> {
   let payload: unknown;
-  try { payload = JSON.parse(fs.readFileSync(0, "utf8")); } catch { return; }
+  try { payload = JSON.parse((await (await import("./stdin-reader.mts")).readStdinBytes({ maxBytes: null })).toString("utf8")); } catch { return; }
   let reason: string | null;
   try { reason = evaluate(payload); } catch { reason = "Privacy classification failed."; }
   if (reason) process.stdout.write(JSON.stringify({ hookSpecificOutput: {
@@ -114,4 +114,4 @@ function isMainModule(): boolean {
   }
 }
 
-if (isMainModule()) main();
+if (isMainModule()) await main();

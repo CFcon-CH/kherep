@@ -553,6 +553,9 @@ export function install(options: InstallOptions = {}) {
       options.log || ((line) => process.stdout.write(`${line}\n`)));
 
     transaction.copyFile(sources.contextHook, targets.contextHook);
+    const stdinReader = path.join(sources.claudeHooks, "lib", "stdin-reader.mts");
+    transaction.copyFile(stdinReader, path.join(path.dirname(targets.contextHook), "stdin-reader.mts"));
+    transaction.copyFile(stdinReader, path.join(targets.hookDir, "stdin-reader.mts"));
     transaction.copyFile(path.join(sourceRoot, "lib", "memory-provider.mts"), path.join(codexHome, "lib", "memory-provider.mts"));
     transaction.writeFile(targets.routing, renderIntercom(fs.readFileSync(sources.routing, "utf8"), intercom));
     transaction.copyFile(sources.registryBridge, targets.registryBridge);
@@ -614,6 +617,7 @@ export function install(options: InstallOptions = {}) {
         path.join("node", "policy.mts"), path.join("node", "session-policy.mts"),
         path.join("node", "mcp-intent-hook.mts"), path.join("node", "mcp-stdio-bridge.mts"),
       ]) transaction.copyFile(path.join(sources.controlPlane, relative), path.join(targets.messagingClient, relative));
+      transaction.copyFile(stdinReader, path.join(targets.messagingClient, "node", "stdin-reader.mts"));
     }
     transaction.copyFile(sources.researchFirstHook, path.join(targets.hookDir, "codex-research-first.mts"));
     transaction.copyFile(sources.researchStopHook, path.join(targets.hookDir, "codex-research-stop.mts"));

@@ -167,9 +167,9 @@ export function strayWarning(value: unknown, env: EnvLike = process.env): string
   return `Kherep: ${found.length} stray file(s) named <drive><U+F03A>..., a Windows path written from Bash (likely an observation page body), e.g. ${found[0]}. Left in place; move them out and never commit them.`;
 }
 
-function main(): void {
+async function main(): Promise<void> {
   try {
-    const payload: unknown = JSON.parse(fs.readFileSync(0, "utf8"));
+    const payload: unknown = JSON.parse((await (await import("./lib/stdin-reader.mts")).readStdinBytes({ maxBytes: null })).toString("utf8"));
     const result = decision(payload);
     const warning = strayWarning(payload);
     const output = warning ? { ...result, systemMessage: warning } : result;
@@ -193,4 +193,4 @@ function isMainModule(): boolean {
   }
 }
 
-if (isMainModule()) main();
+if (isMainModule()) await main();

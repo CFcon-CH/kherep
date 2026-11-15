@@ -38,6 +38,7 @@ function runGuard(stdin: string): string {
     fs.mkdirSync(path.join(root, "hooks", "parity"));
     const guard = path.join(hookDir, "codex-dispatch-contract-guard.mts");
     fs.copyFileSync(GUARD, guard);
+  fs.copyFileSync(path.join(REPO, "claude/hooks/lib/stdin-reader.mts"), path.join(hookDir, "stdin-reader.mts"));
     fs.copyFileSync(path.join(REPO, "claude", "hooks", "lib", "obs-brief-policy.mts"), path.join(hookDir, "lib", "obs-brief-policy.mts"));
     fs.writeFileSync(path.join(root, "hooks", "parity", "capabilities.json"), JSON.stringify(capabilities));
     const result = spawnSync(process.execPath, [guard], { encoding: "utf8", input: stdin });
@@ -166,6 +167,7 @@ test("the installed guard loads the brief check from its lib sibling and fails c
   fs.mkdirSync(path.join(root, "hooks", "parity"));
   const guard = path.join(hookDir, "codex-dispatch-contract-guard.mts");
   fs.copyFileSync(GUARD, guard);
+  fs.copyFileSync(path.join(REPO, "claude/hooks/lib/stdin-reader.mts"), path.join(hookDir, "stdin-reader.mts"));
   fs.writeFileSync(path.join(root, "hooks", "parity", "capabilities.json"), JSON.stringify(capabilities));
   const run = (message: string) => spawnSync(process.execPath, [guard], {
     encoding: "utf8", input: JSON.stringify(spawnDispatch({ agent_type: "codex-obs", model: OBS_MODEL, message })),
@@ -327,6 +329,7 @@ test("the installed guard writes the notice as context and a system message, and
   fs.mkdirSync(path.join(root, "hooks", "parity"));
   const guard = path.join(hookDir, "codex-dispatch-contract-guard.mts");
   fs.copyFileSync(GUARD, guard);
+  fs.copyFileSync(path.join(REPO, "claude/hooks/lib/stdin-reader.mts"), path.join(hookDir, "stdin-reader.mts"));
   fs.writeFileSync(path.join(root, "hooks", "parity", "capabilities.json"), JSON.stringify(capabilities));
   const lib = fs.readFileSync(path.join(REPO, "claude", "hooks", "lib", "obs-brief-policy.mts"), "utf8");
   const run = (message: string, model = OBS_MODEL) => spawnSync(process.execPath, [guard], {

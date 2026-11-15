@@ -183,10 +183,10 @@ function emit(verdict: Verdict | undefined, stderr: string, notice?: string, pha
 }
 
 // PostToolUse phases: as before #507 part 3.
-function postMain(target: string | undefined, phase: string): void {
+async function postMain(target: string | undefined, phase: string): Promise<void> {
   if (!target || !path.isAbsolute(target)) return;
   let payload: HookPayload;
-  try { payload = JSON.parse(fs.readFileSync(0, "utf8")); } catch { return; }
+  try { payload = JSON.parse((await (await import("./stdin-reader.mts")).readStdinBytes({ maxBytes: null })).toString("utf8")); } catch { return; }
   const result = runAdaptedHook(target, phase, payload);
   process.stdout.write(result.stdout);
   process.stderr.write(result.stderr);
@@ -233,6 +233,6 @@ function isMainModule(): boolean {
 if (isMainModule()) {
   const target = process.argv[2];
   const phase = process.argv[3] || "pre";
-  if (!PRE_TOOL_USE_PHASES.has(phase)) postMain(target, phase);
+  if (!PRE_TOOL_USE_PHASES.has(phase)) await postMain(target, phase);
   else main(target, phase).catch(() => emit(adapterFailure(phase, "internal error"), "", undefined, phase)); // fixed text: no raw error
 }

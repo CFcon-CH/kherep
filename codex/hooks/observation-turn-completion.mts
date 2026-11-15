@@ -34,10 +34,10 @@ export function decision(input: StopInput, workspace = SELECTED_WORKSPACE): Stop
   return { decision: "block", reason: renderObservationInstruction(workspace) };
 }
 
-function main(): void {
+async function main(): Promise<void> {
   let input: StopInput;
   try {
-    input = JSON.parse(fs.readFileSync(0, "utf8")) as StopInput;
+    input = JSON.parse((await (await import("./stdin-reader.mts")).readStdinBytes({ maxBytes: null })).toString("utf8")) as StopInput;
   } catch {
     return;
   }
@@ -60,4 +60,4 @@ function isMainModule(): boolean {
   }
 }
 
-if (isMainModule()) main();
+if (isMainModule()) await main();

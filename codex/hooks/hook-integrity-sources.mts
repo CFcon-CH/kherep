@@ -37,6 +37,7 @@ export const CODEX_HELPERS = new Set(["acceptance-policy.mts", "obs-candidate-po
 // The checkout path of the versioned source of an installed file (rel to
 // <CODEX_HOME>/hooks), or why there is none.
 export function sourceOf(rel: string): { from: string } | { hint: string } {
+  if (rel === "stdin-reader.mts" || rel === "kherep-maestro/stdin-reader.mts") return { from: "claude/hooks/lib/stdin-reader.mts" };
   if (rel === "kherep-maestro/obs-candidate-policy.mts") return {from:"modules/atl-jira-brokers/observation-candidate.mts"};
   if (rel === "kherep-maestro/obs-result-policy.mts") return {from:"modules/atl-jira-brokers/observation-result.mts"};
   if (RENDERED.has(rel)) return { hint: "rendered by the installer, no byte-identical source; run codex/install.mts" };

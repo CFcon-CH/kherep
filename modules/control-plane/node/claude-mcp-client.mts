@@ -8,7 +8,7 @@ export const CLAUDE_CLIENT_GRAPH = [
   "protocol.mts", "protocol-mcp.mts", "protocol-messages.mts", "protocol-diagnostics.mts", "protocol-loop-brake.mts", "protocol-session-identity.mts", "protocol-message-binding.mts", "protocol-task-control.mts", "protocol-tasks.mts",
   "node/config.mts", "node/inbox.mts", "node/inbox-storage.mts", "node/inbox-selected-read.mts", "node/inbox-record-lock.mts", "node/mcp-local.mts", "node/mcp-credential-file.mts",
   "node/guarded-replies.mts", "node/message-owner.mts", "node/session-publication.mts", "node/policy.mts", "node/session-policy.mts", "node/mcp-intent-hook.mts",
-  "node/mcp-stdio-bridge.mts",
+  "node/mcp-stdio-bridge.mts", "node/stdin-reader.mts",
 ] as const;
 
 const CLIENT_NAME = "kherep-claude-messaging-client";
@@ -116,7 +116,9 @@ export function stageClaudeClient(options: StageClaudeClientOptions): ClaudeClie
   if (!absolute(options.outputRoot)) throw new Error("output root must be absolute");
   if (fs.existsSync(options.outputRoot)) throw new Error("output root must not already exist");
   const sourceRoot = options.sourceRoot ?? path.resolve(import.meta.dirname, "..");
-  const sources = CLAUDE_CLIENT_GRAPH.map((relative) => [relative, checkedSource(sourceRoot, relative)] as const);
+  const sources = CLAUDE_CLIENT_GRAPH.map((relative) => [relative, relative === "node/stdin-reader.mts"
+    ? checkedSource(path.resolve(sourceRoot, "..", ".."), "claude/hooks/lib/stdin-reader.mts")
+    : checkedSource(sourceRoot, relative)] as const);
   const rendered = renderClaudeClient(options);
   fs.mkdirSync(path.join(options.outputRoot, "plugin", ".claude-plugin"), { recursive: true });
   fs.mkdirSync(path.join(options.outputRoot, "plugin", "hooks"), { recursive: true });
@@ -124,6 +126,9 @@ export function stageClaudeClient(options: StageClaudeClientOptions): ClaudeClie
   for (const [relative, source] of sources) {
     const target = path.join(options.outputRoot, "control-plane", relative);
     fs.copyFileSync(source, target);
+    if (relative === "node/stdin-reader.mts" && sha256(target) !== sha256(source)) {
+      throw new Error("client stdin reader copy does not match canonical source");
+    }
   }
   fs.writeFileSync(path.join(options.outputRoot, "plugin", ".claude-plugin", "plugin.json"), rendered.pluginJson);
   fs.writeFileSync(path.join(options.outputRoot, "plugin", "hooks", "hooks.json"), rendered.hooksJson);

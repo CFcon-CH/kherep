@@ -121,9 +121,9 @@ export function decision(
   return { decision: "block", reason: researchReason(workspace, configPath) };
 }
 
-function main(): void {
+async function main(): Promise<void> {
   try {
-    const result = decision(JSON.parse(fs.readFileSync(0, "utf8")));
+    const result = decision(JSON.parse((await (await import("./lib/stdin-reader.mts")).readStdinBytes({ maxBytes: null })).toString("utf8")));
     if (result) process.stdout.write(JSON.stringify(result));
   } catch {
     // Fail open: a hook that cannot decide says nothing and lets the turn end.
@@ -144,4 +144,4 @@ function isMainModule(): boolean {
   }
 }
 
-if (isMainModule()) main();
+if (isMainModule()) await main();

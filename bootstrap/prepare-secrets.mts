@@ -24,7 +24,7 @@ const decodeUtf8 = (bytes: Uint8Array, label: string): string => {
   }
 };
 
-const yaml = decodeUtf8(fs.readFileSync(0), 'decrypted SOPS YAML');
+const yaml = decodeUtf8((await (await import("../claude/hooks/lib/stdin-reader.mts")).readStdinBytes({ maxBytes: null })), 'decrypted SOPS YAML');
 const required = ['mcp_json'];
 const encoded = new Map<string, string>();
 for (const line of yaml.split(/\r?\n/)) {

@@ -136,8 +136,10 @@ const sh=(p:string)=>p.split(path.sep).join('/');
  * and a node shim the hook finds on the fixed git PATH (Git for Windows adds $HOME/bin). Returns the shim's run log.
  */
 function installHook(t:T, r:ReturnType<typeof repos>):string {
-  const hooks=path.join(r.base,'hooks'), home=path.join(r.base,'home'), runs=path.join(r.base,'node-shim.log');
-  fs.mkdirSync(hooks);fs.mkdirSync(path.join(home,'bin'),{recursive:true});
+  const hooks=path.join(r.base,'runtime','kherep','githooks'), home=path.join(r.base,'home'), runs=path.join(r.base,'node-shim.log');
+  fs.mkdirSync(hooks,{recursive:true});fs.mkdirSync(path.join(home,'bin'),{recursive:true});
+  const hookLib=path.join(r.base,'runtime','hooks','lib');fs.mkdirSync(hookLib,{recursive:true});
+  fs.copyFileSync(path.resolve(githooks,'../../hooks/lib/stdin-reader.mts'),path.join(hookLib,'stdin-reader.mts'));
   for (const name of ['pre-push','attribution-record.mts']) fs.copyFileSync(path.join(githooks,name),path.join(hooks,name));
   fs.chmodSync(path.join(hooks,'pre-push'),0o755);
   fs.writeFileSync(path.join(home,'bin','node'),`#!/bin/sh\necho run >> '${sh(runs)}'\nexec '${sh(process.execPath)}' "$@"\n`,{mode:0o755});

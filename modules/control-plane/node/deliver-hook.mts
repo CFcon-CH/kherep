@@ -146,9 +146,9 @@ export function isMainModule(url: string): boolean {
 if (isMainModule(import.meta.url)) {
   let stdin = "";
   try {
-    stdin = fs.readFileSync(0, "utf8");
-  } catch (error) {
-    process.stderr.write(`kherep deliver-hook: cannot read stdin: ${String(error)}\n`);
+    stdin = (await (await import("./stdin-reader.mts")).readStdinBytes({ maxBytes: null })).toString("utf8");
+  } catch {
+    process.stderr.write("kherep deliver-hook: cannot read stdin: stdin reader unavailable\n");
   }
   const runtime = hookRuntime(process.argv.slice(2));
   if (!runtime) process.stderr.write("kherep deliver-hook: unknown --runtime; expected codex\n");

@@ -9,9 +9,9 @@ export const MESSAGE = [
   "3. Use text search for literals, configs, scripts, and non-code files.",
 ].join("\n");
 
-export function main(): void {
+export async function main(): Promise<void> {
   let input: { hook_event_name?: unknown } = {};
-  try { input = JSON.parse(fs.readFileSync(0, "utf8") || "{}"); } catch { return; }
+  try { input = JSON.parse((await (await import("./stdin-reader.mts")).readStdinBytes({ maxBytes: null })).toString("utf8") || "{}"); } catch { return; }
   const event = input.hook_event_name;
   if (typeof event !== "string" || !["SessionStart", "SubagentStart"].includes(event)) return;
   process.stdout.write(JSON.stringify({
@@ -33,4 +33,4 @@ function isMainModule(): boolean {
   }
 }
 
-if (isMainModule()) main();
+if (isMainModule()) await main();

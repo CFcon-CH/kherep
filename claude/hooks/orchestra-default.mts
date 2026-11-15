@@ -9,7 +9,6 @@
  *
  * Fail-safe: any error exits 0 silently, never blocks session start.
  */
-import fs from "node:fs";
 import path from "node:path";
 import { describeAgents, loadModelPolicy } from "./lib/model-policy.mts";
 import { isKherepScope, type ScopePayload } from "./lib/workspace-scope.mts";
@@ -25,10 +24,10 @@ function modelPolicyLine(): string {
   }
 }
 
-function main(): void {
+async function main(): Promise<void> {
   let input = "";
   try {
-    input = fs.readFileSync(0, "utf8");
+    input = (await (await import("./lib/stdin-reader.mts")).readStdinBytes({ maxBytes: null })).toString("utf8");
   } catch {
     return;
   }
@@ -70,7 +69,7 @@ function main(): void {
 }
 
 try {
-  main();
+  await main();
 } catch {
   // never break session start
 }

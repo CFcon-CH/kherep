@@ -151,7 +151,7 @@ async function ownImportFailed({ rel, why, loaded }: LoadFailure, payload: Scope
 async function main(): Promise<void> {
   let payload: ScopePayload | null = {};
   try {
-    payload = JSON.parse(fs.readFileSync(0, "utf8") || "{}") as ScopePayload | null;
+    payload = JSON.parse((await (await import("./lib/stdin-reader.mts")).readStdinBytes({ maxBytes: null })).toString("utf8") || "{}") as ScopePayload | null;
   } catch {
     payload = {};
   }

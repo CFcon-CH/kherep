@@ -4,7 +4,7 @@
 // <toplevel>` with git's pre-push lines on stdin. One record per pushed ref.
 //
 // It is installed into <CLAUDE_HOME>/kherep/githooks, away from the checkout, so
-// it imports nothing. configRoot, repoSlug, markerKey, the session-id rule and
+// its stdin reader resolves through ../../hooks/lib. configRoot, repoSlug, markerKey, the session-id rule and
 // the 90-day trim are copies of modules/control-plane/node/config.mts and
 // attribution.mts; bootstrap/pre-push-hook.test.mts pins each copy to its
 // original. The remote URL only yields owner/name: userinfo never reaches the log.
@@ -111,10 +111,18 @@ function isMainModule(): boolean {
   }
 }
 
+async function readStdinText(): Promise<string> {
+  try {
+    return (await (await import("../../hooks/lib/stdin-reader.mts")).readStdinBytes({ maxBytes: null })).toString("utf8");
+  } catch {
+    throw new Error("stdin reader unavailable");
+  }
+}
+
 if (isMainModule()) {
   try {
     const [verb, remoteUrl = "", toplevel = ""] = process.argv.slice(2);
-    const stdin = fs.readFileSync(0, "utf8");
+    const stdin = await readStdinText();
     if (verb === "push") recordPush(remoteUrl, toplevel, stdin, process.env, Date.now());
   } catch (error) {
     process.stderr.write(`kherep pre-push: attribution not recorded: ${(error as Error).message ?? String(error)}\n`);

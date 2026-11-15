@@ -29,9 +29,9 @@ export function promptContext(
   return lines.join("\n");
 }
 
-function main(): void {
+async function main(): Promise<void> {
   try {
-    const context = promptContext(JSON.parse(fs.readFileSync(0, "utf8") || "{}"));
+    const context = promptContext(JSON.parse((await (await import("./stdin-reader.mts")).readStdinBytes({ maxBytes: null })).toString("utf8") || "{}"));
     if (context) process.stdout.write(context);
   } catch {
     // A reminder hook never blocks prompt submission.
@@ -46,4 +46,4 @@ function isMainModule(): boolean {
   } catch { return false; }
 }
 
-if (isMainModule()) main();
+if (isMainModule()) await main();

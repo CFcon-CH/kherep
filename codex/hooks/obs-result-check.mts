@@ -55,10 +55,10 @@ export function decide(value: unknown): HookOutput | null {
   return { systemMessage: `${PREFIX} the codex-obs receipt is still malformed (${check.problem}); the Maestro treats it as a failure; publication state is UNKNOWN and it must not publish or repair silently.` };
 }
 
-function main(): void {
+async function main(): Promise<void> {
   let output: HookOutput | null;
   try {
-    output = decide(JSON.parse(fs.readFileSync(0, "utf8")));
+    output = decide(JSON.parse((await (await import("./stdin-reader.mts")).readStdinBytes({ maxBytes: null })).toString("utf8")));
   } catch {
     output = { systemMessage: ERROR_MESSAGE };
   }
@@ -79,4 +79,4 @@ function isMainModule(): boolean {
   }
 }
 
-if (isMainModule()) main();
+if (isMainModule()) await main();

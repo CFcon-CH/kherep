@@ -65,9 +65,9 @@ function summary(filePath: string, repoDir: string, diff: string): string {
   return `${msg}Run \`git -C "${repoDir}" diff HEAD -- ${path.basename(filePath)}\` for the full diff.`;
 }
 
-function main(): void {
+async function main(): Promise<void> {
   try {
-    const filePath = manifestPath(JSON.parse(fs.readFileSync(0, "utf8")) as ManifestPayload | null);
+    const filePath = manifestPath(JSON.parse((await (await import("./lib/stdin-reader.mts")).readStdinBytes({ maxBytes: null })).toString("utf8")) as ManifestPayload | null);
     if (!filePath) return;
     const repoDir = path.dirname(filePath);
     const diff = diffAgainstHead(repoDir, filePath);
@@ -92,4 +92,4 @@ function isMainModule(): boolean {
   }
 }
 
-if (isMainModule()) main();
+if (isMainModule()) await main();

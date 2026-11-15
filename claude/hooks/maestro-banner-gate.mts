@@ -19,7 +19,6 @@
  * in the session the gate is permanently silent - it enforces "once", not
  * "every reply". Any hook error or missing input data fails open.
  */
-import fs from "node:fs";
 import { isKherepScope, type ScopePayload } from "./lib/workspace-scope.mts";
 // The turn boundary and the "substantial" predicate are shared with
 // observation-stop.mts, so both Stop hooks judge the same turns.
@@ -42,9 +41,9 @@ interface StopPayload extends ScopePayload {
 const BANNER =
   /\[\s*maestro\s+on\s*\|\s*routing\s+loaded\s*\|\s*evidence-first\s*\]/i;
 
-function readStdin(): string {
+async function readStdin(): Promise<string> {
   try {
-    return fs.readFileSync(0, "utf8");
+    return (await (await import("./lib/stdin-reader.mts")).readStdinBytes({ maxBytes: null })).toString("utf8");
   } catch {
     return "";
   }
@@ -57,8 +56,8 @@ function bannerSeen(entries: TranscriptEntry[]): boolean {
   });
 }
 
-function main(): void {
-  const input = readStdin();
+async function main(): Promise<void> {
+  const input = await readStdin();
   let data: StopPayload = {};
   try {
     data = JSON.parse(input || "{}") as StopPayload;
@@ -89,7 +88,7 @@ function main(): void {
 }
 
 try {
-  main();
+  await main();
 } catch {
   // fail-open: never trap the Maestro on a hook malfunction
 }

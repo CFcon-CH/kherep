@@ -315,7 +315,7 @@ export async function runWake(input: unknown, deps: WakeDeps): Promise<WakeResul
 if (isMainModule(import.meta.url)) {
   let stdin = "";
   try {
-    stdin = fs.readFileSync(0, "utf8");
+    stdin = (await (await import("./stdin-reader.mts")).readStdinBytes({ maxBytes: null })).toString("utf8");
   } catch {
     // no input: nothing to listen for
   }

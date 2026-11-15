@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 /** Claude Agent/Task adapter for the provider-neutral dispatch policy. */
-import fs from "node:fs";
 import { evaluateDispatch, type DispatchMetadata } from "./lib/dispatch-policy.mts";
 
 // The fields this hook reads from a PreToolUse payload.
@@ -46,10 +45,10 @@ function emitNotice(ruleId: string, notice: string): void {
   }));
 }
 
-function main(): void {
+async function main(): Promise<void> {
   let payload: DispatchPayload | null;
   try {
-    payload = JSON.parse(fs.readFileSync(0, "utf8")) as DispatchPayload | null;
+    payload = JSON.parse((await (await import("./lib/stdin-reader.mts")).readStdinBytes({ maxBytes: null })).toString("utf8")) as DispatchPayload | null;
   } catch {
     emitDeny("HOOK_INPUT_INVALID", "Dispatch hook received malformed JSON; refusing an unclassifiable dispatch.");
     return;
@@ -78,7 +77,7 @@ function main(): void {
 }
 
 try {
-  main();
+  await main();
 } catch {
   emitDeny("HOOK_RUNTIME_FAILURE", "Dispatch policy failed unexpectedly; refusing the dispatch.");
 }

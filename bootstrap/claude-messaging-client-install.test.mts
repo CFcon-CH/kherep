@@ -90,12 +90,15 @@ test("installs a verifiable client while preserving every unrelated byte", { ski
   assert.equal(verified.status, 0, verified.stderr);
   const identity = JSON.parse(verified.stdout);
   assert.match(identity.manifestSha256, /^[a-f0-9]{64}$/);
-  assert.equal(identity.files, 26);
+  assert.equal(identity.files, 27);
   assert.equal(fs.readFileSync(path.join(f.target, "control-plane/protocol-session-identity.mts"), "utf8"),
     fs.readFileSync(path.join(import.meta.dirname, "../modules/control-plane/protocol-session-identity.mts"), "utf8"));
   assert.equal(fs.readFileSync(path.join(f.target, "control-plane/protocol-loop-brake.mts"), "utf8"),
     fs.readFileSync(path.join(import.meta.dirname, "../modules/control-plane/protocol-loop-brake.mts"), "utf8"));
   const manifest = JSON.parse(fs.readFileSync(path.join(f.target, "manifest.json"), "utf8"));
+  const helper = fs.readFileSync(path.join(f.target, "control-plane/node/stdin-reader.mts"));
+  assert.deepEqual(helper, fs.readFileSync(path.join(REPO, "claude/hooks/lib/stdin-reader.mts")));
+  assert.equal(manifest.files["control-plane/node/stdin-reader.mts"], createHash("sha256").update(helper).digest("hex"));
   for (const relative of ["protocol-diagnostics.mts", "node/inbox-storage.mts", "node/inbox-selected-read.mts"]) {
     const staged = fs.readFileSync(path.join(f.target, "control-plane", relative));
     const source = fs.readFileSync(path.join(import.meta.dirname, "../modules/control-plane", relative));

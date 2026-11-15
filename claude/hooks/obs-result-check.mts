@@ -166,7 +166,7 @@ export async function decide(value: unknown, { home, waitMs = WAIT_MS }: DecideO
 async function main(): Promise<void> {
   let output: HookOutput | null;
   try {
-    output = await decide(JSON.parse(fs.readFileSync(0, "utf8")), { home: homeOf(process.argv[1] || "") });
+    output = await decide(JSON.parse((await (await import("./lib/stdin-reader.mts")).readStdinBytes({ maxBytes: null })).toString("utf8")), { home: homeOf(process.argv[1] || "") });
   } catch {
     output = { systemMessage: ERROR_MESSAGE };
   }

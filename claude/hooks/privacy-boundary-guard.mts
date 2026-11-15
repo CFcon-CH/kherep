@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-import fs from "node:fs";
 import { normalizePathLike, type ScopePayload } from "./lib/workspace-scope.mts";
 import { referencesArtifact, referencesCredentials, shellWords, type PolicyInput } from "./lib/private-path-policy.mts";
 
@@ -50,9 +49,9 @@ function referencesInferenceHttp(command: unknown): boolean {
   return /(?:^|[\s"'=(])(?:localhost|127\.0\.0\.1|\[::1\]|[A-Za-z0-9.-]+):0*(?:8000|1234)(?=$|[\/\s?&#"'`])/i.test(text);
 }
 
-function main(): void {
+async function main(): Promise<void> {
   let payload: ToolPayload | null;
-  try { payload = JSON.parse(fs.readFileSync(0, "utf8")) as ToolPayload | null; }
+  try { payload = JSON.parse((await (await import("./lib/stdin-reader.mts")).readStdinBytes({ maxBytes: null })).toString("utf8")) as ToolPayload | null; }
   catch { return; }
 
   const tool = payload && payload.tool_name;
@@ -97,7 +96,7 @@ function main(): void {
   }
 }
 
-try { main(); } catch {
+try { await main(); } catch {
   // Unknown/non-tool events stay fail-open. Relevant tool errors are handled in main.
 }
 process.exit(0);

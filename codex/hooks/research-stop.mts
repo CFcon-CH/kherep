@@ -73,9 +73,9 @@ export function decision(
   return { decision: "block", reason: researchReason(workspace, configPath, !facts.brain, facts.codeWork && !facts.codeGraph) };
 }
 
-function main(): void {
+async function main(): Promise<void> {
   try {
-    const result = decision(JSON.parse(fs.readFileSync(0, "utf8") || "{}"));
+    const result = decision(JSON.parse((await (await import("./stdin-reader.mts")).readStdinBytes({ maxBytes: null })).toString("utf8") || "{}"));
     if (result) process.stdout.write(JSON.stringify(result));
   } catch {
     // Unreadable or unstable inputs are undecidable and fail open.
@@ -90,4 +90,4 @@ function isMainModule(): boolean {
   } catch { return false; }
 }
 
-if (isMainModule()) main();
+if (isMainModule()) await main();

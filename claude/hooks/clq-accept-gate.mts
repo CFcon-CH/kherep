@@ -26,9 +26,9 @@ interface StopPayload extends ScopePayload {
   transcript_path?: unknown;
 }
 
-function readStdin(): string {
+async function readStdin(): Promise<string> {
   try {
-    return fs.readFileSync(0, "utf8");
+    return (await (await import("./lib/stdin-reader.mts")).readStdinBytes({ maxBytes: null })).toString("utf8");
   } catch {
     return "";
   }
@@ -89,8 +89,8 @@ function missingField(text: string): string {
   return hasAccept ? "" : "Accept";
 }
 
-function main(): void {
-  const input = readStdin();
+async function main(): Promise<void> {
+  const input = await readStdin();
   let data: StopPayload = {};
   try {
     data = JSON.parse(input || "{}") as StopPayload;
@@ -116,7 +116,7 @@ function main(): void {
 }
 
 try {
-  main();
+  await main();
 } catch {
   // fail-open: never trap the Maestro on a hook malfunction
 }

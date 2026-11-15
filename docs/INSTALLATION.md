@@ -39,6 +39,16 @@ For issue #808 Stage 1, verify that `hooks/lib/tool-event-shape.mts` is present 
 
 Inspect the candidate's rules, settings, hook commands and installation receipt. Keep its backup until you have checked recovery. A files-only preview does not establish that connected services work.
 
+For #914, verify the canonical stdin reader at Claude `hooks/lib/stdin-reader.mts`
+and Codex `hooks/stdin-reader.mts`, `hooks/kherep-maestro/stdin-reader.mts` and
+`hooks/kherep-maestro/lib/stdin-reader.mts`. An enabled Codex messaging client also
+needs `orchestra/control-plane/node/stdin-reader.mts`; an isolated Claude client
+needs `control-plane/node/stdin-reader.mts`. Each copy must match the source
+`claude/hooks/lib/stdin-reader.mts` byte for byte. Source-tree sibling reexports
+are not installable replacements. `bootstrap/stdin-reader-projection.test.mts`
+checks isolated copies, strict staged inventory, missing/tampered dependencies
+and rollback; actual host activation remains a separate acceptance step.
+
 ## 3. Install the Claude adapter
 
 From the checkout, select your actual workspace:
