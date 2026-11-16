@@ -1,4 +1,4 @@
-import { LOOP_IDLE_MS, LOOP_PAIRS, LOOP_RING, LOOP_SEGMENT, LOOP_STRIKES, LOOP_LINEAGE, loopHeldReason, type LoopAdmissionV1, type LoopHoldCode, safeLoopReason } from "../../protocol-loop-brake.mts";
+import { LOOP_IDLE_MS, LOOP_PAIRS, LOOP_RING, LOOP_SEGMENT, LOOP_SEGMENT_IDLE_MS, LOOP_STRIKES, LOOP_LINEAGE, loopHeldReason, type LoopAdmissionV1, type LoopHoldCode, safeLoopReason } from "../../protocol-loop-brake.mts";
 import type { LoopSignal } from "./message-loop-signals.mts";
 type Row = Record<string, SqlStorageValue>;
 const SCHEMA = `CREATE TABLE IF NOT EXISTS message_loop_pairs (
@@ -64,6 +64,14 @@ export class MessageLoopStore {
     let r = this.read(c.key);
     if (r?.hold_id) return { reason: loopHeldReason(r.hold_code as LoopHoldCode, String(r.hold_id)) };
     if (c.parentGeneration !== undefined && (!r || c.parentGeneration > Number(r.generation))) return { reason: LOOP_LINEAGE };
+    // Issue #946: an unheld pair idle for LOOP_SEGMENT_IDLE_MS starts a new segment. Strikes and fingerprints
+    // stay, so ack-or-repeat cannot be bypassed by waiting; held pairs returned above.
+    if (r && Number(r.admitted_count) > 0 && c.now - Number(r.last_activity) >= LOOP_SEGMENT_IDLE_MS) {
+      const generation = Number(r.generation) + 1;
+      if (!Number.isSafeInteger(generation)) throw new Error("loop-state-unavailable");
+      this.sql.exec("UPDATE message_loop_pairs SET generation = ?, admitted_count = 0 WHERE pair_key = ?", generation, c.key);
+      r = this.read(c.key)!;
+    }
     if (!r) {
       const count = Number(this.sql.exec("SELECT COUNT(*) AS n FROM message_loop_pairs").one().n);
       if (count >= LOOP_PAIRS) return { reason: "loop-capacity" };

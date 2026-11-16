@@ -181,6 +181,16 @@ increments the minor version; every other release increments the patch version.
   `admit-binding`, `deliver-identity` or `deliver-capability`) and the two
   endpoint reference codes `fromCode` and `toCode` in its audit detail; the
   status reason is unchanged. Operator action: deploy the Worker. Refs #773
+- The Worker loop brake no longer holds a busy session pair for good after
+  256 admissions spread over days. The segment fuse counted every admission
+  since the pair was created, so a pair at generation 0 reached
+  `segment-limit` after ten days of ordinary traffic. A segment is now one
+  idle-separated activity window: when an unheld pair has been idle for 6
+  hours (`LOOP_SEGMENT_IDLE_MS`), its next admission advances the generation
+  and resets the segment count. Strikes and the fingerprint window stay, so
+  waiting cannot bypass `ack-or-repeat`; a held pair still needs operator
+  release. No protocol, Node or capability change. Operator action: deploy
+  the Worker. Refs #946
 
 - The Worker no longer refuses a Codex self-assignment or a Claude slot
   selection because the Node's clock runs a little ahead. The Codex activity
