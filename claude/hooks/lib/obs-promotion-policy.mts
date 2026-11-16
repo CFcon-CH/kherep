@@ -96,7 +96,11 @@ export function unreadableWarning(ids: readonly string[]): string {
     + "check by hand whether a measured finding was filed evidence-assumed.";
 }
 
-export function unjoinedWarning(ids: readonly string[]): string {
-  return `${PROMOTION_PREFIX} page(s) ${ids.join(", ")} were filed evidence-assumed but could not be joined to the dispatch brief (no session id); `
+// Why a result could not be joined; the cause is one of these fixed texts.
+export const NO_SESSION = "no session id";
+export const NO_BRIEF = "no dispatch brief recorded for this session";
+
+export function unjoinedWarning(ids: readonly string[], cause: typeof NO_SESSION | typeof NO_BRIEF): string {
+  return `${PROMOTION_PREFIX} page(s) ${ids.join(", ")} were filed evidence-assumed but could not be joined to the dispatch brief (${cause}); `
     + "check by hand whether their findings were marked measured:.";
 }

@@ -76,7 +76,8 @@ async function main(): Promise<void> {
   };
   const result = evaluateDispatch(event);
   // Issue #731 PR-B. The measured: positions of an allowed claude-obs brief, for the result-side join.
-  if (result.decision === "allow" && result.metadata?.agent === "claude-obs") recordBrief(homeOf(process.argv[1] as string), payload.session_id, String(input.prompt));
+  // It never turns the allow into a deny: recordBrief never throws, also while it derives the home.
+  if (result.decision === "allow" && result.metadata?.agent === "claude-obs") recordBrief(() => homeOf(process.argv[1] as string), payload.session_id, String(input.prompt));
   if (result.decision === "deny") emitDeny(result.ruleId, result.reason, result.metadata);
   else if (result.notice) emitNotice(result.noticeRuleId || "OBS_BRIEF_REVISION", result.notice);
   else warnUnclassifiable(payload, "dispatch-contract-guard");

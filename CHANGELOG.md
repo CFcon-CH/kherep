@@ -25,12 +25,13 @@ increments the minor version; every other release increments the patch version.
   `codex-obs-result-check` join the two through the new pure module
   `claude/hooks/lib/obs-promotion-policy.mts` and write the hits to
   `<session_id>.promote`. The parent Stop hook (`observation-stop.mts` on both
-  runtimes) removes that file first and continues the turn once with a fixed
+  runtimes) claims that file by renaming it, last, and continues the turn once with a fixed
   instruction to run the Confluence broker evidence verb for each page or to
   say why it cannot be promoted; it is not gated on `stop_hook_active` and is
   merged into one block with the observation reason. Labels that cannot be
-  read against a measured brief, or a result without a session id whose pages
-  could be a hit, give an operator warning naming the page ids, never a
+  read against a measured brief, or a result without a session id or without a
+  recorded brief whose pages could be a hit, give an operator warning naming
+  the page ids, never a
   block. No hook wiring changed. The brief notice for an unmarked finding now
   points at `measured: live, doc or tracker`. The observation-only Codex
   upgrade recognizes the previous observation files

@@ -87,19 +87,20 @@ test("the recorder joins neither a failed nor an empty report", () => {
 test("without a session id the recorder degrades to the warning and never throws", () => {
   const h = home();
   assert.match(String(record(handback(HIT, { session_id: undefined }), h)?.systemMessage), /could not be joined to the dispatch brief \(no session id\)/);
-  assert.equal(record(handback("OBS-RESULT: wrote 1 12\n12 finding=2 evidence=confirmed T", { session_id: undefined }), h), null);
-  assert.deepEqual(fs.readdirSync(stateDir(h)), ["rec-1.delivered"], "only the delivery record, no session-keyed state");
+  assert.equal(record(handback("OBS-RESULT: wrote 1 12\n12 finding=2 evidence=confirmed T", { session_id: undefined, tool_use_id: "toolu_02" }), h), null);
+  assert.deepEqual(fs.readdirSync(stateDir(h)).sort((a, b) => a.localeCompare(b)), ["rec-1.delivered", "rec-1.toolu_01.joined", "rec-1.toolu_02.joined"],
+    "the delivery record and the join markers, no session-keyed state");
 });
 
 const stopFields = (extra: Record<string, unknown>) => ({ session_id: SID, hook_event_name: "SubagentStop", agent_id: "stop-1",
   agent_type: "claude-obs", stop_hook_active: false, ...extra });
-function handbackTranscript(message: string, ok?: boolean): string {
+function handbackTranscript(message: string, ok?: boolean, id = "toolu_h"): string {
   const file = path.join(TMP, `agent-${++seq}.jsonl`);
   const entries: unknown[] = [
     { type: "user", isSidechain: true, message: { role: "user", content: "brief" } },
-    { type: "assistant", isSidechain: true, message: { role: "assistant", content: [{ type: "tool_use", id: "toolu_h", name: "SubagentHandback", input: { message } }] } },
+    { type: "assistant", isSidechain: true, message: { role: "assistant", content: [{ type: "tool_use", id, name: "SubagentHandback", input: { message } }] } },
   ];
-  if (ok !== undefined) entries.push({ type: "user", isSidechain: true, message: { role: "user", content: [{ type: "tool_result", tool_use_id: "toolu_h", content: "ok", is_error: !ok }] } });
+  if (ok !== undefined) entries.push({ type: "user", isSidechain: true, message: { role: "user", content: [{ type: "tool_result", tool_use_id: id, content: "ok", is_error: !ok }] } });
   fs.writeFileSync(file, `${entries.map((entry) => JSON.stringify(entry)).join("\n")}\n`);
   return file;
 }
@@ -126,9 +127,9 @@ test("the stop hook joins a handback seen in the transcript, after its own notic
   brief(h, "measured=1 findings=2\n");
   assert.equal(await stop(stopFields({ agent_transcript_path: handbackTranscript(HIT, true) }), { home: h, waitMs: 0 }), null);
   assert.equal(pending(h), "11\n");
-  const unconfirmed = await stop(stopFields({ agent_transcript_path: handbackTranscript(UNLABELLED) }), { home: h, waitMs: 0 });
+  const unconfirmed = await stop(stopFields({ agent_transcript_path: handbackTranscript(UNLABELLED, undefined, "toolu_u") }), { home: h, waitMs: 0 });
   assert.match(String((unconfirmed as { systemMessage?: string }).systemMessage), /delivery was not confirmed; check the result by hand\. Kherep obs-promotion: .* 13 /);
-  const empty = await stop(stopFields({ agent_transcript_path: handbackTranscript("OBS-RESULT: empty nothing new", true) }), { home: h, waitMs: 0 });
+  const empty = await stop(stopFields({ agent_transcript_path: handbackTranscript("OBS-RESULT: empty nothing new", true, "toolu_e") }), { home: h, waitMs: 0 });
   assert.equal(empty, null);
 });
 
@@ -137,6 +138,27 @@ test("the stop hook leaves a recorded delivery to the recorder's join", async ()
   brief(h, "measured=1 findings=2\n");
   fs.writeFileSync(path.join(stateDir(h), "stop-1.delivered"), "wrote\ttoolu_h\n");
   assert.equal(await stop(stopFields({ agent_transcript_path: handbackTranscript(HIT, true) }), { home: h, waitMs: 0 }), null);
+  assert.equal(pending(h), null);
+});
+
+test("a handback joined once is never joined again after the Stop consumed it", async () => {
+  const h = home();
+  brief(h, "measured=1 findings=2\n");
+  assert.equal(record(handback(HIT, { agent_id: "stop-1", tool_use_id: "toolu_h" }), h), null);
+  assert.equal(promotion({ session_id: SID }, h), promotionReason(["11"]));
+  assert.equal(record(handback(HIT, { agent_id: "stop-1", tool_use_id: "toolu_h" }), h), null, "the recorder again");
+  assert.equal(await stop(stopFields({ agent_transcript_path: handbackTranscript(HIT, true) }), { home: h, waitMs: 0 }), null, "the stop hook, same handback");
+  assert.equal(pending(h), null, "nothing to deliver twice");
+  assert.equal(promotion({ session_id: SID }, h), null);
+});
+
+test("a resumed agent's earlier handback in the transcript is not joined again", async () => {
+  const h = home();
+  brief(h, "measured=1 findings=2\n");
+  assert.equal(await stop(stopFields({ agent_transcript_path: handbackTranscript(HIT, true) }), { home: h, waitMs: 0 }), null);
+  assert.equal(promotion({ session_id: SID }, h), promotionReason(["11"]));
+  const resumed = await stop(stopFields({ agent_transcript_path: handbackTranscript(UNLABELLED, true) }), { home: h, waitMs: 0 });
+  assert.equal(resumed, null, "the old handback id: no join, no warning");
   assert.equal(pending(h), null);
 });
 
@@ -157,9 +179,9 @@ test("withPromotion merges the promotion into one block", () => {
   assert.deepEqual(withPromotion(block, "P"), { decision: "block", reason: "Session observation.\n\nP" });
 });
 
-function spawnHook(name: string, payload: unknown): string {
+function spawnHook(name: string, payload: unknown, env: Record<string, string> = {}): string {
   const result = spawnSync(process.execPath, ["--disable-warning=ExperimentalWarning", path.join(import.meta.dirname, name)],
-    { input: JSON.stringify(payload), encoding: "utf8", env: { PATH: process.env.PATH, ...(process.env.NODE_V8_COVERAGE ? { NODE_V8_COVERAGE: process.env.NODE_V8_COVERAGE } : {}) } });
+    { input: JSON.stringify(payload), encoding: "utf8", env: { PATH: process.env.PATH, ...env, ...(process.env.NODE_V8_COVERAGE ? { NODE_V8_COVERAGE: process.env.NODE_V8_COVERAGE } : {}) } });
   assert.equal(result.status, 0);
   return result.stdout;
 }
@@ -174,6 +196,29 @@ test("observation-stop: a pending promotion blocks once, also on a continuation"
   assert.deepEqual(JSON.parse(spawnHook("observation-stop.mts", payload)), { decision: "block", reason: promotionReason(["123", "456"]) });
   assert.equal(fs.existsSync(file), false, "consumed before it was emitted");
   assert.equal(spawnHook("observation-stop.mts", payload), "", "the second Stop is silent");
+});
+
+test("observation-stop: the observation block and a pending promotion merge into one block", () => {
+  const sid = randomUUID();
+  const file = path.join(CHECKOUT_STATE, `${sid}.promote`);
+  planted.push(file);
+  fs.mkdirSync(CHECKOUT_STATE, { recursive: true });
+  fs.writeFileSync(file, "789\n");
+  const transcript = path.join(TMP, `turn-${++seq}.jsonl`);
+  fs.writeFileSync(transcript, [
+    { type: "user", message: { role: "user", content: [{ type: "text", text: "change the file" }] } },
+    { type: "assistant", message: { role: "assistant", content: [{ type: "tool_use", id: "t1", name: "Write", input: { file_path: "/tmp/x" } }] } },
+    { type: "user", message: { role: "user", content: [{ type: "tool_result", tool_use_id: "t1", content: "ok" }] } },
+    { type: "assistant", message: { role: "assistant", content: [{ type: "text", text: "Done." }] } },
+  ].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
+  const workspace = path.join(TMP, "workspace");
+  const stdout = spawnHook("observation-stop.mts", { session_id: sid, stop_hook_active: false, cwd: path.join(workspace, "app"), transcript_path: transcript },
+    { KHEREP_WORKSPACE: workspace });
+  const output = JSON.parse(stdout) as { decision: string; reason: string };
+  assert.equal(output.decision, "block");
+  assert.match(output.reason, /^Session observation \(ROUTING\.md, Session observations\): this turn was substantial/);
+  assert.ok(output.reason.endsWith(`\n\n${promotionReason(["789"])}`), "one block: the observation reason, then the promotion");
+  assert.equal(fs.existsSync(file), false);
 });
 
 test("dispatch-contract-guard records the brief of an allowed claude-obs dispatch, and only then", () => {
