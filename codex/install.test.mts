@@ -2059,7 +2059,8 @@ test("makes the Control Plane outbox a sandbox writable root without ever writin
   const merged = install(installOptions);
   const config = read(merged.targets.config);
   assert.equal(headers(config), 1);
-  assert.ok(config.includes(`\n[sandbox_workspace_write]\nwritable_roots = ["/operator/cache", ${JSON.stringify(outbox)}]\n`
+  // Issue #737: no root effort line is filled in, so the operator table may open the file.
+  assert.ok(`\n${config}`.includes(`\n[sandbox_workspace_write]\nwritable_roots = ["/operator/cache", ${JSON.stringify(outbox)}]\n`
     + "network_access = false\n\n"));
   assert.ok(!config.includes(table));
   assert.deepEqual(merged.receipt.controlPlaneOutbox, { status: "operator-merged" });
