@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { install } from './install.mts';
 import { installObservationPublisher, checkObservationPublisher } from './install-observations.mts';
-import { fixtureModelOptions } from './lib/model-policy.fixture.mts';
+import { fixtureModelOptions, legacyModelHome } from './lib/model-policy.fixture.mts';
 import { renderAgent } from './lib/component-render.mts';
 import { PREDECESSOR_OBSERVATION_TOOLS, renderObservationHook, renderObservationPublisher } from './lib/observation-projection.mts';
 import { observationHash, OBSERVATION_SOURCES } from './lib/observation-source.mts';
@@ -40,6 +40,7 @@ function fixture(t: { after(fn: () => void): void }) {
     fs.writeFileSync(registry, '{"mcpServers":{}}', { mode: 0o600 });
     install({ ...fixtureModelOptions(), codexHome: home, workspace, claudeRegistryFile: registry, claudeConfigDir: path.join(root, 'empty-claude'),
         nodePath: process.execPath, skipPluginRegistration: true, resolveRegistryRuntime: () => ({}), log: () => {}, controlPlaneOutbox: path.join(root, 'outbox') });
+    legacyModelHome(home);
     const dir = path.join(home, 'hooks/kherep-maestro');
     const agent = path.join(home, 'agents/codex-obs.toml');
     const model = JSON.parse(/^model = (.*)$/m.exec(fs.readFileSync(agent, 'utf8'))![1]);

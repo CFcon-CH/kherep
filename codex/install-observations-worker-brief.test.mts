@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { install } from './install.mts';
 import { installObservationPublisher, checkObservationPublisher } from './install-observations.mts';
-import { fixtureModelOptions } from './lib/model-policy.fixture.mts';
+import { fixtureModelOptions, legacyModelHome } from './lib/model-policy.fixture.mts';
 import { observationHash } from './lib/observation-source.mts';
 const REPO = path.resolve(import.meta.dirname, '..');
 const worker = JSON.parse(fs.readFileSync(path.join(REPO, 'codex/parity/observation-worker-brief-predecessor.json'), 'utf8')) as Record<string, string>;
@@ -36,6 +36,7 @@ function home764200b(t: { after(fn: () => void): void }) {
     fs.writeFileSync(registry, '{"mcpServers":{}}', { mode: 0o600 });
     install({ ...fixtureModelOptions(), codexHome: home, workspace, claudeRegistryFile: registry, claudeConfigDir: path.join(root, 'empty-claude'),
         nodePath: process.execPath, skipPluginRegistration: true, resolveRegistryRuntime: () => ({}), log: () => { }, controlPlaneOutbox: path.join(root, 'outbox') });
+    legacyModelHome(home);
     const file = path.join(home, 'hooks', 'kherep-maestro', 'hook-integrity-sources.mts');
     fs.writeFileSync(file, worker[SOURCES]);
     const snapshotRoot = path.join(home, 'orchestra', 'observation-source');

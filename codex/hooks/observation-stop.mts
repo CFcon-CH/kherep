@@ -21,11 +21,11 @@ interface Continuation {
 export function observationPrompt(workspace = SELECTED_WORKSPACE, platform = process.platform): string {
   void workspace; void platform;
   return [
-  "Before the final response, dispatch the codex-obs agent for this completed user turn using agent_type codex-obs, the exact model from its installed agent TOML, reasoning_effort low, and fork_turns none.",
+  "Before the final response, dispatch the codex-obs agent for this completed user turn using agent_type codex-obs (its recorded installed name), the exact model and model_reasoning_effort from its installed agent TOML, and fork_turns none.",
   "Give it only a bounded, sanitized summary; never pass raw sessions, credentials, customer-private material, or private infrastructure.",
   "Mark each finding at the start of its own line as measured: `<command>` -> <deciding output excerpt>, or relayed: <source>.",
   "A finding about repository code starts with code after measured: and names each repository as <name>@<full commit sha> before the command, each followed by -- and the repo-relative paths the finding rests on.",
-    "Luna owns extraction and publication through mcp__kherep_observations__publish_observations only, using the supplied session/turn IDs and named node.",
+    "The observer owns extraction and publication through mcp__kherep_observations__publish_observations only, using the supplied session/turn IDs and named node.",
     "Require one strict OBS-RESULT receipt, or a bounded OBS-ATTEMPT worker report when no canonical receipt exists, as defined in the worker contract. Preserve canonical receipts and all created IDs even when isError is true; isError alone does not prove an outer refusal.",
     "The adapter validates candidates, literal canonical authority bound to the resolved space, placement, the approved links against their related_candidates receipt, labels and trusted author readback, and writes only the links codex-obs approved after judging each candidate on topic.",
     "Independently validate the handback and read canonical created targets. Report failed receipts and non-adapter attempts in the same turn; attempted calls without a receipt leave publication and IDs UNKNOWN. Never silently publish or repair.",

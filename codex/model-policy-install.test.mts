@@ -8,12 +8,14 @@ import { test, type TestContext } from "node:test";
 import { install, type InstallOptions } from "./install.mts";
 import { dispatchPolicy, validate } from "./hooks/dispatch-contract-guard.mts";
 import type { Capabilities, ProjectionReceipt } from "./lib/contracts.mts";
-import { fixtureModels } from "./lib/model-policy.fixture.mts";
-import { parseModelPolicy, resolveModels, type ModelResolution } from "./lib/model-policy.mts";
+import { fixtureModels, legacyModelHome } from "./lib/model-policy.fixture.mts";
+import { parseModelPolicy, resolveModels, type EffectiveResolutionV2 } from "./lib/model-policy.mts";
 import { checkObservationPublisher, installObservationPublisher } from "./install-observations.mts";
 import { turnContext } from "./hooks/kherep-maestro-context.mts";
 
-interface ModelReceipt { modelResolution: ModelResolution; projection: ProjectionReceipt }
+interface ModelReceipt { modelResolution: { selectionId: string }; projection: ProjectionReceipt }
+interface SelectionReceipt { selectionId: string; resolution: EffectiveResolutionV2; inputs: { catalogDigest: string; policySha256: string } }
+const effective = (row: { effective: { model: string; effort: string } }) => ({ model: row.effective.model, reasoning: row.effective.effort });
 const catalog = () => ({ complete: true, models: structuredClone(fixtureModels) });
 const newerCatalog = () => ({ complete: true, models: [...structuredClone(fixtureModels), {
   ...structuredClone(fixtureModels[1]), id: "gpt-7-sol", model: "gpt-7-sol",
@@ -48,8 +50,9 @@ function fixture(t: TestContext, personalDesigner = false) {
   };
   const guardFile = path.join(codexHome, "hooks", "parity", "capabilities.json");
   const receiptFile = path.join(codexHome, "orchestra", "parity-receipt.json");
+  const selectionFile = path.join(codexHome, "orchestra", "model-selection-receipt.json");
   const run = (overrides: InstallOptions = {}) => install({ ...options, ...overrides });
-  return { root, codexHome, workspace, guardFile, receiptFile, run, calls, personalToml };
+  return { root, codexHome, workspace, guardFile, receiptFile, selectionFile, run, calls, personalToml };
 }
 
 function tree(root: string): Record<string, string> {
@@ -68,8 +71,10 @@ function tree(root: string): Record<string, string> {
 
 function readInstallation(f: ReturnType<typeof fixture>) {
   const receipt = JSON.parse(fs.readFileSync(f.receiptFile, "utf8")) as ModelReceipt;
-  const snapshot = JSON.parse(fs.readFileSync(f.guardFile, "utf8")) as Capabilities & { modelResolution: ModelResolution };
-  assert.deepEqual(snapshot.modelResolution, receipt.modelResolution);
+  const selection = JSON.parse(fs.readFileSync(f.selectionFile, "utf8")) as SelectionReceipt;
+  const snapshot = JSON.parse(fs.readFileSync(f.guardFile, "utf8")) as Capabilities & { modelResolution: EffectiveResolutionV2 & { selectionId: string } };
+  assert.deepEqual(snapshot.modelResolution, { ...selection.resolution, selectionId: selection.selectionId });
+  assert.equal(receipt.modelResolution.selectionId, selection.selectionId);
   assert.deepEqual(snapshot.projectedAgents, receipt.projection.agentDefaults);
   const policy = dispatchPolicy(snapshot);
   for (const [name, defaults] of Object.entries(receipt.projection.agentDefaults)) {
@@ -87,13 +92,13 @@ function readInstallation(f: ReturnType<typeof fixture>) {
   assert.equal(fs.readFileSync(path.join(f.codexHome, "orchestra", "model-policy.toml"), "utf8"),
     fs.readFileSync(new URL("./parity/model-policy.toml", import.meta.url), "utf8"));
   assert.equal(parseModelPolicy(fs.readFileSync(path.join(f.codexHome, "orchestra/model-policy.toml"), "utf8")).roles.observer.reasoning, "medium");
-  assert.deepEqual(receipt.modelResolution.roles.observer, { model: "gpt-6-luna", reasoning: "medium" });
+  assert.deepEqual(effective(selection.resolution.roles.observer), { model: "gpt-6-luna", reasoning: "medium" });
   assert.deepEqual(receipt.projection.agentDefaults["codex-obs"], { role: "observer", model: "gpt-6-luna", reasoning: "medium" });
   assert.equal(parseModelPolicy(fs.readFileSync(path.join(f.codexHome, "orchestra/model-policy.toml"), "utf8")).roles.broker.reasoning, "medium");
-  assert.deepEqual(receipt.modelResolution.roles.broker, { model: "gpt-6-luna", reasoning: "medium" });
+  assert.deepEqual(effective(selection.resolution.roles.broker), { model: "gpt-6-luna", reasoning: "medium" });
   assert.deepEqual(receipt.projection.agentDefaults["atlassian-broker"], { role: "broker", model: "gpt-6-luna", reasoning: "medium" });
   assert.equal(snapshot.agents["atlassian-broker"].reasoning, "medium");
-  assert.equal(snapshot.agents["claude-obs"].enforcePin, true);
+  assert.equal(snapshot.agents["claude-obs"].enforcePin, undefined);
   assert.equal(snapshot.agents["claude-obs"].sandbox, "read-only");
   assert.equal(snapshot.agents["claude-obs"].reasoning, "medium");
   assert.match(fs.readFileSync(path.join(f.codexHome, "agents/codex-obs.toml"), "utf8"), /sandbox_mode = "read-only"/);
@@ -102,7 +107,7 @@ function readInstallation(f: ReturnType<typeof fixture>) {
   assert.match(turnContext(), /the exact model and model_reasoning_effort from its installed agent TOML/);
   assert.doesNotMatch(turnContext(), /reasoning_effort low/);
   assert.equal(f.calls.length, 0, "fixture neither launches Codex nor registers external plugins");
-  return { receipt, snapshot, policy };
+  return { receipt, selection, snapshot, policy };
 }
 
 test("first install rejects absent or incomplete model evidence before any write or runtime call", (t) => {
@@ -128,15 +133,18 @@ for (const personalDesigner of [false, true]) test(`first install shares native 
   assert.equal(designers.length, 1);
   const [name, designer] = designers[0];
   assert.equal(name, personalDesigner ? "feature-dev-code-architect" : "code-architect");
-  assert.equal(designer.model, receipt.modelResolution.roles.designer.model);
+  const { selection } = readInstallation(f);
+  assert.equal(designer.model, selection.resolution.roles.designer.effective.model);
   if (personalDesigner) assert.equal(fs.readFileSync(path.join(f.codexHome, "agents", "code-architect.toml"), "utf8"), f.personalToml);
-  assert.equal(policy.pins.get("codex-obs"), snapshot.agents["claude-obs"].model);
+  const observer = policy.agentDefaults.get("codex-obs")!.model;
+  assert.equal(observer, snapshot.agents["claude-obs"].model);
   const input = { task_name: "observe", message: "- measured: `synthetic-test` -> 1 pass\n- relayed: operator in test fixture", agent_type: "codex-obs" };
   const dispatch = (overrides: object) => validate({ tool_name: "spawn_agent", tool_input: { ...input, ...overrides } }, policy);
-  assert.match(dispatch({}) ?? "", /pinned/);
-  assert.match(dispatch({ model: designer.model }) ?? "", /pinned/);
-  assert.equal(dispatch({ model: policy.pins.get("codex-obs"), reasoning_effort: "low" }), null);
-  assert.equal(dispatch({ model: policy.pins.get("codex-obs"), reasoning_effort: "medium" }), null);
+  assert.equal(dispatch({}), null, "issue #737: no observer model pin");
+  assert.equal(dispatch({ model: designer.model }), null);
+  assert.equal(dispatch({ model: observer, reasoning_effort: "low" }), null);
+  assert.equal(dispatch({ model: observer, reasoning_effort: "medium" }), null);
+  assert.match(dispatch({ model: "opus" }) ?? "", /Unsupported/);
 });
 
 test("normal reinstall preserves exact resolution despite a newer supplied catalog", (t) => {
@@ -146,7 +154,7 @@ test("normal reinstall preserves exact resolution despite a newer supplied catal
   const agentsBefore = tree(path.join(f.codexHome, "agents"));
   f.run({ modelCatalog: newerCatalog() });
   const after = readInstallation(f);
-  assert.deepEqual(after.receipt.modelResolution, before.receipt.modelResolution);
+  assert.deepEqual(after.selection, before.selection);
   assert.deepEqual(after.snapshot, before.snapshot);
   assert.deepEqual(tree(path.join(f.codexHome, "agents")), agentsBefore);
 });
@@ -154,13 +162,13 @@ test("normal reinstall preserves exact resolution despite a newer supplied catal
 test("explicit refresh changes all consuming artifacts from one new resolution", (t) => {
   const f = fixture(t);
   f.run({ modelCatalog: catalog() });
-  const before = readInstallation(f).receipt.modelResolution;
+  const before = readInstallation(f).selection;
   f.run({ modelCatalog: newerCatalog(), refreshModels: true });
-  const after = readInstallation(f).receipt.modelResolution;
-  assert.equal(after.roles.builder.model, "gpt-7-sol");
-  assert.equal(after.roles.root.model, "gpt-7-sol");
-  assert.notEqual(after.catalogSha256, before.catalogSha256);
-  assert.equal(after.policySha256, before.policySha256);
+  const after = readInstallation(f).selection;
+  assert.equal(after.resolution.roles.builder.effective.model, "gpt-7-sol");
+  assert.equal(after.resolution.roles.root.effective.model, "gpt-7-sol");
+  assert.notEqual(after.inputs.catalogDigest, before.inputs.catalogDigest);
+  assert.equal(after.inputs.policySha256, before.inputs.policySha256);
 });
 
 test("refresh failure after projected plugin snapshot rolls native agents, snapshot and receipt back together", (t) => {
@@ -183,16 +191,21 @@ test("refresh failure after projected plugin snapshot rolls native agents, snaps
   assert.equal(fs.readFileSync(f.guardFile, "utf8"), snapshotBefore);
   assert.equal(fs.readFileSync(f.receiptFile, "utf8"), receiptBefore);
   assert.deepEqual(tree(path.join(f.codexHome, "agents")), agentsBefore);
-  assert.deepEqual(readInstallation(f).receipt.modelResolution, before.receipt.modelResolution);
+  assert.deepEqual(readInstallation(f).selection, before.selection);
 });
 
 test("observation-only updater preserves the validated Medium installation", (t) => {
   const f = fixture(t);
   f.run({ modelCatalog: catalog() });
   const before = readInstallation(f);
-  assert.equal(checkObservationPublisher({ codexHome: f.codexHome, workspace: f.workspace }).pinUnchanged, true);
+  const check = checkObservationPublisher({ codexHome: f.codexHome, workspace: f.workspace });
+  assert.equal(check.pinUnchanged, true);
+  assert.deepEqual(check.modelSelection, { kind: "v2-overlay", selectionId: before.selection.selectionId, effectivePairUnchanged: true, observer: "codex-obs" });
   assert.equal(installObservationPublisher({ codexHome: f.codexHome, workspace: f.workspace }).receipt.installedHashesMatch, true);
-  assert.deepEqual(readInstallation(f), before);
+  const after = readInstallation(f);
+  assert.deepEqual(after.selection, before.selection);
+  assert.deepEqual(after.policy.agentDefaults, before.policy.agentDefaults);
+  assert.deepEqual(after.snapshot.modelSelectionOverlay !== undefined, true, "the snapshot records the observer overlay");
 });
 
 for (const mismatch of ["receipt", "snapshot", "native"] as const) test(`observation updater refuses Low ${mismatch} mismatch before writes`, (t) => {
@@ -202,16 +215,18 @@ for (const mismatch of ["receipt", "snapshot", "native"] as const) test(`observa
     const file = path.join(f.codexHome, "agents/codex-obs.toml");
     write(file, fs.readFileSync(file, "utf8").replace('model_reasoning_effort = "medium"', 'model_reasoning_effort = "low"'));
   } else {
-    const file = mismatch === "receipt" ? f.receiptFile : f.guardFile;
+    const file = mismatch === "receipt" ? f.selectionFile : f.guardFile;
     const value = JSON.parse(fs.readFileSync(file, "utf8"));
-    (mismatch === "receipt" ? value.projection.agentDefaults["codex-obs"] : value.agents["claude-obs"]).reasoning = "low";
+    if (mismatch === "receipt") value.resolution.roles.observer.effective.effort = "low";
+    else value.agents["claude-obs"].reasoning = "low";
     write(file, JSON.stringify(value));
   }
   const before = tree(f.root);
   let writes = 0;
   const options = { codexHome: f.codexHome, workspace: f.workspace, afterWrite() { writes++; } };
-  assert.throws(() => checkObservationPublisher(options), /observation-(pin-unrecognized|agent-drift)/);
-  assert.throws(() => installObservationPublisher(options), /observation-(pin-unrecognized|agent-drift)/);
+  const refused = /model-selection-(receipt-conflict|installed-state-invalid)/;
+  assert.throws(() => checkObservationPublisher(options), refused);
+  assert.throws(() => installObservationPublisher(options), refused);
   assert.equal(writes, 0);
   assert.deepEqual(tree(f.root), before);
 });
@@ -219,7 +234,9 @@ for (const mismatch of ["receipt", "snapshot", "native"] as const) test(`observa
 test("coherent synthetic Low installation requires refresh, then ordinary reinstall retains Medium", (t) => {
   const f = fixture(t);
   f.run({ modelCatalog: catalog() });
-  const { receipt, snapshot } = readInstallation(f);
+  legacyModelHome(f.codexHome);
+  const receipt = JSON.parse(fs.readFileSync(f.receiptFile, "utf8"));
+  const snapshot = JSON.parse(fs.readFileSync(f.guardFile, "utf8"));
   const policyFile = path.join(f.codexHome, "orchestra/model-policy.toml");
   const lowText = fs.readFileSync(policyFile, "utf8").replace(/(\[roles\.observer\]\s+family = "luna"\s+reasoning = )"medium"/, '$1"low"');
   const low = resolveModels(parseModelPolicy(lowText), catalog());
@@ -234,16 +251,16 @@ test("coherent synthetic Low installation requires refresh, then ordinary reinst
   write(agentFile, fs.readFileSync(agentFile, "utf8").replace('model_reasoning_effort = "medium"', 'model_reasoning_effort = "low"'));
   const before = tree(f.root);
   let writes = 0;
-  assert.throws(() => f.run({ modelCatalog: newerCatalog(), afterWrite() { writes++; } }), /explicit refresh/);
+  assert.throws(() => f.run({ modelCatalog: newerCatalog(), afterWrite() { writes++; } }), /model-selection-refresh-required/);
   assert.throws(() => installObservationPublisher({ codexHome: f.codexHome, workspace: f.workspace, afterWrite() { writes++; } }), /explicit refresh/);
   assert.equal(writes, 0);
   assert.deepEqual(tree(f.root), before);
   f.run({ modelCatalog: catalog(), refreshModels: true });
   const refreshed = readInstallation(f), agents = tree(path.join(f.codexHome, "agents"));
-  assert.equal(refreshed.receipt.modelResolution.roles.observer.reasoning, "medium");
+  assert.equal(refreshed.selection.resolution.roles.observer.effective.effort, "medium");
   f.run({ modelCatalog: newerCatalog() });
   const after = readInstallation(f);
-  assert.deepEqual(after.receipt.modelResolution, refreshed.receipt.modelResolution);
+  assert.deepEqual(after.selection, refreshed.selection);
   assert.deepEqual(after.snapshot, refreshed.snapshot);
   assert.deepEqual(tree(path.join(f.codexHome, "agents")), agents);
 });
@@ -251,7 +268,9 @@ test("coherent synthetic Low installation requires refresh, then ordinary reinst
 test("coherent Broker Low refuses ordinary writes, rolls failed refresh back, then retains Medium", (t) => {
   const f = fixture(t);
   f.run({ modelCatalog: catalog() });
-  const { receipt, snapshot } = readInstallation(f);
+  legacyModelHome(f.codexHome);
+  const receipt = JSON.parse(fs.readFileSync(f.receiptFile, "utf8"));
+  const snapshot = JSON.parse(fs.readFileSync(f.guardFile, "utf8"));
   const policyFile = path.join(f.codexHome, "orchestra/model-policy.toml");
   const agentFile = path.join(f.codexHome, "agents/atlassian-broker.toml");
   const lowText = fs.readFileSync(policyFile, "utf8").replace(/(\[roles\.broker\]\s+family = "luna"\s+reasoning = )"medium"/, '$1"low"');
@@ -267,7 +286,7 @@ test("coherent Broker Low refuses ordinary writes, rolls failed refresh back, th
   assert.deepEqual(dispatchPolicy(snapshot).agentDefaults.get("atlassian-broker"), low.roles.broker);
   const before = tree(f.root);
   let writes = 0;
-  assert.throws(() => f.run({ modelCatalog: newerCatalog(), afterWrite() { writes++; } }), /explicit refresh/);
+  assert.throws(() => f.run({ modelCatalog: newerCatalog(), afterWrite() { writes++; } }), /model-selection-refresh-required/);
   assert.equal(writes, 0);
   assert.deepEqual(tree(f.root), before);
   const prior = [policyFile, agentFile, f.receiptFile, f.guardFile].map(file => fs.readFileSync(file));
@@ -276,8 +295,9 @@ test("coherent Broker Low refuses ordinary writes, rolls failed refresh back, th
   assert.throws(() => f.run({ modelCatalog: catalog(), refreshModels: true, afterWrite() {
     const installed = JSON.parse(fs.readFileSync(f.guardFile, "utf8")) as Capabilities;
     if (installed.projectedAgents?.["atlassian-broker"]?.reasoning !== "medium") return;
-    const installedReceipt = JSON.parse(fs.readFileSync(f.receiptFile, "utf8")) as ModelReceipt;
-    if (installedReceipt.modelResolution.roles.broker.reasoning !== "medium") return;
+    if (!fs.existsSync(f.selectionFile)) return;
+    const installedReceipt = JSON.parse(fs.readFileSync(f.selectionFile, "utf8")) as SelectionReceipt;
+    if (installedReceipt.resolution.roles.broker.effective.effort !== "medium") return;
     assert.equal(parseModelPolicy(fs.readFileSync(policyFile, "utf8")).roles.broker.reasoning, "medium");
     assert.match(fs.readFileSync(agentFile, "utf8"), /model_reasoning_effort = "medium"/);
     reachedSnapshot = true;
@@ -288,14 +308,14 @@ test("coherent Broker Low refuses ordinary writes, rolls failed refresh back, th
   assert.deepEqual(tree(path.join(f.codexHome, "agents")), agentsBefore);
   f.run({ modelCatalog: catalog(), refreshModels: true });
   const refreshed = readInstallation(f), agents = tree(path.join(f.codexHome, "agents"));
-  assert.deepEqual(refreshed.receipt.modelResolution.roles.broker, { model: low.roles.broker.model, reasoning: "medium" });
+  assert.deepEqual(effective(refreshed.selection.resolution.roles.broker), { model: low.roles.broker.model, reasoning: "medium" });
   for (const role of ["root", "designer", "builder", "support", "researcher", "observer"] as const)
-    assert.deepEqual(refreshed.receipt.modelResolution.roles[role], low.roles[role]);
-  assert.deepEqual(refreshed.receipt.modelResolution.supportedModels, low.supportedModels);
-  assert.equal(refreshed.receipt.modelResolution.catalogSha256, low.catalogSha256);
+    assert.deepEqual(effective(refreshed.selection.resolution.roles[role]), low.roles[role]);
+  for (const [model, efforts] of Object.entries(low.supportedModels))
+    assert.deepEqual([...refreshed.selection.resolution.supportedModels[model]!].sort(), [...efforts].sort());
   f.run({ modelCatalog: newerCatalog() });
   const after = readInstallation(f);
-  assert.deepEqual(after.receipt.modelResolution, refreshed.receipt.modelResolution);
+  assert.deepEqual(after.selection, refreshed.selection);
   assert.deepEqual(after.snapshot, refreshed.snapshot);
   assert.deepEqual(tree(path.join(f.codexHome, "agents")), agents);
 });

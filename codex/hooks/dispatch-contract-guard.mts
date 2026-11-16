@@ -5,17 +5,16 @@ import { pathToFileURL } from "node:url";
 
 const DISPATCH_TOOLS = new Set(["Agent", "spawn_agent"]);
 
-// The pins come from the parity manifest the installer projects the agent TOML from:
-// an agents entry with "enforcePin": true pins its projected name (`as`, else its key)
-// to its `model`. The installer copies the manifest to the same place relative to the
-// installed guard, so the repository and an installation each read one file.
+// The installed dispatch snapshot: the parity manifest plus the installed model
+// selection (issue #737). The installer copies it to the same place relative to
+// the installed guard, so the repository and an installation each read one file.
+// Model choice is support-checked only: a native agent TOML carries the effective
+// model and effort, and no argument equality is enforced as a pin.
 export const CAPABILITIES_FILE = path.join(import.meta.dirname, "..", "parity", "capabilities.json");
 
-export type Pins = ReadonlyMap<string, string>;
-// The pins plus the projected name of the observation agent, whose brief format
-// is checked at dispatch (issue #331); null when the manifest projects none.
+// The projected name of the observation agent, whose brief format is checked at
+// dispatch (issue #331); null when the manifest projects none.
 export interface DispatchPolicy {
-  pins: Pins;
   observationAgent: string | null;
   // Issue #701. Projected names of the agents marked "codeBound", whose brief
   // must carry revision: and decided: (claude/hooks/lib/worker-brief-policy.mts).
@@ -77,15 +76,18 @@ function projectedName(name: string, entry: Record<string, unknown>): string {
   return typeof entry.as === "string" && entry.as ? entry.as : name;
 }
 
-function modelSupport(capabilities: unknown): Map<string, ReadonlySet<string>> {
-  const resolution = isRecord(capabilities) ? capabilities.modelResolution : undefined;
-  const supported = isRecord(resolution) ? resolution.supportedModels : undefined;
+const EFFORTS = new Set(["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"]);
+// Any runtime-visible catalog model the installer recorded; no family shape.
+const MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._:@/[\]-]{0,199}$/;
+type Pair = { model: string; reasoning: string };
+
+function modelSupport(resolution: Record<string, unknown>): Map<string, ReadonlySet<string>> {
+  const supported = resolution.supportedModels;
   if (!isRecord(supported) || !Object.keys(supported).length) throw new Error("Installed model resolution is missing");
   const models = new Map<string, ReadonlySet<string>>();
-  const efforts = new Set(["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"]);
   for (const [model, values] of Object.entries(supported)) {
-    if (!/^gpt-\d+(?:\.\d+)?-(?:astra|sol|terra|luna)$/.test(model) || !Array.isArray(values) || !values.length
-      || values.some((value) => typeof value !== "string" || !efforts.has(value)) || new Set(values).size !== values.length) {
+    if (!MODEL_ID.test(model) || model === "inherit" || !Array.isArray(values) || !values.length
+      || values.some((value) => typeof value !== "string" || !EFFORTS.has(value)) || new Set(values).size !== values.length) {
       throw new Error("Installed model resolution is malformed");
     }
     models.set(model, new Set(values as string[]));
@@ -93,34 +95,40 @@ function modelSupport(capabilities: unknown): Map<string, ReadonlySet<string>> {
   return models;
 }
 
-export function dispatchPins(capabilities: unknown): Pins {
-  const agents = isRecord(capabilities) ? capabilities.agents : undefined;
-  if (!isRecord(agents)) throw new Error("The parity manifest has no agents table.");
-  const models = modelSupport(capabilities);
-  const pins = new Map<string, string>();
-  for (const [name, entry] of Object.entries(agents)) {
-    if (!isRecord(entry) || entry.enforcePin !== true) continue;
-    if (typeof entry.model !== "string" || !models.has(entry.model)) {
-      throw new Error(`Pinned agent ${name} has no allowed model.`);
-    }
-    pins.set(projectedName(name, entry), entry.model);
+// The V2 selection (issue #737) carries its own agent rows; the projected
+// defaults must be exactly that generation, so a mixed snapshot fails closed.
+// A V1 resolution is read only for compatibility during a complete upgrade.
+function rootAndAgents(resolution: Record<string, unknown>, projected: Record<string, unknown>): Pair {
+  const roles = isRecord(resolution.roles) ? resolution.roles : {};
+  if (resolution.schemaVersion === 1) {
+    const root = roles.root;
+    return isRecord(root) ? root as unknown as Pair : { model: "", reasoning: "" };
   }
-  return pins;
+  const agents = resolution.agents;
+  if (resolution.schemaVersion !== 2 || typeof resolution.selectionId !== "string" || !/^[a-f0-9]{64}$/.test(resolution.selectionId)
+    || !Array.isArray(agents) || agents.length !== Object.keys(projected).length) throw new Error("Installed model selection generation is inconsistent");
+  for (const agent of agents) {
+    const row = isRecord(agent) ? projected[String(agent.installedName)] : undefined;
+    const effective = isRecord(agent) && isRecord(agent.effective) ? agent.effective : {};
+    if (!isRecord(row) || !Object.hasOwn(projected, String(agent.installedName)) || row.role !== agent.role
+      || row.model !== effective.model || row.reasoning !== effective.effort) throw new Error("Installed model selection generation is inconsistent");
+  }
+  const root = isRecord(roles.root) && isRecord(roles.root.effective) ? roles.root.effective : {};
+  return { model: String(root.model), reasoning: String(root.effort) };
 }
 
 export function dispatchPolicy(capabilities: unknown): DispatchPolicy {
-  const pins = dispatchPins(capabilities);
-  const entry = (capabilities as { agents: Record<string, unknown> }).agents[OBSERVATION_ENTRY];
-  const supportedModels = modelSupport(capabilities);
-  const manifest = capabilities as { agents: Record<string, unknown>; projectedAgents?: unknown;
-    modelResolution: { roles: { root: { model: string; reasoning: string } } } };
-  const rootDefault = manifest.modelResolution.roles?.root;
-  if (!rootDefault || !supportedModels.get(rootDefault.model)?.has(rootDefault.reasoning)) throw new Error("Installed root model resolution is missing");
+  const manifest = isRecord(capabilities) ? capabilities : {};
+  if (!isRecord(manifest.agents)) throw new Error("The parity manifest has no agents table.");
+  if (!isRecord(manifest.modelResolution)) throw new Error("Installed model resolution is missing");
+  const supportedModels = modelSupport(manifest.modelResolution);
   if (!isRecord(manifest.projectedAgents)) throw new Error("Installed projected agent defaults are missing");
-  const agentDefaults = new Map<string, { model: string; reasoning: string }>();
+  const rootDefault = rootAndAgents(manifest.modelResolution, manifest.projectedAgents);
+  if (!supportedModels.get(rootDefault.model)?.has(rootDefault.reasoning)) throw new Error("Installed root model resolution is missing");
+  const agentDefaults = new Map<string, Pair>();
   for (const [name, agent] of Object.entries(manifest.projectedAgents)) {
-    if (!isRecord(agent) || typeof agent.model !== "string" || !supportedModels.has(agent.model)
-      || typeof agent.reasoning !== "string" || !supportedModels.get(agent.model)?.has(agent.reasoning)) {
+    if (!isRecord(agent) || typeof agent.model !== "string" || typeof agent.reasoning !== "string"
+      || !supportedModels.get(agent.model)?.has(agent.reasoning)) {
       throw new Error(`Agent ${name} has an invalid installed model resolution`);
     }
     agentDefaults.set(name, { model: agent.model, reasoning: agent.reasoning });
@@ -134,14 +142,15 @@ export function dispatchPolicy(capabilities: unknown): DispatchPolicy {
     }
     if (agent.codeBound === true) codeBoundAgents.add(projectedName(name, agent));
   }
-  return { pins, supportedModels, agentDefaults, codeBoundAgents, observationAgent: isRecord(entry) ? projectedName(OBSERVATION_ENTRY, entry) : null };
+  const entry = manifest.agents[OBSERVATION_ENTRY];
+  return { supportedModels, agentDefaults, codeBoundAgents, observationAgent: isRecord(entry) ? projectedName(OBSERVATION_ENTRY, entry) : null };
 }
 
 export function loadPolicy(): DispatchPolicy {
   return dispatchPolicy(JSON.parse(fs.readFileSync(CAPABILITIES_FILE, "utf8")));
 }
 
-export function validate(payload: unknown, { pins, observationAgent, supportedModels, agentDefaults, codeBoundAgents }: DispatchPolicy): string | null {
+export function validate(payload: unknown, { observationAgent, supportedModels, agentDefaults, codeBoundAgents }: DispatchPolicy): string | null {
   // codex/lib/parity-config.mts registers this guard for Agent|spawn_agent only, so
   // input that does not name its tool is an unclassifiable dispatch.
   if (!isRecord(payload) || typeof payload.tool_name !== "string") {
@@ -154,10 +163,8 @@ export function validate(payload: unknown, { pins, observationAgent, supportedMo
   if (typeof input.message !== "string" || !input.message.trim()) return "Agent dispatch requires a bounded message.";
   if (input.agent_type != null && typeof input.agent_type !== "string") return "Malformed agent dispatch: agent_type must be a string.";
   const agent = typeof input.agent_type === "string" ? input.agent_type.trim() : "";
-  const pin = pins.get(agent);
-  if (pin !== undefined && input.model !== pin) {
-    return `Kherep agent ${agent} is pinned to model ${pin}; got ${input.model || "no model"}.`;
-  }
+  // An installed agent TOML's own model and effort take precedence over spawn
+  // arguments, so supplied fields are support-checked, never compared as a pin.
   if (input.model !== undefined && !(typeof input.model === "string" && supportedModels.has(input.model))) return `Unsupported Kherep agent model: ${input.model}`;
   const defaults = agentDefaults.get(agent);
   const overridesModel = input.model !== undefined, overridesEffort = input.reasoning_effort !== undefined;
@@ -205,7 +212,7 @@ export function decide(raw: string, readPolicy: () => DispatchPolicy = loadPolic
   }
   let policy: DispatchPolicy;
   try { policy = readPolicy(); } catch {
-    return "Kherep dispatch pin policy is unreadable; refusing the agent dispatch.";
+    return "Kherep dispatch policy is unreadable; refusing the agent dispatch.";
   }
   return validate(payload, policy);
 }

@@ -54,3 +54,12 @@ test("observation prompt exposes only the narrow tool, independent of workspace 
     assert.match(prompt,/NO further publication/);
   }
 });
+
+// Issue #737 (Lead review L4): the Stop text follows the installed effective
+// pair instead of naming an effort or a model family.
+test("the Stop reminder takes the observer's model and effort from its installed agent TOML", () => {
+  const prompt = observationPrompt();
+  assert.match(prompt, /agent_type codex-obs \(its recorded installed name\), the exact model and model_reasoning_effort from its installed agent TOML/);
+  assert.doesNotMatch(prompt, /reasoning_effort low|\bLuna\b/);
+  assert.match(prompt, /The observer owns extraction and publication/);
+});

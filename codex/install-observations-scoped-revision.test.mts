@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { install } from './install.mts';
 import { installObservationPublisher, checkObservationPublisher } from './install-observations.mts';
-import { fixtureModelOptions } from './lib/model-policy.fixture.mts';
+import { fixtureModelOptions, legacyModelHome } from './lib/model-policy.fixture.mts';
 import { renderAgent } from './lib/component-render.mts';
 import { renderObservationHook } from './lib/observation-projection.mts';
 import { observationHash } from './lib/observation-source.mts';
@@ -40,6 +40,7 @@ function f0893dHome(t: { after(fn: () => void): void }) {
     fs.writeFileSync(registry, '{"mcpServers":{}}', { mode: 0o600 });
     install({ ...fixtureModelOptions(), codexHome: home, workspace, claudeRegistryFile: registry, claudeConfigDir: path.join(root, 'empty-claude'),
         nodePath: process.execPath, skipPluginRegistration: true, resolveRegistryRuntime: () => ({}), log: () => { }, controlPlaneOutbox: path.join(root, 'outbox') });
+    legacyModelHome(home);
     const hookDir = path.join(home, 'hooks', 'kherep-maestro');
     const files = { agent: path.join(home, 'agents', 'codex-obs.toml'), routing: path.join(home, 'orchestra', 'ROUTING.md'),
         helper: path.join(hookDir, 'obs-candidate-policy.mts'), broker: path.join(workspace, 'tools', 'observation-candidate.mts'),

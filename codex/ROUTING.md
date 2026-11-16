@@ -20,19 +20,21 @@ Product implementation, detailed investigations and analysis, builds, long funct
 
 Main turns are short coordination steps: no long synchronous waits, repeated unchanged-status polling or chains of successive worker and review phases held in one root turn. At a bounded handoff with no immediate decision, close the main turn instead of keeping it open solely for worker execution.
 
-Codex role families and reasoning defaults are versioned in `codex/parity/model-policy.toml`
-and installed at `orchestra/model-policy.toml` within the selected Codex home:
-Astra designs, SOL builds and coordinates the root, Terra handles bounded support
-and research, and Luna handles observation and broker work. Installation resolves
-these families against a complete visible native `model/list` catalog and writes
-concrete IDs into agent TOMLs and the dispatch snapshot together. Use those native
-agent defaults. Read the installed observation agent TOML for its exact model pin
-when explicitly dispatching `codex-obs`; never copy an ID from an old reminder.
-Ordinary reinstall preserves a verified resolution. Model refresh is an explicit
-installer operation, and an unavailable family or reasoning level fails closed.
+Shipped Codex role defaults are versioned in `codex/parity/model-policy.toml` and
+installed at `orchestra/model-policy.toml` within the selected Codex home. They are
+defaults, not pins: the operator may choose another visible model or effort per
+role or per agent in `kherep/model-policy.user.json`, and that choice wins field by
+field. Installation resolves the effective model and effort against a complete
+visible native `model/list` catalog and writes them into agent TOMLs, the dispatch
+snapshot and the anchored model-selection receipt together. Read the installed
+agent TOML for the effective model and `model_reasoning_effort` when explicitly
+dispatching `codex-obs` or any other agent; never copy an ID from an old reminder
+or assume a model family. Ordinary reinstall keeps the verified installed choices.
+Adopting new shipped defaults is the explicit `--refresh-models` operation, and an
+unavailable model or reasoning level fails closed.
 
-Resolve BOTH actual managed names before dispatch: the Astra design worker
-(normally `code-architect`) and the SOL implementation worker (the original
+Resolve BOTH actual managed names before dispatch: the designer worker
+(normally `code-architect`) and the implementation builder (the original
 `kherep-builder` mapping). Use the receipt's `projection.agentDefaults` or the
 installed dispatch snapshot's `projectedAgents` for concrete model and reasoning
 defaults. Validate the builder against the original `capabilities.agents`
@@ -58,7 +60,7 @@ A brief for a worker that builds or reviews code binds the work to a revision (i
 - `revision: <name>@<sha>` once per repository, with the full 40-hex SHA from `git rev-parse HEAD` of the checkout the dispatcher measured, and `-dirty` appended when that tree had uncommitted changes. A build names the base the worker starts from; a review names its range as `<name>@<base>..<head>`, where `<head>-dirty` means the range plus the working tree and `<name>@<sha>-dirty` on its own means uncommitted work on `<sha>`. The tokens are the rest of the marker's line; several repositories take several tokens or several lines.
 - `decided: <decision or assumption already made>`, one per marker or a multi-line list under one marker. `decided: none` is the explicit empty form.
 
-`kherep-builder` and `dc-plugin-build-runner` are code-bound by role: their `capabilities.json` entries carry `"codeBound": true`, read by projected name like `enforcePin`, and the Codex dispatch guard denies their dispatch without the revision and decision markers and the build route fields with a reason starting `Worker brief format:`. Any other dispatch whose `message` declares `revision:` is checked as well, and the guard denies a malformed token or an empty `decided:` there too. A dispatch that is neither code-bound nor an observation, declares no `revision:` and whose message mentions a review (`review`, `reviews`, `reviewed`, `reviewing` or `reviewer`) gets a notice starting `Worker brief revision:` once, never a deny. The guard checks presence and form only: it reads no git state and does not judge completeness. Without its installed brief lib it refuses a code-bound dispatch and checks no other. The observation brief keeps its own rules (Session observations). Outside the guard's view, and bound by this rule alone, are `codex exec` started from a shell and a peer directive over the Control Plane. Codex is reached through `codex exec` or the Control Plane intercom; the retired plugin agent is denied with those recovery paths.
+`kherep-builder` and `dc-plugin-build-runner` are code-bound by role: their `capabilities.json` entries carry `"codeBound": true`, read by projected name, and the Codex dispatch guard denies their dispatch without the revision and decision markers and the build route fields with a reason starting `Worker brief format:`. Any other dispatch whose `message` declares `revision:` is checked as well, and the guard denies a malformed token or an empty `decided:` there too. A dispatch that is neither code-bound nor an observation, declares no `revision:` and whose message mentions a review (`review`, `reviews`, `reviewed`, `reviewing` or `reviewer`) gets a notice starting `Worker brief revision:` once, never a deny. The guard checks presence and form only: it reads no git state and does not judge completeness. Without its installed brief lib it refuses a code-bound dispatch and checks no other. The observation brief keeps its own rules (Session observations). Outside the guard's view, and bound by this rule alone, are `codex exec` started from a shell and a peer directive over the Control Plane. Codex is reached through `codex exec` or the Control Plane intercom; the retired plugin agent is denied with those recovery paths.
 
 The builder receipt ends with `REVISION: <name>@<sha>[-dirty]`, or `<name>@<base>..<head>` when the brief authorized a commit and HEAD moved. A review brief requires the receipt lines `REVISION: <name>@<base>..<head>[-dirty]` and `ASSUMED: none | <n>`, and carries this rule verbatim:
 
@@ -148,15 +150,16 @@ Discover capabilities from the active runtime and current installed bindings. A 
 
 ## Session observations
 
-After a completed turn, the Maestro dispatches the observation agent for its own runtime with an
-explicit pinned model. On this runtime that agent is `codex-obs`, projected from its own worker
-definition `codex/agents/codex-obs.md` through `codex/parity/capabilities.json`; on Claude it is `claude-obs`. The pin is
-enforced at dispatch, not merely configured. The Codex dispatch guard reads it from the same
-`capabilities.json` entry that writes `model` into the agent TOML, an entry marked `enforcePin`, and
-denies an `Agent` or `spawn_agent` dispatch whose `agent_type` names that agent when `model` is
-missing or differs; the reason names the pinned model. It also denies hook input it cannot parse or
-attribute to a tool, and every dispatch while its pin source is unreadable. Agents without
-`enforcePin` keep the allowed model the Maestro selects, or inherit one. An observation run never dispatches another observation run.
+After a completed turn, the Maestro dispatches the observation agent for its own runtime. On this
+runtime that agent is `codex-obs`, projected from its own worker definition `codex/agents/codex-obs.md`
+through `codex/parity/capabilities.json`; on Claude it is `claude-obs`. Its installed agent TOML
+carries the effective model and `model_reasoning_effort` of the installed model selection, which
+the shipped observer default or the operator's own choice decided. The Codex dispatch guard checks
+a supplied `model` and `reasoning_effort` against the installed supported models and never compares
+them with a pinned value: the agent TOML's own settings take precedence over spawn arguments. It
+denies hook input it cannot parse or attribute to a tool, and every dispatch while its installed
+dispatch snapshot is unreadable or carries an inconsistent model-selection generation. An
+observation run never dispatches another observation run.
 
 The Codex worker owns extraction and publication through the exact narrow local tools
 `mcp__kherep_observations__related_candidates` (read-only) and

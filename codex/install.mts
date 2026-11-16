@@ -31,9 +31,10 @@ import { InstallTransaction } from "./lib/install-transaction.mts";
 import * as localPlugin from "./lib/local-plugin.mts";
 import * as managedConfig from "./lib/managed-config.mts";
 import { memoryProviderFile, resolveMemoryProvider } from "./lib/memory-provider.mts";
-import { selectModelResolution } from "./lib/model-install-state.mts";
 import { CatalogReadError, readAvailableModels } from "./lib/model-catalog-process.mts";
-import { record, resolveCapabilities } from "./lib/model-policy.mts";
+import { acquireSelectionLock, MODEL_SELECTION_FILES, verifyAnchoredState } from "./lib/model-selection-anchor.mts";
+import { modelSelectionGit, type ModelSelectionGit } from "./lib/model-selection-git.mts";
+import { assertSelectionUnchanged, assertSelectionWritten, prepareInstallSelection, selectionNeedsCatalog } from "./lib/model-selection-install.mts";
 import { projectOperatorBinding } from "./lib/mcp-operator-binding.mts";
 import { projectRegistry } from "./lib/mcp-registry-projection.mts";
 import { retiredCentralBrainRender } from "./lib/retired-central-brain.mts";
@@ -92,6 +93,8 @@ export interface InstallOptions {
   // A complete metadata-only model/list catalog, injected by the async CLI or tests.
   modelCatalog?: unknown;
   refreshModels?: boolean;
+  // Issue #737. The Git adapter of the source checkout; tests inject a fake.
+  modelSelectionGit?: ModelSelectionGit;
   memoryProvider?: unknown;
   memoryProviderConfig?: string;
   codexHome?: string;
@@ -149,37 +152,23 @@ function resolvedCodexHome(options: InstallOptions): string {
   return path.resolve(options.codexHome || process.env.CODEX_HOME || path.join(os.homedir(), ".codex"));
 }
 
-function previousModelResolution(codexHome: string): unknown {
-  let text: string;
-  try { text = fs.readFileSync(path.join(codexHome, "orchestra", "parity-receipt.json"), "utf8"); }
-  catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-    throw new Error("Installed model receipt is unreadable");
-  }
-  try {
-    const receipt: unknown = JSON.parse(text);
-    if (record(receipt)) return receipt.modelResolution;
-  } catch { /* A corrupt read must not look like a fresh installation. */ }
-  throw new Error("Installed model receipt is unreadable");
-}
-
 export type ModelCatalogReader = (options: { codexHome: string }) => Promise<unknown>;
 
 // The async entry point collects metadata before the synchronous transaction.
-// A normal reinstall validates and reuses its canonical receipt without a read.
+// A reinstall plans from the anchored, verified support snapshot and reads a
+// catalog only when the selection needs fresh support (issue #737).
 export async function installFromCli(options: InstallOptions, readCatalog: ModelCatalogReader = readAvailableModels) {
   const codexHome = resolvedCodexHome(options);
-  const existing = previousModelResolution(codexHome);
+  const repoRoot = path.resolve(import.meta.dirname, "..");
   let modelCatalog = options.modelCatalog;
-  if (options.refreshModels === true || existing === undefined) {
-    if (modelCatalog === undefined) {
-      // Codex refuses a CODEX_HOME that does not exist (measured 0.160.1). A home named by the caller
-      // is created here, private, before the read; the transaction would create it moments later
-      // anyway. A home taken from CODEX_HOME or the default is left as it is.
-      if (options.codexHome && !fs.existsSync(codexHome)) fs.mkdirSync(codexHome, { recursive: true, mode: 0o700 });
-      try { modelCatalog = await readCatalog({ codexHome }); }
-      catch (error) { throw error instanceof CatalogReadError ? error : new CatalogReadError(); }
-    }
+  if (modelCatalog === undefined && selectionNeedsCatalog({ repoRoot, codexHome, refresh: options.refreshModels === true,
+    git: options.modelSelectionGit ?? modelSelectionGit(repoRoot) })) {
+    // Codex refuses a CODEX_HOME that does not exist (measured 0.160.1). A home named by the caller
+    // is created here, private, before the read; the transaction would create it moments later
+    // anyway. A home taken from CODEX_HOME or the default is left as it is.
+    if (options.codexHome && !fs.existsSync(codexHome)) fs.mkdirSync(codexHome, { recursive: true, mode: 0o700 });
+    try { modelCatalog = await readCatalog({ codexHome }); }
+    catch (error) { throw error instanceof CatalogReadError ? error : new CatalogReadError(); }
   }
   return install({ ...options, codexHome, modelCatalog });
 }
@@ -214,10 +203,10 @@ export function install(options: InstallOptions = {}) {
   const codexHome = resolvedCodexHome(options);
   const capabilitiesFile = path.join(sourceRoot, "parity", "capabilities.json");
   const modelPolicyFile = path.join(sourceRoot, "parity", "model-policy.toml");
-  const modelResolution = selectModelResolution(fs.readFileSync(modelPolicyFile, "utf8"), {
-    existing: previousModelResolution(codexHome), catalog: options.modelCatalog, refresh: options.refreshModels,
-  });
-  const capabilities = resolveCapabilities(JSON.parse(fs.readFileSync(capabilitiesFile, "utf8")) as Capabilities, modelResolution);
+  // Issue #737. The whole model selection is planned and verified before any write.
+  const git = options.modelSelectionGit ?? modelSelectionGit(repoRoot);
+  const selection = prepareInstallSelection({ repoRoot, codexHome, git, refresh: options.refreshModels === true, catalog: options.modelCatalog });
+  const capabilities = JSON.parse(fs.readFileSync(capabilitiesFile, "utf8")) as Capabilities;
   const selectionFile = memoryProviderFile(codexHome);
   if (options.memoryProviderConfig && options.memoryProvider !== undefined) throw new Error("Memory provider selection is ambiguous");
   const { memoryProvider, retired: retiredMemoryProvider } = resolveMemoryProvider(selectionFile, options.memoryProviderConfig
@@ -481,12 +470,19 @@ export function install(options: InstallOptions = {}) {
     writes += 1;
     options.afterWrite?.(writes);
   }
-  const transaction = new InstallTransaction(codexHome, backupRoot, recordWrite);
-  const workspaceTransaction = new InstallTransaction(
-    workspace,
-    path.join(backupRoot, "workspace"),
-    recordWrite,
-  );
+  // Issue #737. One model-selection writer per Codex home, taken before the
+  // first write (the backup directory included); the plan's inputs are then
+  // rechecked under the lock.
+  const releaseLock = acquireSelectionLock(codexHome);
+  let transaction: InstallTransaction, workspaceTransaction: InstallTransaction;
+  try {
+    assertSelectionUnchanged(codexHome, selection);
+    transaction = new InstallTransaction(codexHome, backupRoot, recordWrite);
+    workspaceTransaction = new InstallTransaction(workspace, path.join(backupRoot, "workspace"), recordWrite);
+  } catch (error) {
+    releaseLock();
+    throw error;
+  }
 
   try {
     transaction.stage(targets.config);
@@ -647,11 +643,11 @@ export function install(options: InstallOptions = {}) {
       codexHome,
       repoRoot,
       transaction,
+      agentOutputs: selection.agentOutputs,
     });
-    // Projection determines the actual plugin names, including personal-name
-    // collisions. Write the guard snapshot only after those native TOMLs exist.
-    transaction.writeFile(path.join(targets.hookDir, "..", "parity", "capabilities.json"),
-      `${JSON.stringify({ ...capabilities, projectedAgents: projection.agentDefaults }, null, 2)}\n`);
+    // The planned names and bytes are the projection's; the guard snapshot
+    // follows the native TOMLs and carries the same selection identity.
+    transaction.writeFile(path.join(targets.hookDir, "..", "parity", "capabilities.json"), selection.snapshotText);
     transaction.copyFile(modelPolicyFile, path.join(codexHome, "orchestra", "model-policy.toml"));
 
     const existingAgents = fs.existsSync(targets.agents) ? fs.readFileSync(targets.agents, "utf8") : "";
@@ -681,7 +677,8 @@ export function install(options: InstallOptions = {}) {
       generatedAt: new Date().toISOString(),
       platform,
       manifestSha256: hashFile(capabilitiesFile),
-      modelResolution,
+      // Issue #737. A pointer only: the anchor pins the selection receipt.
+      modelResolution: selection.pointer,
       canonicalTargetPolicy: capabilities.canonicalTargetPolicy,
       claudeModified: false,
       hooks: ["PreToolUse", "UserPromptSubmit", "PostToolUse", "SessionStart", "PreCompact", "Stop", "SubagentStart", "SubagentStop"],
@@ -739,17 +736,34 @@ export function install(options: InstallOptions = {}) {
       ])],
       projection,
     };
+    const anchorFile = path.join(codexHome, ...MODEL_SELECTION_FILES.anchor.split("/"));
+    if (selection.receiptText !== null) transaction.writeFile(path.join(codexHome, ...MODEL_SELECTION_FILES.receipt.split("/")), selection.receiptText);
     transaction.writeFile(targets.receipt, `${JSON.stringify(receipt, null, 2)}\n`);
+    assertSelectionWritten(codexHome, selection);
+    if (selection.anchorText !== null) {
+      transaction.writeFile(anchorFile, selection.anchorText);
+      verifyAnchoredState(codexHome, git, fs.readFileSync(anchorFile, "utf8"));
+    }
     const cacheRepair = { status: "not-requested" };
+    releaseLock();
     return {
       backupRoot, codexHome, localMarketplace,
       cacheRepair, receipt, targets,
+      modelSelection: { selectionId: selection.selectionId, noOp: selection.noOp, receipt: selection.plan.receipt, resolution: selection.resolution },
       atlassianMcpProblem: receipt.atlassianMcp.status.startsWith("skipped-") && atlassianToken
         ? tokenBindingProblem(atlassianToken) : undefined,
     };
   } catch (error) {
-    transaction.rollback();
-    workspaceTransaction.rollback();
+    // The anchor is restored after every other target; a target another writer
+    // changed after this run is left in place and reported, never overwritten.
+    const conflicts = [
+      ...transaction.rollback({ last: [path.join(codexHome, ...MODEL_SELECTION_FILES.anchor.split("/"))] }),
+      ...workspaceTransaction.rollback(),
+    ];
+    releaseLock();
+    if (conflicts.length) {
+      throw new Error(`install-rollback-ownership-conflict: ${conflicts.length} target(s) changed by another writer were left in place`, { cause: error });
+    }
     throw error;
   }
 }

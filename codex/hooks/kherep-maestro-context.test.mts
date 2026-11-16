@@ -31,7 +31,8 @@ test("session start announces the configured Windows workspace and managed roles
   assert.match(result.stdout, /KHEREP CODEX ORCHESTRA ACTIVE/);
   assert.match(result.stdout, /\[Maestro on \| routing loaded \| evidence-first\]/);
   assert.match(result.stdout, /ROUTING\.md/);
-  assert.match(result.stdout, /Astra for the main designer, SOL for builders and root/);
+  assert.match(result.stdout, /each native agent TOML carries its effective model and reasoning/);
+  assert.doesNotMatch(result.stdout, /\b(Astra|SOL|Luna|Terra)\b/);
 });
 
 test("prompt submission supplies the acceptance and observation worker contract", () => {
@@ -46,7 +47,7 @@ test("prompt submission supplies the acceptance and observation worker contract"
   assert.match(result.stdout, /dispatch codex-obs once.*installed agent TOML.*fork_turns none/);
   assert.match(result.stdout, /the exact model and model_reasoning_effort from its installed agent TOML/);
   assert.doesNotMatch(result.stdout, /reasoning_effort low/);
-  assert.match(result.stdout, /Luna extracts and publishes only through mcp__kherep_observations__publish_observations/);
+  assert.match(result.stdout, /The observer extracts and publishes only through mcp__kherep_observations__publish_observations/);
   assert.doesNotMatch(result.stdout, /Before the final response, dispatch the codex-obs agent/);
 });
 
@@ -95,13 +96,13 @@ const workspaceEnv = { KHEREP_WORKSPACE: "/synthetic/work" };
 const unavailable = "Observation turn identity unavailable. Maestro: continue the user task and its tools; pass this unavailable-identity condition to codex-obs. The observation WORKER must return OBS-ATTEMPT: failed missing-turn-identity detail=none publication=not-attempted created=none with no WORKER tool calls.";
 const header = (sessionId: string, turnId: string) => JSON.stringify({ sessionId, turnId });
 
-test("native stdin supplies exact bounded main-turn identity for the Luna brief", () => {
+test("native stdin supplies exact bounded main-turn identity for the observer brief", () => {
   for (const [sessionId, turnId] of [["main-session_1.2", "native-turn_3.4"], ["s".repeat(80), "t".repeat(80)]]) {
     const result = run({ ...payload, session_id: sessionId, turn_id: turnId }, workspaceEnv);
     assert.strictEqual(result.status, 0);
     assert.match(result.stdout, /MAESTRO TURN CHECK/);
     assert.ok(result.stdout.includes(header(sessionId, turnId)));
-    assert.match(result.stdout, /copy.*verbatim.*Luna brief/i);
+    assert.match(result.stdout, /copy.*verbatim.*observer brief/i);
     assert.match(result.stdout, /dispatching MAIN turn.*not worker/i);
     assert.doesNotMatch(result.stdout, /identity unavailable/);
   }
