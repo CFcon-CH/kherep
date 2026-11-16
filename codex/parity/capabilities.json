@@ -83,7 +83,6 @@
     "claude-obs": {
       "as": "codex-obs",
       "source": "codex/agents/codex-obs.md",
-      "enforcePin": true,
       "sandbox": "read-only",
       "role": "observer"
     },

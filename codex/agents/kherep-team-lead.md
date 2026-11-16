@@ -39,7 +39,7 @@ thread orchestrates, it does not implement. The worker contracts stay exactly as
 - build with the managed SOL builder (the `kherep-builder` mapping, or `dc-plugin-build-runner`),
   the brief bound to `revision:` and `decided:`, one writer per worktree;
 - review with a bounded read-only Terra worker that returns `REVISION:` and `ASSUMED:`;
-- observe with `codex-obs` and its pinned model after the turn.
+- observe with `codex-obs` and the effective model and effort of its installed agent TOML after the turn.
 
 Give each worker one bounded brief: objective, ownership, constraints, evidence required, return
 format, and a real pickup path. Keep root turns short; close a turn at a bounded handoff instead of

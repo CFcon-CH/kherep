@@ -188,7 +188,8 @@ test("projects the Codex root orchestration boundary into routing and Maestro in
       /privacy.*authority/i,
     ]) assert.match(text, rule, `${name} retains ${rule}`);
   }
-  assert.match(routing, /Astra designs, SOL builds and coordinates the root/);
+  assert.match(routing, /Shipped Codex role defaults are versioned in `codex\/parity\/model-policy\.toml`/);
+  assert.match(routing, /They are\s+defaults, not pins/);
   assert.doesNotMatch(routing, /Maestro.*runs proportional checks/);
 });
 
@@ -1096,20 +1097,21 @@ test("default install projects observation delivery without optional Jira toolin
     "utf8",
   );
   assert.match(observationAgent, /^sandbox_mode = "read-only"$/m);
-  // The installed dispatch guard enforces exactly the pin the projection wrote.
+  // The installed dispatch guard reads the selection the projection wrote (issue #737: no model pin).
   const obsModel = observationAgent.match(/^model = "(.*)"$/m)?.[1] ?? "";
   const installedGuard = path.join(result.targets.hookDir, "codex-dispatch-contract-guard.mts");
   assert.deepEqual(fs.readFileSync(installedGuard), fs.readFileSync(path.join(here, "hooks", "dispatch-contract-guard.mts")));
   const installedCapabilities = JSON.parse(fs.readFileSync(
     path.join(result.targets.hookDir, "..", "parity", "capabilities.json"), "utf8")) as Capabilities;
-  assert.deepEqual(installedCapabilities.modelResolution, result.receipt.modelResolution);
+  assert.equal((installedCapabilities.modelResolution as { selectionId: string }).selectionId, result.receipt.modelResolution.selectionId);
   assert.deepEqual(installedCapabilities.projectedAgents, result.receipt.projection.agentDefaults);
   assert.equal(installedCapabilities.agents["claude-obs"].model, obsModel);
   const guard = (extra: Record<string, unknown>): string => spawnSync(process.execPath, [installedGuard], {
     encoding: "utf8",
     input: JSON.stringify({ tool_name: "spawn_agent", tool_input: { task_name: "obs", message: "m", agent_type: "codex-obs", ...extra } }),
   }).stdout;
-  assert.ok(guard({}).includes(`pinned to model ${obsModel};`));
+  assert.ok(guard({ model: "opus" }).includes("Unsupported Kherep agent model: opus"));
+  assert.match(guard({}), /Observation brief format/, "no model is no pin violation; the brief is still checked");
   // Issue #331. The installed guard loads the brief check from its lib sibling.
   assert.match(guard({ model: obsModel }), /Observation brief format: the brief marks no finding/);
   assert.equal(guard({ model: obsModel, message: "- measured: code kherep@2733b35e2c102ac54295568509c68b18b6d92cab -- t.mts `node t.mts` -> 1 pass\n- relayed: the operator" }), "");
@@ -2093,9 +2095,9 @@ test("T3b the wired dispatch-contract command keeps the guard's deny, notice and
     assert.equal(out.status, 0, out.stderr);
     return out.stdout ? JSON.parse(out.stdout) as { hookSpecificOutput: Record<string, string>; systemMessage?: string } : undefined;
   };
-  const denied = run({})!;
+  const denied = run({ model: "opus" })!;
   assert.equal(denied.hookSpecificOutput.permissionDecision, "deny");
-  assert.ok(denied.hookSpecificOutput.permissionDecisionReason!.includes(`pinned to model ${obsModel};`));
+  assert.ok(denied.hookSpecificOutput.permissionDecisionReason!.includes("Unsupported Kherep agent model: opus"));
   assert.equal(denied.systemMessage, denied.hookSpecificOutput.permissionDecisionReason);
   const format = run({ model: obsModel })!;
   assert.match(String(format.hookSpecificOutput.permissionDecisionReason), /^Observation brief format: the brief marks no finding/);

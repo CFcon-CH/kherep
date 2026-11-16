@@ -6,7 +6,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { install } from './install.mts';
 import { installObservationPublisher, checkObservationPublisher } from './install-observations.mts';
-import { fixtureModelOptions } from './lib/model-policy.fixture.mts';
+import { fixtureModelOptions, legacyModelHome } from './lib/model-policy.fixture.mts';
 import { renderAgent } from './lib/component-render.mts';
 import { renderObservationHook, renderObservationPublisher, observationFiles } from './lib/observation-projection.mts';
 import { OBSERVATION_SOURCES, observationSnapshot, observationHash } from './lib/observation-source.mts';
@@ -32,6 +32,7 @@ function fixture(t: {
     const installOptions = { ...fixtureModelOptions(), codexHome: home, workspace, claudeRegistryFile: registry, claudeConfigDir: path.join(root, 'empty-claude'),
         nodePath: process.execPath, skipPluginRegistration: true, resolveRegistryRuntime: () => ({}), log: () => { }, controlPlaneOutbox: path.join(root, 'outbox'), messagingClient: messaging };
     install(installOptions);
+    legacyModelHome(home);
     const configFile = path.join(home, 'config.toml');
     let config = fs.readFileSync(configFile, 'utf8');
     const table = renderObservationPublisher({ entry: path.join(workspace, 'tools', 'observation-stdio.mts'), home }, process.execPath);
@@ -227,7 +228,7 @@ for (const messaging of [false, true])
         const f = fixture(t, messaging);
         installObservationPublisher({ codexHome: f.home, workspace: f.workspace });
         const before = fs.readFileSync(f.configFile, 'utf8');
-        install(f.installOptions);
+        install({ ...f.installOptions, refreshModels: true });
         assert.equal(fs.readFileSync(f.configFile, 'utf8'), before);
     });
 test('known b9f5ef72 stdio predecessor upgrades and an idempotent rerun preserves installed bytes', t => {
@@ -357,7 +358,7 @@ test('scoped context binding changes exactly the recognized command lines before
     assert.equal(fs.readFileSync(f.configFile, 'utf8'), bound);
     assert.equal(result.receipt.unrelatedConfigUnchanged, true);
     assert.deepEqual(result.receipt.changedContextDefinitions, ['UserPromptSubmit', 'SessionStart']);
-    install(f.installOptions);
+    install({ ...f.installOptions, refreshModels: true });
     assert.equal(fs.readFileSync(f.configFile, 'utf8'), bound);
 });
 for (const drift of ['foreign-workspace', 'mixed', 'command']) test(`scoped ${drift} binding refuses before writes`, t => {

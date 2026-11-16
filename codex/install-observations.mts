@@ -10,6 +10,9 @@ import { copyObservationSnapshot, observationHash } from './lib/observation-sour
 import { stableNodePath } from './lib/node-path.mts';
 import { observationWiring } from './lib/observation-wiring.mts';
 import { preserveExternalPostToolPositions } from './lib/post-tool-trust-position.mts';
+import { acquireSelectionLock, ANCHOR_REFUSAL, homeFile, MODEL_SELECTION_FILES, readOptional, verifyAnchoredState } from './lib/model-selection-anchor.mts';
+import { modelSelectionGit, ModelSelectionRefusal, type ModelSelectionGit } from './lib/model-selection-git.mts';
+import { planObserverOverlay, type ObserverOverlayPlan } from './lib/model-selection-observer.mts';
 const START = '# >>> Kherep Codex Maestro >>>', END = '# <<< Kherep Codex Maestro <<<';
 const HOOKS: Record<string, string> = {
     'obs-result-check.mts': 'codex-obs-result-check.mts', 'kherep-maestro-context.mts': '../kherep-maestro-context.mts',
@@ -35,32 +38,12 @@ export interface ObservationInstallOptions {
     nodePath?: string;
     repoRoot?: string;
     afterWrite?: (writes: number) => void;
+    // Issue #737. The Git adapter of the source checkout; tests inject a fake.
+    modelSelectionGit?: ModelSelectionGit;
 }
-function prepareObservationPublisher(options: ObservationInstallOptions) {
-    const home = path.resolve(options.codexHome), workspace = path.resolve(options.workspace);
-    const repo = path.resolve(options.repoRoot ?? path.join(import.meta.dirname, '..'));
-    if (!path.isAbsolute(options.codexHome) || !path.isAbsolute(options.workspace))
-        throw new Error('observation-explicit-targets-required');
-    const predecessor = JSON.parse(read(path.join(repo, 'codex', 'parity', 'observation-predecessor.json'))) as Record<string, string>;
-    const headerPredecessor = JSON.parse(read(path.join(repo, 'codex', 'parity', 'observation-header-predecessor.json'))) as Record<string, string>;
-    const lookupPredecessor = JSON.parse(read(path.join(repo, 'codex', 'parity', 'observation-lookup-predecessor.json'))) as Record<string, string>;
-    const prosePredecessor = JSON.parse(read(path.join(repo, 'codex', 'parity', 'observation-prose-predecessor.json'))) as Record<string, string>;
-    const scopedPredecessor = JSON.parse(read(path.join(repo, 'codex', 'parity', 'observation-scoped-revision-predecessor.json'))) as Record<string, string>;
-    const identityPredecessor = JSON.parse(read(path.join(repo, 'codex', 'parity', 'observation-turn-identity-predecessor.json'))) as Record<string, string>;
-    const pilotPredecessor = JSON.parse(read(path.join(repo, 'codex', 'parity', 'observation-turn-identity-pilot-predecessor.json'))) as Record<string, string>;
-    const workspacePredecessor = JSON.parse(read(path.join(repo, 'codex', 'parity', 'observation-context-workspace-predecessor.json'))) as Record<string, string>;
-    // Issue #701: the 764200b hook-integrity-sources.mts, before the dispatch guard's worker-brief lib.
-    const workerPredecessor = JSON.parse(read(path.join(repo, 'codex', 'parity', 'observation-worker-brief-predecessor.json'))) as Record<string, string>;
-    // Issue #730: frozen exact 57c0c471 bytes, before worker-only handbacks.
-    const handbackPredecessor = JSON.parse(read(path.join(repo, 'codex', 'parity', 'observation-handback-predecessor.json'))) as Record<string, string>;
-    // Issue #736: frozen exact f34b66f bytes, before candidates-first linking.
-    const linkingPredecessor = JSON.parse(read(path.join(repo, 'codex', 'parity', 'observation-linking-predecessor.json'))) as Record<string, string>;
-    const source = (relative: string) => read(path.join(repo, relative));
-    const configFile = path.join(home, 'config.toml'), beforeConfig = read(configFile);
-    const start = beforeConfig.indexOf(START), end = beforeConfig.indexOf(END);
-    if (start < 0 || end < start || beforeConfig.split(START).length !== 2 || beforeConfig.split(END).length !== 2)
-        throw new Error('observation-managed-block-unrecognized');
-    const wiring = observationWiring(beforeConfig, home, options.nodePath ?? stableNodePath(process.execPath), workspace);
+// The V1 compatibility path for a home without a model-selection anchor: the
+// installed resolution, projected defaults and pinned snapshot must still agree.
+function legacyObserver(home: string, source: (relative: string) => string, known: Record<string, string>[]) {
     const receipt = JSON.parse(read(path.join(home, 'orchestra', 'parity-receipt.json')));
     const resolution = selectModelResolution(source('codex/parity/model-policy.toml'), { existing: receipt.modelResolution });
     const defaults = receipt.projection?.agentDefaults as Record<string, {
@@ -81,10 +64,47 @@ function prepareObservationPublisher(options: ObservationInstallOptions) {
     const agentOptions = { model: agent.model, reasoning: resolution.roles.observer.reasoning, sandbox: 'read-only' };
     const agentFile = path.join(home, 'agents', `${agentName}.toml`), beforeAgent = read(agentFile);
     const newAgent = renderAgent(agentName, source('codex/agents/codex-obs.md'), agentOptions);
-    if (beforeAgent !== newAgent && ![predecessor, scopedPredecessor, identityPredecessor, pilotPredecessor, handbackPredecessor, linkingPredecessor].some(known => beforeAgent === renderAgent(agentName, known['codex/agents/codex-obs.md'], agentOptions)))
+    if (beforeAgent !== newAgent && !known.some(predecessor => beforeAgent === renderAgent(agentName, predecessor['codex/agents/codex-obs.md'], agentOptions)))
         throw new Error('observation-agent-drift');
+    return { agentFile, newAgent, capabilities };
+}
+function prepareObservationPublisher(options: ObservationInstallOptions) {
+    const home = path.resolve(options.codexHome), workspace = path.resolve(options.workspace);
+    const repo = path.resolve(options.repoRoot ?? path.join(import.meta.dirname, '..'));
+    if (!path.isAbsolute(options.codexHome) || !path.isAbsolute(options.workspace))
+        throw new Error('observation-explicit-targets-required');
+    const predecessor = JSON.parse(read(path.join(repo, 'codex', 'parity', 'observation-predecessor.json'))) as Record<string, string>;
+    const headerPredecessor = JSON.parse(read(path.join(repo, 'codex', 'parity', 'observation-header-predecessor.json'))) as Record<string, string>;
+    const lookupPredecessor = JSON.parse(read(path.join(repo, 'codex', 'parity', 'observation-lookup-predecessor.json'))) as Record<string, string>;
+    const prosePredecessor = JSON.parse(read(path.join(repo, 'codex', 'parity', 'observation-prose-predecessor.json'))) as Record<string, string>;
+    const scopedPredecessor = JSON.parse(read(path.join(repo, 'codex', 'parity', 'observation-scoped-revision-predecessor.json'))) as Record<string, string>;
+    const identityPredecessor = JSON.parse(read(path.join(repo, 'codex', 'parity', 'observation-turn-identity-predecessor.json'))) as Record<string, string>;
+    const pilotPredecessor = JSON.parse(read(path.join(repo, 'codex', 'parity', 'observation-turn-identity-pilot-predecessor.json'))) as Record<string, string>;
+    const workspacePredecessor = JSON.parse(read(path.join(repo, 'codex', 'parity', 'observation-context-workspace-predecessor.json'))) as Record<string, string>;
+    // Issue #701: the 764200b hook-integrity-sources.mts, before the dispatch guard's worker-brief lib.
+    const workerPredecessor = JSON.parse(read(path.join(repo, 'codex', 'parity', 'observation-worker-brief-predecessor.json'))) as Record<string, string>;
+    // Issue #730: frozen exact 57c0c471 bytes, before worker-only handbacks.
+    const handbackPredecessor = JSON.parse(read(path.join(repo, 'codex', 'parity', 'observation-handback-predecessor.json'))) as Record<string, string>;
+    // Issue #736: frozen exact f34b66f bytes, before candidates-first linking.
+    const linkingPredecessor = JSON.parse(read(path.join(repo, 'codex', 'parity', 'observation-linking-predecessor.json'))) as Record<string, string>;
+    // Issue #737: frozen exact 72cebdd4 bytes, before the installed model selection replaced pins.
+    const modelPolicyPredecessor = JSON.parse(read(path.join(repo, 'codex', 'parity', 'observation-model-policy-predecessor.json'))) as Record<string, string>;
+    const source = (relative: string) => read(path.join(repo, relative));
+    const configFile = path.join(home, 'config.toml'), beforeConfig = read(configFile);
+    const start = beforeConfig.indexOf(START), end = beforeConfig.indexOf(END);
+    if (start < 0 || end < start || beforeConfig.split(START).length !== 2 || beforeConfig.split(END).length !== 2)
+        throw new Error('observation-managed-block-unrecognized');
+    const wiring = observationWiring(beforeConfig, home, options.nodePath ?? stableNodePath(process.execPath), workspace);
+    const anchorText = readOptional(homeFile(home, MODEL_SELECTION_FILES.anchor), ANCHOR_REFUSAL.anchorInvalid);
+    const overlay: ObserverOverlayPlan | undefined = anchorText === undefined ? undefined
+        : planObserverOverlay(home, options.modelSelectionGit ?? modelSelectionGit(repo), anchorText);
+    const { agentFile, newAgent, capabilities } = overlay
+        ? { agentFile: overlay.agentFile, newAgent: overlay.agentText, capabilities: JSON.parse(overlay.snapshotText) }
+        : legacyObserver(home, source, [predecessor, scopedPredecessor, identityPredecessor, pilotPredecessor, handbackPredecessor, linkingPredecessor]);
     const changes = new Map<string, string>();
     changes.set(agentFile, newAgent);
+    if (overlay)
+        changes.set(overlay.snapshotFile, overlay.snapshotText);
     const hookDir = path.join(home, 'hooks', 'kherep-maestro');
     for (const [name, target] of Object.entries(HOOKS)) {
         const relative = `codex/hooks/${name}`, file = path.resolve(hookDir, target);
@@ -94,6 +114,7 @@ function prepareObservationPublisher(options: ObservationInstallOptions) {
             && (scopedPredecessor[relative] === undefined || read(file) !== render(scopedPredecessor[relative]))
             && (handbackPredecessor[relative] === undefined || read(file) !== render(handbackPredecessor[relative]))
             && (linkingPredecessor[relative] === undefined || read(file) !== render(linkingPredecessor[relative]))
+            && (modelPolicyPredecessor[relative] === undefined || read(file) !== render(modelPolicyPredecessor[relative]))
             && read(file) !== identityPredecessor[relative] && read(file) !== workspacePredecessor[relative] && read(file) !== workerPredecessor[relative])
             throw new Error('observation-hook-drift');
         changes.set(file, next);
@@ -108,11 +129,11 @@ function prepareObservationPublisher(options: ObservationInstallOptions) {
     }
     const agentsFile = path.join(home, 'AGENTS.md');
     const line = (text: string) => text.split('\n').find(row => row.startsWith('- After a completed turn,'))!;
-    const oldAgents = [predecessor, handbackPredecessor, linkingPredecessor].map(known => known['codex/AGENTS.maestro.md'])
+    const oldAgents = [predecessor, handbackPredecessor, linkingPredecessor, modelPolicyPredecessor].map(known => known['codex/AGENTS.maestro.md'])
         .find(known => read(agentsFile).includes(line(known))) ?? predecessor['codex/AGENTS.maestro.md'];
     changes.set(agentsFile, replaceKnown(read(agentsFile), line(oldAgents), line(source('codex/AGENTS.maestro.md'))));
     const routingFile = path.join(home, 'orchestra', 'ROUTING.md'), routing = read(routingFile);
-    const oldRouting = [predecessor, scopedPredecessor, handbackPredecessor, linkingPredecessor].map(known => section(known['codex/ROUTING.md'])).find(old => routing.includes(old)) ?? section(predecessor['codex/ROUTING.md']);
+    const oldRouting = [predecessor, scopedPredecessor, handbackPredecessor, linkingPredecessor, modelPolicyPredecessor].map(known => section(known['codex/ROUTING.md'])).find(old => routing.includes(old)) ?? section(predecessor['codex/ROUTING.md']);
     changes.set(routingFile, replaceKnown(routing, oldRouting, section(source('codex/ROUTING.md'))));
     const table = renderObservationPublisher({ entry: path.join(workspace, 'tools', 'observation-stdio.mts'), home }, wiring.node);
     let config = beforeConfig;
@@ -173,20 +194,37 @@ function prepareObservationPublisher(options: ObservationInstallOptions) {
         restored = restored.slice(0, at) + edit.before + restored.slice(at + edit.after.length);
     }
     if (restored !== beforeConfig) throw new Error('observation-config-preservation-failed');
-    return { home, workspace, repo, changes, config, newAgent, agentFile, capabilities,
+    return { home, workspace, repo, changes, config, newAgent, agentFile, capabilities, overlay,
         changedContextDefinitions: ['UserPromptSubmit', 'SessionStart'] };
 }
+function modelSelectionReport(overlay: ObserverOverlayPlan | undefined) {
+    return overlay ? { kind: 'v2-overlay', selectionId: overlay.selectionId, effectivePairUnchanged: true, observer: overlay.installedName }
+        : { kind: 'v1-compatibility' };
+}
 export function checkObservationPublisher(options: ObservationInstallOptions) {
-    const { changedContextDefinitions } = prepareObservationPublisher(options);
-    return { contextWorkspaceBinding: 'installer-workspace', changedContextDefinitions, nativeTrustReview: 'required', predecessorRecognized: true, unknownObservationDrift: false, pinUnchanged: true, sandbox: 'read-only', nativeToolDiscovery: 'UNKNOWN' };
+    const { changedContextDefinitions, overlay } = prepareObservationPublisher(options);
+    return { contextWorkspaceBinding: 'installer-workspace', changedContextDefinitions, nativeTrustReview: 'required', predecessorRecognized: true, unknownObservationDrift: false, pinUnchanged: true, modelSelection: modelSelectionReport(overlay), sandbox: 'read-only', nativeToolDiscovery: 'UNKNOWN' };
 }
 export function installObservationPublisher(options: ObservationInstallOptions) {
-    const { home, workspace, repo, changes, config, newAgent, agentFile, capabilities, changedContextDefinitions } = prepareObservationPublisher(options);
+    const { home, workspace, repo, changes, config, newAgent, agentFile, capabilities, overlay, changedContextDefinitions } = prepareObservationPublisher(options);
     const source = (relative: string) => read(path.join(repo, relative));
     const backup = path.join(home, 'backups', 'kherep-observations', `${Date.now()}-${process.pid}`);
     let writes = 0;
     const onWrite = () => options.afterWrite?.(++writes);
-    const homeTx = new InstallTransaction(home, backup, onWrite), workspaceTx = new InstallTransaction(workspace, path.join(backup, 'workspace'), onWrite);
+    // Issue #737. A V2 overlay is a model-selection write: one writer per home,
+    // and the verified anchor must still be the one on disk under the lock.
+    const releaseLock = overlay ? acquireSelectionLock(home) : () => undefined;
+    let homeTx: InstallTransaction, workspaceTx: InstallTransaction;
+    try {
+        if (overlay && readOptional(overlay.anchorFile, ANCHOR_REFUSAL.anchorInvalid) !== overlay.previousAnchorText)
+            throw new ModelSelectionRefusal('model-selection-plan: output-precondition-conflict');
+        homeTx = new InstallTransaction(home, backup, onWrite);
+        workspaceTx = new InstallTransaction(workspace, path.join(backup, 'workspace'), onWrite);
+    }
+    catch (error) {
+        releaseLock();
+        throw error;
+    }
     const controlPointer = path.join(home, 'orchestra', 'control-plane-source.json');
     const oldPointer = fs.existsSync(controlPointer) ? read(controlPointer) : null;
     const hookStateFile = path.join(home, 'hooks.state.json');
@@ -207,16 +245,24 @@ export function installObservationPublisher(options: ObservationInstallOptions) 
             nativeTrustReview: 'required', unrelatedConfigUnchanged: true,
             hookStateUnchanged: (fs.existsSync(hookStateFile) ? read(hookStateFile) : null) === oldState,
             controlPlanePointerUnchanged: (fs.existsSync(controlPointer) ? read(controlPointer) : null) === oldPointer,
-            externalHookPositionsUnchanged: true, integritySourceMatches: snapshotMatches, pinUnchanged: pinMatches, sandbox: 'read-only',
+            externalHookPositionsUnchanged: true, integritySourceMatches: snapshotMatches, pinUnchanged: pinMatches, modelSelection: modelSelectionReport(overlay), sandbox: 'read-only',
             nativeToolDiscovery: 'UNKNOWN', livePublication: 'UNTESTED', hashes, brokerHashes, source: { kind: 'content-manifest', sha256: observationHash(JSON.stringify({ hashes, brokerHashes, manifest })) } };
         if (!report.installedHashesMatch || !report.unrelatedConfigUnchanged || !report.hookStateUnchanged || !report.controlPlanePointerUnchanged || !report.pinUnchanged || !report.integritySourceMatches)
             throw new Error('observation-target-verification-failed');
         homeTx.writeFile(path.join(home, 'orchestra', 'observation-install-receipt.json'), JSON.stringify(report, null, 2) + '\n');
+        if (overlay) {
+            // The overlay first, the anchor last; the anchored generation is then re-verified.
+            homeTx.writeFile(overlay.overlayFile, overlay.overlayText);
+            homeTx.writeFile(overlay.anchorFile, overlay.anchorText);
+            verifyAnchoredState(home, options.modelSelectionGit ?? modelSelectionGit(repo), read(overlay.anchorFile));
+        }
+        releaseLock();
         return { backupRoot: backup, receipt: report };
     }
     catch {
-        homeTx.rollback();
+        homeTx.rollback({ last: overlay ? [overlay.anchorFile] : [] });
         workspaceTx.rollback();
+        releaseLock();
         throw new Error('observation-install-failed-rolled-back');
     }
 }
@@ -241,7 +287,8 @@ if (main) {
         const allowed = new Set(['observation-explicit-targets-required', 'observation-managed-block-unrecognized', 'observation-role-unrecognized',
             'observation-pin-unrecognized', 'observation-agent-drift', 'observation-hook-drift', 'observation-helper-drift', 'observation-tool-table-drift',
             'observation-context-wiring-drift', 'observation-config-preservation-failed', 'observation-result-wiring-drift', 'observation-broker-drift', 'observation-predecessor-unrecognized', 'observation-install-failed-rolled-back']);
-        const message = error instanceof Error && allowed.has(error.message) ? error.message : 'observation-upgrade-unavailable';
+        const message = error instanceof ModelSelectionRefusal ? error.code
+            : error instanceof Error && allowed.has(error.message) ? error.message : 'observation-upgrade-unavailable';
         process.stderr.write(`${message}\n`);
         process.exitCode = 1;
     }

@@ -274,7 +274,7 @@ Only the operator starts the canary. Nothing installs, schedules or runs it auto
 
 ### Codex observation publisher upgrade
 
-An existing Codex installation can use the [observation-only updater](CODEX.md#observation-only-upgrade) after an isolated review. It preserves authority, model pin, read-only sandbox, unrelated MCP settings, hook positions/state and the shared Control Plane pointer. Its separate receipt and observation-only restore snapshot cover the changed artifacts. Restart the native session and measure exact tool discovery and target readback before claiming activation; source tests do not prove live publication. Claude installation and publication remain unchanged.
+An existing Codex installation can use the [observation-only updater](CODEX.md#observation-only-upgrade) after an isolated review. It preserves authority, the committed model selection (the observer's effective model and effort), read-only sandbox, unrelated MCP settings, hook positions/state and the shared Control Plane pointer. Its separate receipt and observation-only restore snapshot cover the changed artifacts. Restart the native session and measure exact tool discovery and target readback before claiming activation; source tests do not prove live publication. Claude installation and publication remain unchanged.
 
 ## Upgrades and rollback
 

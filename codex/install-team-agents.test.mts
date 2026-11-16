@@ -54,7 +54,8 @@ test("capabilities.json names the runtime's own source and the root role for bot
 test("install projects both profiles as native agent TOMLs with the root defaults", (t) => {
   const { codexHome, options } = fixture(t);
   const result = install(options);
-  const defaults = result.receipt.modelResolution.roles.root;
+  const root = result.modelSelection.resolution.roles.root.effective;
+  const defaults = { model: root.model, reasoning: root.effort };
   for (const agent of AGENTS) {
     const source = fs.readFileSync(path.join(here, "agents", `${agent}.md`), "utf8");
     const toml = fs.readFileSync(path.join(codexHome, "agents", `${agent}.toml`), "utf8");
