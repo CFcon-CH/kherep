@@ -80,6 +80,98 @@ function files(root: string, dir = root, result: Record<string, string> = {}): R
   return result;
 }
 
+function sourceHashes(relative: string, result: Record<string, string> = {}): Record<string, string> {
+  if (relative in result) return result;
+  const file = path.resolve(REPO, relative);
+  assert.ok(file.startsWith(`${REPO}${path.sep}`));
+  const bytes = fs.readFileSync(file);
+  result[relative] = createHash("sha256").update(bytes).digest("hex");
+  for (const specifier of relativeSpecifiers(bytes.toString())) {
+    if (specifier.startsWith(".") && specifier.endsWith(".mts")) {
+      sourceHashes(path.relative(REPO, path.resolve(path.dirname(file), specifier)), result);
+    }
+  }
+  return result;
+}
+
+test("checkout pre-push CLI records one real attribution journal entry", t => {
+  const relative = "claude/kherep/githooks/attribution-record.mts", dependencies = sourceHashes(relative);
+  const f = fixture(t, relative), before = files(f.root), ref = "refs/heads/source-cli", sha = "a".repeat(40);
+  const started = Date.now();
+  assert.equal(run(f, `${ref} ${sha} ${ref} ${"0".repeat(40)}\n`,
+    ["push", "https://example.invalid/synthetic/repo.git", f.workspace], { KHEREP_SESSION_ID: "synthetic-source-session" }), "");
+  const finished = Date.now(), journal = "config/control-plane/attribution.jsonl";
+  const records = fs.readFileSync(path.join(f.root, journal), "utf8").trim().split("\n").map(line => JSON.parse(line));
+  assert.equal(records.length, 1);
+  const { ts, ...record } = records[0];
+  assert.deepEqual(record, { v: 1, kind: "push", sessionId: "synthetic-source-session", runtime: "codex",
+    sessionSource: "KHEREP_SESSION_ID", repo: "synthetic/repo", toplevel: f.workspace, branch: "source-cli",
+    remoteRef: ref, sha, pr: null });
+  assert.ok(Date.parse(ts) >= started && Date.parse(ts) <= finished);
+  const after = files(f.root);
+  assert.deepEqual(Object.keys(after).filter(file => before[file] !== after[file]), [journal]);
+  assert.deepEqual(sourceHashes(relative), dependencies);
+});
+
+test("checkout post-edit CLI skips Bash and retains its exact malformed-input error", t => {
+  const relative = "codex/hooks/post-edit-checks.mts", dependencies = sourceHashes(relative);
+  const f = fixture(t, relative), before = files(f.root);
+  assert.equal(run(f, JSON.stringify({ tool_name: "Bash", tool_input: { command: "printf safe" } })), "");
+  const child = spawnSync(process.execPath, [f.entry], { cwd: f.root, env: f.env, input: "{not json", encoding: "utf8",
+    timeout: 10_000, killSignal: "SIGKILL", maxBuffer: 256 * 1024, windowsHide: true });
+  assert.equal(child.error, undefined);
+  assert.equal(child.signal, null);
+  const stderr = child.stderr.replace(/\(node:\d+\) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time\r?\n/g, "")
+    .replace(/\(Use .+?--trace-warnings.+?\)\r?\n/g, "");
+  assert.deepEqual([child.status, child.stdout, stderr], [1, "", "post-edit-checks received malformed JSON input\n"]);
+  assert.deepEqual(files(f.root), before);
+  assert.deepEqual(sourceHashes(relative), dependencies);
+});
+
+test("checkout handback gate remains quiet for out-of-scope and malformed input", t => {
+  const relative = "claude/hooks/obs-handback-gate.mts", dependencies = sourceHashes(relative);
+  const f = fixture(t, relative), before = files(f.root);
+  assert.equal(run(f, JSON.stringify({ hook_event_name: "SessionStart" })), "");
+  assert.equal(run(f, "{not json"), "");
+  assert.deepEqual(files(f.root), before);
+  assert.deepEqual(sourceHashes(relative), dependencies);
+});
+
+test("checkout dispatch guard denies malformed input with the exact contract", t => {
+  const relative = "codex/hooks/dispatch-contract-guard.mts", dependencies = sourceHashes(relative);
+  const f = fixture(t, relative), before = files(f.root);
+  const reason = "Dispatch hook received malformed JSON; refusing an unclassifiable agent dispatch.";
+  assert.deepEqual(JSON.parse(run(f, "{not json")), { hookSpecificOutput: {
+    hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: reason }, systemMessage: reason });
+  assert.deepEqual(files(f.root), before);
+  assert.deepEqual(sourceHashes(relative), dependencies);
+});
+
+test("checkout deliver CLI distinguishes readable and write-only inherited fd0", t => {
+  const relative = "modules/control-plane/node/deliver-hook.mts", dependencies = sourceHashes(relative);
+  const f = fixture(t, relative), control = path.join(f.root, "control-empty"), attempt = path.join(f.root, "attempt-empty");
+  fs.writeFileSync(control, "");
+  const controlFd = fs.openSync(control, "r"), attemptFd = fs.openSync(attempt, "wx"), before = files(f.root);
+  try {
+    for (const [name, fd, expected] of [["read-only-control", controlFd, ""],
+      ["write-only-attempt", attemptFd, "kherep deliver-hook: cannot read stdin: stdin reader unavailable\n"]] as const) {
+      const child = spawnSync(process.execPath, [f.entry], { cwd: f.root, env: f.env, stdio: [fd, "pipe", "pipe"],
+        encoding: "utf8", timeout: 10_000, killSignal: "SIGKILL", maxBuffer: 256 * 1024, windowsHide: true });
+      t.diagnostic(JSON.stringify({ platform: process.platform, mode: name, status: child.status, signal: child.signal,
+        error: child.error ? { name: child.error.name, code: (child.error as NodeJS.ErrnoException).code, message: child.error.message } : null,
+        stdout: child.stdout, stderr: child.stderr }));
+      assert.equal(child.error, undefined);
+      assert.equal(child.signal, null);
+      const stderr = child.stderr.replace(/\(node:\d+\) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time\r?\n/g, "")
+        .replace(/\(Use .+?--trace-warnings.+?\)\r?\n/g, "");
+      assert.deepEqual([child.status, child.stdout, stderr], [0, "", expected]);
+    }
+  } finally { fs.closeSync(controlFd); fs.closeSync(attemptFd); }
+  assert.deepEqual(files(f.root), before);
+  assert.deepEqual([fs.statSync(control).size, fs.statSync(attempt).size], [0, 0]);
+  assert.deepEqual(sourceHashes(relative), dependencies);
+});
+
 test("acceptance CLI refuses an in-scope completion without a receipt and accepts C1-C4", t => {
   const f = fixture(t, "codex/hooks/acceptance-gate.mts"), before = files(f.root);
   const env = { KHEREP_WORKSPACE: f.workspace };
@@ -200,12 +292,20 @@ test("installed post-adapter invokes one real guard and creates no denial journa
   assert.deepEqual(fs.readFileSync(helper), canonical);
 });
 
-test("privacy CLI post-emission fault preserves a real denial byte for byte", t => {
+for (const direct of [false, true]) test(direct
+  ? "checkout privacy CLI post-emission fault preserves a real denial byte for byte"
+  : "privacy CLI post-emission fault preserves a real denial byte for byte", t => {
   // INJECTED POST-EMISSION FAILURE: the unchanged guard emits the denial first.
   // This does not claim recovery from a natural Node output failure.
   const relative = "claude/hooks/privacy-boundary-guard.mts";
-  const injected = fixture(t, relative, false, false), control = fixture(t, relative, false, false);
-  assert.equal(injected.copied.size, 7);
+  const injected = fixture(t, relative, direct, false), control = fixture(t, relative, direct, false);
+  const dependencies = sourceHashes(relative);
+  assert.equal(Object.keys(dependencies).length, 7);
+  if (!direct) {
+    assert.equal(injected.copied.size, 7);
+    assert.deepEqual([...injected.copied].sort(), Object.keys(dependencies).sort());
+    assert.deepEqual([...control.copied].sort(), Object.keys(dependencies).sort());
+  }
   const hashes = (f: Fixture) => Object.fromEntries([...f.copied].sort().map(file => {
     const bytes = fs.readFileSync(path.join(f.source, file));
     assert.deepEqual(bytes, fs.readFileSync(path.join(REPO, file)));
@@ -239,6 +339,7 @@ await import(pathToFileURL(process.argv[2]).href);`);
   assert.deepEqual(JSON.parse(fs.readFileSync(receipt, "utf8")), { calls: 1, originalReturned: true, restored: true });
   assert.deepEqual(hashes(injected), before);
   assert.deepEqual(hashes(control), beforeControl);
+  assert.deepEqual(sourceHashes(relative), dependencies);
 });
 
 test("four native Node invocation forms keep recorder argv fallback distinct from main not entered", t => {

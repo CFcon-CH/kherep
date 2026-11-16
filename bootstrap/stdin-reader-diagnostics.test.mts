@@ -44,20 +44,29 @@ function run(t: TestContext, route: typeof ROUTES[number], fault: "missing" | "c
   const helper = path.join(root, route.helper);
   // Installed siblings contain canonical bytes, rather than a source reexport shim.
   fs.copyFileSync(path.join(SOURCE, CANONICAL), helper);
-  if (fault === "missing") fs.rmSync(helper);
-  else fs.writeFileSync(helper, 'export * from "./SYNTHETIC_PRIVATE_MODULE_MARKER.mts";\n');
   const entry = path.join(root, route.entry);
   const original = fs.readFileSync(path.join(SOURCE, route.entry));
   declareCopy(path.join(SOURCE, route.entry), entry);
   assert.deepEqual(fs.readFileSync(entry), original);
-  const child = spawnSync(process.execPath, [entry, ...route.args], {
-    cwd: root, input: PRIVATE_PAYLOAD, encoding: "utf8", timeout: 10_000,
+  const options = {
+    cwd: root, encoding: "utf8" as const, timeout: 10_000,
     env: { PATH: process.env.PATH, SYSTEMROOT: process.env.SYSTEMROOT,
       ...(process.env.NODE_V8_COVERAGE === undefined ? {} : { NODE_V8_COVERAGE: process.env.NODE_V8_COVERAGE }),
       CLAUDE_HOME: path.join(root, "claude-home"), CODEX_HOME: path.join(root, "codex-home"),
       KHEREP_CONFIG_DIR: path.join(root, "config"), KHEREP_WORKSPACE: path.join(root, "workspace"),
       KHEREP_PROFILE: process.platform === "win32" ? "win" : "mac" },
-  });
+  };
+  if (route.name === "deliver") {
+    assert.deepEqual(fs.readFileSync(helper), fs.readFileSync(path.join(SOURCE, CANONICAL)));
+    const healthy = spawnSync(process.execPath, [entry, ...route.args], { ...options, input: "" });
+    assert.equal(healthy.error, undefined);
+    assert.equal(healthy.signal, null);
+    assert.deepEqual([healthy.status, healthy.stdout, healthy.stderr.replace(TYPE_WARNING, "")], [0, "", ""]);
+    assert.deepEqual(fs.readFileSync(entry), original);
+  }
+  if (fault === "missing") fs.rmSync(helper);
+  else fs.writeFileSync(helper, 'export * from "./SYNTHETIC_PRIVATE_MODULE_MARKER.mts";\n');
+  const child = spawnSync(process.execPath, [entry, ...route.args], { ...options, input: PRIVATE_PAYLOAD });
   assert.deepEqual(fs.readFileSync(entry), original, "the declared entry stays source-identical through execution");
   return { child, stderr: child.stderr.replace(TYPE_WARNING, "") };
 }
