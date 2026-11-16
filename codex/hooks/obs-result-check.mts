@@ -57,11 +57,18 @@ export function hookLib<T>(name: string, dir = import.meta.dirname): T | null {
 // The state home: the parent of the hook directory, the rule of the Claude hooks.
 export const HOME = path.dirname(import.meta.dirname);
 
-export function decide(value: unknown, home = HOME): HookOutput | null {
+// The lib only when it has both functions: the observation-only upgrade refreshes
+// this hook but not the lib, so an older lib beside it must skip the join, not fail.
+export function stateLib(dir = import.meta.dirname): StatePolicy | null {
+  const lib = hookLib<StatePolicy>("obs-handback-state.mts", dir);
+  return typeof lib?.prune === "function" && typeof lib.recordPromotion === "function" ? lib : null;
+}
+
+export function decide(value: unknown, home = HOME, libDir = import.meta.dirname): HookOutput | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("payload is no object");
   const payload = value as SubagentStopPayload;
   if (payload.agent_type !== OBSERVATION_AGENT) return null;
-  const state = hookLib<StatePolicy>("obs-handback-state.mts");
+  const state = stateLib(libDir);
   state?.prune(home); // the 24 h removal of the Claude stop hook, here for the session-keyed files
   const text = resultText(payload);
   if (!text.trim()) return { systemMessage: NOT_VISIBLE };

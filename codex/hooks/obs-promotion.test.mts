@@ -10,8 +10,8 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { advise, type DispatchPolicy } from "./dispatch-contract-guard.mts";
-import { decide, HOME, hookLib, OBS_RESULT_REASON } from "./obs-result-check.mts";
+import { advise, type DispatchPolicy, statePolicy } from "./dispatch-contract-guard.mts";
+import { decide, HOME, hookLib, OBS_RESULT_REASON, stateLib } from "./obs-result-check.mts";
 import { checkObsHandback } from "./obs-result-policy.mts";
 import { decision, promotion } from "./observation-stop.mts";
 import { stateDir } from "../../claude/hooks/lib/obs-handback-state.mts";
@@ -113,6 +113,32 @@ test("hookLib prefers the installed lib beside the hook and gives null when none
   fs.writeFileSync(path.join(dir, "lib", "stub.mts"), "export const installed = true;\n");
   assert.deepEqual({ ...hookLib<{ installed: boolean }>("stub.mts", dir) }, { installed: true });
   assert.equal(hookLib("absent.mts", dir), null);
+});
+
+// The observation-only upgrade refreshes the hooks but not hooks/kherep-maestro/lib,
+// so an installed 840b9548 obs-handback-state.mts (no recordPromotion) can sit beside them.
+function staleLibDir(name: string, source: string): string {
+  const dir = path.join(TMP, name, "hooks");
+  fs.mkdirSync(path.join(dir, "lib"), { recursive: true });
+  fs.writeFileSync(path.join(dir, "lib", "obs-handback-state.mts"), source);
+  return dir;
+}
+
+test("codex-obs-result-check skips the join, never fails, beside an older state lib", () => {
+  const h = home();
+  brief(h, "measured=1 findings=2\n");
+  const dir = staleLibDir("stale-result", "export function prune() {}\n");
+  assert.equal(stateLib(dir), null);
+  assert.equal(decide(stop(`${RECEIPT}\nOBS-EVIDENCE: 11:1:assumed`), h, dir), null);
+  assert.equal(pending(h), null);
+  assert.equal(stateLib(staleLibDir("no-prune", "export function recordPromotion() {}\n")), null);
+  assert.notEqual(stateLib(), null, "the checkout lib has both");
+});
+
+test("the Codex dispatch guard uses the state lib only when it can record a brief", () => {
+  assert.equal(statePolicy(staleLibDir("stale-guard", "export function prune() {}\n")), null);
+  assert.equal(statePolicy(path.join(TMP, "nowhere", "hooks")), null);
+  assert.equal(typeof statePolicy()?.recordBrief, "function");
 });
 
 test("the Codex Stop hook consumes a pending promotion once and merges it with the observation reason", () => {
