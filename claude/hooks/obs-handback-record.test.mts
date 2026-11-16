@@ -102,11 +102,10 @@ test("without a valid agent_id the notice stays and nothing is written", () => {
     const result = run("OBS-RESULT: failed missing broker", { agent_id });
     assert.match(notice(result), /OBS-RESULT: failed/);
   }
-  // Every file under <root>/.cache is a record of a valid rec-<n> id, wherever an invalid id would have landed;
-  // issue #731 PR-B adds the join marker of a valid id's wrote handback.
+  // Every file under <root>/.cache is a record of a valid rec-<n> id, wherever an invalid id would have landed.
   const cache = path.join(ROOT, ".cache");
   const written = fs.existsSync(cache) ? fs.readdirSync(cache, { recursive: true }).map((name) => String(name).replace(/\\/g, "/")) : [];
-  for (const name of written) assert.match(name, /^obs-result-check(\/rec-\d+\.(delivered|toolu_01ABC\.joined))?$/, name);
+  for (const name of written) assert.match(name, /^obs-result-check(\/rec-\d+\.delivered)?$/, name);
 });
 
 test("any hook error is one systemMessage and exit 0", () => {

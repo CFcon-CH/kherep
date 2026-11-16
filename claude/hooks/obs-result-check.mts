@@ -60,8 +60,8 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import {
-  clearDelivered, type Delivered, type DeliveredRead, FAILED_MESSAGE, homeOf, OBS_RESULT_FORMAT, PREFIX, prune,
-  claimJoin, readDelivered, recordPromotion, stillMalformed, type StopTrace, validId, writeStopTrace,
+  claimJoin, clearDelivered, type Delivered, type DeliveredRead, FAILED_MESSAGE, homeOf, joinKey, OBS_RESULT_FORMAT, PREFIX, prune,
+  readDelivered, recordPromotion, stillMalformed, type StopTrace, validId, writeStopTrace,
 } from "./lib/obs-handback-state.mts";
 import { claudeIds, claudePages } from "./lib/obs-promotion-policy.mts";
 import { checkObsResult } from "./lib/obs-result-policy.mts";
@@ -100,9 +100,9 @@ const isRecord = (state: DeliveredRead): state is Delivered => state !== null &&
 const TRANSCRIPT: Record<Handback["result"], StopTrace["transcript"]> = { ok: "delivered", error: "refused", unknown: "unknown" };
 
 // Issue #731 PR-B. A wrote report this hook judges itself is joined with the
-// brief here; one the recorder judged (branch "state") was joined there. A
-// handback is joined once per tool_use_id (claimJoin), so a resumed agent's
-// earlier handback is never joined again.
+// brief here; one the recorder judged (branch "state") was joined there. Each
+// result is joined once per agent id and join key (claimJoin, joinKey), so a
+// resumed agent's earlier handback or a repeated final message is never joined again.
 type Join = (text: string, toolUseId?: string | null) => string | null;
 
 // A warning of the join after an existing notice, or alone.
@@ -171,8 +171,8 @@ export async function decide(value: unknown, { home, waitMs = WAIT_MS }: DecideO
     after = isRecord(state) ? "present" : "absent";
   }
 
-  const join: Join = (text, toolUseId) => toolUseId === undefined || claimJoin(home, id, toolUseId)
-    ? recordPromotion(home, payload.session_id, claudeIds(text), claudePages(text)) : null;
+  const join: Join = (text, toolUseId) =>
+    recordPromotion(home, payload.session_id, claudeIds(text), claudePages(text), () => claimJoin(home, id, joinKey(toolUseId, text)));
   let branch: string;
   let output: HookOutput | null;
   if (isRecord(state)) [branch, output] = ["state", null];

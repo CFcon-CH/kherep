@@ -160,8 +160,9 @@ parent Stop hook consumes it and continues the turn once with a fixed instructio
 Confluence broker evidence verb for each page with this turn's measurement, or state in the final
 message why it cannot be promoted. A marker alone never promotes a page. Labels that cannot be
 read against a measured brief, or a result without a session id or without a recorded brief whose
-pages could be a hit, give an operator warning naming the page ids, never a block. Each handback is
-joined once, and the Stop hook claims the pending file by renaming it before it reads it.
+pages could be a hit, give an operator warning naming the page ids, never a block. Each result is
+joined once, each join writes its own pending file, and the Stop hook claims every pending file of
+the session by renaming it before it reads it.
 
 Observations are stored in the Confluence knowledge space configured for this host, read from
 `<runtime-home>/kherep/confluence.json` and resolved at install time. A host without that file, or

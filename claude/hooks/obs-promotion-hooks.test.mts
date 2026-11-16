@@ -43,8 +43,12 @@ const brief = (h: string, line: string, sid = SID) => {
   fs.mkdirSync(stateDir(h), { recursive: true });
   fs.writeFileSync(path.join(stateDir(h), `${sid}.brief`), line);
 };
+// The pending promotion files of the session, their lines joined in name order; null for none.
 const pending = (h: string, sid = SID) => {
-  try { return fs.readFileSync(path.join(stateDir(h), `${sid}.promote`), "utf8"); } catch { return null; }
+  let names: string[];
+  try { names = fs.readdirSync(stateDir(h)); } catch { return null; }
+  const files = names.filter((name) => name.startsWith(`${sid}.promote`) && !/\.(claim|tmp)$/.test(name)).sort((a, b) => a.localeCompare(b));
+  return files.length ? files.map((name) => fs.readFileSync(path.join(stateDir(h), name), "utf8")).join("") : null;
 };
 const HIT = "OBS-RESULT: wrote 2 11,12\n11 finding=1 evidence=assumed Build passes\n12 finding=2 evidence=confirmed Endpoint answers";
 const UNLABELLED = "OBS-RESULT: wrote 1 13\n13 (id, title) old page line";
@@ -88,8 +92,7 @@ test("without a session id the recorder degrades to the warning and never throws
   const h = home();
   assert.match(String(record(handback(HIT, { session_id: undefined }), h)?.systemMessage), /could not be joined to the dispatch brief \(no session id\)/);
   assert.equal(record(handback("OBS-RESULT: wrote 1 12\n12 finding=2 evidence=confirmed T", { session_id: undefined, tool_use_id: "toolu_02" }), h), null);
-  assert.deepEqual(fs.readdirSync(stateDir(h)).sort((a, b) => a.localeCompare(b)), ["rec-1.delivered", "rec-1.toolu_01.joined", "rec-1.toolu_02.joined"],
-    "the delivery record and the join markers, no session-keyed state");
+  assert.deepEqual(fs.readdirSync(stateDir(h)), ["rec-1.delivered"], "only the delivery record: no hit was written, so no join marker");
 });
 
 const stopFields = (extra: Record<string, unknown>) => ({ session_id: SID, hook_event_name: "SubagentStop", agent_id: "stop-1",
@@ -112,6 +115,26 @@ test("the stop hook joins a wrote final message itself", async () => {
   assert.equal(pending(h), "11\n");
   assert.match(String((await stop(stopFields({ last_assistant_message: UNLABELLED }), { home: h, waitMs: 0 }) as { systemMessage?: string })?.systemMessage),
     /page\(s\) 13 could not be read/);
+});
+
+test("a repeated wrote final message of the same agent is joined once", async () => {
+  const h = home();
+  brief(h, "measured=1 findings=2\n");
+  assert.equal(await stop(stopFields({ last_assistant_message: HIT }), { home: h, waitMs: 0 }), null);
+  assert.equal(promotion({ session_id: SID }, h), promotionReason(["11"]));
+  assert.equal(await stop(stopFields({ last_assistant_message: `\n${HIT}` }), { home: h, waitMs: 0 }), null, "the resumed agent's same status line");
+  assert.equal(pending(h), null, "the consumed promotion is not written again");
+  assert.equal(await stop(stopFields({ agent_id: undefined, last_assistant_message: HIT }), { home: h, waitMs: 0 }), null);
+  assert.equal(pending(h), "11\n", "only without an agent id does the join run unguarded");
+});
+
+test("a handback without a tool_use_id is joined once by its status line", () => {
+  const h = home();
+  brief(h, "measured=1 findings=2\n");
+  assert.equal(record(handback(HIT, { tool_use_id: undefined }), h), null);
+  assert.equal(promotion({ session_id: SID }, h), promotionReason(["11"]));
+  assert.equal(record(handback(HIT, { tool_use_id: undefined }), h), null);
+  assert.equal(pending(h), null);
 });
 
 test("the stop hook keeps a failed or empty final message as before and joins neither", async () => {
@@ -157,8 +180,8 @@ test("a resumed agent's earlier handback in the transcript is not joined again",
   brief(h, "measured=1 findings=2\n");
   assert.equal(await stop(stopFields({ agent_transcript_path: handbackTranscript(HIT, true) }), { home: h, waitMs: 0 }), null);
   assert.equal(promotion({ session_id: SID }, h), promotionReason(["11"]));
-  const resumed = await stop(stopFields({ agent_transcript_path: handbackTranscript(UNLABELLED, true) }), { home: h, waitMs: 0 });
-  assert.equal(resumed, null, "the old handback id: no join, no warning");
+  const resumed = await stop(stopFields({ agent_transcript_path: handbackTranscript(HIT, true) }), { home: h, waitMs: 0 });
+  assert.equal(resumed, null, "the old handback, still the last one in the transcript");
   assert.equal(pending(h), null);
 });
 

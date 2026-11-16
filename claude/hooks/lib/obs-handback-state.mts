@@ -7,8 +7,7 @@
 // `<verdict>\t<tool_use_id or ->`, verdict `wrote`, `empty`, `failed` or
 // `malformed <fixed problem text>`. <agent_id>.stop: one line of fixed keys the
 // stop hook writes for the host measurement of the hook ordering. Neither holds
-// message text, a session id or a path. Both are pruned after 24 h, like the
-// session-keyed .brief and .promote files of issue #731 (see recordBrief).
+// message text, a session id or a path. Both are pruned after 24 h.
 //
 // Issue #571. <agent_id>.refused: one line `refused\t<tool_use_id or ->`,
 // created once, exclusively, by the PreToolUse gate obs-handback-gate.mts when
@@ -20,6 +19,7 @@
 // guard-dispatch.mts, with no environment variable. Only writers create the
 // directory: a read, a clear or a prune never does. Every operation is best
 // effort and never throws.
+import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -161,15 +161,16 @@ export function prune(home: string, maxAgeMs = DAY_MS): void {
 
 // Issue #731 PR-B. Session-keyed state of the promotion join. <session_id>.brief:
 // the one formatBrief line (integers only) the dispatch guard writes after it
-// allowed an observation dispatch. <session_id>.promote: one line of
-// comma-separated numeric page ids the result side writes for each hit, through
-// a <name>.<pid>.tmp file renamed into place; the parent Stop hook claims it by
-// renaming it to <name>.<pid>.claim. <agent_id>.<tool_use_id>.joined: empty,
-// created once by the hook that joined that handback. The session id is the
+// allowed an observation dispatch. <session_id>.promote.<pid>.<hex>: one line of
+// comma-separated numeric page ids, one file per join, written through a .tmp
+// file renamed into place; the parent Stop hook claims every pending file of the
+// session by renaming it to <file>.<pid>.claim. <agent_id>.<key>.joined: empty,
+// created once by the hook that joined that result. The session id is the
 // payload's, of the shape obs-session-policy.mts accepts; anything else keeps
 // no state. prune() removes every one of these files after 24 h.
 const SESSION_ID = /^[a-z0-9][a-z0-9-]{0,79}$/;
 const PAGE_IDS = /^\d{1,30}(?:,\d{1,30})*\n?$/;
+const byNumber = (a: string, b: string) => (a.length - b.length) || a.localeCompare(b);
 
 export function validSession(value: unknown): string | null {
   return typeof value === "string" && SESSION_ID.test(value) ? value : null;
@@ -195,40 +196,50 @@ export function readBrief(home: string, id: string): BriefRecord | null {
   }
 }
 
+// The ids of one pending file; none for a file that is unreadable or not one id line.
 function readIds(file: string): string[] {
-  const raw = fs.readFileSync(file, "utf8");
-  return PAGE_IDS.test(raw) ? raw.trim().split(",") : [];
+  try {
+    const raw = fs.readFileSync(file, "utf8");
+    return PAGE_IDS.test(raw) ? raw.trim().split(",") : [];
+  } catch {
+    return [];
+  }
 }
 
-// Idempotent: the ids already pending are kept, each id is written once. The
-// line is written beside the target and renamed over it, so a reader never sees
-// a half-written file; a claim between the read and the rename leaves a fresh
-// .promote for the next Stop.
+// One new file per join, never a merge: a Stop that claims while a join writes
+// can then never see ids twice, and two joins never overwrite each other. The
+// line is written beside its name and renamed into place, so a claim never
+// reads half a file.
 function writePromote(home: string, id: string, hits: readonly string[]): void {
-  const dir = stateDir(home), file = path.join(dir, `${id}.promote`), temp = `${file}.${process.pid}.tmp`;
-  let pending: string[] = [];
-  try { pending = readIds(file); } catch { /* none pending yet */ }
-  const all = [...new Set([...pending, ...hits])].sort((a, b) => (a.length - b.length) || a.localeCompare(b));
+  const dir = stateDir(home), file = path.join(dir, `${id}.promote.${process.pid}.${randomBytes(6).toString("hex")}`), temp = `${file}.tmp`;
   try {
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-    fs.writeFileSync(temp, `${all.join(",")}\n`, { mode: 0o600 });
+    fs.writeFileSync(temp, `${[...hits].sort(byNumber).join(",")}\n`, { mode: 0o600 });
     fs.renameSync(temp, file);
   } catch {
     try { fs.unlinkSync(temp); } catch { /* best effort; prune removes a leftover */ }
   }
 }
 
-// Issue #731 PR-B. The first hook that joins a handback's result creates
-// <agent_id>.<tool_use_id>.joined exclusively; a second join of the same
-// handback (the other Claude join site, or a resumed agent whose transcript
-// still shows its previous handback) is skipped, so a consumed promotion is
-// never written again. Without both ids, or when the marker cannot be written,
-// the join runs unguarded.
-export function claimJoin(home: string, agentId: string | null, toolUseId: unknown): boolean {
-  if (!agentId || typeof toolUseId !== "string" || !TOOL_USE_ID.test(toolUseId)) return true;
+// The key a result is joined under: its tool_use_id when valid, else the first
+// 16 hex digits of the SHA-256 of its trimmed status line (a final message, a
+// Codex receipt), so a repeated status line is the same result.
+export function joinKey(toolUseId: unknown, message: string): string {
+  if (typeof toolUseId === "string" && TOOL_USE_ID.test(toolUseId)) return toolUseId;
+  const status = message.split(/\r?\n/).find((line) => line.trim())?.trim() ?? "";
+  return `s${createHash("sha256").update(status).digest("hex").slice(0, 16)}`;
+}
+
+// Issue #731 PR-B. The first hook that joins a result creates
+// <agent_id>.<key>.joined exclusively; a second join of the same result (the
+// other Claude join site, a resumed agent, a repeated SubagentStop) is skipped,
+// so a consumed promotion is never written again. Only without a valid agent
+// id, or when the marker cannot be written, does the join run unguarded.
+export function claimJoin(home: string, agentId: string | null, key: string): boolean {
+  if (!agentId) return true;
   try { fs.mkdirSync(stateDir(home), { recursive: true, mode: 0o700 }); } catch { /* the open below reports it */ }
   try {
-    fs.closeSync(fs.openSync(path.join(stateDir(home), `${agentId}.${toolUseId}.joined`), "wx", 0o600));
+    fs.closeSync(fs.openSync(path.join(stateDir(home), `${agentId}.${key}.joined`), "wx", 0o600));
     return true;
   } catch (error) {
     return (error as NodeJS.ErrnoException).code !== "EEXIST";
@@ -238,8 +249,10 @@ export function claimJoin(home: string, agentId: string | null, toolUseId: unkno
 // The result side of the join. Writes the hits for the session and returns the
 // warning for the operator, or null. Never throws. Without a session id or a
 // recorded brief, the pages that could be a hit get the unjoined warning; a
-// brief without a measured finding is silent.
-export function recordPromotion(home: string, sessionId: unknown, ids: readonly string[], pages: ReadonlyMap<string, PageEvidence>): string | null {
+// brief without a measured finding is silent. claim (claimJoin) runs only when
+// there are hits to write, so a result without one leaves no join marker.
+export function recordPromotion(home: string, sessionId: unknown, ids: readonly string[], pages: ReadonlyMap<string, PageEvidence>,
+  claim: () => boolean = () => true): string | null {
   const id = validSession(sessionId);
   const brief = id ? readBrief(home, id) : null;
   if (!id || !brief) {
@@ -247,27 +260,37 @@ export function recordPromotion(home: string, sessionId: unknown, ids: readonly 
     return open.length ? unjoinedWarning(open, id ? NO_BRIEF : NO_SESSION) : null;
   }
   const { hits, unreadable } = joinPromotion(brief, ids, pages);
-  if (hits.length) writePromote(home, id, hits);
+  if (hits.length && claim()) writePromote(home, id, hits);
   return unreadable.length ? unreadableWarning(unreadable) : null;
 }
 
-// The parent Stop hook's side: the fixed reason for the pending page ids, or
-// null. A successful rename to this process's .claim file is ownership, so a
-// pending promotion is delivered at most once; the claimed copy is read and
-// removed. Never throws.
+// The parent Stop hook's side: one fixed reason for every pending file of the
+// session, or null. A successful rename to this process's .claim file is
+// ownership, so each written file is delivered at most once; the claimed copies
+// are read, their ids de-duplicated and sorted, and removed. Never throws.
 export function pendingPromotion(home: string, sessionId: unknown): string | null {
   const id = validSession(sessionId);
   if (!id) return null;
-  const file = path.join(stateDir(home), `${id}.promote`), claim = `${file}.${process.pid}.claim`;
+  const dir = stateDir(home);
+  let names: string[];
   try {
-    fs.renameSync(file, claim);
+    names = fs.readdirSync(dir);
   } catch {
-    return null; // nothing pending, or another Stop claimed it
+    return null; // no state directory: nothing pending
   }
-  let ids: string[] = [];
-  try { ids = readIds(claim); } catch { /* claimed but unreadable: nothing to deliver */ }
-  try { fs.unlinkSync(claim); } catch { /* not a file; prune leaves it to the operator */ }
-  return ids.length ? promotionReason(ids) : null;
+  const pending = new RegExp(`^${id}\\.promote(?:\\.\\d+\\.[0-9a-f]+)?$`);
+  const ids = new Set<string>();
+  for (const name of names.filter((entry) => pending.test(entry))) {
+    const claim = path.join(dir, `${name}.${process.pid}.claim`);
+    try {
+      fs.renameSync(path.join(dir, name), claim);
+    } catch {
+      continue; // another Stop claimed it
+    }
+    for (const page of readIds(claim)) ids.add(page);
+    try { fs.unlinkSync(claim); } catch { /* not a file; prune leaves it to the operator */ }
+  }
+  return ids.size ? promotionReason([...ids].sort(byNumber)) : null;
 }
 
 export function writeStopTrace(home: string, id: string, trace: StopTrace): void {
