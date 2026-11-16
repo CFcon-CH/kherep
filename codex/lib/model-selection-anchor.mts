@@ -6,7 +6,7 @@ import { renderAgent } from "./component-render.mts";
 import type { AgentInventory } from "./model-agent-inventory.mts";
 import { record, type ModelEffort } from "./model-policy.mts";
 import { parseModelPolicyJson } from "./model-policy-user.mts";
-import { verifyInstalledModelState, type ObserverOverlayAuthority, type RenderedModelOutput,
+import { MODEL_DISPATCH_SNAPSHOT_TARGET, verifyInstalledModelState, type ObserverOverlayAuthority, type RenderedModelOutput,
   type VerifiedInstalledModelState } from "./model-resolution-receipt.mts";
 import { ModelSelectionRefusal, type ModelSelectionGit, type SourceReader } from "./model-selection-git.mts";
 import { buildSelectionInventory, readSourceSnapshot } from "./model-selection-inventory.mts";
@@ -46,6 +46,16 @@ export interface AnchoredState {
 export const sha256 = (text: string): string => createHash("sha256").update(text).digest("hex");
 const DIGEST = /^[a-f0-9]{64}$/, REVISION = /^[a-f0-9]{40}$/;
 const SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
+// The model-selection outputs whose rollback is ownership-checked (amendment 5):
+// generated agent TOMLs, the dispatch snapshot, receipt, overlay and anchor.
+export function modelSelectionTarget(codexHome: string): (target: string) => boolean {
+  const owned = new Set([MODEL_DISPATCH_SNAPSHOT_TARGET, MODEL_SELECTION_FILES.receipt, MODEL_SELECTION_FILES.overlay, MODEL_SELECTION_FILES.anchor]);
+  return (target) => {
+    const relative = path.relative(path.resolve(codexHome), path.resolve(target)).split(path.sep).join("/");
+    return owned.has(relative) || /^agents\/[^/]+\.toml$/.test(relative);
+  };
+}
 
 export function homeFile(codexHome: string, relative: string, code: string = ANCHOR_REFUSAL.anchorInvalid): string {
   const parts = relative.split("/");

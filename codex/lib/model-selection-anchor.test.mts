@@ -4,8 +4,9 @@ import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 
+import { renderAgent } from "./component-render.mts";
 import { buildAgentInventory } from "./model-agent-inventory.mts";
-import { acquireSelectionLock, ANCHOR_REFUSAL, homeFile, MODEL_SELECTION_FILES, observerOverlayAuthority, parseAnchor, readOptional,
+import { acquireSelectionLock, ANCHOR_REFUSAL, homeFile, MODEL_SELECTION_FILES, modelSelectionTarget, observerOverlayAuthority, parseAnchor, readOptional,
   renderAnchor, sha256, verifyAnchoredState, type ModelSelectionAnchor } from "./model-selection-anchor.mts";
 import { ModelSelectionRefusal } from "./model-selection-git.mts";
 
@@ -81,5 +82,27 @@ test("a receipt whose pinned bytes are not a receipt shape is refused before any
     fs.writeFileSync(path.join(root, MODEL_SELECTION_FILES.receipt), text);
     const pinned = renderAnchor({ ...anchor, receipt: { target: MODEL_SELECTION_FILES.receipt, sha256: sha256(text) } });
     assert.throws(() => verifyAnchoredState(root, git, pinned), refusal(ANCHOR_REFUSAL.stateInvalid), text);
+  }
+});
+
+// Lead review of #737, item 4. An observer overlay is verified by re-rendering
+// codex-obs.md at the overlay revision with the CURRENT renderer. This pins the
+// renderer's exact output for frozen input bytes: if renderAgent or its text
+// adaptation changes, every anchored host with an overlay stops verifying and
+// needs --refresh-models, so such a change must be deliberate and documented.
+test("the observer TOML renderer output is pinned for frozen observer bytes", () => {
+  const frozen = JSON.parse(fs.readFileSync(new URL("../parity/observation-linking-predecessor.json", import.meta.url), "utf8")) as Record<string, string>;
+  const toml = renderAgent("codex-obs", frozen["codex/agents/codex-obs.md"]!, { model: "gpt-6-luna", reasoning: "medium", sandbox: "read-only" });
+  assert.equal(sha256(toml), "129dd0e452049a8e7f45927df911e95b01dac86eb0398bfb9aa1be35f688a05d");
+});
+
+test("only the model-selection outputs are ownership-checked on rollback", () => {
+  const home = path.join(os.tmpdir(), "kherep-owned-home");
+  const owned = modelSelectionTarget(home);
+  for (const relative of ["agents/codex-obs.toml", "hooks/parity/capabilities.json", MODEL_SELECTION_FILES.receipt, MODEL_SELECTION_FILES.overlay, MODEL_SELECTION_FILES.anchor]) {
+    assert.equal(owned(path.join(home, ...relative.split("/"))), true, relative);
+  }
+  for (const relative of ["config.toml", "orchestra/parity-receipt.json", "agents/nested/x.toml", "agents/notes.md", "AGENTS.md"]) {
+    assert.equal(owned(path.join(home, ...relative.split("/"))), false, relative);
   }
 });

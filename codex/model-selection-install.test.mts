@@ -316,3 +316,39 @@ test("the observation-only CLI reports a model-selection refusal by its fixed co
   assert.equal(cli("--check").stderr, "observation-upgrade-unavailable\n");
   assert.equal(cli("--check", "--codex-home", "relative-home", "--workspace", "relative-workspace").stderr, "observation-explicit-targets-required\n");
 });
+
+// Lead review of #737, item 1. The plugin CLI rewrites config.toml after the
+// installer staged and wrote it; a later failure must still restore the
+// operator's original bytes, with no ownership conflict.
+test("rollback restores a config.toml the plugin CLI rewrote", (t) => {
+  const f = fixture(t);
+  // Mixed line endings: the installer normalizes and writes config.toml before registration.
+  const original = 'model_reasoning_effort = "xhigh"\r\n\r\n[plugins."kherep-maestro@kherep"]\nenabled = false\n';
+  write(f.file("config.toml"), original);
+  let registered = false;
+  const runCodex = (args: string[]): string => {
+    if (args.join(" ") === "plugin marketplace list --json") return JSON.stringify({ marketplaces: [] });
+    if (args.join(" ") === "plugin add kherep-maestro@kherep") {
+      fs.appendFileSync(f.file("config.toml"), '\n[plugins."kherep-maestro@kherep"]\nenabled = true\n');
+      registered = true;
+    }
+    return "{}";
+  };
+  assert.throws(() => f.run({ modelCatalog: catalog(), skipPluginRegistration: false, runCodex, afterWrite() {
+    if (registered) throw new Error("synthetic failure after plugin registration");
+  } }), (error: Error) => error.message === "synthetic failure after plugin registration");
+  assert.equal(registered, true);
+  assert.equal(f.read("config.toml"), original, "the operator's enabled = false survives the rollback");
+  assert.equal(fs.existsSync(f.file(files.lock)), false);
+});
+
+// Lead review of #737, item 3. A rollback that itself throws still releases the lock.
+test("the selection lock is released even when rollback itself fails", (t) => {
+  const f = fixture(t);
+  f.run({ modelCatalog: catalog() });
+  const breakRollback = () => { fs.rmSync(f.file("backups"), { recursive: true, force: true }); throw new Error("synthetic failure"); };
+  assert.throws(() => f.run({ modelCatalog: newerCatalog(), refreshModels: true, afterWrite: breakRollback }), /ENOENT/);
+  assert.equal(fs.existsSync(f.file(files.lock)), false, "installer");
+  assert.throws(() => installObservationPublisher({ codexHome: f.codexHome, workspace: f.workspace, afterWrite: breakRollback }), /ENOENT/);
+  assert.equal(fs.existsSync(f.file(files.lock)), false, "observation-only updater");
+});

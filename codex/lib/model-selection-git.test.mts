@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { test, type TestContext } from "node:test";
 
-import { GIT_REFUSAL, gitRunner, modelSelectionGit, ModelSelectionRefusal, workingTreeReader } from "./model-selection-git.mts";
+import { GIT_REFUSAL, gitRunner, modelSelectionGit, ModelSelectionRefusal, sameTopLevel, workingTreeReader } from "./model-selection-git.mts";
 
 function git(root: string, ...args: string[]): string {
   const result = spawnSync("git", ["-C", root, "-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid",
@@ -44,6 +44,15 @@ test("HEAD resolves only at the repository's own top level, and is cached", (t) 
   git(plain, "init", "-q");
   assert.throws(() => modelSelectionGit(plain).head(), refusal(GIT_REFUSAL.headUnresolved), "a repository without a commit has no HEAD");
   assert.throws(() => modelSelectionGit(path.join(plain, "missing")).head(), refusal(GIT_REFUSAL.headUnresolved));
+});
+
+test("the top-level comparison is case-insensitive on Windows only and never throws", () => {
+  const identity = (file: string) => file;
+  assert.equal(sameTopLevel(String.raw`C:\Users\Op\Kherep`, String.raw`c:\users\op\kherep`, "win32", identity), true);
+  assert.equal(sameTopLevel("/Users/Op/Kherep", "/users/op/kherep", "darwin", identity), false);
+  assert.equal(sameTopLevel("/repo", "/repo", "linux", identity), true);
+  assert.equal(sameTopLevel(undefined, "/repo", "linux", identity), false);
+  assert.equal(sameTopLevel("/repo", "/repo", "win32", () => { throw new Error("ENOENT"); }), false);
 });
 
 test("an inherited GIT_DIR does not redirect which repository is read", (t) => {

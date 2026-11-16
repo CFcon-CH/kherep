@@ -29,18 +29,23 @@ export class InstallTransaction {
   entries: Map<string, Entry>;
   createdGraveyards: string[];
   onWrite: ((target: string) => void) | null;
-  // Issue #737. The bytes (SHA-256, or null for absent) this transaction left
-  // at a staged file target. Rollback restores a target only while it still
-  // holds them, so a concurrent writer's later change is never overwritten.
+  // Issue #737. For the targets `ownershipChecked` names (the model-selection
+  // outputs), the bytes (SHA-256, or null for absent) this transaction left
+  // there. Rollback restores such a target only while it still holds them, so a
+  // concurrent writer's later change is never overwritten. Every other target,
+  // config.toml among them, is restored unconditionally.
   owned: Map<string, string | null>;
+  ownershipChecked: (target: string) => boolean;
 
-  constructor(root: string, backupRoot: string, onWrite: ((target: string) => void) | null = null) {
+  constructor(root: string, backupRoot: string, onWrite: ((target: string) => void) | null = null,
+    ownershipChecked: (target: string) => boolean = () => false) {
     this.root = path.resolve(root);
     this.backupRoot = path.resolve(backupRoot);
     this.entries = new Map();
     this.createdGraveyards = [];
     this.onWrite = onWrite;
     this.owned = new Map();
+    this.ownershipChecked = ownershipChecked;
     fs.mkdirSync(this.backupRoot, { recursive: true });
   }
 
@@ -81,7 +86,7 @@ export class InstallTransaction {
   }
 
   own(resolved: string, hash: string | null): void {
-    if (this.entries.get(resolved)?.directory === false) this.owned.set(resolved, hash);
+    if (this.entries.get(resolved)?.directory === false && this.ownershipChecked(resolved)) this.owned.set(resolved, hash);
   }
 
   // #44. Retirement parks instead of deleting, as bootstrap/transaction-retire.sh

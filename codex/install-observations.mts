@@ -10,7 +10,7 @@ import { copyObservationSnapshot, observationHash } from './lib/observation-sour
 import { stableNodePath } from './lib/node-path.mts';
 import { observationWiring } from './lib/observation-wiring.mts';
 import { preserveExternalPostToolPositions } from './lib/post-tool-trust-position.mts';
-import { acquireSelectionLock, ANCHOR_REFUSAL, homeFile, MODEL_SELECTION_FILES, readOptional, verifyAnchoredState } from './lib/model-selection-anchor.mts';
+import { acquireSelectionLock, ANCHOR_REFUSAL, homeFile, MODEL_SELECTION_FILES, modelSelectionTarget, readOptional, verifyAnchoredState } from './lib/model-selection-anchor.mts';
 import { modelSelectionGit, ModelSelectionRefusal, type ModelSelectionGit } from './lib/model-selection-git.mts';
 import { planObserverOverlay, type ObserverOverlayPlan } from './lib/model-selection-observer.mts';
 const START = '# >>> Kherep Codex Maestro >>>', END = '# <<< Kherep Codex Maestro <<<';
@@ -218,7 +218,7 @@ export function installObservationPublisher(options: ObservationInstallOptions) 
     try {
         if (overlay && readOptional(overlay.anchorFile, ANCHOR_REFUSAL.anchorInvalid) !== overlay.previousAnchorText)
             throw new ModelSelectionRefusal('model-selection-plan: output-precondition-conflict');
-        homeTx = new InstallTransaction(home, backup, onWrite);
+        homeTx = new InstallTransaction(home, backup, onWrite, modelSelectionTarget(home));
         workspaceTx = new InstallTransaction(workspace, path.join(backup, 'workspace'), onWrite);
     }
     catch (error) {
@@ -260,9 +260,13 @@ export function installObservationPublisher(options: ObservationInstallOptions) 
         return { backupRoot: backup, receipt: report };
     }
     catch {
-        homeTx.rollback({ last: overlay ? [overlay.anchorFile] : [] });
-        workspaceTx.rollback();
-        releaseLock();
+        try {
+            homeTx.rollback({ last: overlay ? [overlay.anchorFile] : [] });
+            workspaceTx.rollback();
+        }
+        finally {
+            releaseLock();
+        }
         throw new Error('observation-install-failed-rolled-back');
     }
 }

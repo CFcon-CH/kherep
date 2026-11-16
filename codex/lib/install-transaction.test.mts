@@ -67,7 +67,8 @@ test("repeated exact writes preserve their first snapshot and existing escape re
 // Issue #737. Rollback restores only targets that still hold this run's bytes,
 // and restores the named last targets (the model-selection anchor) after all others.
 test("ownership-checked rollback leaves a concurrent change in place and restores last targets last", (t) => {
-  const { home, source, target, transaction } = fixture(t);
+  const { home, backup, source, target } = fixture(t);
+  const transaction = new InstallTransaction(home, backup, null, () => true);
   const written = path.join(home, "orchestra", "written.json"), copied = path.join(home, "orchestra", "copied.md");
   const removed = path.join(home, "orchestra", "removed.json"), parked = path.join(home, "orchestra", "parked.json");
   const anchor = path.join(home, "orchestra", "anchor.json"), taken = path.join(home, "orchestra", "taken.json");
@@ -93,11 +94,30 @@ test("ownership-checked rollback leaves a concurrent change in place and restore
   assert.equal(fs.existsSync(copied), false);
   assert.equal(fs.readFileSync(path.join(target, "SKILL.md"), "utf8"), "original projected skill\n");
   assert.deepEqual(new InstallTransaction(home, path.join(home, "..", "b2")).rollback(), []);
-  const replaced = new InstallTransaction(home, path.join(home, "..", "b3"));
+  const replaced = new InstallTransaction(home, path.join(home, "..", "b3"), null, () => true);
   const file = path.join(home, "orchestra", "replaced.json");
   replaced.writeFile(file, "ours\n");
   fs.rmSync(file);
   fs.mkdirSync(file);
   assert.deepEqual(replaced.rollback(), [path.join("orchestra", "replaced.json")], "a directory in our file's place is another writer's");
   assert.ok(fs.statSync(file).isDirectory());
+});
+
+// Lead review of #737, item 1. Outside the checked targets rollback restores
+// unconditionally, as before: config.toml that another tool rewrote mid-run
+// returns to the operator's original bytes.
+test("targets outside the ownership predicate are restored unconditionally", (t) => {
+  const { home, backup } = fixture(t);
+  const config = path.join(home, "config.toml"), agent = path.join(home, "agents", "a.toml");
+  write(config, "operator\n");
+  write(agent, "old agent\n");
+  const checked = (target: string) => target === agent;
+  const transaction = new InstallTransaction(home, backup, null, checked);
+  transaction.writeFile(config, "stripped\n");
+  transaction.writeFile(agent, "new agent\n");
+  fs.writeFileSync(config, "rewritten by the plugin CLI\n");
+  fs.writeFileSync(agent, "another writer\n");
+  assert.deepEqual(transaction.rollback(), [path.join("agents", "a.toml")]);
+  assert.equal(fs.readFileSync(config, "utf8"), "operator\n");
+  assert.equal(fs.readFileSync(agent, "utf8"), "another writer\n");
 });

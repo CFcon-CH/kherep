@@ -101,9 +101,11 @@ increments the minor version; every other release increments the patch version.
   `HEAD` and clean `codex/parity/**`, `claude/agents/*.md` and
   `codex/agents/*.md`; an exact no-op reinstall does not. One installer run
   holds `orchestra/model-selection.lock`, rollback restores the anchor last and
-  never overwrites a target another writer changed. The dispatch guard drops
-  the model family check and the observer model pin and checks supplied fields
-  against installed support only; a mixed snapshot generation fails closed. The
+  never overwrites a model-selection output another writer changed; every
+  other target, `config.toml` included, is restored as before. The dispatch
+  guard drops the model family check and the observer model pin and checks
+  supplied fields against installed support only; a mixed snapshot generation
+  fails closed. The
   observation-only updater keeps the committed pair, records
   `orchestra/model-selection-overlay.json` and updates only the anchor's
   overlay. The Stop and context reminders take the observer's model and
