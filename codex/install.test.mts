@@ -616,6 +616,11 @@ test("Windows entrypoint delegates to the shared Node installer", () => {
   assert.match(entrypoint, /"--mcp-registry"/);
   assert.match(entrypoint, /"--workspace"/);
   assert.match(entrypoint, /"--enable-messaging-client"/);
+  // Issue #737: both model-selection switches reach the shared installer.
+  assert.match(entrypoint, /^\s*\[switch\]\$RefreshModels,$/m);
+  assert.match(entrypoint, /^if \(\$RefreshModels\) \{ \$arguments \+= "--refresh-models" \}$/m);
+  assert.match(entrypoint, /^\s*\[switch\]\$ApplyRootModelPolicy$/m);
+  assert.match(entrypoint, /^if \(\$ApplyRootModelPolicy\) \{ \$arguments \+= "--apply-root-model-policy" \}$/m);
   assert.doesNotMatch(entrypoint, /Set-MarkedBlock/);
 });
 test("targets the v2 Atlassian MCP server and retires v1 rovo", () => {

@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { test, type TestContext } from "node:test";
 
-import { GIT_REFUSAL, gitRunner, modelSelectionGit, ModelSelectionRefusal, sameTopLevel, workingTreeReader } from "./model-selection-git.mts";
+import { byCodeUnit, gitBinary, GIT_REFUSAL, gitRunner, modelSelectionGit, ModelSelectionRefusal, sameTopLevel, workingTreeReader } from "./model-selection-git.mts";
 
 function git(root: string, ...args: string[]): string {
   const result = spawnSync("git", ["-C", root, "-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid",
@@ -44,6 +44,17 @@ test("HEAD resolves only at the repository's own top level, and is cached", (t) 
   git(plain, "init", "-q");
   assert.throws(() => modelSelectionGit(plain).head(), refusal(GIT_REFUSAL.headUnresolved), "a repository without a commit has no HEAD");
   assert.throws(() => modelSelectionGit(path.join(plain, "missing")).head(), refusal(GIT_REFUSAL.headUnresolved));
+});
+
+test("Git is a fixed system binary, never a PATH lookup", () => {
+  const only = (file: string) => (candidate: string) => candidate === file;
+  assert.equal(gitBinary("win32", only(String.raw`C:\Program Files\Git\bin\git.exe`)), String.raw`C:\Program Files\Git\bin\git.exe`);
+  assert.equal(gitBinary("win32", () => true), String.raw`C:\Program Files\Git\cmd\git.exe`);
+  assert.equal(gitBinary("win32", only("/usr/bin/git")), null);
+  assert.equal(gitBinary("darwin", only("/opt/homebrew/bin/git")), "/opt/homebrew/bin/git");
+  assert.equal(gitBinary("darwin", () => true), "/usr/bin/git");
+  assert.equal(gitBinary("darwin", () => false), null);
+  assert.deepEqual(["b", "B", "a", "_", "a"].sort(byCodeUnit), ["B", "_", "a", "a", "b"], "code-unit order, not locale order");
 });
 
 test("the top-level comparison is case-insensitive on Windows only and never throws", () => {
@@ -115,12 +126,11 @@ test("a failing Git process is a refusal, never an empty clean answer", (t) => {
   assert.throws(() => failing(() => true).head(), refusal(GIT_REFUSAL.headUnresolved));
   const vanished = modelSelectionGit(root, (args) => args[1] === "--show-toplevel" ? { status: 0, stdout: Buffer.from("/no/such/kherep-top\n") } : real(args));
   assert.throws(() => vanished.head(), refusal(GIT_REFUSAL.headUnresolved), "an unresolvable top level is no HEAD");
-  const saved = process.env.PATH;
-  process.env.PATH = path.join(root, "no-git-here");
-  let missing: ReturnType<typeof gitRunner>;
-  try { missing = gitRunner(root); } finally { process.env.PATH = saved; }
-  assert.deepEqual(missing(["rev-parse", "HEAD"]).status, null, "a Git binary that cannot start is a failed read");
-  assert.throws(() => modelSelectionGit(root, missing).head(), refusal(GIT_REFUSAL.headUnresolved));
+  for (const binary of [path.join(root, "no-git-here", "git"), null]) {
+    const missing = gitRunner(root, binary);
+    assert.deepEqual(missing(["rev-parse", "HEAD"]).status, null, `${binary}: a Git that cannot start is a failed read`);
+    assert.throws(() => modelSelectionGit(root, missing).head(), refusal(GIT_REFUSAL.headUnresolved));
+  }
   assert.equal(new ModelSelectionRefusal("code").message, "code");
   assert.equal(new ModelSelectionRefusal("code", "detail").message, "code (detail)");
 });

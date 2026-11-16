@@ -12,6 +12,7 @@ import type {
 import type { InstallTransaction } from "./install-transaction.mts";
 import { previousManaged, removeStaleManaged, reservePersonalTargets } from "./managed-projection.mts";
 import type { AgentSourceRow } from "./model-selection-inventory.mts";
+import { byCodeUnit } from "./model-selection-git.mts";
 const SKILL_NAME_LINE = /^name:\s*(?:\S.*)?$/m;
 
 // A row of Claude's installed_plugins.json; only the fields read here are typed.
@@ -228,7 +229,7 @@ function agentOptions(context: ProjectionContext, plugin: CapabilityPlugin, name
 function installPluginAgents(context: ProjectionContext, plugin: CapabilityPlugin, root: string, usedAgents: Set<string>, receipt: ProjectionReceipt): void {
   if (context.agentOutputs) {
     const relative = path.relative(context.repoRoot, path.join(root, "agents")).split(path.sep).join("/");
-    for (const sourceFile of files(path.join(root, "agents")).sort()) {
+    for (const sourceFile of files(path.join(root, "agents")).sort(byCodeUnit)) {
       usedAgents.add(writePlannedAgent(context, `${plugin.id}:${relative}/${path.basename(sourceFile)}`, receipt, plugin.id));
     }
     return;
