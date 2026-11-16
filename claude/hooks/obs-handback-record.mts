@@ -43,7 +43,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { claimJoin, FAILED_MESSAGE, homeOf, recordDelivered, recordPromotion, stillMalformed, validId } from "./lib/obs-handback-state.mts";
+import { claimJoin, FAILED_MESSAGE, homeOf, joinKey, recordDelivered, recordPromotion, stillMalformed, validId } from "./lib/obs-handback-state.mts";
 import { claudeIds, claudePages } from "./lib/obs-promotion-policy.mts";
 import { checkObsResult } from "./lib/obs-result-policy.mts";
 
@@ -66,9 +66,9 @@ export function decide(value: unknown, home: string): HookOutput | null {
   if (id) recordDelivered(home, id, "status" in check ? check.status : `malformed ${check.problem}`, payload.tool_use_id);
   if ("problem" in check) return { systemMessage: stillMalformed(check.problem) };
   if (check.status === "failed") return { systemMessage: FAILED_MESSAGE };
-  // Issue #731 PR-B. The join of a wrote report with its brief, once per handback; a warning only.
-  const joins = check.status === "wrote" && claimJoin(home, id, payload.tool_use_id);
-  const warning = joins ? recordPromotion(home, payload.session_id, claudeIds(message), claudePages(message)) : null;
+  // Issue #731 PR-B. The join of a wrote report with its brief, written once per handback; a warning only.
+  const warning = check.status === "wrote" ? recordPromotion(home, payload.session_id, claudeIds(message), claudePages(message),
+    () => claimJoin(home, id, joinKey(payload.tool_use_id, message))) : null;
   return warning ? { systemMessage: warning } : null;
 }
 

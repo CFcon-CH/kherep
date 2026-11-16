@@ -61,7 +61,8 @@ export const HOME = path.dirname(import.meta.dirname);
 // this hook but not the lib, so an older lib beside it must skip the join, not fail.
 export function stateLib(dir = import.meta.dirname): StatePolicy | null {
   const lib = hookLib<StatePolicy>("obs-handback-state.mts", dir);
-  return typeof lib?.prune === "function" && typeof lib.recordPromotion === "function" ? lib : null;
+  const needed = [lib?.prune, lib?.recordPromotion, lib?.claimJoin, lib?.joinKey, lib?.validId];
+  return needed.every((fn) => typeof fn === "function") ? lib : null;
 }
 
 export function decide(value: unknown, home = HOME, libDir = import.meta.dirname): HookOutput | null {
@@ -75,7 +76,9 @@ export function decide(value: unknown, home = HOME, libDir = import.meta.dirname
   const check = checkObsHandback(text);
   if ("status" in check && check.status === "wrote") {
     const pages = new Map(("evidence" in check ? check.evidence ?? [] : []).map((entry) => [entry.id, entry]));
-    const warning = state?.recordPromotion(home, payload.session_id, check.ids, pages);
+    // Written once per agent id and receipt line: a repeated SubagentStop never writes a consumed promotion again.
+    const warning = state?.recordPromotion(home, payload.session_id, check.ids, pages,
+      () => state.claimJoin(home, state.validId(payload.agent_id), state.joinKey(undefined, text)));
     return warning ? { systemMessage: warning } : null;
   }
   if ('status' in check && check.status === 'attempt-failed') return { systemMessage:

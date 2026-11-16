@@ -30,8 +30,12 @@ const brief = (h: string, line: string) => {
   fs.mkdirSync(stateDir(h), { recursive: true });
   fs.writeFileSync(path.join(stateDir(h), `${SID}.brief`), line);
 };
+// The pending promotion files of the session, their lines joined in name order; null for none.
 const pending = (h: string) => {
-  try { return fs.readFileSync(path.join(stateDir(h), `${SID}.promote`), "utf8"); } catch { return null; }
+  let names: string[];
+  try { names = fs.readdirSync(stateDir(h)); } catch { return null; }
+  const files = names.filter((name) => name.startsWith(`${SID}.promote`) && !/\.(claim|tmp)$/.test(name)).sort((a, b) => a.localeCompare(b));
+  return files.length ? files.map((name) => fs.readFileSync(path.join(stateDir(h), name), "utf8")).join("") : null;
 };
 const RECEIPT = "OBS-RESULT: wrote 2 11,12";
 
@@ -64,6 +68,18 @@ test("codex-obs-result-check writes a hit and stays silent", () => {
   brief(h, "measured=1 findings=2\n");
   assert.equal(decide(stop(`${RECEIPT}\nOBS-EVIDENCE: 11:1:assumed,12:2:assumed`), h), null);
   assert.equal(pending(h), "11\n");
+});
+
+test("a repeated codex-obs SubagentStop is joined once per agent and receipt", () => {
+  const h = home();
+  brief(h, "measured=1 findings=2\n");
+  const text = `${RECEIPT}\nOBS-EVIDENCE: 11:1:assumed,12:2:confirmed`;
+  assert.equal(decide(stop(text, { agent_id: "agent-7" }), h), null);
+  assert.equal(promotion({ session_id: SID }, h), promotionReason(["11"]));
+  assert.equal(decide(stop(text, { agent_id: "agent-7" }), h), null, "the repeated stop");
+  assert.equal(pending(h), null, "the consumed promotion is not written again");
+  assert.equal(decide(stop(text, { agent_id: "agent-8" }), h), null);
+  assert.equal(pending(h), "11\n", "another agent's result is its own join");
 });
 
 test("codex-obs-result-check warns, never blocks, when labels cannot be read against a measured brief", () => {
@@ -167,6 +183,16 @@ test("the Codex Stop hook CLI, run in place, delivers a pending promotion once a
   const first = run(JSON.stringify({ session_id: sid, stop_hook_active: true }));
   assert.deepEqual([first.status, JSON.parse(first.stdout)], [0, { decision: "block", reason: promotionReason(["321"]) }]);
   assert.deepEqual([run(JSON.stringify({ session_id: sid, stop_hook_active: true })).stdout, run("{not json").stdout], ["", ""]);
+  fs.writeFileSync(file, "654\n");
+  const merged = JSON.parse(run(JSON.stringify({ session_id: sid, turn_id: "turn-1", stop_hook_active: false })).stdout) as { decision: string; reason: string };
+  assert.equal(merged.decision, "block");
+  assert.match(merged.reason, /^Before the final response, dispatch the codex-obs agent/);
+  assert.ok(merged.reason.endsWith(`\n\n${promotionReason(["654"])}`), "one block: the observation prompt, then the promotion");
+});
+
+test("the Codex Stop hook stays silent beside an older state lib without pendingPromotion", () => {
+  const dir = staleLibDir("stale-stop", "export function prune() {}\n");
+  assert.equal(promotion({ session_id: SID }, TMP, dir), null);
 });
 
 test("the Codex Stop hook finds the installed lib beside it, and without one there is no promotion", () => {

@@ -24,9 +24,10 @@ increments the minor version; every other release increments the patch version.
   parsers are unchanged. `obs-handback-record`, `obs-result-check` and
   `codex-obs-result-check` join the two through the new pure module
   `claude/hooks/lib/obs-promotion-policy.mts` and write the hits to
-  `<session_id>.promote`. The parent Stop hook (`observation-stop.mts` on both
-  runtimes) claims that file by renaming it, last, and continues the turn once with a fixed
-  instruction to run the Confluence broker evidence verb for each page or to
+  `<session_id>.promote.<pid>.<hex>`, one file per join, each result joined
+  once. The parent Stop hook (`observation-stop.mts` on both runtimes) claims
+  every pending file of the session by renaming it, last, and continues the
+  turn once with a fixed instruction to run the Confluence broker evidence verb for each page or to
   say why it cannot be promoted; it is not gated on `stop_hook_active` and is
   merged into one block with the observation reason. Labels that cannot be
   read against a measured brief, or a result without a session id or without a
