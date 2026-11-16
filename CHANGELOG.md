@@ -87,6 +87,32 @@ increments the minor version; every other release increments the patch version.
 
 ### Changed
 
+- Codex model and effort selection is user-owned and anchored (#737). The
+  installer reads `<CODEX_HOME>/kherep/model-policy.user.json` (never writes
+  it), where the operator may choose any visible model or effort per role or
+  per source agent; precedence is field by field over the shipped defaults.
+  Each generation is recorded in `orchestra/model-selection-receipt.json`, and
+  `orchestra/model-selection-anchor.json`, written last, pins its exact bytes;
+  `parity-receipt.json` keeps only a pointer. A later install verifies the
+  anchored generation against the receipt's own Git revision and the bytes of
+  every generated agent TOML before planning. An ordinary reinstall keeps the
+  installed choices, a changed shipped default no longer throws, and only
+  `--refresh-models` adopts new defaults. A selection change needs a resolved
+  `HEAD` and clean `codex/parity/**`, `claude/agents/*.md` and
+  `codex/agents/*.md`; an exact no-op reinstall does not. One installer run
+  holds `orchestra/model-selection.lock`, rollback restores the anchor last and
+  never overwrites a target another writer changed. The dispatch guard drops
+  the model family check and the observer model pin and checks supplied fields
+  against installed support only; a mixed snapshot generation fails closed. The
+  observation-only updater keeps the committed pair, records
+  `orchestra/model-selection-overlay.json` and updates only the anchor's
+  overlay. The Stop and context reminders take the observer's model and
+  effort from its installed agent TOML instead of naming `low` or a family.
+  `codex/install.ps1` gains `-RefreshModels`. **Operator action:** every
+  existing Codex host needs one install with `--refresh-models` (Windows
+  `-RefreshModels`); until then an ordinary install stops with
+  `model-selection-refresh-required` before any write, and a historically
+  managed observer `low` becomes `medium`. See `docs/CODEX.md`.
 - The Claude Confluence broker's `create` is observation-only (#760, contract
   A). It requires `--format storage`, `--body-file` and `--labels`, refuses
   inline `--body` and the wiki and ADF formats, and runs the `validate` check
