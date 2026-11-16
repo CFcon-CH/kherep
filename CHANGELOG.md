@@ -11,6 +11,33 @@ increments the minor version; every other release increments the patch version.
 
 ### Added
 
+- The observation promotion trigger (#731, PR-B). A finding the dispatching
+  session marked `measured:` but the observation agent filed evidence-assumed,
+  for example without an exact code binding, is now followed up in the same
+  session. After an allowed `claude-obs` or `codex-obs` dispatch the dispatch
+  guard writes `<session_id>.brief` (the brief's `measured:` positions and
+  finding count, integers only) under `.cache/obs-result-check/`. The result
+  names each page's finding position and evidence label: the `claude-obs`
+  page line is now `<id> finding=<n|-> evidence=<label> <title>`, and
+  `codex-obs` may add one `OBS-EVIDENCE: <id>:<n|->:<label>[,...]` line after
+  its receipt, which only `checkObsHandback` accepts; the receipt and journal
+  parsers are unchanged. `obs-handback-record`, `obs-result-check` and
+  `codex-obs-result-check` join the two through the new pure module
+  `claude/hooks/lib/obs-promotion-policy.mts` and write the hits to
+  `<session_id>.promote`. The parent Stop hook (`observation-stop.mts` on both
+  runtimes) removes that file first and continues the turn once with a fixed
+  instruction to run the Confluence broker evidence verb for each page or to
+  say why it cannot be promoted; it is not gated on `stop_hook_active` and is
+  merged into one block with the observation reason. Labels that cannot be
+  read against a measured brief, or a result without a session id whose pages
+  could be a hit, give an operator warning naming the page ids, never a
+  block. No hook wiring changed. The brief notice for an unmarked finding now
+  points at `measured: live, doc or tracker`. The observation-only Codex
+  upgrade recognizes the previous observation files
+  (`codex/parity/observation-promotion-predecessor.json`). Whether Claude
+  Code and Codex put `session_id` into the subagent payloads is not verified;
+  without it the trigger degrades to the warning. A real turn after install
+  is still to be shown.
 - An operator-started guard canary, `bootstrap/guard-canary.mts` (#808, stage
   2b). In live mode (`--runtime claude|codex|both`) it runs one headless turn
   per runtime in a throwaway git repository. The turn makes a control commit

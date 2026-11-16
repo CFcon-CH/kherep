@@ -35,8 +35,27 @@ export type ObsAttempt = {
     publication: 'not-attempted' | 'unknown';
     created: 'none' | 'unknown';
 };
-export type ObsHandback = ObsResult | ObsAttempt;
+/** Issue #731 PR-B. One page of the optional worker line `OBS-EVIDENCE: <id>:<n|->:<label>[,...]`. */
+export type ObsEvidence = { id: string; finding: number | null; evidence: string };
+/** A receipt with the worker's evidence line: its entries, or null when the line is malformed. */
+export type ObsLabelled = Extract<ObsResult, { status: string }> & { evidence: ObsEvidence[] | null };
+export type ObsHandback = ObsResult | ObsLabelled | ObsAttempt;
+const EVIDENCE_ENTRY = /^(\d{1,30}):([1-9]\d{0,3}|-):(confirmed|assumed|refuted|superseded)$/;
+function evidenceLine(line: string): ObsEvidence[] | null {
+    const entries = line.slice('OBS-EVIDENCE:'.length).split(',').map(entry => EVIDENCE_ENTRY.exec(entry.trim()));
+    if (line.length > 1200 || entries.length > 20 || entries.some(entry => !entry)) return null;
+    const list = entries.map(entry => ({ id: entry![1], finding: entry![2] === '-' ? null : Number(entry![2]), evidence: entry![3] }));
+    return new Set(list.map(entry => entry.id)).size === list.length ? list : null;
+}
 export function checkObsHandback(text: string): ObsHandback {
+    // The evidence line is the worker's, never part of the adapter receipt, so the
+    // receipt parser stays strict; a malformed evidence line never refuses the
+    // receipt it follows (null entries, and the join warns).
+    const lines = text.split(/\r?\n/).filter(row => row.trim());
+    if (lines.length === 2 && lines[1].trim().startsWith('OBS-EVIDENCE:')) {
+        const labelled = checkObsResult(lines[0]);
+        if ('status' in labelled) return { ...labelled, evidence: evidenceLine(lines[1].trim()) };
+    }
     const receipt = checkObsResult(text);
     if ('status' in receipt) return receipt;
     const bad = { problem: 'the result is not one strict publication receipt or worker attempt' };

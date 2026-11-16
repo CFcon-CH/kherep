@@ -78,6 +78,9 @@ hooks/lib/obs-result-policy.mts
 hooks/lib/obs-result-policy.test.mts
 hooks/lib/obs-handback-state.mts
 hooks/lib/obs-handback-state.test.mts
+hooks/lib/obs-promotion-policy.mts
+hooks/lib/obs-promotion-policy.test.mts
+hooks/lib/obs-promotion-state.test.mts
 hooks/lib/git-commit-match.mts
 hooks/lib/git-push-match.mts
 hooks/lib/git-push-match.test.mts

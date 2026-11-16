@@ -1,1 +1,1 @@
-export { checkObsResult, checkObsHandback, OBS_FAILURES, type ObsResult, type ObsHandback, type ObsAttempt } from '../../modules/atl-jira-brokers/observation-result.mts';
+export { checkObsResult, checkObsHandback, OBS_FAILURES, type ObsResult, type ObsHandback, type ObsAttempt, type ObsEvidence, type ObsLabelled } from '../../modules/atl-jira-brokers/observation-result.mts';

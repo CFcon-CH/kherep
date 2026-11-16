@@ -32,6 +32,10 @@
  * and one shortened example as systemMessage, which is shown to the user and
  * not sent to the model. It never deletes or moves a file.
  *
+ * PROMOTION (issue #731 PR-B). Independently of the decision, a promotion
+ * pending for the payload session_id is consumed and continues the turn once
+ * with a fixed reason naming only numeric page ids (promotion() below).
+ *
  * Counterpart of the Codex runtime's codex/hooks/observation-stop.mts, which
  * judges a turn id; this one judges the Claude Code transcript, because Claude
  * decides "substantial" and "already dispatched" from it. Any error fails open.
@@ -51,6 +55,7 @@ import {
   type TranscriptEntry,
 } from "./lib/turn-substance.mts";
 import { dispatchModelFor, loadModelPolicy, type ResolvedPolicy } from "./lib/model-policy.mts";
+import { homeOf, pendingPromotion } from "./lib/obs-handback-state.mts";
 import { isKherepScope, type EnvLike } from "./lib/workspace-scope.mts";
 
 export interface StopPayload {
@@ -138,6 +143,21 @@ export function decision(value: unknown, env: EnvLike = process.env): Continuati
   return { decision: "block", reason: OBSERVATION_REASON };
 }
 
+// Issue #731 PR-B. The promotion pending for this session, consumed: the
+// result side wrote <session_id>.promote for a page filed evidence-assumed for a
+// measured finding. Not gated on stop_hook_active: the file is removed before
+// the reason is emitted, so it continues the turn at most once.
+export function promotion(value: unknown, home: string): string | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  return pendingPromotion(home, (value as StopPayload).session_id);
+}
+
+// One block: the observation reason, if any, then the promotion reason.
+export function withPromotion(result: Continuation | null, reason: string | null): Continuation | null {
+  if (!reason) return result;
+  return { decision: "block", reason: result ? `${result.reason}\n\n${reason}` : reason };
+}
+
 // Any drive letter: the workspace itself can sit on D:.
 const STRAY_NAME = /^[A-Za-z]\uf03a/;
 
@@ -170,7 +190,7 @@ export function strayWarning(value: unknown, env: EnvLike = process.env): string
 async function main(): Promise<void> {
   try {
     const payload: unknown = JSON.parse((await (await import("./lib/stdin-reader.mts")).readStdinBytes({ maxBytes: null })).toString("utf8"));
-    const result = decision(payload);
+    const result = withPromotion(decision(payload), promotion(payload, homeOf(process.argv[1] as string)));
     const warning = strayWarning(payload);
     const output = warning ? { ...result, systemMessage: warning } : result;
     if (output) process.stdout.write(JSON.stringify(output));

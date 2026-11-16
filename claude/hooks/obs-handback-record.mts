@@ -23,21 +23,28 @@
  *     gate obs-handback-gate.mts refuses the first malformed handback of an
  *     agent id before it runs; this hook judges what is delivered.
  *   - no visible message: a notice, nothing recorded.
+ *   - issue #731 PR-B: a valid wrote report is joined with the brief the
+ *     dispatch guard recorded for session_id (lib/obs-handback-state.mts
+ *     recordPromotion): a page filed evidence-assumed for a measured finding is
+ *     written to <session_id>.promote for the parent Stop hook; labels that
+ *     cannot be read against a measured brief are a notice naming the page ids.
  *   - any error: a one-line systemMessage, exit 0.
  *
  * It never prints a decision and never exits 2. The relative order of this hook
  * and the subagent's SubagentStop is not documented; the stop hook waits for
  * this record for a bounded time (obs-result-check.mts).
  *
- * PRIVACY. Every systemMessage is a constant or the policy's fixed problem
- * text. Nothing from the message, the response or the payload reaches stdout,
- * and the state file holds only the verdict and the opaque tool_use_id.
+ * PRIVACY. Every systemMessage is a constant, the policy's fixed problem
+ * text or a fixed promotion text naming numeric page ids. Nothing else from
+ * the message, the response or the payload reaches stdout, and the state file
+ * holds only the verdict and the opaque tool_use_id.
  */
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { FAILED_MESSAGE, homeOf, recordDelivered, stillMalformed, validId } from "./lib/obs-handback-state.mts";
+import { FAILED_MESSAGE, homeOf, recordDelivered, recordPromotion, stillMalformed, validId } from "./lib/obs-handback-state.mts";
+import { claudeIds, claudePages } from "./lib/obs-promotion-policy.mts";
 import { checkObsResult } from "./lib/obs-result-policy.mts";
 
 export type HookOutput = { systemMessage: string };
@@ -58,7 +65,10 @@ export function decide(value: unknown, home: string): HookOutput | null {
   const id = validId(payload.agent_id);
   if (id) recordDelivered(home, id, "status" in check ? check.status : `malformed ${check.problem}`, payload.tool_use_id);
   if ("problem" in check) return { systemMessage: stillMalformed(check.problem) };
-  return check.status === "failed" ? { systemMessage: FAILED_MESSAGE } : null;
+  if (check.status === "failed") return { systemMessage: FAILED_MESSAGE };
+  // Issue #731 PR-B. The join of a wrote report with its brief; a warning only.
+  const warning = check.status === "wrote" ? recordPromotion(home, payload.session_id, claudeIds(message), claudePages(message)) : null;
+  return warning ? { systemMessage: warning } : null;
 }
 
 async function main(): Promise<void> {

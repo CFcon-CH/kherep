@@ -7,7 +7,8 @@
 // `<verdict>\t<tool_use_id or ->`, verdict `wrote`, `empty`, `failed` or
 // `malformed <fixed problem text>`. <agent_id>.stop: one line of fixed keys the
 // stop hook writes for the host measurement of the hook ordering. Neither holds
-// message text, a session id or a path. Both are pruned after 24 h.
+// message text, a session id or a path. Both are pruned after 24 h, like the
+// session-keyed .brief and .promote files of issue #731 (see recordBrief).
 //
 // Issue #571. <agent_id>.refused: one line `refused\t<tool_use_id or ->`,
 // created once, exclusively, by the PreToolUse gate obs-handback-gate.mts when
@@ -21,6 +22,11 @@
 // effort and never throws.
 import fs from "node:fs";
 import path from "node:path";
+
+import {
+  briefRecord, type BriefRecord, formatBrief, joinPromotion, type PageEvidence, parseBrief, promotionReason, unjoinable, unjoinedWarning,
+  unreadableWarning,
+} from "./obs-promotion-policy.mts";
 
 export interface Delivered { verdict: string; toolUseId: string }
 // null: no state. "unreadable": a state that exists but cannot be read; the two are told apart.
@@ -151,6 +157,76 @@ export function prune(home: string, maxAgeMs = DAY_MS): void {
       // Raced by another stop hook, or not removable: the next prune tries again.
     }
   }
+}
+
+// Issue #731 PR-B. Session-keyed state of the promotion join. <session_id>.brief:
+// the one formatBrief line (integers only) the dispatch guard writes after it
+// allowed an observation dispatch. <session_id>.promote: one line of
+// comma-separated numeric page ids the result side writes for each hit; the
+// parent Stop hook consumes it. The session id is the payload's, of the shape
+// obs-session-policy.mts accepts; anything else keeps no state.
+const SESSION_ID = /^[a-z0-9][a-z0-9-]{0,79}$/;
+const PAGE_IDS = /^\d{1,30}(?:,\d{1,30})*\n?$/;
+
+export function validSession(value: unknown): string | null {
+  return typeof value === "string" && SESSION_ID.test(value) ? value : null;
+}
+
+export function recordBrief(home: string, sessionId: unknown, brief: string): void {
+  const id = validSession(sessionId);
+  if (id) writeLine(home, `${id}.brief`, formatBrief(briefRecord(brief)));
+}
+
+// null: no usable brief (absent, unreadable or not one formatBrief line).
+export function readBrief(home: string, id: string): BriefRecord | null {
+  try {
+    return parseBrief(fs.readFileSync(path.join(stateDir(home), `${id}.brief`), "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+function readIds(file: string): string[] {
+  const raw = fs.readFileSync(file, "utf8");
+  return PAGE_IDS.test(raw) ? raw.trim().split(",") : [];
+}
+
+// Idempotent: the ids already pending are kept, each id is written once.
+function writePromote(home: string, id: string, hits: readonly string[]): void {
+  let pending: string[] = [];
+  try { pending = readIds(path.join(stateDir(home), `${id}.promote`)); } catch { /* none pending yet */ }
+  const all = [...new Set([...pending, ...hits])].sort((a, b) => (a.length - b.length) || a.localeCompare(b));
+  writeLine(home, `${id}.promote`, `${all.join(",")}\n`);
+}
+
+// The result side of the join. Writes the hits for the session and returns the
+// warning for the operator, or null. Never throws.
+export function recordPromotion(home: string, sessionId: unknown, ids: readonly string[], pages: ReadonlyMap<string, PageEvidence>): string | null {
+  const id = validSession(sessionId);
+  if (!id) {
+    const open = unjoinable(ids, pages);
+    return open.length ? unjoinedWarning(open) : null;
+  }
+  const { hits, unreadable } = joinPromotion(readBrief(home, id), ids, pages);
+  if (hits.length) writePromote(home, id, hits);
+  return unreadable.length ? unreadableWarning(unreadable) : null;
+}
+
+// The parent Stop hook's side: the fixed reason for the pending page ids, or
+// null. The file is removed first and the reason returned only when the unlink
+// succeeded, so a pending promotion is delivered at most once. Never throws.
+export function pendingPromotion(home: string, sessionId: unknown): string | null {
+  const id = validSession(sessionId);
+  if (!id) return null;
+  const file = path.join(stateDir(home), `${id}.promote`);
+  let ids: string[];
+  try {
+    ids = readIds(file);
+    fs.unlinkSync(file);
+  } catch {
+    return null;
+  }
+  return ids.length ? promotionReason(ids) : null;
 }
 
 export function writeStopTrace(home: string, id: string, trace: StopTrace): void {

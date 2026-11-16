@@ -40,6 +40,7 @@ function hookLib<T>(name: string): T {
 }
 const obsBriefPolicy = () => hookLib<ObsBriefPolicy>("obs-brief-policy.mts");
 const workerBriefPolicy = () => hookLib<WorkerBriefPolicy>("worker-brief-policy.mts");
+const statePolicy = () => { try { return hookLib<typeof import("../../claude/hooks/lib/obs-handback-state.mts")>("obs-handback-state.mts"); } catch { return null; } };
 // A dispatch that is not code-bound is checked only when the lib is there.
 function optionalWorkerBriefPolicy(): WorkerBriefPolicy | null {
   try { return workerBriefPolicy(); } catch { return null; }
@@ -193,13 +194,16 @@ export function validate(payload: unknown, { observationAgent, supportedModels, 
 // Issue #505. The revision notice for an observation dispatch that validate
 // allows; issue #701, the review notice for a dispatch that is neither code-bound
 // nor an observation; null otherwise. A report, not a gate: a missing or older
-// installed lib yields no notice and no deny.
-export function advise(payload: unknown, policy: DispatchPolicy): string | null {
+// installed lib yields no notice and no deny. Issue #731 PR-B: for an allowed
+// observation dispatch it also records the brief's measured: positions for the
+// payload session_id under the hook's parent directory; without the lib, nothing.
+export function advise(payload: unknown, policy: DispatchPolicy, home = path.dirname(import.meta.dirname)): string | null {
   if (validate(payload, policy) !== null || !isRecord(payload) || !DISPATCH_TOOLS.has(payload.tool_name as string)) return null;
   const input = payload.tool_input;
   if (!isRecord(input) || typeof input.message !== "string") return null;
   const agent = typeof input.agent_type === "string" ? input.agent_type.trim() : "";
   if (policy.codeBoundAgents.has(agent)) return null;
+  if (agent === policy.observationAgent) statePolicy()?.recordBrief(home, payload.session_id, input.message);
   const notice = agent === policy.observationAgent
     ? obsBriefPolicy().observationBriefNotice : optionalWorkerBriefPolicy()?.workerBriefNotice;
   return typeof notice === "function" ? notice(input.message) : null;

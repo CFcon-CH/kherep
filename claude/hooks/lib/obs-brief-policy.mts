@@ -52,12 +52,14 @@ function codeSpan(text: string): CodeSpan | null {
   return found;
 }
 
-interface Finding {
+export interface Finding {
   kind: string;
   text: string;
 }
 
-function findings(brief: string): Finding[] {
+// Issue #731 PR-B. Exported for the promotion join (obs-promotion-policy.mts),
+// which needs the same 1-based positions the notices name.
+export function findings(brief: string): Finding[] {
   const marks = [...brief.matchAll(MARKER)];
   return marks.map((mark, index) => ({
     kind: mark[1],
@@ -128,7 +130,7 @@ const PATHS_ADVICE = "Paths never change the evidence label; without a valid lis
 const UNMARKED = "names no repository and commit SHA";
 const UNMARKED_PARTIAL = "has no complete binding of all named repositories";
 const UNMARKED_ADVICE = "If it is about repository code, tests or a build, the observation agent files it as assumed; "
-  + "add `code <name>@<sha>` after measured:. A finding that is not about repository code is unchanged.";
+  + "add `code <name>@<sha>` after measured:. A finding that is not about repository code is unchanged; declare it with `measured: live, doc or tracker`.";
 
 // null for a complete <name>@<sha>, else the clause for that token.
 function tokenProblem(token: string): string | null {
