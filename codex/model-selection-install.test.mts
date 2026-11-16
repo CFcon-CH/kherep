@@ -314,4 +314,5 @@ test("the observation-only CLI reports a model-selection refusal by its fixed co
   assert.equal(refused.status, 1);
   assert.equal(refused.stderr, `${ANCHOR_REFUSAL.receiptConflict}\n`);
   assert.equal(cli("--check").stderr, "observation-upgrade-unavailable\n");
+  assert.equal(cli("--check", "--codex-home", "relative-home", "--workspace", "relative-workspace").stderr, "observation-explicit-targets-required\n");
 });
