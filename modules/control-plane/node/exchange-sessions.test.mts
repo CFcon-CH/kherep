@@ -9,6 +9,7 @@ import type { SessionInfo } from "../protocol.mts";
 import { listenerDir } from "./autonomy.mts";
 import { nodePaths, type NodePaths } from "./config.mts";
 import { startDaemon, SESSIONS_INTERVAL_MS } from "./daemon.mts";
+import { attachCodexTitles } from "./codex-titles.mts";
 import { recordingSessions } from "./exchange-sessions.mts";
 import { getMessage, readJson, UNDELIVERABLE_AFTER_MS, type InboxRecord } from "./inbox.mts";
 import { knownSessionsFile, readKnownSessions } from "./known-sessions.mts";
@@ -337,4 +338,31 @@ test("the bound holds while sessions keep appearing, on lastSeen the listing its
     assert.equal(writtenIds(paths).length, 1 + CARRY_LIMIT);
   }
   assert.deepEqual(new Set(writtenIds(paths)), new Set([...born, ...ids.slice(-(CARRY_LIMIT - 4))]), "the oldest rows left, every session of the last rounds stayed");
+});
+
+// Issue #828: a Codex session older than the 12 h window leaves the listing and is carried from sessions.json. Its row takes
+// the thread title read for this listing, so a rename reaches msg sessions; nothing else of the row changes.
+const C = "019a2b3c-4d5e-7f60-8123-456789abcdef", CL = "33333333-3333-4333-8333-333333333333";
+const carriedTitles = async (t: test.TestContext, titles?: Map<string, string>) => {
+  const { paths } = seedNode(t, 0, { extras: [{ sessionId: C, name: "codex-89abcdef" }, { sessionId: CL, runtime: "claude-code", name: "review" }] });
+  const file = readJson<{ sessions: object[] }>(paths.sessions)!;
+  fs.writeFileSync(paths.sessions, JSON.stringify({ ...file, sessions: file.sessions.map(s => ({ ...s, title: "Old" })) }));
+  const listed = LISTED.map(r => ({ ...r }));
+  const sessions = await recordingSessions(paths, async () => titles ? attachCodexTitles(listed, titles) : listed, () => {}, () => NOW, UNDELIVERABLE_AFTER_MS, () => [])();
+  const stored = readJson<{ sessions: SessionInfo[] }>(paths.sessions)!.sessions;
+  return { sessions, stored, pick: (rows: SessionInfo[], id: string) => rows.find(s => s.sessionId === id)! };
+};
+test("#828 a carried Codex row takes the title of its listing, in the result and in sessions.json", async t => {
+  const { sessions, stored, pick } = await carriedTitles(t, new Map([[C, "New"], [CL, "Not for Claude"]]));
+  for (const rows of [sessions, stored]) {
+    const row = pick(rows, C);
+    assert.deepEqual([row.title, row.state, row.name], ["New", "unknown", "codex-89abcdef"]);
+    assert.equal(pick(rows, CL).title, "Old", "a carried Claude row ignores the Codex titles");
+  }
+});
+test("#828 a carried Codex row keeps its title without titles for the listing or for its id", async t => {
+  for (const [name, titles] of [["no titles", undefined], ["titles without the id", new Map([["other", "New"]])]] as const) await t.test(name, async sub => {
+    const { sessions, stored, pick } = await carriedTitles(sub, titles);
+    assert.deepEqual([pick(sessions, C).title, pick(stored, C).title], ["Old", "Old"]);
+  });
 });

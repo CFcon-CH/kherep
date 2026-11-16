@@ -121,6 +121,15 @@ test("#828 a missing Codex title is unknown and keeps the old row", t => {
     recordLocalLabels(p, [codexRow()], now + 2000, true, policyStamp(p));
     assert.equal(codexLabel(p)?.name, "A");
 });
+test("#828 a carried Codex row with a new title keeps its label row noncurrent and unrenamed", t => {
+    const p = fixture(t, ["review"]);
+    const seen = (generation: number, listed: SessionInfo[]) => ({ snapshot: { version: 1 as const, generation, sessions: [], tombstones: [] }, listed, evidence: [] });
+    recordLocalLabels(p, [codexRow("A")], now, true, policyStamp(p), 1, seen(1, [codexRow("A")]));
+    assert.deepEqual([codexLabel(p)?.name, codexLabel(p)?.current], ["A", true]);
+    recordLocalLabels(p, [codexRow("B")], now + 1000, true, policyStamp(p), 2, seen(2, []));
+    const label = codexLabel(p)!;
+    assert.deepEqual([label.name, label.revision, label.previousName, label.current], ["A", 1, undefined, false]);
+});
 test("#828 a Claude rename records previousName one level deep and keeps it while the name holds", t => {
     const p = fixture(t, [S]);
     recordLocalLabels(p, [row("review")], now, true, policyStamp(p));

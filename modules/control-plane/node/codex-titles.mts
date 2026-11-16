@@ -123,3 +123,13 @@ export function withCodexTitles(sessions: SessionInfo[], titles: Map<string, str
     return title ? { ...s, title } : s;
   });
 }
+
+// The titles read for a listing travel with that exact array, outside the wire
+// protocol, so the recording can title the Codex rows it carries from
+// sessions.json (issue #828).
+const listingTitles = new WeakMap<SessionInfo[], Map<string, string>>();
+export function attachCodexTitles(listing: SessionInfo[], titles: Map<string, string>): SessionInfo[] {
+  listingTitles.set(listing, titles);
+  return listing;
+}
+export const listingCodexTitles = (listing: SessionInfo[]): Map<string, string> | undefined => listingTitles.get(listing);
