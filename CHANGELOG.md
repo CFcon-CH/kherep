@@ -170,6 +170,18 @@ increments the minor version; every other release increments the patch version.
 
 ### Fixed
 
+- The Worker no longer refuses a guarded reply or a queued attested message
+  because the sending Node's clock runs a little ahead. A session identity
+  proof dated after the Worker clock was invalid, so for about the clock offset
+  after each publication a reply was refused with `loop-compatibility: legacy
+  reply limit` and a new root went legacy. The Worker now accepts a proof up to
+  `CLOCK_SKEW_MS` (60 s) ahead, the same tolerance as the handshake; the 12 hour
+  maximum age is unchanged and Node-side checks keep no allowance. Each
+  loop-compatibility refusal now records `loopBranch` (`admit-endpoint`,
+  `admit-binding`, `deliver-identity` or `deliver-capability`) and the two
+  endpoint reference codes `fromCode` and `toCode` in its audit detail; the
+  status reason is unchanged. Operator action: deploy the Worker. Refs #773
+
 - A Codex thread renamed after its session left the listing now shows the new
   title in `msg sessions`. A Codex session without a hook event for 12 hours
   drops out of the listing and is carried from `sessions.json` with the title

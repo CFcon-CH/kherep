@@ -1,4 +1,4 @@
-import { isSessionList, type SessionInfo } from "../../protocol.mts";
+import { CLOCK_SKEW_MS, isSessionList, type SessionInfo } from "../../protocol.mts";
 import type { MessageAddress } from "../../protocol-messages.mts";
 import { currentIdentity, isCanonicalIdentity, isIdentitySnapshot, type CanonicalIdentityV1, type IdentitySnapshotV1 } from "../../protocol-session-identity.mts";
 type Row = Record<string, SqlStorageValue>;
@@ -44,7 +44,8 @@ export class RegistrySessionIdentity {
     if (row.canonical_identity === null) return { ...base, eligible: !base.unknown, code: base.unknown ? "UNPROVEN" : "LEGACY_KNOWN" };
     let proof: unknown;
     try { proof = JSON.parse(String(row.canonical_identity)); } catch { return { ...base, eligible: false, code: "INVALID_PROOF" }; }
-    if (!currentIdentity(proof, { sessionId: base.address.session, runtime: base.runtime }, now)) return { ...base, eligible: false, code: "INVALID_PROOF" };
+    // A Node clock may run up to CLOCK_SKEW_MS ahead, as the handshake allows (#773).
+    if (!currentIdentity(proof, { sessionId: base.address.session, runtime: base.runtime }, now, CLOCK_SKEW_MS)) return { ...base, eligible: false, code: "INVALID_PROOF" };
     const n = this.sql.exec("SELECT identity_generation FROM nodes WHERE id = ? AND revoked_at IS NULL", nodeId).toArray()[0];
     const runtime = proof.runtime === "claude-code" ? "claude" : "codex";
     const registered = this.sql.exec("SELECT kind FROM runtimes WHERE node_id = ? AND name = ?", nodeId, runtime).toArray()[0];

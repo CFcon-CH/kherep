@@ -138,3 +138,28 @@ it("L13: unavailable signer refuses before scoring", async () => {
     expect(sql.exec("SELECT COUNT(*) AS n FROM message_loop_pairs WHERE from_node=?", nodeId).one().n).toBe(0);
   });
 });
+
+// #773: a Node clock ahead of the Worker publishes proofs with a future observedAt.
+it("L16: a proof up to CLOCK_SKEW_MS ahead keeps a guarded reply attested", async () => {
+  const { nodeId, send, take } = await attestedPair();
+  const root = await send(); if (!root.ok) throw new Error(root.error); await take(root.status.messageId);
+  await registry().replaceSessions(nodeId, attestedRows(Date.now() + 2000), { version: 1, generation: 2 });
+  const reply = await send(ID_B, ID_A, root.status.messageId); if (!reply.ok) throw new Error(reply.error);
+  expect(reply.status.state).toBe("queued");
+  expect(reply.effects.deliveries[0].body.loop).toMatchObject({ depth: 1 });
+});
+it("L16: a queued attested root stays deliverable after a proof republished ahead", async () => {
+  const { nodeId, send } = await attestedPair();
+  const root = await send(); if (!root.ok) throw new Error(root.error);
+  await registry().replaceSessions(nodeId, attestedRows(Date.now() + 2000), { version: 1, generation: 2 });
+  expect(await registry().messageDeliveryReady(root.status.messageId)).toBe(true);
+});
+it("L16: a proof more than CLOCK_SKEW_MS ahead is still refused at admission and delivery", async () => {
+  const { nodeId, send, take } = await attestedPair();
+  const root = await send(); if (!root.ok) throw new Error(root.error); await take(root.status.messageId);
+  const queued = await send(); if (!queued.ok) throw new Error(queued.error);
+  await registry().replaceSessions(nodeId, attestedRows(Date.now() + 61_000), { version: 1, generation: 2 });
+  const reply = await send(ID_B, ID_A, root.status.messageId);
+  expect(reply.ok && reply.status.reason).toBe("loop-compatibility: legacy reply limit");
+  expect(await registry().messageDeliveryReady(queued.status.messageId)).toBe(false);
+});

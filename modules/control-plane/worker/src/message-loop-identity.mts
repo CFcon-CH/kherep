@@ -8,6 +8,8 @@ export const LOOP_FIELDS = ["loop_thread", "loop_pair", "loop_generation", "loop
 export const ALL_LOOP_FIELDS = [...LOOP_FIELDS, "loop_identity"] as const;
 export const loopColumnType = (field: string): "TEXT" | "INTEGER" => ["loop_thread", "loop_pair", "loop_identity"].includes(field) ? "TEXT" : "INTEGER";
 type Row = Record<string, SqlStorageValue>;
+// Audit-only name of the branch behind a LOOP_COMPATIBILITY refusal (#773).
+export type LoopBranch = "admit-endpoint" | "admit-binding" | "deliver-identity" | "deliver-capability";
 export type StoredLoopLineage = { kind: "legacy" | "guarded-invalid" }
   | { kind: "guarded"; loop: LoopAdmissionV1; pair: string; direction: 0 | 1; identityBinding: string | null };
 
@@ -96,12 +98,17 @@ export class LoopIdentity {
     return sameLoopIdentity(before, { ...before, parent: b }, { parentRetirementEquivalent: true })
       && this.validate(before, key, true, now) === a.kind && this.validate(after, key, true, now) === a.kind;
   }
-  validate(snapshot: LoopSnapshot, key: string | null, hasParent: boolean, now = Date.now()): "legacy" | "guarded" | { reason: string } {
+  // The audit detail of a LOOP_COMPATIBILITY refusal: the branch and both endpoint reference codes.
+  loopAudit(loopBranch: LoopBranch, from: MessageAddress, to: MessageAddress, now: number) {
+    const code = (endpoint: MessageAddress) => this.references.resolveCanonicalReference(endpoint, now).code;
+    return { loopBranch, fromCode: code(from), toCode: code(to) };
+  }
+  validate(snapshot: LoopSnapshot, key: string | null, hasParent: boolean, now: number): "legacy" | "guarded" | { reason: string; loopBranch?: LoopBranch } {
     const { parent: p, from, to } = snapshot;
     if (p.kind === "guarded-invalid") return { reason: LOOP_LINEAGE };
     if (p.kind === "guarded") {
-      if (!snapshot.both || !from || !to || snapshot.direction === null) return { reason: LOOP_COMPATIBILITY };
-      if (p.identityBinding === null ? !snapshot.compatibility : p.identityBinding !== snapshot.identityBinding) return { reason: LOOP_COMPATIBILITY };
+      if (!snapshot.both || !from || !to || snapshot.direction === null) return { reason: LOOP_COMPATIBILITY, loopBranch: "admit-endpoint" };
+      if (p.identityBinding === null ? !snapshot.compatibility : p.identityBinding !== snapshot.identityBinding) return { reason: LOOP_COMPATIBILITY, loopBranch: "admit-binding" };
       if (p.pair !== key || snapshot.direction !== 1 - p.direction || p.row.from_node !== to.nodeId || p.row.to_node !== from.nodeId
         || !["accepted", "delivered", "replied"].includes(String(p.row.state))) return { reason: LOOP_LINEAGE };
       if (p.row.from_session !== null) {

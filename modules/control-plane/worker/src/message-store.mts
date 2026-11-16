@@ -10,7 +10,7 @@ import { RESOLUTION_REQUIRED, type MessageBinding } from "../../protocol-message
 import { bindingContext, selectedAgreesWithProof, type PreparedBinding } from "./message-binding.mts";
 import { BINDING_COLUMNS, migrateMessageBinding, storedMessageBinding } from "./message-binding-store.mts";
 import { LOOP_LINEAGE, LOOP_STALE, LOOP_COMPATIBILITY, MESSAGING_LOOP_BRAKE_CAPABILITY, type LoopAdmissionV1 } from "../../protocol-loop-brake.mts";
-import { LoopIdentity, LOOP_COLUMNS, ALL_LOOP_FIELDS, loopColumnType, parentOf, storedLoopLineage, type LoopSnapshot } from "./message-loop-identity.mts";
+import { LoopIdentity, LOOP_COLUMNS, ALL_LOOP_FIELDS, loopColumnType, parentOf, storedLoopLineage, type LoopBranch, type LoopSnapshot } from "./message-loop-identity.mts";
 import { MessageLoopStore, LOOP_QUERIES } from "./message-loop-store.mts";
 import { prepareLoopSignal, type LoopSigner, type LoopSignal } from "./message-loop-signals.mts";
 import {
@@ -286,12 +286,16 @@ export class MessageStore {
       || (mode === "guarded" && current.identityBinding !== null);
     let currentContext: ReturnType<typeof bindingContext> | undefined;
     let selectedMismatch = false;
+    let loopAudit: ReturnType<LoopIdentity["loopAudit"]> | undefined;
     if (reason === null) {
       if (comparison && !comparison.matches) reason = LOOP_STALE;
       else if (prepared?.error || prepared?.binding?.error) reason = prepared.error ?? prepared.binding!.error!;
       else if (prepared?.binding && prepared.binding.stamp !== (currentContext = bindingContext(this.sql, message)).stamp) reason = LOOP_STALE;
       else if (denyKey && this.loops.held(denyKey)) reason = this.loops.held(denyKey);
-      else if (typeof mode === "object") reason = mode.reason;
+      else if (typeof mode === "object") {
+        reason = mode.reason;
+        if (mode.loopBranch) loopAudit = this.identity.loopAudit(mode.loopBranch, message.from, message.to, now);
+      }
       else if (bindingRequired && !prepared?.binding?.binding) reason = RESOLUTION_REQUIRED;
       else if (bindingRequired && prepared?.binding?.binding && current.identityBinding !== null
         && (current.from?.session !== prepared.binding.binding.from.sessionId || current.to?.session !== prepared.binding.binding.to.sessionId
@@ -344,7 +348,7 @@ export class MessageStore {
     storeDiagnostic(this.sql, message.messageId, diagnostic);
     this.retention.finalized(message.messageId, message.from.nodeId, state, now);
     this.audit(actor, "message.send", target, { messageId: message.messageId, toSession: message.to.session, state, reason, ...(reason === LOOP_STALE && prepared ? { ...(diagnostic ? { changedDimension: changedIdentityDimension(prepared.snapshot, current,
-      { parentRetirementEquivalent: comparison?.parentRetirementEquivalent }) } : { diagnosticGap: true }) } : {}) });
+      { parentRetirementEquivalent: comparison?.parentRetirementEquivalent }) } : { diagnosticGap: true }) } : {}), ...loopAudit });
     if (state === "queued") {
       effects.deliveries.push({ nodeId: target, body: {
         messageId: message.messageId, from: storedFrom, toSession: storedTo.session, text: message.text,
@@ -571,12 +575,15 @@ export class MessageStore {
     const lineage = storedLoopLineage(row);
     const denyKey = typeof row.delivery_pair === "string" ? row.delivery_pair : lineage.kind === "guarded" ? lineage.pair : null;
     const held = denyKey ? this.loops.held(denyKey) : null;
-    const reason = held ?? (storedMessageBinding(row) === "invalid" ? RESOLUTION_REQUIRED : lineage.kind === "guarded-invalid" ? LOOP_LINEAGE
-      : lineage.kind === "guarded" && lineage.identityBinding !== null && !this.identity.deliveryValid(row, lineage.identityBinding, now) ? LOOP_COMPATIBILITY
-      : lineage.kind === "guarded" && (!this.capabilities(String(row.from_node))?.includes(MESSAGING_LOOP_BRAKE_CAPABILITY)
-        || !this.capabilities(String(row.to_node))?.includes(MESSAGING_LOOP_BRAKE_CAPABILITY)) ? LOOP_COMPATIBILITY : null);
+    const earlier = held ?? (storedMessageBinding(row) === "invalid" ? RESOLUTION_REQUIRED : lineage.kind === "guarded-invalid" ? LOOP_LINEAGE : null);
+    const loopBranch: LoopBranch | null = earlier !== null || lineage.kind !== "guarded" ? null
+      : lineage.identityBinding !== null && !this.identity.deliveryValid(row, lineage.identityBinding, now) ? "deliver-identity"
+      : !this.capabilities(String(row.from_node))?.includes(MESSAGING_LOOP_BRAKE_CAPABILITY)
+        || !this.capabilities(String(row.to_node))?.includes(MESSAGING_LOOP_BRAKE_CAPABILITY) ? "deliver-capability" : null;
+    const reason = earlier ?? (loopBranch ? LOOP_COMPATIBILITY : null);
     if (reason === null) return true;
-    this.setState(recordMetadata(row), "refused", reason, "system", now, effects);
+    this.setState(recordMetadata(row), "refused", reason, "system", now, effects, undefined, undefined, loopBranch ? this.identity.loopAudit(loopBranch,
+      { nodeId: String(row.from_node), session: String(row.from_session) }, { nodeId: String(row.to_node), session: String(row.to_session) }, now) : undefined);
     return false;
   }
 
@@ -606,14 +613,14 @@ export class MessageStore {
   }
 
   private setState(record: MessageRecord, state: MessageState, reason: string | null, actor: string, now: number,
-    effects: MessageEffects, progress?: MessageProgress, diagnostic?: MessageDiagnostic): void {
+    effects: MessageEffects, progress?: MessageProgress, diagnostic?: MessageDiagnostic, auditDetail?: object): void {
     // Only a queued message keeps its text. Progress belongs only to accepted.
     const kept = state === "accepted" ? progress ?? null : null;
     const keptDiagnostic = state === "accepted" ? diagnostic : undefined;
     this.sql.exec(`UPDATE messages SET state = ?, reason = ?, text = NULL, progress_phase = ?, progress_code = ?,
       progress_observed_at = ?, progress_retry_at = ?, updated_at = ? WHERE id = ?`, state, reason, kept?.phase ?? null,
     kept?.code ?? null, kept?.observedAt ?? null, kept?.retryAt ?? null, now, record.messageId);
-    this.audit(actor, "message.state", record.toNode, { messageId: record.messageId, state, reason, ...(kept ? { progress: kept } : {}) });
+    this.audit(actor, "message.state", record.toNode, { messageId: record.messageId, state, reason, ...auditDetail, ...(kept ? { progress: kept } : {}) });
     storeDiagnostic(this.sql, record.messageId, keptDiagnostic);
     this.retention.finalized(record.messageId, record.fromNode, state, now);
     if (record.fromNode !== OPERATOR_NODE_ID) {
