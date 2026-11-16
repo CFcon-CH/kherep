@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /** Codex SubagentStop receipt check. Fixed privacy-safe feedback; one correction. */
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -39,13 +40,37 @@ function resultText(payload: SubagentStopPayload): string {
   return readLatestTurn(file)?.finalAssistantText ?? "";
 }
 
-export function decide(value: unknown): HookOutput | null {
+// Issue #731 PR-B. The promotion join with the brief the dispatch guard recorded
+// for session_id, in the Claude hook libs (claude/hooks/lib), found the way the
+// dispatch guard finds them: beside this file at the install target, else in the
+// checkout. A missing lib skips the join; the receipt check is unchanged.
+type StatePolicy = typeof import("../../claude/hooks/lib/obs-handback-state.mts");
+const require = createRequire(import.meta.url);
+export function hookLib<T>(name: string, dir = import.meta.dirname): T | null {
+  const local = path.join(dir, "lib", name);
+  try {
+    return require(fs.existsSync(local) ? local : path.resolve(dir, "..", "..", "claude", "hooks", "lib", name)) as T;
+  } catch {
+    return null;
+  }
+}
+// The state home: the parent of the hook directory, the rule of the Claude hooks.
+export const HOME = path.dirname(import.meta.dirname);
+
+export function decide(value: unknown, home = HOME): HookOutput | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("payload is no object");
   const payload = value as SubagentStopPayload;
   if (payload.agent_type !== OBSERVATION_AGENT) return null;
+  const state = hookLib<StatePolicy>("obs-handback-state.mts");
+  state?.prune(home); // the 24 h removal of the Claude stop hook, here for the session-keyed files
   const text = resultText(payload);
   if (!text.trim()) return { systemMessage: NOT_VISIBLE };
   const check = checkObsHandback(text);
+  if ("status" in check && check.status === "wrote") {
+    const pages = new Map(("evidence" in check ? check.evidence ?? [] : []).map((entry) => [entry.id, entry]));
+    const warning = state?.recordPromotion(home, payload.session_id, check.ids, pages);
+    return warning ? { systemMessage: warning } : null;
+  }
   if ('status' in check && check.status === 'attempt-failed') return { systemMessage:
     `${PREFIX} non-adapter worker attempt failed (${check.reason}/${check.detail}); report this failure in the same turn; ${check.publication === 'unknown'
       ? 'publication and created IDs are UNKNOWN' : 'publication was not attempted; created IDs: none'}; no retry, publication or silent repair.` };

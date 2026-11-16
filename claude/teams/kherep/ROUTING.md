@@ -149,6 +149,19 @@ recorder and a malformed line is reported to the operator; a final
 message without a handback is sent back to `claude-obs` once with a fixed instruction; both warn the
 operator when the line is still malformed or reads `failed`, and quote nothing.
 
+Promotion trigger (#731 PR-B). After an allowed observation dispatch the dispatch guard records
+the brief's `measured:` positions and finding count for the session, integers only, as
+`<session_id>.brief` in `.cache/obs-result-check/` beside the directory that holds the hook. The
+result names each page's finding position and evidence label: on Claude the page line
+`<id> finding=<n|-> evidence=<label> <title>`, on Codex the optional worker line
+`OBS-EVIDENCE: <id>:<n|->:<label>[,...]` after the receipt. The result check joins the two; a page
+filed `assumed` for a finding the brief marked `measured:` goes to `<session_id>.promote`, and the
+parent Stop hook consumes it and continues the turn once with a fixed instruction: run the
+Confluence broker evidence verb for each page with this turn's measurement, or state in the final
+message why it cannot be promoted. A marker alone never promotes a page. Labels that cannot be
+read against a measured brief, or a result without a session id whose pages could be a hit, give
+an operator warning naming the page ids, never a block.
+
 Observations are stored in the Confluence knowledge space configured for this host, read from
 `<runtime-home>/kherep/confluence.json` and resolved at install time. A host without that file, or
 whose file names no space, writes nothing. On Claude the same file stores `broker`, the absolute
@@ -239,7 +252,7 @@ Use `measured: live|doc|tracker` before the inline command for a genuinely non-c
 Code correctness, test/build results or general implementation behavior remain code-bound under #505 even when marked live/doc/tracker: a marker cannot launder a code claim. Split mixed claims or keep the unsupported code assertion `assumed`. Do not classify a narrow live claim as code merely because its prose mentions a commit.
 An installed public copy remains `code`: supply full source revision and repo-relative paths, measured SHA-256 equality of exact installed/source bytes, and identity of the artifact actually exercised. Hash before and after the bounded behavior measurement, or use an immutable verified fixture; bind the relevant executable dependency closure, not just a similarly named entrypoint. Source proof is a clean exact checkout or immutable Git object evidence, never a fabricated clean verdict for dirty working files. Dirty, unbound or mismatched proof stays `assumed`; incomplete closure narrows the claim or leaves it assumed. No private scan, absolute host paths or source-copy search is authorized.
 For refusal use only a literal identifier, e.g. ``measured: refused `check-ref: public-policy#safe-host-check` -> guard=secret-output-guard decision=deny event=safe-event-1``. Reference components are 1-64 lowercase letters/digits/dot/underscore/hyphen, starting with a letter/digit; guard/event identifiers use the same alphabet up to 80 characters. The safe reference is not a command. Never confirm connectivity, remote state or an unexecuted command result. A historical denial, echo, missing/ambiguous event or unsafe reference stays `assumed` or is omitted; omit unsafe command text entirely, never encode it. The parser checks only the declaration, not event authenticity.
-Missing code binding stays NOTICE, not a new denial; malformed briefs and unsafe refusal-reference syntax still refuse. No automatic promotion or page-label update is authorized. PR-B correlation/follow-up is not implemented here; native classification remains UNTESTED.
+Missing code binding stays NOTICE, not a new denial; malformed briefs and unsafe refusal-reference syntax still refuse. No automatic promotion or page-label update is authorized. PR-B joins each page's reported finding position and label with the brief's `measured:` positions; a page filed assumed for a measured finding makes the parent Stop hook ask once for the evidence verb or a stated reason. Native classification remains UNTESTED.
 <!-- observation-claim-scopes:end -->
 
 The runtime label carries the host as well as the runtime, because the two service accounts are

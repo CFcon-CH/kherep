@@ -88,7 +88,7 @@ const DIRTY = /finding 1 \(measured:\) was measured on a dirty tree/;
 const MALFORMED = /finding 1 \(measured:\) has a malformed repository or revision/;
 const CONDITIONAL = (n: number) => `Observation brief revision: finding ${n} (measured:) names no repository and commit SHA. `
   + "If it is about repository code, tests or a build, the observation agent files it as assumed; add `code <name>@<sha>` after measured:. "
-  + "A finding that is not about repository code is unchanged.";
+  + "A finding that is not about repository code is unchanged; declare it with `measured: live, doc or tracker`.";
 
 function notice(brief: string): string | null {
   assert.equal(observationBriefIssue(brief), null, `well-formed: ${brief}`);

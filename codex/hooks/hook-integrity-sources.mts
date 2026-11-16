@@ -16,7 +16,10 @@ export const COMPUTED: Record<string, string[]> = {
   // is loaded by a computed path like the adapter's (issue #507, part 4).
   "kherep-maestro/codex-shell-checks.mts": ["guard-recheck", "tool-event-shape"],
   "kherep-maestro/codex-privacy-boundary-guard.mts": ["workspace-scope", "private-path-policy", "private-path-rules", "real-path-policy"],
-  "kherep-maestro/codex-dispatch-contract-guard.mts": ["obs-brief-policy", "worker-brief-policy"],
+  "kherep-maestro/codex-dispatch-contract-guard.mts": ["obs-brief-policy", "worker-brief-policy", "obs-handback-state"],
+  // Issue #731 PR-B: the promotion state lib, required the same way by the result check and the Stop hook.
+  "kherep-maestro/codex-obs-result-check.mts": ["obs-handback-state"],
+  "kherep-maestro/codex-observation-stop.mts": ["obs-handback-state"],
   // The adapter loads its re-check lib (issue #507, part 3) and the denied-call journal lib (issue #504) by a computed path.
   "kherep-maestro/codex-hook-adapter.mts": ["guard-recheck", "denial-journal", "tool-event-shape"],
   "kherep-maestro/hook-adapter.mts": ["guard-recheck", "denial-journal", "tool-event-shape"],

@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 
@@ -152,6 +153,12 @@ const sess = (prompt: string, description?: string, model?: string) => ({ ...obs
 check("claude-obs without the session line denied", sess(GOOD_BRIEF), true, "OBS_BRIEF_SESSION");
 check("claude-obs session deny gives the line to copy", sess(GOOD_BRIEF), true, `\n${LINE}\n`);
 check("claude-obs session line first is allowed", sess(`${LINE}\n${GOOD_BRIEF}`), false);
+// Issue #731 PR-B. An allowed claude-obs dispatch with a usable session_id records its
+// brief under the hook's home, which for this in-place run is the checkout's claude/.
+const BRIEF_FILE = path.join(import.meta.dirname, "..", ".cache", "obs-result-check", `${SID}.brief`);
+const recorded = fs.existsSync(BRIEF_FILE) ? fs.readFileSync(BRIEF_FILE, "utf8") : null;
+recorded === "measured=1 findings=2\n" ? pass++ : fail++;
+console.log(`${recorded === "measured=1 findings=2\n" ? "PASS" : "FAIL"} | claude-obs allowed with a session_id records its brief`);
 check("claude-obs session line before the findings passes the format check alone", obs(`${LINE}\n${GOOD_BRIEF}`), false);
 check("claude-obs forged session line denied", sess(`Session id: a1b2c3d4-0000-4000-8000-000000000000\n${GOOD_BRIEF}`), true, LINE);
 check("claude-obs session line in the description only denied", sess(GOOD_BRIEF, LINE), true, "OBS_BRIEF_SESSION");
@@ -239,6 +246,12 @@ noticeCheck("claude-obs actual refusal declaration is silent", obs(REFUSED), "si
 noticeCheck("claude-obs missing refusal event is notice only", obs(REFUSED.replace(" event=safe-event-1", "")), "notice");
 check("claude-obs unsafe refusal reference denied", obs(REFUSED.replace("public-policy#safe-check", "../unsafe")), true, "safe check reference");
 check("claude-obs scope never overrides model denial", obs(REFUSED, "Record observations", "operator-model"), true, "DISPATCH_MODEL_UNKNOWN");
+
+// Issue #731 PR-B: the briefs the session cases recorded in the checkout go again.
+fs.rmSync(BRIEF_FILE, { force: true });
+for (const dir of [path.dirname(BRIEF_FILE), path.dirname(path.dirname(BRIEF_FILE))]) {
+  try { fs.rmdirSync(dir); } catch { /* absent, or used by another test file */ }
+}
 
 console.log(`\n=== ${pass} pass, ${fail} fail ===`);
 process.exit(fail === 0 ? 0 : 1);

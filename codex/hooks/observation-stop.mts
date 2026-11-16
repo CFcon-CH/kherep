@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { decision as acceptanceDecision } from "./acceptance-policy.mts";
@@ -7,6 +8,7 @@ const SELECTED_WORKSPACE = "__KHEREP_SELECTED_WORKSPACE__";
 
 interface StopInput {
   turn_id?: unknown;
+  session_id?: unknown;
   stop_hook_active?: unknown;
   last_assistant_message?: unknown;
   assistant_message?: unknown;
@@ -35,9 +37,33 @@ export function observationPrompt(workspace = SELECTED_WORKSPACE, platform = pro
   ].join(" ");
 }
 
-export function decision(value: unknown, env: NodeJS.ProcessEnv = process.env): Continuation | null {
+// Issue #731 PR-B. A promotion the result side left for this session: consumed
+// before the reason is emitted, so it continues the turn at most once, whatever
+// stop_hook_active says. The lib is the Claude hook lib beside this file at the
+// install target, else in the checkout; without it there is no promotion.
+type StatePolicy = typeof import("../../claude/hooks/lib/obs-handback-state.mts");
+const require = createRequire(import.meta.url);
+export const HOME = path.dirname(import.meta.dirname);
+export function promotion(input: StopInput, home: string, dir = import.meta.dirname): string | null {
+  const local = path.join(dir, "lib", "obs-handback-state.mts");
+  try {
+    const lib = require(fs.existsSync(local) ? local : path.resolve(dir, "..", "..", "claude", "hooks", "lib", "obs-handback-state.mts")) as StatePolicy;
+    return lib.pendingPromotion(home, input.session_id);
+  } catch {
+    return null;
+  }
+}
+
+export function decision(value: unknown, env: NodeJS.ProcessEnv = process.env, home = HOME): Continuation | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const input = value as StopInput;
+  const pending = promotion(input, home);
+  const result = observationDecision(input, env);
+  if (!pending) return result;
+  return { decision: "block", reason: result ? `${result.reason}\n\n${pending}` : pending };
+}
+
+function observationDecision(input: StopInput, env: NodeJS.ProcessEnv): Continuation | null {
   const prompt = observationPrompt();
   const receipt = acceptanceDecision(input, env);
   if (receipt) {

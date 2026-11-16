@@ -89,6 +89,8 @@ function prepareObservationPublisher(options: ObservationInstallOptions) {
     const linkingPredecessor = JSON.parse(read(path.join(repo, 'codex', 'parity', 'observation-linking-predecessor.json'))) as Record<string, string>;
     // Issue #737: frozen exact 72cebdd4 bytes, before the installed model selection replaced pins.
     const modelPolicyPredecessor = JSON.parse(read(path.join(repo, 'codex', 'parity', 'observation-model-policy-predecessor.json'))) as Record<string, string>;
+    // Issue #731 PR-B: frozen exact 840b9548 bytes, before the promotion trigger.
+    const promotionPredecessor = JSON.parse(read(path.join(repo, 'codex', 'parity', 'observation-promotion-predecessor.json'))) as Record<string, string>;
     const source = (relative: string) => read(path.join(repo, relative));
     const configFile = path.join(home, 'config.toml'), beforeConfig = read(configFile);
     const start = beforeConfig.indexOf(START), end = beforeConfig.indexOf(END);
@@ -100,7 +102,7 @@ function prepareObservationPublisher(options: ObservationInstallOptions) {
         : planObserverOverlay(home, options.modelSelectionGit ?? modelSelectionGit(repo), anchorText);
     const { agentFile, newAgent, capabilities } = overlay
         ? { agentFile: overlay.agentFile, newAgent: overlay.agentText, capabilities: JSON.parse(overlay.snapshotText) }
-        : legacyObserver(home, source, [predecessor, scopedPredecessor, identityPredecessor, pilotPredecessor, handbackPredecessor, linkingPredecessor]);
+        : legacyObserver(home, source, [predecessor, scopedPredecessor, identityPredecessor, pilotPredecessor, handbackPredecessor, linkingPredecessor, promotionPredecessor]);
     const changes = new Map<string, string>();
     changes.set(agentFile, newAgent);
     if (overlay)
@@ -115,6 +117,7 @@ function prepareObservationPublisher(options: ObservationInstallOptions) {
             && (handbackPredecessor[relative] === undefined || read(file) !== render(handbackPredecessor[relative]))
             && (linkingPredecessor[relative] === undefined || read(file) !== render(linkingPredecessor[relative]))
             && (modelPolicyPredecessor[relative] === undefined || read(file) !== render(modelPolicyPredecessor[relative]))
+            && (promotionPredecessor[relative] === undefined || read(file) !== render(promotionPredecessor[relative]))
             && read(file) !== identityPredecessor[relative] && read(file) !== workspacePredecessor[relative] && read(file) !== workerPredecessor[relative])
             throw new Error('observation-hook-drift');
         changes.set(file, next);
@@ -122,7 +125,8 @@ function prepareObservationPublisher(options: ObservationInstallOptions) {
     for (const [target, from] of [['obs-candidate-policy.mts', 'observation-candidate.mts'], ['obs-result-policy.mts', 'observation-result.mts']]) {
         const file = path.join(hookDir, target), next = source(`modules/atl-jira-brokers/${from}`);
         const old = target === 'obs-candidate-policy.mts' ? [predecessor['codex/hooks/obs-candidate-policy.mts'], scopedPredecessor[`modules/atl-jira-brokers/${from}`]]
-            : [lookupPredecessor[`modules/atl-jira-brokers/${from}`], handbackPredecessor[`modules/atl-jira-brokers/${from}`], linkingPredecessor[`modules/atl-jira-brokers/${from}`]];
+            : [lookupPredecessor[`modules/atl-jira-brokers/${from}`], handbackPredecessor[`modules/atl-jira-brokers/${from}`], linkingPredecessor[`modules/atl-jira-brokers/${from}`],
+                promotionPredecessor[`modules/atl-jira-brokers/${from}`]];
         if (fs.existsSync(file) && read(file) !== next && !old.includes(read(file)))
             throw new Error('observation-helper-drift');
         changes.set(file, next);
@@ -133,7 +137,7 @@ function prepareObservationPublisher(options: ObservationInstallOptions) {
         .find(known => read(agentsFile).includes(line(known))) ?? predecessor['codex/AGENTS.maestro.md'];
     changes.set(agentsFile, replaceKnown(read(agentsFile), line(oldAgents), line(source('codex/AGENTS.maestro.md'))));
     const routingFile = path.join(home, 'orchestra', 'ROUTING.md'), routing = read(routingFile);
-    const oldRouting = [predecessor, scopedPredecessor, handbackPredecessor, linkingPredecessor, modelPolicyPredecessor].map(known => section(known['codex/ROUTING.md'])).find(old => routing.includes(old)) ?? section(predecessor['codex/ROUTING.md']);
+    const oldRouting = [predecessor, scopedPredecessor, handbackPredecessor, linkingPredecessor, modelPolicyPredecessor, promotionPredecessor].map(known => section(known['codex/ROUTING.md'])).find(old => routing.includes(old)) ?? section(predecessor['codex/ROUTING.md']);
     changes.set(routingFile, replaceKnown(routing, oldRouting, section(source('codex/ROUTING.md'))));
     const table = renderObservationPublisher({ entry: path.join(workspace, 'tools', 'observation-stdio.mts'), home }, wiring.node);
     let config = beforeConfig;
@@ -171,7 +175,7 @@ function prepareObservationPublisher(options: ObservationInstallOptions) {
         const relative = `modules/atl-jira-brokers/${name}`;
         if (fs.existsSync(file) && read(file) !== source(relative) && read(file) !== predecessor[relative] && read(file) !== lookupPredecessor[relative]
             && read(file) !== headerPredecessor[relative] && read(file) !== prosePredecessor[relative] && read(file) !== scopedPredecessor[relative] && read(file) !== handbackPredecessor[relative]
-            && read(file) !== linkingPredecessor[relative])
+            && read(file) !== linkingPredecessor[relative] && read(file) !== promotionPredecessor[relative])
             throw new Error('observation-broker-drift');
     }
     // Reverse exactly the validated command-line edits and the optional table insertion.

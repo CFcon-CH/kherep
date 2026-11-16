@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /** Claude Agent/Task adapter for the provider-neutral dispatch policy. */
 import { evaluateDispatch, type DispatchMetadata } from "./lib/dispatch-policy.mts";
+import { homeOf, recordBrief } from "./lib/obs-handback-state.mts";
 import { warnUnclassifiable } from "./lib/tool-event-shape.mts";
 
 // The fields this hook reads from a PreToolUse payload.
@@ -74,6 +75,8 @@ async function main(): Promise<void> {
     sessionId: payload.session_id,
   };
   const result = evaluateDispatch(event);
+  // Issue #731 PR-B. The measured: positions of an allowed claude-obs brief, for the result-side join.
+  if (result.decision === "allow" && result.metadata?.agent === "claude-obs") recordBrief(homeOf(process.argv[1] as string), payload.session_id, String(input.prompt));
   if (result.decision === "deny") emitDeny(result.ruleId, result.reason, result.metadata);
   else if (result.notice) emitNotice(result.noticeRuleId || "OBS_BRIEF_REVISION", result.notice);
   else warnUnclassifiable(payload, "dispatch-contract-guard");

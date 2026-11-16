@@ -35,9 +35,14 @@
  *     the continuation a systemMessage only, no visible result a systemMessage.
  *     The message comes from last_assistant_message, else from the last
  *     assistant text of agent_transcript_path.
+ *   - issue #731 PR-B: in the transcript and final-message branches a valid
+ *     wrote report is joined with the brief recorded for session_id
+ *     (lib/obs-handback-state.mts recordPromotion), as the recorder does; a
+ *     label that cannot be read against a measured brief adds a notice.
  *   - any error: a one-line systemMessage, exit 0.
  *
- * Without a valid agent_id there is no record, no wait and no state write.
+ * Without a valid agent_id there is no record, no wait and no per-agent state
+ * write; the session-keyed promotion join above does not need one.
  * With one, the hook clears the record, prunes state older than 24 h and writes
  * <agent_id>.stop, the fixed-key trace of the host measurement, after the
  * decision. Known limits: when the recorder lands after this hook's transcript
@@ -46,8 +51,9 @@
  * handback is the previous run's, matching the old record, stays silent for the new run.
  *
  * PRIVACY. The block reason is a constant, and every systemMessage is built
- * from constants and the policy's fixed problem texts. Nothing from the
- * message, the transcript or the payload reaches stdout or the state files.
+ * from constants, the policy's fixed problem texts and numeric page ids.
+ * Nothing else from the message, the transcript or the payload reaches stdout
+ * or the state files.
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -55,8 +61,9 @@ import { pathToFileURL } from "node:url";
 
 import {
   clearDelivered, type Delivered, type DeliveredRead, FAILED_MESSAGE, homeOf, OBS_RESULT_FORMAT, PREFIX, prune,
-  readDelivered, stillMalformed, type StopTrace, validId, writeStopTrace,
+  readDelivered, recordPromotion, stillMalformed, type StopTrace, validId, writeStopTrace,
 } from "./lib/obs-handback-state.mts";
+import { claudeIds, claudePages } from "./lib/obs-promotion-policy.mts";
 import { checkObsResult } from "./lib/obs-result-policy.mts";
 import { type Handback, lastAssistantText, lastHandback, readTranscript, type TranscriptEntry } from "./lib/turn-substance.mts";
 
@@ -92,25 +99,39 @@ const UNCONFIRMED = " (delivery not confirmed)";
 const isRecord = (state: DeliveredRead): state is Delivered => state !== null && state !== "unreadable";
 const TRANSCRIPT: Record<Handback["result"], StopTrace["transcript"]> = { ok: "delivered", error: "refused", unknown: "unknown" };
 
-function finalMessage(payload: SubagentStopPayload, entries: TranscriptEntry[]): HookOutput | null {
+// Issue #731 PR-B. A wrote report this hook judges itself is joined with the
+// brief here; one the recorder judged (branch "state") was joined there.
+type Join = (text: string) => string | null;
+
+// A warning of the join after an existing notice, or alone.
+function withWarning(output: { systemMessage: string } | null, warning: string | null): HookOutput | null {
+  if (!warning) return output;
+  return { systemMessage: output ? `${output.systemMessage} ${warning}` : warning };
+}
+
+function finalMessage(payload: SubagentStopPayload, entries: TranscriptEntry[], join: Join): HookOutput | null {
   const message = payload.last_assistant_message;
   const text = typeof message === "string" && message.trim() ? message : lastAssistantText(entries);
   if (!text.trim()) return { systemMessage: NOT_VISIBLE };
   const check = checkObsResult(text);
-  if ("status" in check) return check.status === "failed" ? { systemMessage: FAILED_MESSAGE } : null;
+  if ("status" in check) {
+    if (check.status === "wrote") return withWarning(null, join(text));
+    return check.status === "failed" ? { systemMessage: FAILED_MESSAGE } : null;
+  }
   if (payload.stop_hook_active === false) return { decision: "block", reason: OBS_RESULT_REASON };
   return { systemMessage: stillMalformed(check.problem) };
 }
 
 // The handback's own message, judged without a block.
-function handbackMessage(handback: Handback): HookOutput | null {
+function handbackMessage(handback: Handback, join: Join): HookOutput | null {
   if (handback.result === "error") return { systemMessage: NOT_DELIVERED };
   const suffix = handback.result === "unknown" ? UNCONFIRMED : "";
   if (!handback.message || !handback.message.trim()) return { systemMessage: NOT_VISIBLE };
   const check = checkObsResult(handback.message);
   if ("problem" in check) return { systemMessage: stillMalformed(check.problem) + suffix };
   if (check.status === "failed") return { systemMessage: FAILED_MESSAGE + suffix };
-  return suffix ? { systemMessage: NOT_CONFIRMED } : null;
+  const output = suffix ? { systemMessage: NOT_CONFIRMED } : null;
+  return check.status === "wrote" ? withWarning(output, join(handback.message)) : output;
 }
 
 async function waitForRecord(home: string, id: string, waitMs: number): Promise<{ state: DeliveredRead; waited: number }> {
@@ -148,12 +169,13 @@ export async function decide(value: unknown, { home, waitMs = WAIT_MS }: DecideO
     after = isRecord(state) ? "present" : "absent";
   }
 
+  const join: Join = (text) => recordPromotion(home, payload.session_id, claudeIds(text), claudePages(text));
   let branch: string;
   let output: HookOutput | null;
   if (isRecord(state)) [branch, output] = ["state", null];
-  else if (handback) [branch, output] = [`transcript-${handback.result}`, handbackMessage(handback)];
+  else if (handback) [branch, output] = [`transcript-${handback.result}`, handbackMessage(handback, join)];
   else if (auto) [branch, output] = ["auto", { systemMessage: NOT_VISIBLE }];
-  else [branch, output] = ["final-message", finalMessage(payload, entries)];
+  else [branch, output] = ["final-message", finalMessage(payload, entries, join)];
 
   if (id) {
     clearDelivered(home, id);
