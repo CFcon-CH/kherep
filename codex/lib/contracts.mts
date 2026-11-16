@@ -20,8 +20,8 @@ export interface AgentRenderOptions {
   source?: string;
   role?: string;
   model?: string;
-  // true: the Codex dispatch guard denies a dispatch of this agent whose model is
-  // missing or differs from `model` (codex/hooks/dispatch-contract-guard.mts).
+  // Retired with issue #737: the guard no longer pins a dispatch model. Read only
+  // from a V1 dispatch snapshot by the observation-only updater.
   enforcePin?: boolean;
   // true: the Codex dispatch guard denies a dispatch of this agent whose brief
   // lacks a well-formed revision: or decided: marker (issue #701); mirrors
@@ -127,6 +127,17 @@ export interface ProjectionContext {
   pluginSourceRoot?: string;
   repoRoot: string;
   transaction: InstallTransaction;
+  // Issue #737. Planned agent TOML bytes by source binding id; without it the
+  // projection renders agents from the V1 manifest fields (projection tests).
+  agentOutputs?: ReadonlyMap<string, PlannedAgentOutput>;
+}
+
+export interface PlannedAgentOutput {
+  installedName: string;
+  content: string;
+  role: string;
+  model: string;
+  reasoning: string;
 }
 
 export interface CanonicalEntry {

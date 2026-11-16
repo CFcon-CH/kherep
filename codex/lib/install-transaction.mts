@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -7,6 +8,12 @@ interface Entry {
   relative: string;
   target: string;
 }
+
+const fileHash = (target: string): string | null => {
+  const stat = fs.lstatSync(target, { throwIfNoEntry: false });
+  if (!stat) return null;
+  return stat.isFile() ? createHash("sha256").update(fs.readFileSync(target)).digest("hex") : "not-a-file";
+};
 
 function exists(target: string): boolean {
   return Boolean(fs.lstatSync(target, { throwIfNoEntry: false }));
@@ -22,6 +29,10 @@ export class InstallTransaction {
   entries: Map<string, Entry>;
   createdGraveyards: string[];
   onWrite: ((target: string) => void) | null;
+  // Issue #737. The bytes (SHA-256, or null for absent) this transaction left
+  // at a staged file target. Rollback restores a target only while it still
+  // holds them, so a concurrent writer's later change is never overwritten.
+  owned: Map<string, string | null>;
 
   constructor(root: string, backupRoot: string, onWrite: ((target: string) => void) | null = null) {
     this.root = path.resolve(root);
@@ -29,6 +40,7 @@ export class InstallTransaction {
     this.entries = new Map();
     this.createdGraveyards = [];
     this.onWrite = onWrite;
+    this.owned = new Map();
     fs.mkdirSync(this.backupRoot, { recursive: true });
   }
 
@@ -64,7 +76,12 @@ export class InstallTransaction {
   remove(target: string): string {
     const resolved = this.stage(target);
     if (fs.existsSync(resolved)) fs.rmSync(resolved, { force: true, recursive: true });
+    this.own(resolved, null);
     return resolved;
+  }
+
+  own(resolved: string, hash: string | null): void {
+    if (this.entries.get(resolved)?.directory === false) this.owned.set(resolved, hash);
   }
 
   // #44. Retirement parks instead of deleting, as bootstrap/transaction-retire.sh
@@ -86,6 +103,7 @@ export class InstallTransaction {
       for (let attempt = 1; exists(dest); attempt += 1) dest = `${dated}-${attempt}`;
     }
     fs.renameSync(resolved, dest);
+    this.own(resolved, null);
     this.onWrite?.(dest);
     return dest;
   }
@@ -96,6 +114,7 @@ export class InstallTransaction {
     const resolved = this.remove(target);
     fs.mkdirSync(path.dirname(resolved), { recursive: true });
     fs.cpSync(source, resolved, { recursive: true });
+    this.owned.delete(resolved);
     this.onWrite?.(resolved);
     return resolved;
   }
@@ -106,6 +125,7 @@ export class InstallTransaction {
     const resolved = this.remove(target);
     fs.mkdirSync(path.dirname(resolved), { recursive: true });
     fs.copyFileSync(source, resolved);
+    this.own(resolved, fileHash(resolved));
     this.onWrite?.(resolved);
     return resolved;
   }
@@ -114,12 +134,23 @@ export class InstallTransaction {
     const resolved = this.stage(target);
     fs.mkdirSync(path.dirname(resolved), { recursive: true });
     fs.writeFileSync(resolved, content, "utf8");
+    this.own(resolved, createHash("sha256").update(content, "utf8").digest("hex"));
     this.onWrite?.(resolved);
     return resolved;
   }
 
-  rollback(): void {
-    for (const entry of [...this.entries.values()].reverse()) {
+  // Restores in reverse order; targets named in `last` (the model-selection
+  // anchor) are restored after everything else. Returns the relative paths left
+  // in place because a concurrent writer changed them after this transaction.
+  rollback(options: { last?: readonly string[] } = {}): string[] {
+    const last = new Set((options.last ?? []).map((target) => path.resolve(target)));
+    const ordered = [...this.entries.values()].reverse();
+    const conflicts: string[] = [];
+    for (const entry of [...ordered.filter((row) => !last.has(row.target)), ...ordered.filter((row) => last.has(row.target))]) {
+      if (this.owned.has(entry.target) && fileHash(entry.target) !== this.owned.get(entry.target)) {
+        conflicts.push(entry.relative);
+        continue;
+      }
       if (fs.existsSync(entry.target)) fs.rmSync(entry.target, { force: true, recursive: true });
       if (entry.existed) {
         const backup = path.join(this.backupRoot, entry.relative);
@@ -134,6 +165,7 @@ export class InstallTransaction {
       try { fs.rmdirSync(graveyard); } catch { /* holds a parked copy */ }
     }
     this.createdGraveyards = [];
+    return conflicts;
   }
 
   targets(): string[] {

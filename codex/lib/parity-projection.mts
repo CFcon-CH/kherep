@@ -11,6 +11,7 @@ import type {
 } from "./contracts.mts";
 import type { InstallTransaction } from "./install-transaction.mts";
 import { previousManaged, removeStaleManaged, reservePersonalTargets } from "./managed-projection.mts";
+import type { AgentSourceRow } from "./model-selection-inventory.mts";
 const SKILL_NAME_LINE = /^name:\s*(?:\S.*)?$/m;
 
 // A row of Claude's installed_plugins.json; only the fields read here are typed.
@@ -130,8 +131,39 @@ export function agentSourcePath(repoRoot: string, name: string, options: AgentRe
     : path.join(repoRoot, "claude", "agents", `${name}.md`);
 }
 
+// Issue #737. The pure name plan: Kherep agents keep their manifest names,
+// personal agent TOMLs are reserved, then plugin agents take collision-safe
+// names in manifest order. Reads only the Codex home's agent file names.
+export function planAgentNames(rows: readonly AgentSourceRow[], codexHome: string): Map<string, string> {
+  const used = new Set<string>(), names = new Map<string, string>();
+  for (const row of rows) if (row.sourceProvider === "kherep") { used.add(row.preferredName); names.set(row.bindingId, row.preferredName); }
+  reservePersonalTargets(codexHome, new Set(), used, previousManaged(codexHome));
+  for (const row of rows) if (row.sourceProvider !== "kherep") names.set(row.bindingId, uniqueName(row.preferredName, used, pluginShort(row.sourceProvider)));
+  return names;
+}
+
+// The write step of a planned selection: exact bytes rendered before the
+// transaction began, so every generated agent TOML matches its receipt.
+function writePlannedAgent(context: ProjectionContext, bindingId: string, receipt: ProjectionReceipt, source?: string): string {
+  const planned = context.agentOutputs!.get(bindingId);
+  if (!planned) throw new Error(`Planned agent output missing: ${bindingId}`);
+  const target = path.join(context.codexHome, "agents", `${planned.installedName}.toml`);
+  const existed = Boolean(fs.statSync(target, { throwIfNoEntry: false }));
+  context.transaction.writeFile(target, planned.content);
+  receipt.agents.push(source ? { name: planned.installedName, source, status: "projected" }
+    : { name: planned.installedName, status: existed ? "replaced-with-backup" : "installed" });
+  receipt.agentDefaults[planned.installedName] = { role: planned.role, model: planned.model, reasoning: planned.reasoning };
+  return planned.installedName;
+}
+
 function installKherepAgents(context: ProjectionContext, usedAgents: Set<string>, receipt: ProjectionReceipt): void {
   const { capabilities, codexHome, repoRoot, transaction } = context;
+  if (context.agentOutputs) {
+    for (const [name, options] of Object.entries(capabilities.agents)) {
+      usedAgents.add(writePlannedAgent(context, `kherep:${options.source ?? `claude/agents/${name}.md`}`, receipt));
+    }
+    return;
+  }
   for (const [name, options] of Object.entries(capabilities.agents)) {
     const source = fs.readFileSync(agentSourcePath(repoRoot, name, options), "utf8");
     const projected = options.as || name;
@@ -194,6 +226,13 @@ function agentOptions(context: ProjectionContext, plugin: CapabilityPlugin, name
 }
 
 function installPluginAgents(context: ProjectionContext, plugin: CapabilityPlugin, root: string, usedAgents: Set<string>, receipt: ProjectionReceipt): void {
+  if (context.agentOutputs) {
+    const relative = path.relative(context.repoRoot, path.join(root, "agents")).split(path.sep).join("/");
+    for (const sourceFile of files(path.join(root, "agents")).sort()) {
+      usedAgents.add(writePlannedAgent(context, `${plugin.id}:${relative}/${path.basename(sourceFile)}`, receipt, plugin.id));
+    }
+    return;
+  }
   for (const sourceFile of files(path.join(root, "agents"))) {
     const preferred = path.basename(sourceFile, ".md");
     const name = uniqueName(preferred, usedAgents, pluginShort(plugin.id));

@@ -237,3 +237,15 @@ test("the exact predecessor skill is backed up on projection upgrade and restore
   transaction.rollback();
   assert.deepEqual(fs.readFileSync(target), oldProjected);
 });
+
+// Issue #737. The write step of a planned selection never renders an agent itself.
+test("a planned projection refuses an agent without planned bytes", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "kherep-planned-projection-"));
+  t.after(() => fs.rmSync(root, { force: true, recursive: true }));
+  const repoRoot = path.resolve(here, "..", "..");
+  const codexHome = path.join(root, "codex");
+  const capabilities = JSON.parse(fs.readFileSync(path.join(repoRoot, "codex", "parity", "capabilities.json"), "utf8")) as Capabilities;
+  const transaction = new InstallTransaction(codexHome, path.join(root, "backup"));
+  assert.throws(() => project({ capabilities, codexHome, repoRoot, transaction, agentOutputs: new Map() }),
+    /Planned agent output missing: kherep:claude\/agents\/kherep-builder\.md/);
+});
