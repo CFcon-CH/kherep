@@ -37,6 +37,8 @@ export interface ConfigUpgradeResult {
 }
 
 export interface ManagedConfigOptions {
+  // Issue #737. Only with --apply-root-model-policy: the effective root role pair.
+  applyRootModel?: { model: string; effort: string };
   observationPublisher?: import("./observation-projection.mts").ObservationProjection;
   memoryProvider?: "unconfigured";
   retiredCentralBrain?: RetiredCentralBrainRender;
@@ -196,12 +198,12 @@ export function preserveConfigUpgrade(
   };
 }
 
-// Issue #212. Written only when config.toml has no top-level value of its own.
-export const DEFAULT_REASONING_EFFORT = "xhigh";
-
+// Issue #737 (replaces the #212 xhigh fill). The top-level model and effort are
+// the operator's native root state: kept as they are, absence included, unless
+// the explicit root apply writes the effective root role pair.
 export interface ReasoningEffortReport {
-  status: "configured" | "preserved-existing";
-  value: string;
+  status: "preserved-absent" | "preserved-existing" | "applied";
+  value: string | null;
 }
 
 // The receipt shows a plain TOML string unquoted and anything else as written.
@@ -285,11 +287,13 @@ function prepareAnchoredConfig(config: string, options: ManagedConfigOptions, or
   const operatorEffort = topLevelSetting(migrated, "model_reasoning_effort");
   let reasoningEffort: ReasoningEffortReport;
   let next = migrated;
-  if (operatorEffort === undefined) {
-    reasoningEffort = { status: "configured", value: DEFAULT_REASONING_EFFORT };
-    next = setTopLevelSetting(next, "model_reasoning_effort", JSON.stringify(DEFAULT_REASONING_EFFORT));
+  if (options.applyRootModel) {
+    next = setTopLevelSetting(next, "model", JSON.stringify(options.applyRootModel.model));
+    next = setTopLevelSetting(next, "model_reasoning_effort", JSON.stringify(options.applyRootModel.effort));
+    reasoningEffort = { status: "applied", value: options.applyRootModel.effort };
   } else {
-    reasoningEffort = { status: "preserved-existing", value: reportedValue(operatorEffort) };
+    reasoningEffort = operatorEffort === undefined ? { status: "preserved-absent", value: null }
+      : { status: "preserved-existing", value: reportedValue(operatorEffort) };
   }
   const previousNodes = managedNodePaths(config, options.startMarker, options.endMarker, options.node);
   next = configureMemoryNotify(next, options.node, options.memoryNotifyHook, previousNodes);

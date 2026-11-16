@@ -95,6 +95,9 @@ export interface InstallOptions {
   refreshModels?: boolean;
   // Issue #737. The Git adapter of the source checkout; tests inject a fake.
   modelSelectionGit?: ModelSelectionGit;
+  // Issue #737. Writes the effective root role model and effort as the top-level
+  // config.toml settings; otherwise both stay as the operator left them.
+  applyRootModelPolicy?: boolean;
   memoryProvider?: unknown;
   memoryProviderConfig?: string;
   codexHome?: string;
@@ -434,7 +437,9 @@ export function install(options: InstallOptions = {}) {
   // Issue #436. The intercom command of that config root, for the AGENTS.md
   // block, ROUTING.md and the rules; an unquotable root stops here, before any write.
   const intercom = intercomValues(messagingClient.configRoot);
+  const root = selection.resolution.roles.root.effective;
   const managedConfigOptions = {
+    applyRootModel: options.applyRootModelPolicy === true ? { model: root.model, effort: root.effort } : undefined,
     observationPublisher: { entry: path.join(workspace, "tools", "observation-stdio.mts"), home: codexHome },
     memoryProvider: memoryProvider.provider,
     // OP-1429. A block an older installer wrote for the retired Central Brain is
@@ -724,6 +729,11 @@ export function install(options: InstallOptions = {}) {
       messagingClient: { status: messagingClient.enabled ? "configured" : "disabled" },
       // Issue #212: the top-level model_reasoning_effort the installer kept or set.
       reasoningEffort: preparedConfig.reasoningEffort,
+      // Issue #737: the root apply status and the bytes it produced; the active
+      // parent model of a running thread is not established by this receipt.
+      rootModelPolicy: options.applyRootModelPolicy === true
+        ? { status: "applied", model: root.model, effort: root.effort, configSha256: crypto.createHash("sha256").update(config).digest("hex") }
+        : { status: "not-applied" },
       // The three literals are legacy entries without a manifest counterpart.
       // Everything else is DERIVED from capabilities.json: any entry declaring
       // status "missing" lands here automatically. Before OP-651 this list was
@@ -774,7 +784,7 @@ export function install(options: InstallOptions = {}) {
 
 type CliOptions = Pick<InstallOptions,
   "codexHome" | "claudeConfigDir" | "registryFile" | "workspace" | "memoryProviderConfig"
-  | "authorizeObservationPublishing" | "messagingClient" | "refreshModels">;
+  | "authorizeObservationPublishing" | "messagingClient" | "refreshModels" | "applyRootModelPolicy">;
 
 export function parseArgs(argv: string[]): CliOptions {
   const args = [...argv];
@@ -789,6 +799,10 @@ export function parseArgs(argv: string[]): CliOptions {
   ]);
   while (args.length) {
     const flag = args.shift();
+    if (flag === "--apply-root-model-policy") {
+      options.applyRootModelPolicy = true;
+      continue;
+    }
     if (flag === "--refresh-models") {
       options.refreshModels = true;
       continue;
