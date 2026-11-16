@@ -260,6 +260,18 @@ Start the selected runtime normally in the configured workspace. Confirm:
 
 Read the installed source receipt and target files when comparing an upgrade. Report unavailable integrations separately from working ones.
 
+### Guard canary
+
+After an install, an upgrade or a CLI update, the operator can check that `commit-guard` still blocks a call from a real runtime turn. Run it from the checkout:
+
+```sh
+node bootstrap/guard-canary.mts --synthetic --checkout .   # no tokens: installed and checkout dispatcher
+node bootstrap/guard-canary.mts --runtime claude           # one live Claude turn, spends tokens
+node bootstrap/guard-canary.mts --runtime codex            # one live Codex turn, spends tokens
+```
+
+Only the operator starts the canary. Nothing installs, schedules or runs it automatically, because a live run spends model tokens. Exit 0 (`DENIED`) means the guard blocked the known-bad commit. Exit 1 (`ALLOWED`) is a failure: the bad commit landed. Exit 2 (`INCONCLUSIVE`) means the run proved nothing, for example because the CLI was missing, the runtime was not logged in, the run timed out, or the output had no deny text. Read `~/.claude/.cache/guard-canary/last-report.json` for the verdict per runtime. The [hook reference](HOOKS.md#guard-canary) describes each mode and verdict.
+
 ### Codex observation publisher upgrade
 
 An existing Codex installation can use the [observation-only updater](CODEX.md#observation-only-upgrade) after an isolated review. It preserves authority, model pin, read-only sandbox, unrelated MCP settings, hook positions/state and the shared Control Plane pointer. Its separate receipt and observation-only restore snapshot cover the changed artifacts. Restart the native session and measure exact tool discovery and target readback before claiming activation; source tests do not prove live publication. Claude installation and publication remain unchanged.

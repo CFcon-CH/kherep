@@ -11,6 +11,20 @@ increments the minor version; every other release increments the patch version.
 
 ### Added
 
+- An operator-started guard canary, `bootstrap/guard-canary.mts` (#808, stage
+  2b). In live mode (`--runtime claude|codex|both`) it runs one headless turn
+  per runtime in a throwaway git repository. The turn makes a control commit
+  and a commit with an em dash, which `commit-guard` denies. The verdict comes
+  from `git log` and the guard's fixed deny text in the raw output (pure
+  module `bootstrap/guard-canary-verdict.mts`): `DENIED` exits 0, `ALLOWED`
+  exits 1 and is reported as a failure, and anything else is `INCONCLUSIVE`
+  with exit 2, so missing evidence never passes. `--synthetic` pipes the same
+  event through the installed Claude dispatcher command, and with `--checkout`
+  through a checkout's dispatcher, without calling a model. The report
+  `<home>/.cache/guard-canary/last-report.json` holds verdicts and runtime
+  versions only. No hook, schedule or CI job runs it, because a live run
+  spends tokens. `docs/HOOKS.md` and `docs/INSTALLATION.md` describe it. #808
+  stays open until the operator has run it live on both runtimes.
 - Every wired `PreToolUse` guard reports an event it cannot classify (#808,
   stage 2a). A data-only table, `claude/hooks/lib/tool-event-contract.mts`,
   holds one row per guard: the tools it judges and the `tool_input` key it
