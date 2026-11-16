@@ -279,6 +279,24 @@ for (const [name, command, block] of [
 ] as const) check(name, command, block, block ? "forge tunnel blocked" : undefined);
 check("#347 decision 2: the footer does not offer the token for forge tunnel", "forge tunnel", true, "never unblocks forge tunnel");
 
+// ---- Issue #808: the PowerShell tool is judged like Bash ----
+// needle: required on block; absent: a substring the stderr must NOT carry.
+function checkTool(name: string, tool: string, command: string, expectBlock: boolean, needle?: string, absent?: string): void {
+  const { blocked, stderr } = runHook(command, tool);
+  const ok = blocked === expectBlock && (!needle || stderr.includes(needle)) && (!absent || !stderr.includes(absent));
+  ok ? pass++ : fail++;
+  console.log(`${ok ? "PASS" : "FAIL"} | ${name} | expected ${expectBlock ? "BLOCK" : "ALLOW"}, got ${blocked ? "BLOCK" : "ALLOW"}`);
+}
+const PS_FOOTER = "not valid PowerShell, so run the approved command again through the Bash tool";
+checkTool("#808 PowerShell: git push --force", "PowerShell", "git push --force", true, "force-push blocked");
+checkTool("#808 PowerShell: destructive kubectl.exe verb", "PowerShell", "kubectl.exe -n synthetic delete pod x", true, "destructive kubectl verb blocked");
+checkTool("#808 PowerShell: forge production deploy", "PowerShell", "forge deploy -e production", true, "forge deploy --environment production blocked");
+checkTool("#808 PowerShell: a $env: token form is no approval", "PowerShell",
+  "$env:KHEREP_DEPLOY_AUTH='approved'; git push --force origin main", true, "force-push blocked");
+checkTool("#808 PowerShell: the footer sends the approved re-run to Bash", "PowerShell", "git push --force", true, PS_FOOTER);
+checkTool("#808 Bash: the footer carries no PowerShell note", "Bash", "git push --force", true, "force-push blocked", PS_FOOTER);
+checkTool("#808 PowerShell: benign push allows", "PowerShell", "git push origin main", false);
+
 // ---- Fail-safe: non-Bash tool and malformed stdin allow ----
 (function nonBash() {
   const res = spawnSync("node", [HOOK], {

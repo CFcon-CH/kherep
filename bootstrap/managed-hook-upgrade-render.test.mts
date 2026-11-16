@@ -206,3 +206,17 @@ test("T8 a matcher move leaves the old group wired (documented limit)", () => {
     assert.deepEqual(r.replaced, [], p);
   });
 });
+
+// Issue #808. An upgrade from a template without the PowerShell group adds it as a
+// group of its own: one guard-dispatch entry per shell matcher, nothing replaced, the
+// "Bash" group untouched, and the second render silent and identical.
+test("T9 the added PowerShell group is a purely additive upgrade", () => {
+  const before = variant((h) => { h.PreToolUse = h.PreToolUse!.filter((g) => g.matcher !== "PowerShell"); });
+  assert.equal(before.hooks.PreToolUse!.length, TEMPLATE.hooks.PreToolUse!.length - 1);
+  check(upgrade(before, TEMPLATE), (r, p) => {
+    const shell = wired(r.hooks, "guard-dispatch.mts").filter((w) => /^PreToolUse\[(Bash|PowerShell|Bash\|PowerShell)\]/.test(w));
+    assert.deepEqual(shell, ["PreToolUse[Bash] t=30", "PreToolUse[PowerShell] t=30", "PreToolUse[Bash|PowerShell] t=30"], p);
+    assert.equal(group(r.hooks, "PreToolUse", "PowerShell").hooks[0]!.command, bash(r.hooks).command, p);
+    assert.deepEqual(r.replaced, [], p);
+  });
+});

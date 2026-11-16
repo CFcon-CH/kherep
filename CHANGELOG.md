@@ -138,6 +138,17 @@ increments the minor version; every other release increments the patch version.
 
 ### Fixed
 
+- `commit-guard` and `deploy-guard` also run for the Claude `PowerShell` tool.
+  Claude Code for Windows runs shell commands through either `Bash` or
+  `PowerShell`, and only a `Bash` group wired the two guards, so the Windows
+  live guard canary reported `ALLOWED` for a known-bad commit. The settings
+  template adds a `PowerShell` group with the same dispatcher command next to
+  the unchanged `Bash` group, so an upgrade only adds a group.
+  `deploy-guard` now accepts `PowerShell` events; its deny message for one says
+  that the `KHEREP_DEPLOY_AUTH=approved` prefix is not valid PowerShell, so an
+  approved re-run goes through the `Bash` tool. No new bypass is accepted.
+  Operator action: run the installer; until then the installed settings do not
+  start the two guards for `PowerShell`. Refs #808
 - Claude observation pages carry the dispatching session's `session-<id>`
   label again (#922). `dispatch-contract-guard` denies a `claude-obs` dispatch
   whose brief does not start with `Session id: <id>`, the `session_id` of the

@@ -47,12 +47,27 @@ function covers(templateMatcher: string | undefined, legacyMatcher: string | und
 const hookFiles = (command: unknown): string[] =>
   [...String(command).matchAll(/\/hooks\/([\w.-]+\.(?:js|mts))"/g)].map((match) => match[1]!);
 
-// The template matcher that wires <hook> at <event>, exactly once.
-function templateMatcher(event: string, hook: string): string | undefined {
+// Every template matcher that wires <hook> at <event>. Issue #808: commit-guard and
+// deploy-guard run under two groups, "Bash" and "PowerShell".
+function templateMatchers(event: string, hook: string): (string | undefined)[] {
   const found = (template.hooks[event] ?? []).filter((group) =>
     (group.hooks ?? []).some((entry) => hookFiles(entry.command).includes(hook)));
+  assert.ok(found.length > 0, `${hook} is wired under ${event}`);
+  return found.map((group) => group.matcher);
+}
+
+// The template matcher that wires <hook> at <event>, exactly once.
+function templateMatcher(event: string, hook: string): string | undefined {
+  const found = templateMatchers(event, hook);
   assert.equal(found.length, 1, `${hook} is wired once under ${event}`);
-  return found[0]!.matcher;
+  return found[0];
+}
+
+// True when the template matchers together cover every tool the legacy matcher matches.
+function coveredByAny(templates: (string | undefined)[], legacyMatcher: string | undefined): boolean {
+  if (templates.some((matcher) => covers(matcher, legacyMatcher))) return true;
+  const names = matchesAll(legacyMatcher) ? undefined : exactNames(legacyMatcher!);
+  return Boolean(names && names.every((name) => templates.some((matcher) => matcherMatches(matcher, name))));
 }
 
 // Every legacy group a host may still carry for a batch-2 guard: the groups
@@ -83,13 +98,17 @@ test("the matcher model follows the documented examples", () => {
   assert.ok(!covers("Agent|Task", "Agent|Task|mcp__.*"));
   assert.ok(!covers("Bash", "Bash|PowerShell"));
   assert.ok(covers("Bash|PowerShell", "Bash"));
+  // Issue #808: two exact-name groups together cover a list neither covers alone.
+  assert.ok(coveredByAny(["Bash", "PowerShell"], "Bash|PowerShell"));
+  assert.ok(!coveredByAny(["Bash"], "Bash|PowerShell"));
+  assert.ok(!coveredByAny(["Bash", "PowerShell"], "mcp__.*") && !coveredByAny(["Bash", "PowerShell"], ""));
 });
 
 for (const legacy of LEGACY) {
   test(`${legacy.guard}.mts covers the legacy PreToolUse "${legacy.matcher}" group`, () => {
-    const current = templateMatcher("PreToolUse", `${legacy.guard}.mts`);
-    assert.ok(covers(current, legacy.matcher),
-      `template matcher "${current}" does not cover legacy "${legacy.matcher}" for ${legacy.guard}`);
+    const current = templateMatchers("PreToolUse", `${legacy.guard}.mts`);
+    assert.ok(coveredByAny(current, legacy.matcher),
+      `template matchers ${JSON.stringify(current)} do not cover legacy "${legacy.matcher}" for ${legacy.guard}`);
   });
 }
 
@@ -114,6 +133,31 @@ test("module-label-guard.mts runs in the main-checkout group", () => {
   assert.equal(group.length, 1);
   assert.deepEqual(group[0]!.hooks!.flatMap((entry) => hookFiles(entry.command)),
     ["guard-dispatch.mts", "main-checkout-guard.mts", "module-label-guard.mts"]);
+});
+
+// Issue #808. Claude Code for Windows runs shell commands through the PowerShell tool;
+// a commit or deploy there passed unguarded (the Windows guard canary measured ALLOWED).
+// A group of its own beside the unchanged "Bash" group keeps every existing matcher.
+test("commit-guard.mts and deploy-guard.mts run for PowerShell in a group of its own", () => {
+  const groups = (matcher: string) => template.hooks.PreToolUse!.filter((group) => group.matcher === matcher);
+  const files = (group: Group) => group.hooks!.flatMap((entry) => hookFiles(entry.command));
+  assert.equal(groups("PowerShell").length, 1);
+  assert.deepEqual(files(groups("PowerShell")[0]!), files(groups("Bash")[0]!));
+  assert.deepEqual(groups("PowerShell")[0]!.hooks, groups("Bash")[0]!.hooks);
+});
+
+// Each shell tool runs each PreToolUse guard exactly once, commit-guard and deploy-guard included.
+test("every shell tool wires each PreToolUse guard at most once and the commit and deploy guards exactly once", () => {
+  const guards = new Set(template.hooks.PreToolUse!.flatMap((group) => (group.hooks ?? []).flatMap((entry) => hookFiles(entry.command))));
+  guards.delete("guard-dispatch.mts");
+  for (const tool of ["Bash", "PowerShell"]) {
+    for (const guard of guards) {
+      const count = template.hooks.PreToolUse!.filter((group) => matcherMatches(group.matcher, tool)
+        && (group.hooks ?? []).some((entry) => hookFiles(entry.command).includes(guard))).length;
+      const exact = guard === "commit-guard.mts" || guard === "deploy-guard.mts";
+      assert.ok(exact ? count === 1 : count <= 1, `${tool} wires ${guard} ${count} times`);
+    }
+  }
 });
 
 test("no template entry wires a .js script", () => {

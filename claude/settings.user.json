@@ -46,6 +46,16 @@
         ]
       },
       {
+        "matcher": "PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"__KHEREP_CLAUDE_HOME__/kherep/hook-runtime/entry.mts\" pretool \"__KHEREP_CLAUDE_HOME__/hooks/guard-dispatch.mts\" \"__KHEREP_CLAUDE_HOME__/hooks/commit-guard.mts\" \"__KHEREP_CLAUDE_HOME__/hooks/deploy-guard.mts\"",
+            "timeout": 30
+          }
+        ]
+      },
+      {
         "matcher": "Bash|PowerShell",
         "hooks": [
           {
