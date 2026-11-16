@@ -5,6 +5,8 @@ export const LOOP_RING = 8;
 export const LOOP_SEGMENT = 256;
 export const LOOP_PAIRS = 4096;
 export const LOOP_IDLE_MS = 24 * 60 * 60_000;
+// Issue #946: an unheld pair idle this long starts a new segment (generation+1, count 0); strikes and fingerprints stay.
+export const LOOP_SEGMENT_IDLE_MS = 6 * 60 * 60_000;
 export interface LoopAdmissionV1 { version: 1; threadId: string; depth: number; generation: number; ordinal: number }
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const natural = (n: unknown): n is number => typeof n === "number" && Number.isSafeInteger(n) && n >= 0;
