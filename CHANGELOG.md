@@ -113,10 +113,10 @@ increments the minor version; every other release increments the patch version.
   The top-level `model` and `model_reasoning_effort` in `config.toml` are
   kept as the operator left them, absence included: the former `xhigh` fill
   for an absent effort is gone, and only the new `--apply-root-model-policy`
-  writes the effective root role pair. `codex/install.ps1` gains
-  `-RefreshModels` and `-ApplyRootModelPolicy`. **Operator action:** every
-  existing Codex host needs one install with `--refresh-models` (Windows
-  `-RefreshModels`); until then an ordinary install stops with
+  writes the effective root role pair. Both flags are passed to
+  `node codex/install.mts` directly; `codex/install.ps1` does not forward them.
+  **Operator action:** every existing Codex host needs one install with
+  `node codex/install.mts --refresh-models` (on Windows too); until then an ordinary install stops with
   `model-selection-refresh-required` before any write, and a historically
   managed observer `low` becomes `medium`. See `docs/CODEX.md`.
 - The Claude Confluence broker's `create` is observation-only (#760, contract
