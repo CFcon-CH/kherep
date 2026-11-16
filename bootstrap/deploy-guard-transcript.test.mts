@@ -151,3 +151,15 @@ test("actual peer frames and their task/session handoffs never authorize, includ
     }
   }
 });
+
+// Issue #808: the source hook itself, so the coverage report sees the PowerShell deny footer.
+test("a PowerShell deny points the approved re-run at the Bash tool, a Bash deny does not", () => {
+  const run = (tool: string) => spawnSync(process.execPath, [path.join(SOURCE, "deploy-guard.mts")], {
+    encoding: "utf8", timeout: 10_000, input: JSON.stringify({ tool_name: tool, tool_input: { command: "git push --force" } }) });
+  const powershell = run("PowerShell");
+  assert.equal(powershell.status, 2, powershell.stderr);
+  assert.match(powershell.stderr, /not valid PowerShell, so run the approved command again through the Bash tool/);
+  const bash = run("Bash");
+  assert.equal(bash.status, 2, bash.stderr);
+  assert.doesNotMatch(bash.stderr, /not valid PowerShell/);
+});
