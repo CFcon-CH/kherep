@@ -43,11 +43,11 @@ function stubFile(dir: string, name = "stub.cjs", shebang = ""): string {
 }
 
 interface Run { code: number; lines: string[]; home: string; tmpRoot: string; report: Record<string, unknown> | undefined }
-async function inProcess(argv: string[], env: Record<string, string>, resolve?: Deps["resolve"]): Promise<Run> {
+async function inProcess(argv: string[], env: Record<string, string>, resolve?: Deps["resolve"], extra: Partial<Deps> = {}): Promise<Run> {
   const home = tmp("canary-home-"), tmpRoot = tmp("canary-tmp-"), lines: string[] = [];
   const stub = stubFile(tmp("canary-stub-"));
   const resolver = resolve ?? ((): Resolved => ({ file: process.execPath, args: [stub] }));
-  const code = await main([...argv, "--home", home], { env: { ...process.env, ...env }, resolve: resolver, tmpRoot, out: (line) => lines.push(line) });
+  const code = await main([...argv, "--home", home], { env: { ...process.env, ...env }, resolve: resolver, tmpRoot, out: (line) => lines.push(line), ...extra });
   const file = path.join(home, ".cache", "guard-canary", "last-report.json");
   const report = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, unknown> : undefined;
   return { code, lines, home, tmpRoot, report };
@@ -193,7 +193,7 @@ test("a missing or unusable runtime is INCONCLUSIVE, and a runtime that cannot s
 });
 
 test("no git on PATH: the throwaway repo cannot be set up, INCONCLUSIVE", { skip: process.platform === "win32" ? "an emptied PATH key is not the only Path key in a copied Windows environment" : false }, async () => {
-  const run = await inProcess(["--runtime", "claude"], { PATH: "", GUARD_CANARY_STUB: "allowed" });
+  const run = await inProcess(["--runtime", "claude"], { GUARD_CANARY_STUB: "allowed" }, undefined, { git: null });
   assert.equal(run.code, 2);
   assert.equal(results(run)[0]!.reason, "repo-setup-failed");
   assert.deepEqual(fs.readdirSync(run.tmpRoot), []);
