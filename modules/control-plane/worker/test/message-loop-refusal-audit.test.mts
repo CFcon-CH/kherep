@@ -46,6 +46,14 @@ it("deliver-capability: a queued unbound guarded row refuses after a brake downg
   expect(await refusal("message.state", root.status.messageId)).toMatchObject(
     { reason: COMPATIBILITY, loopBranch: "deliver-capability", fromCode: "LEGACY_KNOWN", toCode: "LEGACY_KNOWN" });
 });
+it("deliver-capability: a queued bound attested row refuses after a brake downgrade", async () => {
+  const { nodeId, send } = await attestedPair();
+  const root = await send(); if (!root.ok) throw new Error(root.error);
+  await registry().updateRegistration(nodeId, FACTS, [{ name: "codex", kind: "cli" }], [MESSAGING_CAPABILITY]);
+  expect(await registry().messageDeliveryReady(root.status.messageId)).toBe(false);
+  expect(await refusal("message.state", root.status.messageId)).toMatchObject(
+    { reason: COMPATIBILITY, loopBranch: "deliver-capability", fromCode: "ATTESTED", toCode: "ATTESTED" });
+});
 it("other loop refusals record no loop branch", async () => {
   const { send, take } = await attestedPair();
   const root = await send(); if (!root.ok) throw new Error(root.error); await take(root.status.messageId);

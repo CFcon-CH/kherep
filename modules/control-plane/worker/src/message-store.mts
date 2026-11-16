@@ -576,14 +576,18 @@ export class MessageStore {
     const denyKey = typeof row.delivery_pair === "string" ? row.delivery_pair : lineage.kind === "guarded" ? lineage.pair : null;
     const held = denyKey ? this.loops.held(denyKey) : null;
     const earlier = held ?? (storedMessageBinding(row) === "invalid" ? RESOLUTION_REQUIRED : lineage.kind === "guarded-invalid" ? LOOP_LINEAGE : null);
-    const loopBranch: LoopBranch | null = earlier !== null || lineage.kind !== "guarded" ? null
-      : lineage.identityBinding !== null && !this.identity.deliveryValid(row, lineage.identityBinding, now) ? "deliver-identity"
-      : !this.capabilities(String(row.from_node))?.includes(MESSAGING_LOOP_BRAKE_CAPABILITY)
-        || !this.capabilities(String(row.to_node))?.includes(MESSAGING_LOOP_BRAKE_CAPABILITY) ? "deliver-capability" : null;
+    // Capability first: deliveryValid also fails without the brake, which would hide the cause.
+    let loopBranch: LoopBranch | null = null;
+    if (earlier === null && lineage.kind === "guarded") {
+      if (!this.capabilities(String(row.from_node))?.includes(MESSAGING_LOOP_BRAKE_CAPABILITY)
+        || !this.capabilities(String(row.to_node))?.includes(MESSAGING_LOOP_BRAKE_CAPABILITY)) loopBranch = "deliver-capability";
+      else if (lineage.identityBinding !== null && !this.identity.deliveryValid(row, lineage.identityBinding, now)) loopBranch = "deliver-identity";
+    }
     const reason = earlier ?? (loopBranch ? LOOP_COMPATIBILITY : null);
     if (reason === null) return true;
-    this.setState(recordMetadata(row), "refused", reason, "system", now, effects, undefined, undefined, loopBranch ? this.identity.loopAudit(loopBranch,
-      { nodeId: String(row.from_node), session: String(row.from_session) }, { nodeId: String(row.to_node), session: String(row.to_session) }, now) : undefined);
+    const loopAudit = loopBranch ? this.identity.loopAudit(loopBranch, { nodeId: String(row.from_node), session: String(row.from_session) },
+      { nodeId: String(row.to_node), session: String(row.to_session) }, now) : undefined;
+    this.setState(recordMetadata(row), "refused", reason, "system", now, effects, undefined, undefined, loopAudit);
     return false;
   }
 
@@ -613,14 +617,14 @@ export class MessageStore {
   }
 
   private setState(record: MessageRecord, state: MessageState, reason: string | null, actor: string, now: number,
-    effects: MessageEffects, progress?: MessageProgress, diagnostic?: MessageDiagnostic, auditDetail?: object): void {
+    effects: MessageEffects, progress?: MessageProgress, diagnostic?: MessageDiagnostic, loopAudit?: ReturnType<LoopIdentity["loopAudit"]>): void {
     // Only a queued message keeps its text. Progress belongs only to accepted.
     const kept = state === "accepted" ? progress ?? null : null;
     const keptDiagnostic = state === "accepted" ? diagnostic : undefined;
     this.sql.exec(`UPDATE messages SET state = ?, reason = ?, text = NULL, progress_phase = ?, progress_code = ?,
       progress_observed_at = ?, progress_retry_at = ?, updated_at = ? WHERE id = ?`, state, reason, kept?.phase ?? null,
     kept?.code ?? null, kept?.observedAt ?? null, kept?.retryAt ?? null, now, record.messageId);
-    this.audit(actor, "message.state", record.toNode, { messageId: record.messageId, state, reason, ...auditDetail, ...(kept ? { progress: kept } : {}) });
+    this.audit(actor, "message.state", record.toNode, { messageId: record.messageId, state, reason, ...loopAudit, ...(kept ? { progress: kept } : {}) });
     storeDiagnostic(this.sql, record.messageId, keptDiagnostic);
     this.retention.finalized(record.messageId, record.fromNode, state, now);
     if (record.fromNode !== OPERATOR_NODE_ID) {
