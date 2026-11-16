@@ -104,6 +104,23 @@ On Claude the dispatcher joins the warning with the other guards' output. On Cod
 
 What stays unproven:
 
-- **The matcher blind spot.** A runtime starts a guard only when the tool name matches its group's matcher. If a runtime renames a tool, for example `Bash`, every guard behind that matcher never runs, so no warning can appear; the guards that see all tools (`privacy-boundary-guard`, `secret-output-guard`, `playwright-file-guard` on Claude) classify the new name as another tool and print no warning; `secret-output-guard` and `playwright-file-guard` still apply their rule, because they do not read the tool name. Only a call through the real runtime, the canary of a later stage, can show it.
+- **The matcher blind spot.** A runtime starts a guard only when the tool name matches its group's matcher. If a runtime renames a tool, for example `Bash`, every guard behind that matcher never runs, so no warning can appear; the guards that see all tools (`privacy-boundary-guard`, `secret-output-guard`, `playwright-file-guard` on Claude) classify the new name as another tool and print no warning; `secret-output-guard` and `playwright-file-guard` still apply their rule, because they do not read the tool name. Only a call through the real runtime can show it: the [guard canary](#guard-canary) below does that for `commit-guard`.
 - **Native invocation and presentation.** These are source and isolated-install tests with synthetic events; whether a runtime shows the warning to the model or the operator is UNKNOWN.
 - **No durable record.** A warning lives only in that call's output; nothing collects it yet.
+
+## Guard canary
+
+`bootstrap/guard-canary.mts` checks that a guard still blocks a call that comes from a real runtime turn (issue #808, stage 2b). Only the operator starts it. No hook, schedule or CI job runs the live mode, because one live run spends model tokens on each runtime it covers. Run it after an install, an upgrade or a CLI update.
+
+- **Live mode** (`--runtime claude|codex|both`, default `both`). For each runtime, the canary creates a throwaway git repository in the temporary directory and runs one headless turn there: `claude -p` with `Bash(git commit *)` allowed and no permission prompts, or `codex exec` in the `workspace-write` sandbox with that repository's `.git` added as a writable root. Hooks stay on. The prompt asks for a control commit `kherep-canary-control <nonce>` and then a commit whose message contains an em dash, which `commit-guard` denies. The verdict comes from the repository's `git log`, plus the raw runtime output for the deny. Each run has a time limit (`--timeout`, 300 s by default), and the repository is removed afterwards. The runtime is looked up on `PATH` only.
+- **Synthetic mode** (`--synthetic [--checkout <repo>]`). Pipes the same known-bad event through the installed Claude dispatcher command from `<home>/settings.json` (the `PreToolUse` group that matches `Bash` and runs `commit-guard`). With `--checkout`, it also pipes the event through a copy of that checkout's `claude/hooks` dispatcher. No model is called. This mode covers the Claude dispatcher only.
+
+| Verdict | Exit | Meaning |
+|---|---|---|
+| `DENIED` | 0 | Live: the control commit exists, the bad commit does not, and the raw output contains the guard's fixed deny text `commit message contains an em dash (U+2014)`. Synthetic: the dispatcher printed a deny whose reason contains that text, or exited 2 with it on stderr. |
+| `ALLOWED` | 1 | Live: the bad commit is in `git log`. Synthetic: the dispatcher allowed the event. This is a failure: the guard did not block the call. |
+| `INCONCLUSIVE` | 2 | Anything else: CLI missing or unusable, no control commit (for example an auth failure or a refused prompt), a rewritten bad commit, no deny text, an unreadable `git log`, a timeout, missing wiring. Missing evidence never counts as a pass. |
+
+When results are combined, any `ALLOWED` gives exit 1. Otherwise any `INCONCLUSIVE` gives exit 2, and only all `DENIED` gives exit 0. The report `<home>/.cache/guard-canary/last-report.json` (`<home>` is `--home`, else `CLAUDE_CONFIG_DIR`, else `~/.claude`) records the mode, the timestamp, and per runtime the verdict, the reason and the `--version` line. It never contains the nonce, the prompt, the output or a path.
+
+The canary proves one guard (`commit-guard`) behind one matcher (`Bash` on Claude, the shell group on Codex) for the runtime versions it ran. It says nothing about the other guards, and it does not show whether a runtime presents the deny to the operator.
