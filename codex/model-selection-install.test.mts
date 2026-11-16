@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
@@ -351,4 +352,26 @@ test("the selection lock is released even when rollback itself fails", (t) => {
   assert.equal(fs.existsSync(f.file(files.lock)), false, "installer");
   assert.throws(() => installObservationPublisher({ codexHome: f.codexHome, workspace: f.workspace, afterWrite: breakRollback }), /ENOENT/);
   assert.equal(fs.existsSync(f.file(files.lock)), false, "observation-only updater");
+});
+
+// Design "Root": the top-level model and effort are native operator state. An
+// ordinary install keeps them, absence included; only the explicit root apply
+// writes the effective root pair, user root choices included.
+test("the root model and effort change only through the explicit root apply", (t) => {
+  const f = fixture(t);
+  write(f.file("config.toml"), "# operator config without a root model\n");
+  const ordinary = f.run({ modelCatalog: catalog() });
+  assert.deepEqual(ordinary.receipt.reasoningEffort, { status: "preserved-absent", value: null });
+  assert.deepEqual(ordinary.receipt.rootModelPolicy, { status: "not-applied" });
+  assert.doesNotMatch(f.read("config.toml"), /^model(?:_reasoning_effort)? =/m);
+  write(f.file(files.user), JSON.stringify({ roles: { root: { effort: "high" } } }));
+  const applied = f.run({ modelCatalog: catalog(), applyRootModelPolicy: true });
+  const config = f.read("config.toml");
+  assert.match(config, /^model = "gpt-6.10-sol"$/m);
+  assert.match(config, /^model_reasoning_effort = "high"$/m);
+  assert.deepEqual(applied.receipt.rootModelPolicy, { status: "applied", model: "gpt-6.10-sol", effort: "high",
+    configSha256: createHash("sha256").update(config).digest("hex") });
+  const kept = f.run();
+  assert.deepEqual(kept.receipt.reasoningEffort, { status: "preserved-existing", value: "high" });
+  assert.equal(f.read("config.toml"), config, "an ordinary reinstall keeps the applied root lines");
 });

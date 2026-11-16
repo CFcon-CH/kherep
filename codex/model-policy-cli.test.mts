@@ -33,6 +33,7 @@ function fixture(t: TestContext) {
 
 test("model refresh requires its explicit CLI flag", () => {
   assert.deepEqual(parseArgs(["--refresh-models"]), { refreshModels: true });
+  assert.deepEqual(parseArgs(["--apply-root-model-policy"]), { applyRootModelPolicy: true });
   assert.equal(parseArgs([]).refreshModels, undefined);
   assert.throws(() => parseArgs(["--models-only"]), /Unexpected/);
 });

@@ -6,7 +6,8 @@ param(
   [string]$Workspace,
   [switch]$AuthorizeObservationPublishing,
   [switch]$EnableMessagingClient,
-  [switch]$RefreshModels
+  [switch]$RefreshModels,
+  [switch]$ApplyRootModelPolicy
 )
 
 $ErrorActionPreference = "Stop"
@@ -19,6 +20,7 @@ if ($Workspace) { $arguments += @("--workspace", $Workspace) }
 if ($AuthorizeObservationPublishing) { $arguments += "--authorize-observation-publishing" }
 if ($EnableMessagingClient) { $arguments += "--enable-messaging-client" }
 if ($RefreshModels) { $arguments += "--refresh-models" }
+if ($ApplyRootModelPolicy) { $arguments += "--apply-root-model-policy" }
 
 # Der Space-Schritt stand frueher hier und lief gegen orchestra/confluence.json.
 # Er liegt jetzt in install.mts, neben dem Credential-Schritt, und schreibt nach

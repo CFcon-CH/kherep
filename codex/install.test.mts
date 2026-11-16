@@ -692,7 +692,7 @@ test("installs the Mac-compatible projection without replacing user state", asyn
   assert.equal(occurrences(agents, AGENTS_START), 1);
   assert.equal(occurrences(agents, USER_START), 1);
   assert.match(agents, /If a required private processing path is unavailable, report the blocker without exposing the input/);
-  assert.match(config, /^model_reasoning_effort = "xhigh"/m);
+  assert.doesNotMatch(config, /^model_reasoning_effort =/m, "issue #737: an absent root effort stays absent");
   assert.match(config, /^hooks = true$/m);
   assert.match(config, /\[mcp_servers\.keep\]/);
   assert.equal(occurrences(config, "[mcp_servers.context7]"), 1);
@@ -720,7 +720,8 @@ test("installs the Mac-compatible projection without replacing user state", asyn
   assert.ok(config.includes(`KHEREP_MCP_REGISTRY_FILE = ${JSON.stringify(installOptions.claudeRegistryFile)}`));
   assert.equal(occurrences(config, CONFIG_START), 1);
   assert.equal(result.receipt.memoryProvider, "unconfigured");
-  assert.deepEqual(result.receipt.reasoningEffort, { status: "configured", value: "xhigh" });
+  assert.deepEqual(result.receipt.reasoningEffort, { status: "preserved-absent", value: null });
+  assert.deepEqual(result.receipt.rootModelPolicy, { status: "not-applied" });
   assert.deepEqual(codexCalls.map(({ args }) => args), [["plugin", "marketplace", "list", "--json"], ["plugin", "marketplace", "add", "./marketplace", "--json"], ["plugin", "add", LOCAL_PLUGIN_ID]]);
   assert.ok(config.includes(process.execPath.replace(/\\/g, "\\\\")));
   assert.ok(config.includes("kherep-maestro-context.mts"));

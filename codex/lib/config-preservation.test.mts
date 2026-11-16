@@ -305,15 +305,22 @@ test("keeps an existing top-level reasoning effort byte for byte", () => {
   assert.equal(prepareManagedConfig(result.config, MANAGED_OPTIONS).config, result.config);
 });
 
-test("writes the xhigh default only when the top-level reasoning effort is absent", () => {
+// Issue #737. An absent top-level effort stays absent (the #212 xhigh fill is
+// gone); only the explicit root apply writes the effective root pair.
+test("keeps an absent top-level reasoning effort absent unless the root pair is applied", () => {
   const profile = '[profiles.fast]\nmodel_reasoning_effort = "medium"\n';
-  const result = prepareManagedConfig(`model = "fixture"\n\n${profile}`, MANAGED_OPTIONS);
-  assert.ok(result.config.startsWith('model_reasoning_effort = "xhigh"\nmodel = "fixture"\n'));
-  assert.ok(result.config.includes(profile));
-  assert.deepEqual(result.reasoningEffort, { status: "configured", value: "xhigh" });
-  const repeated = prepareManagedConfig(result.config, MANAGED_OPTIONS);
-  assert.equal(repeated.config, result.config);
-  assert.deepEqual(repeated.reasoningEffort, { status: "preserved-existing", value: "xhigh" });
+  const config = `model = "fixture"\n\n${profile}`;
+  const result = prepareManagedConfig(config, MANAGED_OPTIONS);
+  assert.ok(result.config.startsWith(config.split("\n\n")[0]!));
+  assert.equal((result.config.match(/^model_reasoning_effort/gm) || []).length, 1, "only the profile value");
+  assert.deepEqual(result.reasoningEffort, { status: "preserved-absent", value: null });
+  assert.equal(prepareManagedConfig(result.config, MANAGED_OPTIONS).config, result.config);
+  const applied = prepareManagedConfig(config, { ...MANAGED_OPTIONS, applyRootModel: { model: "gpt-6.10-sol", effort: "xhigh" } });
+  assert.ok(applied.config.startsWith('model_reasoning_effort = "xhigh"\nmodel = "gpt-6.10-sol"\n'));
+  assert.ok(applied.config.includes(profile), "a profile value is never changed");
+  assert.deepEqual(applied.reasoningEffort, { status: "applied", value: "xhigh" });
+  const replaced = prepareManagedConfig('model = "old"\nmodel_reasoning_effort = "low"\n', { ...MANAGED_OPTIONS, applyRootModel: { model: "gpt-6.10-sol", effort: "high" } });
+  assert.ok(replaced.config.startsWith('model = "gpt-6.10-sol"\nmodel_reasoning_effort = "high"\n'));
 });
 
 test("full upgrade recognizes the exact unbound current block, binds only context, and settles", () => {
