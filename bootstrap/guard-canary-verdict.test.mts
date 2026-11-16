@@ -72,3 +72,24 @@ test("overall exit: any ALLOWED is 1, else any INCONCLUSIVE or nothing is 2, all
   assert.equal(overallExit([d(2), d(1), d(0)]), 1);
   assert.equal(overallExit([]), 2);
 });
+
+test("the canary uses a fixed system Git and reports an internal error as INCONCLUSIVE", async () => {
+  const { gitBinary, main } = await import("./guard-canary.mts");
+  assert.equal(gitBinary("linux", (file) => file === "/usr/local/bin/git"), "/usr/local/bin/git");
+  assert.equal(gitBinary("win32", (file) => file.endsWith("\\cmd\\git.exe")), "C:\\Program Files\\Git\\cmd\\git.exe");
+  assert.equal(gitBinary("darwin", () => false), null);
+  const lines: string[] = [];
+  const code = await main(["--runtime", "claude", "--home", "/nonexistent-home"], {
+    tmpRoot: "/nonexistent-guard-canary-root", resolve: () => ({ file: process.execPath, args: [] }), git: "/usr/bin/git",
+    out: (line) => lines.push(line) });
+  assert.equal(code, 2);
+  assert.ok(lines.includes("guard-canary: internal error"));
+});
+
+test("the CLI entry point runs main and returns its exit code", async () => {
+  const { spawnSync } = await import("node:child_process");
+  const { fileURLToPath } = await import("node:url");
+  const result = spawnSync(process.execPath, [fileURLToPath(new URL("./guard-canary.mts", import.meta.url)), "--runtime", "gpt"], { encoding: "utf8" });
+  assert.equal(result.status, 2, result.stderr);
+  assert.match(result.stdout, /^usage: /m);
+});
