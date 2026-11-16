@@ -24,7 +24,7 @@ const FILES = ["Read", "Grep", "Glob", "Edit", "Write", "MultiEdit"];
 
 export const TOOL_EVENT_CONTRACT = {
   "commit-guard": SHELL_ROW,
-  "deploy-guard": { shared: { tools: ["Bash"], inputKeys: ["command"] },
+  "deploy-guard": { shared: { tools: SHELL, inputKeys: ["command"] },
     codex: { tools: ["Bash", ...CODEX_SHELL], inputKeys: CODEX_KEYS, stringInput: true } },
   "main-checkout-guard": SHELL_ROW,
   "module-label-guard": SHELL_ROW,

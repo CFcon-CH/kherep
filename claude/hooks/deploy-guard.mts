@@ -2,6 +2,8 @@
 // PreToolUse hook: blocks risky production deploys without explicit user confirmation.
 // Covers Forge production deploys and package wrappers, named-site installs,
 // force-pushes, kubectl apply/scale/destructive verbs and destructive Helm verbs.
+// Judges the Bash and the PowerShell tool (issue #808): Claude Code for Windows runs
+// shell commands through either, and both carry the command in tool_input.command.
 // Rationale: CLAUDE.md (project-level) requires dev-deploy-first + explicit user OK for prod.
 
 import { parseGuardEvent, type GuardEvent } from "./lib/tool-event-shape.mts";
@@ -76,7 +78,7 @@ function explicitlyApprovesProductionDeploy(text: string): boolean {
 await (async () => {
   const event: GuardEvent<ToolPayload> = await parseGuardEvent(read(process.stdin), "deploy-guard");
   const payload = event.payload;
-  if (!payload || !(payload.tool_name === 'Bash')) event.success();
+  if (!payload || !['Bash', 'PowerShell'].includes(payload.tool_name as string)) event.success();
   const cmd = ((payload.tool_input && payload.tool_input.command) || '') as string;
   const violations: string[] = [];
 
@@ -165,10 +167,11 @@ await (async () => {
     );
   }
 
-  // 7. Destructive kubectl verbs (OP-1045). The Bash permission list cannot
+  // 7. Destructive kubectl verbs (OP-1045). The shell permission list cannot
   // refuse these: Bash(*) in the user scope and Bash(ssh:*) / Bash(kubectl:*)
   // in the project scope pre-approve them, which makes the autoMode classifier
-  // a non-layer for Bash. A PreToolUse hook runs regardless of permissions.allow,
+  // a non-layer for the shell tools (Bash and PowerShell, issue #808). A PreToolUse
+  // hook runs regardless of permissions.allow,
   // so this is the only lever that actually holds. Blocked on EVERY host and
   // host or namespace. A configured route never creates an implicit exception.
   // `rollout restart` stays allowed, it is routine, reversible and Director-approved.
@@ -209,7 +212,12 @@ await (async () => {
 
   process.stderr.write(
     `deploy-guard blocked this command:\n  - ${violations.join('\n  - ')}\n\n` +
-      'If the user explicitly approves this action, re-run the same command with a visible per-command KHEREP_DEPLOY_AUTH=approved prefix. The prefix never unblocks forge tunnel. A persistent environment variable is intentionally ignored.\n'
+      'If the user explicitly approves this action, re-run the same command with a visible per-command KHEREP_DEPLOY_AUTH=approved prefix. The prefix never unblocks forge tunnel. A persistent environment variable is intentionally ignored.\n' +
+      // Issue #808. The prefix is a POSIX shell assignment, not valid PowerShell; no
+      // PowerShell form of the token is accepted, so the approved re-run goes through Bash.
+      (payload.tool_name === 'PowerShell'
+        ? 'The KHEREP_DEPLOY_AUTH=approved prefix is not valid PowerShell, so run the approved command again through the Bash tool.\n'
+        : '')
   );
   process.exit(2);
 })();

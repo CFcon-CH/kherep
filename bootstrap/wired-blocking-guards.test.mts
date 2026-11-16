@@ -44,11 +44,21 @@ const settings = JSON.parse(fs.readFileSync(path.join(repo, "claude", "settings.
 
 interface Wired { event: string; matcher: string; command: string }
 
-// The one wired command, in whichever event, that runs the named hook file.
-function wiredCommand(hook: string): Wired {
+// Matcher semantics of the Claude Code hooks reference, as in guard-matcher-coverage:
+// "" or "*" match all, a list of plain names matches exactly, anything else is a regex.
+function matches(matcher: string, tool: string): boolean {
+  if (matcher === "" || matcher === "*") return true;
+  return /^[\w\- ,|]+$/.test(matcher) ? matcher.split(/[|,]/).map((name) => name.trim()).includes(tool) : new RegExp(matcher).test(tool);
+}
+
+// The one wired command, in whichever event, that runs the named hook file; with a
+// tool, the one whose matcher covers that tool (issue #808: commit-guard and
+// deploy-guard run under a "Bash" and a "PowerShell" group).
+function wiredCommand(hook: string, tool?: string): Wired {
   const found: Wired[] = [];
   for (const [event, groups] of Object.entries(settings.hooks ?? {})) {
     for (const group of groups) {
+      if (tool !== undefined && !matches(group.matcher ?? "", tool)) continue;
       for (const entry of group.hooks ?? []) {
         if (typeof entry.command === "string" && entry.command.includes(`/hooks/${hook}`)) {
           found.push({ event, matcher: group.matcher ?? "", command: entry.command });
@@ -56,7 +66,7 @@ function wiredCommand(hook: string): Wired {
       }
     }
   }
-  assert.equal(found.length, 1, `the settings template wires ${hook} exactly once`);
+  assert.equal(found.length, 1, `the settings template wires ${hook} exactly once${tool ? ` for ${tool}` : ""}`);
   return found[0]!;
 }
 
@@ -169,10 +179,12 @@ fs.writeFileSync(path.join(LABELLED, ".github", "module-labels.json"), JSON.stri
 const PRIVATE_FILE = `D:/Work-${"credentials"}/fixture.env`;
 const PRIVATE_TAG = `<${"private"}>synthetic</${"private"}>`;
 const PRETOOL_GUARDS: { hook: string; matcher: string; mode: Mode; blocking: ToolCase[]; benign: ToolCase }[] = [
+  // Issue #808: both also run for the PowerShell tool, under a "PowerShell" group of their own.
   { hook: "commit-guard.mts", matcher: "Bash", mode: "exit2",
-    blocking: [bash('git commit -m "em — dash"')], benign: bash('git commit -m "plain subject\n\nCo-Authored-By: bot"') },
+    blocking: [bash('git commit -m "em — dash"'), bash('git commit -m "em — dash"', "PowerShell")],
+    benign: bash('git commit -m "plain subject\n\nCo-Authored-By: bot"') },
   { hook: "deploy-guard.mts", matcher: "Bash", mode: "exit2",
-    blocking: [bash("git push --force")], benign: bash("git push origin main") },
+    blocking: [bash("git push --force"), bash("git push --force", "PowerShell")], benign: bash("git push origin main") },
   { hook: "main-checkout-guard.mts", matcher: "Bash|PowerShell", mode: "exit2",
     blocking: [bash(`git -C "${MAIN_CHECKOUT}" switch feat`), bash(`git -C "${MAIN_CHECKOUT}" checkout -b feat`, "PowerShell")],
     benign: bash(`git -C "${MAIN_CHECKOUT}" switch main`) },
@@ -212,21 +224,21 @@ function blocked(run: Run, mode: Mode, hook: string): boolean {
 }
 
 // Asserts that the guard blocks every blocking case and lets the benign one pass.
+// Each case runs through the wired command whose matcher covers its tool.
 function assertBlocks(guard: (typeof PRETOOL_GUARDS)[number], claudeHome?: string): void {
-  const wired = wiredCommand(guard.hook);
   for (const item of guard.blocking) {
-    const run = runCase(wired, item, claudeHome);
+    const run = runCase(wiredCommand(guard.hook, item.tool), item, claudeHome);
     assert.ok(blocked(run, guard.mode, guard.hook),
       `${guard.hook} did not block ${item.tool}: status ${run.status}, stderr ${run.stderr}`);
   }
-  const run = runCase(wired, guard.benign, claudeHome);
+  const run = runCase(wiredCommand(guard.hook, guard.benign.tool), guard.benign, claudeHome);
   assert.equal(run.status, 0, `${guard.hook} benign: ${run.stderr}`);
   assert.equal(run.permission, null, `${guard.hook} denied a benign ${guard.benign.tool}`);
 }
 
 for (const guard of PRETOOL_GUARDS) {
   test(`${guard.hook} is wired under PreToolUse "${guard.matcher}" as an .mts file that exists`, async () => {
-    const { event, matcher, command } = wiredCommand(guard.hook);
+    const { event, matcher, command } = wiredCommand(guard.hook, guard.benign.tool);
     assert.equal(event, "PreToolUse");
     assert.equal(matcher, guard.matcher);
     assert.ok(command.startsWith('node "__KHEREP_CLAUDE_HOME__/kherep/hook-runtime/entry.mts" pretool "__KHEREP_CLAUDE_HOME__/hooks/guard-dispatch.mts" ')
@@ -281,7 +293,7 @@ test("a 0-byte or missing PreToolUse guard denies every call and names its file"
     assertBlocks(guard, home);
     for (const breakGuard of [() => fs.writeFileSync(file, ""), () => fs.rmSync(file)]) {
       breakGuard();
-      for (const run of [...guard.blocking, guard.benign].map((item) => runCase(wiredCommand(guard.hook), item, home))) {
+      for (const run of [...guard.blocking, guard.benign].map((item) => runCase(wiredCommand(guard.hook, item.tool), item, home))) {
         assert.ok(run.status === 0 && run.permission === "deny" && String(run.reason).includes(`[guard-dispatch] ${guard.hook} cannot run`),
           `${guard.hook}: ${JSON.stringify(run)}`);
       }

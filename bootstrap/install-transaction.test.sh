@@ -913,14 +913,15 @@ test_upgrade_retires_guard_js_hooks() {
     const fail = (message) => { console.error(message); process.exit(1); };
     const wired = Object.entries(s.hooks).flatMap(([event, groups]) => groups.flatMap((g) =>
       (g.hooks || []).map((h) => ({ event, matcher: g.matcher ?? "", command: String(h.command) }))));
-    const expected = { "commit-guard": "Bash", "deploy-guard": "Bash", "dispatch-contract-guard": "Agent|Task",
-      "playwright-file-guard": "", "privacy-boundary-guard": "", "secret-output-guard": "",
-      "main-checkout-guard": "Bash|PowerShell", "module-label-guard": "Bash|PowerShell" };
-    for (const [name, matcher] of Object.entries(expected)) {
+    // Issue #808: commit-guard and deploy-guard run once under "Bash" and once under "PowerShell".
+    const expected = { "commit-guard": ["Bash", "PowerShell"], "deploy-guard": ["Bash", "PowerShell"],
+      "dispatch-contract-guard": ["Agent|Task"], "playwright-file-guard": [""], "privacy-boundary-guard": [""],
+      "secret-output-guard": [""], "main-checkout-guard": ["Bash|PowerShell"], "module-label-guard": ["Bash|PowerShell"] };
+    for (const [name, matchers] of Object.entries(expected)) {
       if (wired.some((h) => h.command.includes(`hooks/${name}.js`))) fail(`${name}.js still wired`);
       const mts = wired.filter((h) => h.command.includes(`hooks/${name}.mts`));
-      if (mts.length !== 1 || mts[0].event !== "PreToolUse" || mts[0].matcher !== matcher) {
-        fail(`${name}.mts not wired once under PreToolUse "${matcher}": ${JSON.stringify(mts)}`);
+      if (mts.some((h) => h.event !== "PreToolUse") || JSON.stringify(mts.map((h) => h.matcher)) !== JSON.stringify(matchers)) {
+        fail(`${name}.mts not wired once under each PreToolUse ${JSON.stringify(matchers)}: ${JSON.stringify(mts)}`);
       }
     }
     const legacyMatchers = ["Read|Grep|Glob|Edit|Write|MultiEdit|Bash", "Agent|Task|Workflow|WebSearch|WebFetch|mcp__.*",

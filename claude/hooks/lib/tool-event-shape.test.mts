@@ -27,7 +27,9 @@ test("closed warning catalogue is exact, bounded and rejects forged transport", 
 
 test("classification ignores optional metadata and never guesses renamed fields", () => {
   assert.deepEqual(classifyToolEvent({ tool: "Bash", tool_input: { command: "synthetic" } }, "commit-guard", "shared"), { kind: "unclassifiable", reason: "TOOL_NAME_MISSING" });
-  assert.deepEqual(classifyToolEvent({ tool_name: "PowerShell" }, "deploy-guard", "shared"), { kind: "irrelevant" });
+  assert.deepEqual(classifyToolEvent({ tool_name: "Read" }, "deploy-guard", "shared"), { kind: "irrelevant" });
+  // Issue #808: deploy-guard judges the PowerShell tool, so a PowerShell event without tool_input is seen.
+  assert.deepEqual(classifyToolEvent({ tool_name: "PowerShell" }, "deploy-guard", "shared"), { kind: "unclassifiable", reason: "TOOL_INPUT_MISSING" });
   assert.deepEqual(classifyToolEvent({ tool_name: "Read", tool_input: null }, "commit-guard", "codex"), { kind: "irrelevant" });
   assert.deepEqual(classifyToolEvent({ tool_name: "Bash", tool_input: { command: "" } }, "commit-guard", "shared"), { kind: "recognized" });
   assert.deepEqual(classifyToolEvent({ tool_name: "functions.exec", tool_input: { command: null, source: "" } }, "deploy-guard", "codex"), { kind: "recognized" });

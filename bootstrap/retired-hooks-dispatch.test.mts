@@ -82,10 +82,11 @@ test("a command through the runtime entry counts by its main", () => {
   ]);
 });
 
-// The template as it stood before issue #507: one direct entry per guard.
+// The template as it stood before issue #507: one direct entry per guard, and no
+// "PowerShell" group yet (issue #808 added it).
 function directTemplate(): Settings {
   const template = JSON.parse(fs.readFileSync(path.join(repo, "claude", "settings.user.json"), "utf8")) as Settings;
-  template.hooks!.PreToolUse = template.hooks!.PreToolUse!.map((group: HookEntry) => ({
+  template.hooks!.PreToolUse = template.hooks!.PreToolUse!.filter((group: HookEntry) => group.matcher !== "PowerShell").map((group: HookEntry) => ({
     ...group,
     // node, the runtime entry and its mode, the dispatcher: the guards follow.
     hooks: (group.hooks ?? []).flatMap((hook) => String(hook.command).split(/ (?=")/).slice(3)
@@ -119,13 +120,15 @@ test("an upgrade from direct guard entries leaves each guard in one dispatcher e
   const commands = upgraded.hooks!.PreToolUse!.flatMap((group) => (group.hooks ?? []).map((hook) => String(hook.command)));
   const guards = ["privacy-boundary-guard", "secret-output-guard", "playwright-file-guard", "dispatch-contract-guard",
     "commit-guard", "deploy-guard", "main-checkout-guard", "module-label-guard", "atlassian-destructive-guard", "obs-handback-gate"];
+  // Issue #808: commit-guard and deploy-guard also run in the added "PowerShell" group.
+  const twice = new Set(["commit-guard", "deploy-guard"]);
   for (const guard of guards) {
     const wiring = commands.filter((command) => command.includes(`/hooks/${guard}.mts`));
-    assert.equal(wiring.length, 1, `${guard} is wired once: ${JSON.stringify(wiring)}`);
-    assert.match(wiring[0]!, /^node "[^"]+\/kherep\/hook-runtime\/entry\.mts" pretool "[^"]+\/hooks\/guard-dispatch\.mts" /,
+    assert.equal(wiring.length, twice.has(guard) ? 2 : 1, `${guard} is wired once per group: ${JSON.stringify(wiring)}`);
+    for (const command of wiring) assert.match(command, /^node "[^"]+\/kherep\/hook-runtime\/entry\.mts" pretool "[^"]+\/hooks\/guard-dispatch\.mts" /,
       `${guard} runs through the runtime and the dispatcher`);
   }
-  assert.equal(commands.length, 6, `one dispatcher entry per group: ${JSON.stringify(commands)}`);
+  assert.equal(commands.length, 7, `one dispatcher entry per group: ${JSON.stringify(commands)}`);
   const unwired = lines.filter((line) => line.startsWith("hooks: unwire PreToolUse "));
   assert.equal(unwired.length, guards.length, lines.join("\n"));
   for (const line of unwired) assert.match(line, /\(managed under PreToolUse via hooks\/guard-dispatch\.mts\)$/);
