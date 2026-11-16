@@ -4,6 +4,7 @@ import path from "node:path";
 import { test } from "node:test";
 
 import { decide } from "./atlassian-destructive-guard.mts";
+import { warningDocument, type ShapeReason } from "./lib/tool-event-shape.mts";
 
 const HOOK = path.join(import.meta.dirname, "atlassian-destructive-guard.mts");
 
@@ -62,17 +63,19 @@ test("keeps an operation name out of the reason unless it is a plain identifier"
   assert.doesNotMatch(String(output), /rm -rf/);
 });
 
-test("the wired process prints the decision and exits 0, silently for malformed input", () => {
+test("the wired process prints the decision and exits 0, for malformed input only the event-shape warning", () => {
   const ask = run({ tool_name: "mcp__atlassian__executeDestructive", tool_input: { name: "deleteJiraIssue" } });
   assert.equal(ask.status, 0);
   assert.equal(decision(ask.stdout), "ask");
   const deny = run({ tool_name: "mcp__atlassian__executeDestructive", tool_input: {} }, "--runtime", "codex");
   assert.equal(deny.status, 0);
   assert.equal(decision(deny.stdout), "deny");
-  for (const input of ["", "not json", "[]", "null"]) {
+  // Issue #808: a quiet allow of an unclassifiable event carries the fixed warning, never a decision.
+  for (const [input, reason] of [["", "TOOL_NAME_MISSING"], ["not json", "EVENT_ENVELOPE_INVALID"], ["[]", "EVENT_ENVELOPE_INVALID"],
+    ["null", "EVENT_ENVELOPE_INVALID"]] as [string, ShapeReason][]) {
     const result = run(input);
     assert.equal(result.status, 0, input);
-    assert.equal(result.stdout, "", input);
+    assert.equal(result.stdout, warningDocument([{ guard: "atlassian-destructive-guard", reason }]), input);
   }
   const read = run({ tool_name: "mcp__atlassian__executeRead", tool_input: {} });
   assert.equal(read.stdout, "");

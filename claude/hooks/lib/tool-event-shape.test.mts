@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { classifyToolEvent, warningText, warningDocument, parseShapeWarning, type ShapeReason } from "./tool-event-shape.mts";
+import { classifyToolEvent, codexShapeGuard, warningText, warningDocument, parseShapeWarning, type ShapeReason } from "./tool-event-shape.mts";
 
 test("closed warning catalogue is exact, bounded and rejects forged transport", () => {
   for (const guard of ["commit-guard", "deploy-guard"] as const) {
@@ -31,4 +31,20 @@ test("classification ignores optional metadata and never guesses renamed fields"
   assert.deepEqual(classifyToolEvent({ tool_name: "Read", tool_input: null }, "commit-guard", "codex"), { kind: "irrelevant" });
   assert.deepEqual(classifyToolEvent({ tool_name: "Bash", tool_input: { command: "" } }, "commit-guard", "shared"), { kind: "recognized" });
   assert.deepEqual(classifyToolEvent({ tool_name: "functions.exec", tool_input: { command: null, source: "" } }, "deploy-guard", "codex"), { kind: "recognized" });
+});
+
+test("the contract table drives classification and the Codex guard lookup (issue #808)", () => {
+  assert.equal(codexShapeGuard("codex-privacy-boundary-guard"), "privacy-boundary-guard");
+  assert.equal(codexShapeGuard("main-checkout-guard"), "main-checkout-guard");
+  assert.equal(codexShapeGuard("codex-dispatch-contract-guard"), undefined, "a row without a codex shape");
+  assert.equal(codexShapeGuard("synthetic-guard"), undefined);
+  assert.equal(codexShapeGuard("toString"), undefined, "an inherited key is no row");
+  // A guard without a codex shape is classified by its shared row.
+  assert.deepEqual(classifyToolEvent({ tool_name: "shell_command", tool_input: {} }, "secret-output-guard", "codex"), { kind: "irrelevant" });
+  assert.deepEqual(classifyToolEvent({ tool_name: "mcp__synthetic__executeDestructive" }, "atlassian-destructive-guard", "shared"), { kind: "recognized" });
+  assert.deepEqual(classifyToolEvent({ tool_name: "Read", tool_input: {} }, "privacy-boundary-guard", "shared"), { kind: "recognized" });
+  assert.deepEqual(classifyToolEvent({ tool_name: "apply_patch", tool_input: "*** Begin Patch" }, "privacy-boundary-guard", "codex"), { kind: "recognized" });
+  assert.deepEqual(classifyToolEvent({ tool_name: "mcp__synthetic__browser_navigate", tool_input: { url: 1 } }, "playwright-file-guard", "shared"),
+    { kind: "unclassifiable", reason: "COMMAND_INVALID" });
+  assert.deepEqual(classifyToolEvent({ tool_name: "TodoWrite" }, "playwright-file-guard", "shared"), { kind: "irrelevant" });
 });

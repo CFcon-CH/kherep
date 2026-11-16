@@ -16,6 +16,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
+import { warnUnclassifiable } from "./lib/tool-event-shape.mts";
+
 // The fields this hook reads from a PreToolUse payload.
 interface ToolPayload {
   tool_name?: unknown;
@@ -53,16 +55,18 @@ export function decide(payload: ToolPayload, runtime: string): string | null {
 async function main(): Promise<void> {
   const flag = process.argv.indexOf("--runtime");
   const runtime = flag >= 0 ? String(process.argv[flag + 1] || "") : "claude";
+  // Every quiet allow adds the event-shape warning (issue #808).
   let payload: ToolPayload;
   try {
     const parsed: unknown = JSON.parse((await (await import("./lib/stdin-reader.mts")).readStdinBytes({ maxBytes: null })).toString("utf8") || "{}");
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return warnUnclassifiable(parsed, "atlassian-destructive-guard");
     payload = parsed as ToolPayload;
   } catch {
-    return;
+    return warnUnclassifiable(undefined, "atlassian-destructive-guard");
   }
   const output = decide(payload, runtime);
   if (output) process.stdout.write(output);
+  else warnUnclassifiable(payload, "atlassian-destructive-guard");
 }
 
 // Node loads the main module from its real path, so a script started through a

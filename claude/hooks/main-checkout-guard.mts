@@ -12,6 +12,7 @@
 // codex-hook-adapter.mts, which turns the exit 2 into a JSON deny.
 import process from "node:process";
 import { checkoutIntents, judge, MARKER } from "./lib/main-checkout.mts";
+import { parseGuardEvent, type GuardEvent } from "./lib/tool-event-shape.mts";
 
 // The fields this hook reads from a PreToolUse payload.
 interface ToolPayload {
@@ -29,11 +30,12 @@ function read(stream: NodeJS.ReadableStream): Promise<string> {
 }
 
 await (async () => {
-  let payload: ToolPayload | null = null;
-  try { payload = JSON.parse(await read(process.stdin)) as ToolPayload | null; } catch { process.exit(0); }
-  if (!payload || !["Bash", "PowerShell"].includes(payload.tool_name as string)) process.exit(0);
+  // Every quiet allow goes through event.success(): it adds the event-shape warning (issue #808).
+  const event: GuardEvent<ToolPayload> = await parseGuardEvent(read(process.stdin), "main-checkout-guard");
+  const payload = event.payload;
+  if (!payload || !["Bash", "PowerShell"].includes(payload.tool_name as string)) event.success();
   const command = payload.tool_input?.command;
-  if (typeof command !== "string") process.exit(0);
+  if (typeof command !== "string") event.success();
   const cwd = typeof payload.cwd === "string" && payload.cwd ? payload.cwd : process.cwd();
   const violations: string[] = [];
   for (const intent of checkoutIntents(command, cwd)) {
@@ -41,7 +43,7 @@ await (async () => {
     if (verdict.action === "warn") process.stderr.write(`${verdict.message}\n`);
     if (verdict.action === "block") violations.push(verdict.message);
   }
-  if (!violations.length) process.exit(0);
+  if (!violations.length) event.success();
   process.stderr.write(
     `main-checkout-guard blocked this command:\n  - ${violations.join("\n  - ")}\n\n` +
       "Other sessions share the main checkout. Do branch work in a linked worktree instead: " +

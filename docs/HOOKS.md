@@ -1,8 +1,6 @@
 # Hook reference
 
-`commit-guard` and `deploy-guard` report missing or invalid required tool event fields with a fixed `[kherep:event-shape:WARN:<guard>:<reason>]` diagnostic (issue #808, Stage 1). They emit notice-only `PreToolUse.additionalContext` and the same line on stderr. The seven reasons are `EVENT_ENVELOPE_INVALID`, `TOOL_NAME_MISSING`, `TOOL_NAME_INVALID`, `TOOL_INPUT_MISSING`, `TOOL_INPUT_INVALID`, `COMMAND_MISSING` and `COMMAND_INVALID`. Diagnostics contain no input values. A warning changes no permission decision: existing denials, failures and wrapper envelope validation still apply. Recognized unrelated tools, valid empty commands and absent optional metadata remain silent. The guards do not guess renamed keys or broaden their matchers.
-
-Claude transports these notices through the existing dispatcher and hook runtime. Codex checks native fields before normalization and admits exact canonical notice documents only from these two shell guard slots; another guard's notice still fails closed. Source and isolated installation tests establish transport and dependency recovery. Native invocation and UI/model presentation remain UNKNOWN until separately authorized Stage 2 acceptance.
+Every wired `PreToolUse` guard reports a tool event it cannot classify with a fixed warning instead of going quiet (issue #808); see [Event shape coverage](#event-shape-coverage) at the end.
 
 Every hook Kherep wires, one row each. A hook is wired when one of these sources runs it:
 
@@ -80,3 +78,32 @@ The scripts `claude/hooks/cbm-*` have no row: the Claude template does not wire 
 | `commit-msg` | Git | commit-msg | blocking guard | Applies the host's commit policy to every commit in a workspace repository, including optional work-item keys, and allows co-author trailers and AI attribution, whichever runtime or person commits. |
 | `post-checkout` | Git | post-checkout | watcher (warns) | Warns when a branch checkout leaves the main checkout of a workspace repository off its default branch; it runs after the checkout and cannot undo it. |
 | `pre-push` | Git | pre-push | recorder | Records which session pushed which ref in the host-local attribution log and never blocks the push; it does not run for a GitHub App broker push, which pushes from a clean repository without hooks and records itself after verifying it (on `KHEREP_BROKER_PUSH` the hook would also record nothing). |
+
+## Event shape coverage
+
+Each wired `PreToolUse` guard has one row in `claude/hooks/lib/tool-event-contract.mts`: the tools it judges and the `tool_input` key it reads (issue #808). When a guard would allow a call without printing anything and the event does not fit its row, it prints a fixed `[kherep:event-shape:WARN:<guard>:<reason>]` line instead, as notice-only `PreToolUse.additionalContext` and on stderr. The seven reasons are `EVENT_ENVELOPE_INVALID`, `TOOL_NAME_MISSING`, `TOOL_NAME_INVALID`, `TOOL_INPUT_MISSING`, `TOOL_INPUT_INVALID`, `COMMAND_MISSING` (the key the guard reads is absent) and `COMMAND_INVALID` (it holds no string). A warning contains no input value and changes no permission decision: every deny, ask and exit code stays as it was, and a missing `tool_name` is warned about, not denied. An event for another tool, a valid empty command and absent optional metadata stay silent. The guards do not guess renamed keys or widen their matchers.
+
+On Claude the dispatcher joins the warning with the other guards' output. On Codex the adapter classifies the native event before its normalization for every guard whose row has a Codex shape, so a renamed field cannot hide behind the normalized form; as in Stage 1, that adapter warning also rides along when the same call is denied, with the decision and its reason unchanged. The shell dispatcher admits from each of its four slots only that slot's own exact warning document, and any other notice from a slot is still a deny. A guard without a Codex shape that Codex runs through the adapter prints the warning itself. `claude/hooks/tool-event-contract.test.mts` and `codex/hooks/tool-event-contract.test.mts` prove, per guard, that a known-bad event still blocks, that dropping or renaming `tool_name` or `tool_input` or renaming the input key gives a block or the warning and never silence, and that another tool's event stays silent. `bootstrap/hooks-reference.test.mts` pins this table to the contract.
+
+| Guard | Claude | Codex |
+|---|---|---|
+| `commit-guard` | guard warns | adapter warns (native event) |
+| `deploy-guard` | guard warns | adapter warns (native event) |
+| `main-checkout-guard` | guard warns | adapter warns (native event) |
+| `module-label-guard` | guard warns | adapter warns (native event) |
+| `privacy-boundary-guard` | guard warns | adapter warns (native event) |
+| `secret-output-guard` | guard warns | not wired |
+| `playwright-file-guard` | guard warns | guard warns |
+| `dispatch-contract-guard` | guard warns | not wired |
+| `atlassian-destructive-guard` | guard warns | guard warns |
+| `obs-handback-gate` | guard warns | not wired |
+| `codex-dispatch-contract-guard` | not wired | denies |
+| `mcp-intent-hook` | not wired | unproven |
+
+`adapter warns (native event)` covers Codex's own `codex-privacy-boundary-guard` under the `privacy-boundary-guard` row. `codex-dispatch-contract-guard` denies a missing or non-string `tool_name` itself. `mcp-intent-hook` has no row: nothing proves that a renamed field reaches a deny or a warning, and that stays documented rather than tested for now.
+
+What stays unproven:
+
+- **The matcher blind spot.** A runtime starts a guard only when the tool name matches its group's matcher. If a runtime renames a tool, for example `Bash`, every guard behind that matcher never runs, so no warning can appear; the guards that see all tools (`privacy-boundary-guard`, `secret-output-guard`, `playwright-file-guard` on Claude) classify the new name as another tool and print no warning; `secret-output-guard` and `playwright-file-guard` still apply their rule, because they do not read the tool name. Only a call through the real runtime, the canary of a later stage, can show it.
+- **Native invocation and presentation.** These are source and isolated-install tests with synthetic events; whether a runtime shows the warning to the model or the operator is UNKNOWN.
+- **No durable record.** A warning lives only in that call's output; nothing collects it yet.

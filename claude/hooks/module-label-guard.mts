@@ -7,6 +7,7 @@
 // refused. Codex reaches this guard through its shell dispatcher.
 import process from "node:process";
 import { judge, labelIntents, MARKER, ruleFor } from "./lib/module-label.mts";
+import { parseGuardEvent, type GuardEvent } from "./lib/tool-event-shape.mts";
 
 // The fields this hook reads from a PreToolUse payload.
 interface ToolPayload {
@@ -23,11 +24,12 @@ function read(stream: NodeJS.ReadableStream): Promise<string> {
   });
 }
 
-let payload: ToolPayload | null = null;
-try { payload = JSON.parse(await read(process.stdin)) as ToolPayload | null; } catch { process.exit(0); }
-if (!payload || !["Bash", "PowerShell"].includes(payload.tool_name as string)) process.exit(0);
+// Every quiet allow goes through event.success(): it adds the event-shape warning (issue #808).
+const event: GuardEvent<ToolPayload> = await parseGuardEvent(read(process.stdin), "module-label-guard");
+const payload = event.payload;
+if (!payload || !["Bash", "PowerShell"].includes(payload.tool_name as string)) event.success();
 const command = payload.tool_input?.command;
-if (typeof command !== "string") process.exit(0);
+if (typeof command !== "string") event.success();
 const cwd = typeof payload.cwd === "string" && payload.cwd ? payload.cwd : process.cwd();
 const violations = labelIntents(command, cwd).flatMap((intent) => {
   const verdict = judge(intent, ruleFor(intent.dir, intent.repo));
@@ -44,3 +46,4 @@ if (violations.length) {
   );
   process.exit(2);
 }
+event.success();

@@ -41,13 +41,15 @@ export function preToolUse(target: string, phase: string, payload: HookPayload, 
   const hardEnd = options.deadline ?? Infinity;
   const verdicts: Verdict[] = [];
   let stderr = "";
-  const guard = path.basename(target, ".mts");
+  // Issue #808: a guard whose contract row has a native Codex shape is classified before normalization.
+  let guard: ReturnType<ShapeLib["codexShapeGuard"]>;
   let warning: string | undefined;
-  if ((phase === "pre" || phase === "pre-no-transcript") && (guard === "commit-guard" || guard === "deploy-guard")) {
+  if (!intent) {
     try {
       const lib = toolEventShapeLib();
-      const shape = lib.classifyToolEvent(payload, guard, "codex");
-      if (shape.kind === "unclassifiable") warning = lib.warningText(guard, shape.reason);
+      guard = lib.codexShapeGuard(path.basename(target, ".mts"));
+      const shape = guard && lib.classifyToolEvent(payload, guard, "codex");
+      if (guard && shape && shape.kind === "unclassifiable") warning = lib.warningText(guard, shape.reason);
     } catch (error) {
       const verdict = fail(label, `event shape helper cannot load (${codeOf(error)})`);
       return { verdict, stderr, broken: true, verdicts: [verdict] };
@@ -69,11 +71,9 @@ export function preToolUse(target: string, phase: string, payload: HookPayload, 
         if (!intent) stderr += result.stderr ?? ""; // pre-intent forwards no raw error text (issue #538)
         verdict = judge(label, result, budget, phase, normalized.tool_input);
         // judge/render rebuild JSON and would erase duplicate keys or whitespace.
-        // Only raw notice-only output from these two slots has the shape contract;
+        // Only raw notice-only output from a guard with a codex row has the shape contract;
         // keep existing decisions/failures and adapter-originated warnings unchanged.
-        if (!verdict.decision && verdict.notice && (phase === "pre" || phase === "pre-no-transcript")
-          && (guard === "commit-guard" || guard === "deploy-guard")
-          && !toolEventShapeLib().parseShapeWarning(result.stdout, guard)) {
+        if (!verdict.decision && verdict.notice && guard && !toolEventShapeLib().parseShapeWarning(result.stdout, guard)) {
           verdict = fail(label, "stdout is not a canonical event shape warning");
         }
       } catch (error) {

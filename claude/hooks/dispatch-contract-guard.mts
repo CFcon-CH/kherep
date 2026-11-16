@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /** Claude Agent/Task adapter for the provider-neutral dispatch policy. */
 import { evaluateDispatch, type DispatchMetadata } from "./lib/dispatch-policy.mts";
+import { warnUnclassifiable } from "./lib/tool-event-shape.mts";
 
 // The fields this hook reads from a PreToolUse payload.
 interface DispatchPayload {
@@ -54,7 +55,8 @@ async function main(): Promise<void> {
     return;
   }
 
-  if (!payload || !["Agent", "Task"].includes(payload.tool_name as string)) return;
+  // Both quiet allows add the event-shape warning (issue #808).
+  if (!payload || !["Agent", "Task"].includes(payload.tool_name as string)) { warnUnclassifiable(payload, "dispatch-contract-guard"); return; }
   const input = payload.tool_input as DispatchInput | null;
   if (!input || typeof input !== "object" || Array.isArray(input)) {
     emitDeny("HOOK_SCHEMA_UNKNOWN", "Dispatch payload has no recognized tool_input object.");
@@ -74,6 +76,7 @@ async function main(): Promise<void> {
   const result = evaluateDispatch(event);
   if (result.decision === "deny") emitDeny(result.ruleId, result.reason, result.metadata);
   else if (result.notice) emitNotice(result.noticeRuleId || "OBS_BRIEF_REVISION", result.notice);
+  else warnUnclassifiable(payload, "dispatch-contract-guard");
 }
 
 try {

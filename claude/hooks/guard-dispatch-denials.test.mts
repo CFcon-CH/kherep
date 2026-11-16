@@ -100,7 +100,7 @@ test("the real commit-guard: an em dash renders as its violation", async () => {
   const fx = fixture();
   fs.copyFileSync(path.join(import.meta.dirname, "commit-guard.mts"), path.join(fx.hooks, "commit-guard.mts"));
   fs.copyFileSync(path.join(import.meta.dirname, "lib", "git-commit-match.mts"), path.join(fx.hooks, "lib", "git-commit-match.mts"));
-  fs.copyFileSync(path.join(import.meta.dirname, "lib", "tool-event-shape.mts"), path.join(fx.hooks, "lib", "tool-event-shape.mts"));
+  for (const lib of ["tool-event-shape.mts", "tool-event-contract.mts"]) fs.copyFileSync(path.join(import.meta.dirname, "lib", lib), path.join(fx.hooks, "lib", lib));
   const env = { ...process.env };
   delete env.KHEREP_WORK_ITEM_REQUIRED;
   const commit = { tool_input: { command: "git commit -m \"x \u2014 y\"" } };

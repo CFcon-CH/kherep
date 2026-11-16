@@ -19,7 +19,8 @@
  *     once-only rule); it cannot be created, allow, because a refusal the gate
  *     cannot remember may repeat on every attempt. A delivered malformed report
  *     is then judged by the PostToolUse recorder obs-handback-record.mts.
- *   - any error: no output, exit 0. The gate never denies on its own error.
+ *   - any error: the canonical event-shape warning, exit 0. The gate never
+ *     denies on its own error; a missing shape library fails to load (deny).
  *
  * The marker is retained: prune skips it and no hook removes it, because a
  * resumed subagent keeps its id and no event says an id is used for the last
@@ -36,6 +37,7 @@ import { pathToFileURL } from "node:url";
 
 import { homeOf, markRefused, refusedReason, validId } from "./lib/obs-handback-state.mts";
 import { checkObsResult } from "./lib/obs-result-policy.mts";
+import { warnUnclassifiable } from "./lib/tool-event-shape.mts";
 
 export type HookOutput = {
   hookSpecificOutput: { hookEventName: "PreToolUse"; permissionDecision: "deny"; permissionDecisionReason: string };
@@ -62,12 +64,15 @@ export function decide(value: unknown, home: string): HookOutput | null {
 
 async function main(): Promise<void> {
   let output: HookOutput | null;
+  let value: unknown;
   try {
-    output = decide(JSON.parse((await (await import("./lib/stdin-reader.mts")).readStdinBytes({ maxBytes: null })).toString("utf8")), homeOf(process.argv[1] || ""));
+    value = JSON.parse((await (await import("./lib/stdin-reader.mts")).readStdinBytes({ maxBytes: null })).toString("utf8"));
+    output = decide(value, homeOf(process.argv[1])); // main runs only when argv[1] names this module
   } catch {
     output = null;
   }
   if (output) process.stdout.write(JSON.stringify(output));
+  else warnUnclassifiable(value, "obs-handback-gate"); // the quiet allow (issue #808)
 }
 
 // The isMainModule rule of obs-result-check.mts: the real path or the path as given.
