@@ -51,10 +51,23 @@ function gitEnvironment(): NodeJS.ProcessEnv {
   return Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("GIT_")));
 }
 
-export function gitRunner(repoRoot: string): GitRunner {
+// Plain code-unit order, the same on every platform and locale. The planner's
+// file lists and the projection's write order must agree on it.
+export const byCodeUnit = (a: string, b: string): number => Number(a > b) - Number(a < b);
+
+// A fixed system Git, never a PATH lookup (as bootstrap/guard-canary.mts).
+export function gitBinary(platform: string = process.platform, exists: (file: string) => boolean = fs.existsSync): string | null {
+  const candidates = platform === "win32" ? [String.raw`C:\Program Files\Git\cmd\git.exe`, String.raw`C:\Program Files\Git\bin\git.exe`]
+    : ["/usr/bin/git", "/usr/local/bin/git", "/opt/homebrew/bin/git"];
+  return candidates.find((file) => exists(file)) ?? null;
+}
+
+// Without a system Git every read fails, so the fixed refusals fire (fail closed).
+export function gitRunner(repoRoot: string, binary: string | null = gitBinary()): GitRunner {
   const env = gitEnvironment();
   return (args) => {
-    const result = spawnSync("git", ["-C", repoRoot, ...args], { env, maxBuffer: 16 * 1024 * 1024, stdio: ["ignore", "pipe", "ignore"] });
+    if (binary === null) return { status: null, stdout: Buffer.alloc(0) };
+    const result = spawnSync(binary, ["-C", repoRoot, ...args], { env, maxBuffer: 16 * 1024 * 1024, windowsHide: true, stdio: ["ignore", "pipe", "ignore"] });
     return { status: result.error ? null : result.status, stdout: result.stdout ?? Buffer.alloc(0) };
   };
 }
@@ -68,7 +81,7 @@ export function workingTreeReader(repoRoot: string): SourceReader {
     list(relativeDirectory) {
       const directory = path.join(repoRoot, ...relativePath(relativeDirectory).split("/"));
       if (!fs.statSync(directory, { throwIfNoEntry: false })?.isDirectory()) return [];
-      return fs.readdirSync(directory, { withFileTypes: true }).filter((entry) => entry.isFile()).map((entry) => entry.name).sort();
+      return fs.readdirSync(directory, { withFileTypes: true }).filter((entry) => entry.isFile()).map((entry) => entry.name).sort(byCodeUnit);
     },
   };
 }
@@ -121,7 +134,7 @@ export function modelSelectionGit(repoRoot: string, run: GitRunner = gitRunner(r
           const listing = text(["ls-tree", "-z", "--full-tree", revision, "--", `${relativePath(relativeDirectory)}/`]);
           if (listing === null) throw new ModelSelectionRefusal(GIT_REFUSAL.sourceAbsent);
           return listing.split("\0").filter(Boolean).map((row) => row.split("\t"))
-            .filter(([meta]) => meta!.split(" ")[1] === "blob").map(([, name]) => name!.split("/").at(-1)!).sort();
+            .filter(([meta]) => meta!.split(" ")[1] === "blob").map(([, name]) => name!.split("/").at(-1)!).sort(byCodeUnit);
         },
       };
     },

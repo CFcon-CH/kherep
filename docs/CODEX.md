@@ -64,7 +64,7 @@ The installer records each generation in `orchestra/model-selection-receipt.json
 - A changed user file, or a new agent, needs a fresh catalog; the CLI reads it automatically.
 - Deleting a user field falls back to the recorded default, not to the deleted value.
 
-A model-selection change needs a Git checkout: `HEAD` must resolve at the repository's own top level, and `codex/parity/**`, `claude/agents/*.md` and `codex/agents/*.md` must be clean. An exact no-op reinstall is not gated by this check. One installer run per Codex home writes the selection at a time; `orchestra/model-selection.lock` holds it, and a stale lock after a crash must be removed by hand.
+A model-selection change needs a Git checkout and a system Git at a fixed path, never one found through `PATH`: `/usr/bin/git`, `/usr/local/bin/git` or `/opt/homebrew/bin/git`, on Windows `C:\Program Files\Git\cmd\git.exe` or `C:\Program Files\Git\bin\git.exe`. Without one the install stops with `model-selection-head-unresolved`. `HEAD` must resolve at the repository's own top level, and `codex/parity/**`, `claude/agents/*.md` and `codex/agents/*.md` must be clean. An exact no-op reinstall is not gated by this check. One installer run per Codex home writes the selection at a time; `orchestra/model-selection.lock` holds it, and a stale lock after a crash must be removed by hand.
 
 Every host installed before the anchor existed needs one install with `--refresh-models` (on Windows `-RefreshModels`). An ordinary install on such a host stops with `model-selection-refresh-required` before any write. The refresh mints a fresh generation from the shipped defaults, so a historically managed observer `low` becomes `medium`.
 
@@ -73,7 +73,7 @@ The custom agent TOML is the activation channel: its `model` and `model_reasonin
 | Refusal code | Meaning |
 | --- | --- |
 | `model-selection-refresh-required` | An earlier install without an anchor; run once with `--refresh-models` |
-| `model-selection-head-unresolved` | No resolvable `HEAD` at the checkout's own top level |
+| `model-selection-head-unresolved` | No resolvable `HEAD` at the checkout's own top level, or no system Git at one of the fixed paths |
 | `model-selection-source-dirty` | `codex/parity/**`, `claude/agents/*.md` or `codex/agents/*.md` has uncommitted changes |
 | `model-selection-revision-absent` | The anchored revision is not in this checkout |
 | `model-selection-source-absent` | A source file is missing at the revision read |

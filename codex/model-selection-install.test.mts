@@ -283,6 +283,18 @@ test("inputs that change after planning are refused under the lock, and the lock
   assert.equal(fs.existsSync(f.file(files.lock)), false);
 });
 
+test("the observation-only updater refuses a config.toml without exactly one ordered managed block", (t) => {
+  const f = fixture(t);
+  f.run({ modelCatalog: catalog() });
+  const start = "# >>> Kherep Codex Maestro >>>", end = "# <<< Kherep Codex Maestro <<<";
+  const config = f.read("config.toml");
+  for (const broken of [config.replace(start, "# moved"), config.replace(start, "# s").replace(end, start).replace("# s", end),
+    `${config}\n${start}\n`, `${config}\n${end}\n`]) {
+    write(f.file("config.toml"), broken);
+    assert.throws(() => checkObservationPublisher({ codexHome: f.codexHome, workspace: f.workspace }), /observation-managed-block-unrecognized/);
+  }
+});
+
 test("the V1 compatibility updater keeps refusing an incoherent anchor-less home", (t) => {
   const f = fixture(t);
   f.run({ modelCatalog: catalog() });
