@@ -781,6 +781,56 @@ describe("Codex activity final authority after the real digest", () => {
         }
     });
 });
+describe("Codex activity ingress allows a Node clock up to CLOCK_SKEW_MS ahead (#773)", () => {
+    it("accepts a stamp 2 s ahead over the real socket, replays it identically and claims it", async () => {
+        const node = await activityNode();
+        try {
+            const before = await completeState(node.nodeId);
+            const body = await activityBody(node, Number(before.watermark.identity_generation) + 1, [originalRow("reachable-probable"), companionRow()]);
+            const ahead = { ...body, observedAt: Date.now() + 2000 };
+            const accepted = await sendActivity(node, ahead);
+            expect(accepted).toMatchObject({ ok: true, expiresAt: ahead.observedAt + 60000 });
+            expect(await sendActivity(node, ahead)).toEqual(accepted);
+            expect((await claimActivity(node, ahead)).isError).not.toBe(true);
+        }
+        finally {
+            await node.close();
+        }
+    });
+    it("refuses beyond the allowance and after the ingress window, accepts at the boundary, and bounds the replay alike", async () => {
+        const node = await activityNode();
+        try {
+            const before = await completeState(node.nodeId);
+            const body = await activityBody(node, Number(before.watermark.identity_generation) + 1, [originalRow("reachable-probable"), companionRow()]);
+            const results = await runInDurableObject(registry(), async (instance, state) => {
+                const token = String(state.storage.sql.exec("SELECT registration_token FROM nodes WHERE id=?", node.nodeId).one().registration_token);
+                const clock = vi.spyOn(Date, "now");
+                const send = (now: number) => { clock.mockReturnValue(now); return instance.registerCodexActivity(node.nodeId, body, token); };
+                try {
+                    const beyond = await send(body.observedAt - 60_001), stale = await send(body.observedAt + 8000);
+                    const intentsBefore = state.storage.sql.exec("SELECT request_id FROM mcp_intents WHERE request_id=?", body.intent.requestId).toArray();
+                    const boundary = await send(body.observedAt - 60_000);
+                    const replay = await send(body.observedAt + 30_000);
+                    state.storage.sql.exec("UPDATE mcp_intents SET created_at=? WHERE request_id=?", body.observedAt - 60_001, body.intent.requestId);
+                    const rebound = await send(body.observedAt + 30_000);
+                    return { beyond, stale, intentsBefore, boundary, replay, rebound };
+                }
+                finally {
+                    clock.mockRestore();
+                }
+            });
+            expect(results.beyond).toMatchObject({ ok: false });
+            expect(results.stale).toMatchObject({ ok: false });
+            expect(results.intentsBefore).toEqual([]);
+            expect(results.boundary).toMatchObject({ ok: true, expiresAt: body.observedAt + 60000 });
+            expect(results.replay).toEqual(results.boundary);
+            expect(results.rebound).toEqual({ ok: false, error: "requestId already has different intent metadata" });
+        }
+        finally {
+            await node.close();
+        }
+    });
+});
 
 
 it("real ordinary ACK precedes an expired stamped pickup with no registered intent or SDK/CAS effect",async()=>{

@@ -1,4 +1,4 @@
-import { isClaudeSlotSelection, isFixedSlot, isNodeId, type ClaudeSlotSelection, type ClaudeSlotResult, type FixedSlot } from "../../protocol.mts";
+import { CLOCK_SKEW_MS, isClaudeSlotSelection, isFixedSlot, isNodeId, type ClaudeSlotSelection, type ClaudeSlotResult, type FixedSlot } from "../../protocol.mts";
 import { commitSlotChange, withEffects, type SlotChange } from "./slot-notice.mts";
 import type { SlotAddressResult } from "../../protocol-messages.mts";
 import { readIntercomSlots, type IntercomSlot, type IntercomSlotView, type SlotOccupant } from "./intercom-slots.mts";
@@ -317,7 +317,8 @@ export class Registry extends DurableObject<Env> {
         if (!this.claudeConnection(nodeId, connectionToken) || digest !== intent.argumentsDigest) return failure;
         const retry = this.mcp.activityRetry(nodeId, intent, observedAt, now, digest);
         if (retry) return retry;
-        if (observedAt > now || observedAt + CODEX_ACTIVITY_INGRESS_MS <= now) return failure;
+        // A Node clock may run up to CLOCK_SKEW_MS ahead, as the handshake allows (#773).
+        if (observedAt > now + CLOCK_SKEW_MS || observedAt + CODEX_ACTIVITY_INGRESS_MS <= now) return failure;
         const node = this.sql.exec("SELECT identity_generation FROM nodes WHERE id=?", nodeId).one();
         // A watermark can survive a legacy snapshot. New calls always require
         // a genuinely newer, full commit; a same-generation no-op is unsafe.
@@ -372,7 +373,7 @@ export class Registry extends DurableObject<Env> {
     if (this.claudeContext(nodeId, token, request.slot) !== context) return { result: denied };
     const prior = this.claudeSelectionReceipt(eventKey, digest, request);
     if (prior) return { result: prior };
-    if (request.expiresAt <= Date.now() || request.observedAt > Date.now()) return { result: denied };
+    if (request.expiresAt <= Date.now() || request.observedAt > Date.now() + CLOCK_SKEW_MS) return { result: denied };
     return { prepared: { eventKey, digest, expectedRevision, context } };
   }
   private claudeSelectionReceipt(eventKey: string, digest: string, request: ClaudeSlotSelection): ClaudeSlotResult | null {
@@ -397,7 +398,7 @@ export class Registry extends DurableObject<Env> {
       const replay = this.claudeSelectionReceipt(prepared.eventKey, prepared.digest, request);
       if (replay) return replay;
       const now = Date.now();
-      if (request.expiresAt <= now || request.observedAt > now || now - request.observedAt > 60_000) return denied;
+      if (request.expiresAt <= now || request.observedAt > now + CLOCK_SKEW_MS || now - request.observedAt > 60_000) return denied;
       const node = this.sql.exec("SELECT identity_generation FROM nodes WHERE id=?", nodeId).one();
       const actor = this.sql.exec("SELECT runtime, state, kind FROM sessions WHERE node_id=? AND session_id=?", nodeId, request.sessionId).toArray()[0];
       if (node.identity_generation !== generation || !actor || actor.runtime !== "claude-code"

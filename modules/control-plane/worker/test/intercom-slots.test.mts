@@ -436,6 +436,33 @@ describe("v2b committed selection and permanent historical receipts", () => {
     expect(await registry().finishClaudeSelection(nodeId, request, token, 1, prep.prepared!)).toMatchObject({ outcome: "denied" });
     expect((await registry().listIntercomSlots()).every(row => row.occupant === null)).toBe(true);
   });
+  it("prepare allows a Node clock up to CLOCK_SKEW_MS ahead and never beyond (#773)", async () => {
+    const { nodeId, token } = await selectionFixture(); const request = selection();
+    expect((await registry().prepareClaudeSelection(nodeId, { ...request, observedAt: Date.now() + 2_000, expiresAt: Date.now() + 30_000 }, token)).prepared).toBeDefined();
+    const [boundary, beyond] = await runInDurableObject(registry(), async instance => {
+      const clock = vi.spyOn(Date, "now");
+      try {
+        clock.mockReturnValue(request.observedAt - 60_000); const boundary = await instance.prepareClaudeSelection(nodeId, request, token);
+        clock.mockReturnValue(request.observedAt - 60_001); return [boundary, await instance.prepareClaudeSelection(nodeId, request, token)];
+      } finally { clock.mockRestore(); }
+    });
+    expect(boundary.prepared).toBeDefined();
+    expect(beyond).toEqual({ result: { kind: "slot-selection", requestId: request.requestId, slot: request.slot, outcome: "denied", revision: null } });
+  });
+  it("finish allows a Node clock up to CLOCK_SKEW_MS ahead, never beyond, and keeps the expiry (#773)", async () => {
+    const { nodeId, token } = await selectionFixture(); const request = selection();
+    const prep = await registry().prepareClaudeSelection(nodeId, request, token);
+    expect(await registry().replaceSessions(nodeId, [actorRow(request)], { version: 1, generation: 1 }, token)).toEqual({ ok: true });
+    const [beyond, expired, ahead] = await runInDurableObject(registry(), async instance => {
+      const clock = vi.spyOn(Date, "now");
+      const finish = (now: number) => { clock.mockReturnValue(now); return instance.finishClaudeSelection(nodeId, request, token, 1, prep.prepared!); };
+      try { return [await finish(request.observedAt - 60_001), await finish(request.expiresAt), await finish(request.observedAt - 2_000)]; }
+      finally { clock.mockRestore(); }
+    });
+    expect(beyond).toMatchObject({ outcome: "denied", revision: null });
+    expect(expired).toMatchObject({ outcome: "denied", revision: null });
+    expect(ahead).toMatchObject({ outcome: "assigned", revision: 1 });
+  });
   it("audit storage failure rolls back CAS and adds no fabricated receipt", async () => {
     const { nodeId, token } = await selectionFixture(); const request = selection(); const prep = await registry().prepareClaudeSelection(nodeId, request, token);
     await registry().replaceSessions(nodeId, [actorRow(request)], { version: 1, generation: 1 }, token);
