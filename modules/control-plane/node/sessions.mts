@@ -5,7 +5,7 @@ import path from "node:path";
 
 import { isSessionInfo, type SessionInfo } from "../protocol.mts";
 import { listCodexSessions, listCodexTaskSessions } from "./codex-sessions.mts";
-import { readCodexTitles, withCodexTitles } from "./codex-titles.mts";
+import { attachCodexTitles, readCodexTitles, withCodexTitles } from "./codex-titles.mts";
 import type { NodePaths } from "./config.mts";
 import { findOnPath } from "./discovery.mts";
 import { normalizedState } from "./session-liveness.mts";
@@ -144,14 +144,17 @@ export async function listSessions(deps: SessionDeps = {}): Promise<SessionInfo[
   const codex = hooks.filter((s) => !tasks.some((t) => t.sessionId === s.sessionId));
   const claude = await listClaudeSessions(deps);
   deps.signal?.throwIfAborted();
-  const titled = deps.codexHome ? withCodexTitles([...tasks, ...codex], readCodexTitles(deps.codexHome)) : [...tasks, ...codex];
+  const titles = deps.codexHome ? readCodexTitles(deps.codexHome) : undefined;
+  const titled = titles ? withCodexTitles([...tasks, ...codex], titles) : [...tasks, ...codex];
   const all = [...(claude && deps.paths ? withLabels(claude, listTasks(deps.paths)) : claude ?? []), ...titled];
   // Issue #389: what this listing could not see is no evidence that a session
   // ended: Claude without claude on PATH, any runtime at the cap.
   const unseen: string[] = [];
   if (!claude || unlistedRuntimes(claude).length > 0) unseen.push(CLAUDE_RUNTIME);
   if (all.length >= MAX_SESSIONS) unseen.push("*");
-  return markUnseen(uniqueSourceRows(all).slice(0, MAX_SESSIONS), unseen);
+  const listing = markUnseen(uniqueSourceRows(all).slice(0, MAX_SESSIONS), unseen);
+  // Issue #828: the titles go with the listing for the Codex rows carried from sessions.json.
+  return titles ? attachCodexTitles(listing, titles) : listing;
 }
 
 // A Claude task session with a label (issue #74) carries it, found by the

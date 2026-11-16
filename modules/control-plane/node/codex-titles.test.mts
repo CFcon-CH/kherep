@@ -6,7 +6,7 @@ import test from "node:test";
 
 import { isSessionInfo, isTitle, type SessionInfo } from "../protocol.mts";
 import { recordCodexSession } from "./codex-sessions.mts";
-import { CODEX_INDEX, INDEX_MAX_BYTES, INDEX_MAX_LINES, codexAssignmentTitle, readCodexTitles, sanitiseTitle, withCodexTitles } from "./codex-titles.mts";
+import { CODEX_INDEX, INDEX_MAX_BYTES, INDEX_MAX_LINES, codexAssignmentTitle, listingCodexTitles, readCodexTitles, sanitiseTitle, withCodexTitles } from "./codex-titles.mts";
 import { nodePaths } from "./config.mts";
 import { listSessions } from "./sessions.mts";
 
@@ -94,6 +94,18 @@ test("listSessions carries the title of a recorded Codex session when given the 
   assert.deepEqual(listed.map((s) => [s.name, s.title]), [["codex-0000d7d0", "Kherep-Funktionen nachschlagen"]]);
   assert.equal((await list())[0].title, undefined);
   assert.equal((await list(path.join(root, "absent")))[0].title, undefined);
+});
+
+// Issue #828: a thread outside the listing (older than the 12 h window, no hook record) still has its title on the
+// listing, for the row sessions.json carries; without the Codex home the listing carries no titles.
+test("listSessions attaches the titles it read to the listing, also of threads it does not list", async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "kherep-titles-node-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const list = (codexHome?: string) => listSessions({ paths: nodePaths(root), findClaude: () => null, codexHome });
+  const listed = await list(home(t, [line(B, "Renamed while unlisted", "2026-11-16T10:00:00Z")]));
+  assert.deepEqual(listed, []);
+  assert.deepEqual([...listingCodexTitles(listed)!], [[B, "Renamed while unlisted"]]);
+  assert.equal(listingCodexTitles(await list()), undefined);
 });
 
 // Assignment must preserve the exact native title; the display reader remains lossy.

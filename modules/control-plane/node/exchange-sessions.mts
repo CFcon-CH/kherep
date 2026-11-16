@@ -1,6 +1,7 @@
 import { CODEX_ACTIVITY_EVIDENCE_MS, CODEX_ACTIVITY_INGRESS_MS, isCodexActivityStamp, type CodexActivityStamp } from "../protocol-mcp.mts";
 import fs from "node:fs";
 import { listenerDir } from "./autonomy.mts";
+import { listingCodexTitles, withCodexTitles } from "./codex-titles.mts";
 import { labelsFile, policyStamp, readBindingView, recordLocalLabels } from "./session-labels.mts";
 import { attachIdentitySnapshot, uniqueSourceRows } from "./session-identity.mts";
 import { currentIdentity } from "../protocol-session-identity.mts";
@@ -171,7 +172,8 @@ export function recordingSessions(paths: NodePaths, list: (signal?: AbortSignal)
     for (const { listed: _listed, ...s } of prior) if (s.runtime && !rows.some(r => targetKey(r) === targetKey({ runtime: s.runtime!, sessionId: s.sessionId }))) {
       rows.push({ ...s, runtime: s.runtime, state: "unknown" });
     }
-    rows.push(...boundedCarry(paths, rows.splice(listedRows), records, log));
+    // Issue #828: a carried Codex row takes the title read for this listing.
+    rows.push(...withCodexTitles(boundedCarry(paths, rows.splice(listedRows), records, log), listingCodexTitles(listed) ?? new Map()));
     const evidence: SessionEvidence[] = rows.flatMap(s => {
       const matches = supplied.filter(e => targetKey(e) === targetKey(s));
       return matches.length ? matches.map(e => ({ ...e })) : [{ runtime: s.runtime, sessionId: s.sessionId,

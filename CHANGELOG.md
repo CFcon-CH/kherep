@@ -138,6 +138,14 @@ increments the minor version; every other release increments the patch version.
 
 ### Fixed
 
+- A Codex thread renamed after its session left the listing now shows the new
+  title in `msg sessions`. A Codex session without a hook event for 12 hours
+  drops out of the listing and is carried from `sessions.json` with the title
+  it had then, so a rename in the Codex app never reached the directory. The
+  listing now keeps the titles it read, and the recording applies them to the
+  carried Codex rows. Display only: addresses, bindings and label rows are
+  unchanged, and a carried rename now also produces a rename hint. Refs #828
+
 - `commit-guard` and `deploy-guard` also run for the Claude `PowerShell` tool.
   Claude Code for Windows runs shell commands through either `Bash` or
   `PowerShell`, and only a `Bash` group wired the two guards, so the Windows
