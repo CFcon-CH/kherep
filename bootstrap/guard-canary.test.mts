@@ -59,7 +59,7 @@ test("argument parsing", () => {
   const parsed = parseArgs([], env);
   assert.ok(typeof parsed !== "string");
   assert.deepEqual(parsed.runtimes, ["claude", "codex"]);
-  assert.equal(parsed.home, path.join("/h", ".claude"));
+  assert.equal(parsed.home, path.resolve("/h", ".claude"));
   assert.equal(parsed.timeoutMs, 300_000);
   assert.equal((parseArgs([], { CLAUDE_CONFIG_DIR: "/c" }) as { home: string }).home, path.resolve("/c"));
   assert.equal((parseArgs([], { USERPROFILE: "/u" }) as { home: string }).home, path.resolve("/u", ".claude"));
@@ -82,6 +82,8 @@ test("a runtime is found on PATH only, never in fallback directories", () => {
   assert.equal(resolveRuntime("codex", { PATH: "" }), "cli-missing");
   assert.equal(resolveRuntime("codex", {}), "cli-missing");
   assert.equal(resolveRuntime("claude", { Path: empty }, { platform: "linux" }), "cli-missing");
+  // A POSIX lookup needs a POSIX file system (executable bit); the Windows test below covers win32 hosts.
+  if (process.platform === "win32") return;
   const dir = tmp("canary-path-");
   const file = stubFile(dir, "codex");
   assert.deepEqual(resolveRuntime("codex", { PATH: dir }, { platform: "linux" }), { file, args: [] });
