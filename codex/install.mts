@@ -32,7 +32,7 @@ import * as localPlugin from "./lib/local-plugin.mts";
 import * as managedConfig from "./lib/managed-config.mts";
 import { memoryProviderFile, resolveMemoryProvider } from "./lib/memory-provider.mts";
 import { CatalogReadError, readAvailableModels } from "./lib/model-catalog-process.mts";
-import { acquireSelectionLock, MODEL_SELECTION_FILES, verifyAnchoredState } from "./lib/model-selection-anchor.mts";
+import { acquireSelectionLock, MODEL_SELECTION_FILES, modelSelectionTarget, verifyAnchoredState } from "./lib/model-selection-anchor.mts";
 import { modelSelectionGit, type ModelSelectionGit } from "./lib/model-selection-git.mts";
 import { assertSelectionUnchanged, assertSelectionWritten, prepareInstallSelection, selectionNeedsCatalog } from "./lib/model-selection-install.mts";
 import { projectOperatorBinding } from "./lib/mcp-operator-binding.mts";
@@ -477,7 +477,7 @@ export function install(options: InstallOptions = {}) {
   let transaction: InstallTransaction, workspaceTransaction: InstallTransaction;
   try {
     assertSelectionUnchanged(codexHome, selection);
-    transaction = new InstallTransaction(codexHome, backupRoot, recordWrite);
+    transaction = new InstallTransaction(codexHome, backupRoot, recordWrite, modelSelectionTarget(codexHome));
     workspaceTransaction = new InstallTransaction(workspace, path.join(backupRoot, "workspace"), recordWrite);
   } catch (error) {
     releaseLock();
@@ -756,11 +756,15 @@ export function install(options: InstallOptions = {}) {
   } catch (error) {
     // The anchor is restored after every other target; a target another writer
     // changed after this run is left in place and reported, never overwritten.
-    const conflicts = [
-      ...transaction.rollback({ last: [path.join(codexHome, ...MODEL_SELECTION_FILES.anchor.split("/"))] }),
-      ...workspaceTransaction.rollback(),
-    ];
-    releaseLock();
+    let conflicts: string[];
+    try {
+      conflicts = [
+        ...transaction.rollback({ last: [path.join(codexHome, ...MODEL_SELECTION_FILES.anchor.split("/"))] }),
+        ...workspaceTransaction.rollback(),
+      ];
+    } finally {
+      releaseLock();
+    }
     if (conflicts.length) {
       throw new Error(`install-rollback-ownership-conflict: ${conflicts.length} target(s) changed by another writer were left in place`, { cause: error });
     }

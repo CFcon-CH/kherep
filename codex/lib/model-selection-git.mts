@@ -73,6 +73,16 @@ export function workingTreeReader(repoRoot: string): SourceReader {
   };
 }
 
+// Both paths resolved natively; Windows paths compare case-insensitively, since
+// Git and the installer may spell the same directory with different casing.
+export function sameTopLevel(top: string | undefined, repoRoot: string, platform: string = process.platform,
+  realpath: (file: string) => string = fs.realpathSync.native): boolean {
+  if (!top) return false;
+  let left: string, right: string;
+  try { [left, right] = [realpath(top), realpath(repoRoot)]; } catch { return false; }
+  return platform === "win32" ? left.toLowerCase() === right.toLowerCase() : left === right;
+}
+
 // The checkout must be the repository's own top level: a source tree copied
 // into an unrelated parent repository must not borrow that parent's HEAD.
 export function modelSelectionGit(repoRoot: string, run: GitRunner = gitRunner(repoRoot)): ModelSelectionGit {
@@ -86,9 +96,7 @@ export function modelSelectionGit(repoRoot: string, run: GitRunner = gitRunner(r
       if (resolved) return resolved;
       const top = text(["rev-parse", "--show-toplevel"])?.trim();
       const head = text(["rev-parse", "--verify", "--quiet", "HEAD^{commit}"])?.trim();
-      let sameRoot = false;
-      try { sameRoot = Boolean(top) && fs.realpathSync(top!) === fs.realpathSync(repoRoot); } catch { sameRoot = false; }
-      if (!sameRoot || !head || !REVISION.test(head)) throw new ModelSelectionRefusal(GIT_REFUSAL.headUnresolved);
+      if (!sameTopLevel(top, repoRoot) || !head || !REVISION.test(head)) throw new ModelSelectionRefusal(GIT_REFUSAL.headUnresolved);
       resolved = head;
       return head;
     },
