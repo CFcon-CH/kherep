@@ -57,7 +57,8 @@ function fixture(t: { after(fn: () => void): void }) {
     return { root, home, workspace, targets, agentOptions };
 }
 test('the 840b9548 predecessor freezes exactly the changed observation files', () => {
-    assert.deepEqual(Object.keys(old).sort(), ['codex/ROUTING.md', 'codex/agents/codex-obs.md', ...Object.keys(hooks).map(name => `codex/hooks/${name}`), RESULT].sort());
+    const byName = (a: string, b: string) => a.localeCompare(b);
+    assert.deepEqual(Object.keys(old).sort(byName), ['codex/ROUTING.md', 'codex/agents/codex-obs.md', ...Object.keys(hooks).map(name => `codex/hooks/${name}`), RESULT].sort(byName));
     for (const [relative, bytes] of Object.entries(old)) assert.notEqual(bytes, source(relative), relative);
 });
 test('the frozen 840b9548 generation upgrades to the current observation files and reruns idempotently', t => {

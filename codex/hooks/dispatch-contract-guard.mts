@@ -34,13 +34,13 @@ const OBSERVATION_ENTRY = "claude-obs";
 type ObsBriefPolicy = typeof import("../../claude/hooks/lib/obs-brief-policy.mts");
 type WorkerBriefPolicy = typeof import("../../claude/hooks/lib/worker-brief-policy.mts");
 const require = createRequire(import.meta.url);
-function hookLib<T>(name: string): T {
-  const local = path.join(import.meta.dirname, "lib", name);
-  return require(fs.existsSync(local) ? local : path.resolve(import.meta.dirname, "..", "..", "claude", "hooks", "lib", name)) as T;
+function hookLib<T>(name: string, dir = import.meta.dirname): T {
+  const local = path.join(dir, "lib", name);
+  return require(fs.existsSync(local) ? local : path.resolve(dir, "..", "..", "claude", "hooks", "lib", name)) as T;
 }
 const obsBriefPolicy = () => hookLib<ObsBriefPolicy>("obs-brief-policy.mts");
 const workerBriefPolicy = () => hookLib<WorkerBriefPolicy>("worker-brief-policy.mts");
-const statePolicy = () => { try { return hookLib<typeof import("../../claude/hooks/lib/obs-handback-state.mts")>("obs-handback-state.mts"); } catch { return null; } };
+export const statePolicy = (dir?: string) => { try { const lib = hookLib<typeof import("../../claude/hooks/lib/obs-handback-state.mts")>("obs-handback-state.mts", dir); return typeof lib.recordBrief === "function" ? lib : null; } catch { return null; } };
 // A dispatch that is not code-bound is checked only when the lib is there.
 function optionalWorkerBriefPolicy(): WorkerBriefPolicy | null {
   try { return workerBriefPolicy(); } catch { return null; }
