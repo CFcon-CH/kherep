@@ -182,6 +182,16 @@ increments the minor version; every other release increments the patch version.
   endpoint reference codes `fromCode` and `toCode` in its audit detail; the
   status reason is unchanged. Operator action: deploy the Worker. Refs #773
 
+- The Worker no longer refuses a Codex self-assignment or a Claude slot
+  selection because the Node's clock runs a little ahead. The Codex activity
+  registration and both steps of the Claude slot selection refused any
+  `observedAt` after the Worker clock, and an identical retry of an accepted
+  activity registration would have been refused as different metadata. They
+  now accept `observedAt` up to `CLOCK_SKEW_MS` (60 s) ahead, the handshake
+  tolerance. The 8 s ingress window, the 60 s activity evidence, the selection
+  expiry and the 60 s selection age are unchanged. Operator action: deploy the
+  Worker. Refs #773
+
 - A Codex thread renamed after its session left the listing now shows the new
   title in `msg sessions`. A Codex session without a hook event for 12 hours
   drops out of the listing and is carried from `sessions.json` with the title

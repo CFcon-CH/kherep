@@ -5,6 +5,7 @@ import {
   type McpAssignmentResult, type SelfAssignmentSlot,
   type McpLeadConfirmRequest, MCP_LEAD_CONFIRM_MS,
 } from "../../protocol-mcp.mts";
+import { CLOCK_SKEW_MS } from "../../protocol.mts";
 import type { IntercomSlot, SlotOccupant } from "./intercom-slots.mts";
 import type { MessageEffects } from "./message-store.mts";
 import { withEffects, withoutEffects, type SlotChange } from "./slot-notice.mts";
@@ -144,7 +145,7 @@ export class McpRegistry {
     const existing = this.sql.exec("SELECT * FROM mcp_intents WHERE request_id=?", intent.requestId).toArray()[0];
     if (existing) {
       if (Number(existing.expires_at) !== observedAt + CODEX_ACTIVITY_EVIDENCE_MS || Number(existing.expires_at) <= now
-        || Number(existing.created_at) < observedAt || Number(existing.created_at) >= observedAt + CODEX_ACTIVITY_INGRESS_MS) {
+        || Number(existing.created_at) < observedAt - CLOCK_SKEW_MS || Number(existing.created_at) >= observedAt + CODEX_ACTIVITY_INGRESS_MS) {
         return { ok: false, error: "requestId already has different intent metadata" };
       }
       return this.register(nodeId, intent, now, digest);
