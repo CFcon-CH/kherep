@@ -13,6 +13,14 @@ test("R04: strict receipt/header keys, versions, runtime, timestamp and generati
   assert.equal(isIdentitySnapshot({ version: 1, generation: 0 }), false);
   assert.equal(isIdentitySnapshot({ version: 1, generation: 1, extra: true }), false);
 });
+test("#773: a proof may be up to aheadMs ahead of the clock; the default allows none", () => {
+  const row = { sessionId, runtime: "codex" };
+  assert.equal(currentIdentity(p, row, 999, 60_000), true);
+  assert.equal(currentIdentity(p, row, 1000 - 60_000, 60_000), true);
+  assert.equal(currentIdentity(p, row, 1000 - 60_001, 60_000), false);
+  assert.equal(currentIdentity(p, row, 999), false);
+  assert.equal(currentIdentity(p, row, 43_201_001, 60_000), false);
+});
 test("L08 M01: binding parsing is canonical, bounded, and carries no identifiers", () => {
   assert.deepEqual(parseIdentityBinding('[1,"codex",0,"claude-code",3]'), [1, "codex", 0, "claude-code", 3]);
   for (const x of ['[1, "codex",0,"claude-code",3]', '[1,"codex",-1,"codex",0]', '[2,"codex",0,"codex",0]', '[1,"codex",0,"codex",0,"extra"]', 'bad']) assert.equal(parseIdentityBinding(x), null);

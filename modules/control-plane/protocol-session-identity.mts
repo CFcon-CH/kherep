@@ -19,9 +19,10 @@ export function isCanonicalIdentity(v: unknown): v is CanonicalIdentityV1 {
     && (v.runtime === "codex" ? v.source === "codex-hook" : v.source === "claude-list")
     && typeof v.observedAt === "number" && Number.isFinite(v.observedAt) && v.observedAt >= 0 && natural(v.lifecycleGeneration);
 }
-export function currentIdentity(v: unknown, row: { sessionId: string; runtime: string }, now: number): v is CanonicalIdentityV1 {
+// aheadMs tolerates a publishing clock that runs ahead of the checking clock; the max age is unchanged.
+export function currentIdentity(v: unknown, row: { sessionId: string; runtime: string }, now: number, aheadMs = 0): v is CanonicalIdentityV1 {
   return isCanonicalIdentity(v) && v.sessionId === row.sessionId && v.runtime === row.runtime
-    && v.observedAt <= now && now - v.observedAt <= CANONICAL_IDENTITY_MAX_AGE_MS;
+    && v.observedAt <= now + aheadMs && now - v.observedAt <= CANONICAL_IDENTITY_MAX_AGE_MS;
 }
 export function isIdentitySnapshot(v: unknown): v is IdentitySnapshotV1 {
   return object(v) && exact(v, ["version", "generation"]) && v.version === 1 && natural(v.generation) && v.generation > 0;
