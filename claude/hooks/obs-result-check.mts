@@ -61,7 +61,7 @@ import { pathToFileURL } from "node:url";
 
 import {
   clearDelivered, type Delivered, type DeliveredRead, FAILED_MESSAGE, homeOf, OBS_RESULT_FORMAT, PREFIX, prune,
-  readDelivered, recordPromotion, stillMalformed, type StopTrace, validId, writeStopTrace,
+  claimJoin, readDelivered, recordPromotion, stillMalformed, type StopTrace, validId, writeStopTrace,
 } from "./lib/obs-handback-state.mts";
 import { claudeIds, claudePages } from "./lib/obs-promotion-policy.mts";
 import { checkObsResult } from "./lib/obs-result-policy.mts";
@@ -100,8 +100,10 @@ const isRecord = (state: DeliveredRead): state is Delivered => state !== null &&
 const TRANSCRIPT: Record<Handback["result"], StopTrace["transcript"]> = { ok: "delivered", error: "refused", unknown: "unknown" };
 
 // Issue #731 PR-B. A wrote report this hook judges itself is joined with the
-// brief here; one the recorder judged (branch "state") was joined there.
-type Join = (text: string) => string | null;
+// brief here; one the recorder judged (branch "state") was joined there. A
+// handback is joined once per tool_use_id (claimJoin), so a resumed agent's
+// earlier handback is never joined again.
+type Join = (text: string, toolUseId?: string | null) => string | null;
 
 // A warning of the join after an existing notice, or alone.
 function withWarning(output: { systemMessage: string } | null, warning: string | null): HookOutput | null {
@@ -131,7 +133,7 @@ function handbackMessage(handback: Handback, join: Join): HookOutput | null {
   if ("problem" in check) return { systemMessage: stillMalformed(check.problem) + suffix };
   if (check.status === "failed") return { systemMessage: FAILED_MESSAGE + suffix };
   const output = suffix ? { systemMessage: NOT_CONFIRMED } : null;
-  return check.status === "wrote" ? withWarning(output, join(handback.message)) : output;
+  return check.status === "wrote" ? withWarning(output, join(handback.message, handback.id)) : output;
 }
 
 async function waitForRecord(home: string, id: string, waitMs: number): Promise<{ state: DeliveredRead; waited: number }> {
@@ -169,7 +171,8 @@ export async function decide(value: unknown, { home, waitMs = WAIT_MS }: DecideO
     after = isRecord(state) ? "present" : "absent";
   }
 
-  const join: Join = (text) => recordPromotion(home, payload.session_id, claudeIds(text), claudePages(text));
+  const join: Join = (text, toolUseId) => toolUseId === undefined || claimJoin(home, id, toolUseId)
+    ? recordPromotion(home, payload.session_id, claudeIds(text), claudePages(text)) : null;
   let branch: string;
   let output: HookOutput | null;
   if (isRecord(state)) [branch, output] = ["state", null];

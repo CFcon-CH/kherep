@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  briefRecord, claudeIds, claudePages, formatBrief, joinPromotion, parseBrief, PROMOTION_PREFIX, promotionReason, unjoinable,
+  briefRecord, claudeIds, claudePages, formatBrief, joinPromotion, NO_BRIEF, NO_SESSION, parseBrief, PROMOTION_PREFIX, promotionReason, unjoinable,
   unjoinedWarning, unreadableWarning, type PageEvidence,
 } from "./obs-promotion-policy.mts";
 
@@ -102,6 +102,7 @@ test("the delivered texts are fixed and name only the page ids", () => {
     + "In this turn, for each page run the Confluence broker evidence verb (--mode prepare, then decide, then verify) with this turn's measurement, "
     + "or state in your final message why it cannot be promoted (for example no exact code binding). A marker alone never promotes a page.");
   assert.match(unreadableWarning(["7"]), /^Kherep obs-promotion: the evidence labels of page\(s\) 7 could not be read/);
-  assert.match(unjoinedWarning(["8", "9"]), /^Kherep obs-promotion: page\(s\) 8, 9 were filed evidence-assumed but could not be joined .*no session id/);
-  for (const text of [promotionReason(["1"]), unreadableWarning(["1"]), unjoinedWarning(["1"])]) assert.ok(text.startsWith(PROMOTION_PREFIX));
+  assert.match(unjoinedWarning(["8", "9"], NO_SESSION), /^Kherep obs-promotion: page\(s\) 8, 9 were filed evidence-assumed but could not be joined .*\(no session id\)/);
+  assert.match(unjoinedWarning(["8"], NO_BRIEF), /could not be joined to the dispatch brief \(no dispatch brief recorded for this session\)/);
+  for (const text of [promotionReason(["1"]), unreadableWarning(["1"]), unjoinedWarning(["1"], NO_SESSION)]) assert.ok(text.startsWith(PROMOTION_PREFIX));
 });

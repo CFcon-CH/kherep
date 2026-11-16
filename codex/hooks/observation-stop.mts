@@ -57,8 +57,8 @@ export function promotion(input: StopInput, home: string, dir = import.meta.dirn
 export function decision(value: unknown, env: NodeJS.ProcessEnv = process.env, home = HOME): Continuation | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const input = value as StopInput;
-  const pending = promotion(input, home);
   const result = observationDecision(input, env);
+  const pending = promotion(input, home); // claimed last, after everything that can fail
   if (!pending) return result;
   return { decision: "block", reason: result ? `${result.reason}\n\n${pending}` : pending };
 }
@@ -75,10 +75,12 @@ function observationDecision(input: StopInput, env: NodeJS.ProcessEnv): Continua
 }
 
 async function main(): Promise<void> {
-  let input: unknown;
-  try { input = JSON.parse((await (await import("./stdin-reader.mts")).readStdinBytes({ maxBytes: null })).toString("utf8")); } catch { return; }
-  const result = decision(input);
-  if (result) process.stdout.write(JSON.stringify(result));
+  try {
+    const result = decision(JSON.parse((await (await import("./stdin-reader.mts")).readStdinBytes({ maxBytes: null })).toString("utf8")));
+    if (result) process.stdout.write(JSON.stringify(result));
+  } catch {
+    // Fail open: a hook that cannot decide says nothing and lets the turn end.
+  }
 }
 
 // Node loads the main module from its real path, so a script started through a

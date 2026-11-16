@@ -3,6 +3,8 @@
 // of the dispatch guard and the consuming Stop hook. Every case runs the
 // checkout's modules in this process with a temporary state home.
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -75,9 +77,10 @@ test("codex-obs-result-check warns, never blocks, when labels cannot be read aga
   assert.equal(pending(h), null);
 });
 
-test("codex-obs-result-check is silent without a brief or a measured finding, and keeps failed and empty unchanged", () => {
+test("codex-obs-result-check warns without a recorded brief, is silent without a measured finding, and keeps failed and empty unchanged", () => {
   const h = home();
-  assert.equal(decide(stop(`${RECEIPT}\nOBS-EVIDENCE: 11:1:assumed,12:1:assumed`), h), null);
+  assert.match(String((decide(stop(`${RECEIPT}\nOBS-EVIDENCE: 11:1:assumed,12:-:assumed`), h) as { systemMessage: string }).systemMessage),
+    /page\(s\) 11 were filed evidence-assumed but could not be joined to the dispatch brief \(no dispatch brief recorded for this session\)/);
   brief(h, "measured=- findings=2\n");
   assert.equal(decide(stop(RECEIPT), h), null);
   assert.match(String((decide(stop("OBS-RESULT: failed authority-denied\nOBS-EVIDENCE: 1:1:assumed"), h) as { systemMessage: string }).systemMessage),
@@ -123,6 +126,21 @@ test("the Codex Stop hook consumes a pending promotion once and merges it with t
   assert.equal(decision({ session_id: SID, turn_id: "turn-1", stop_hook_active: true }, {}, h), null, "consumed");
   fs.writeFileSync(path.join(stateDir(h), `${SID}.promote`), "7\n");
   assert.deepEqual(decision({ session_id: SID, stop_hook_active: true }, {}, h), { decision: "block", reason: promotionReason(["7"]) });
+});
+
+test("the Codex Stop hook CLI, run in place, delivers a pending promotion once and fails open on bad input", (t) => {
+  const sid = randomUUID(), dir = stateDir(HOME), file = path.join(dir, `${sid}.promote`);
+  t.after(() => {
+    fs.rmSync(file, { force: true });
+    for (const empty of [dir, path.dirname(dir)]) { try { fs.rmdirSync(empty); } catch { /* absent or still used */ } }
+  });
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(file, "321\n");
+  const run = (input: string) => spawnSync(process.execPath, ["--disable-warning=ExperimentalWarning", path.join(import.meta.dirname, "observation-stop.mts")],
+    { input, encoding: "utf8", env: { PATH: process.env.PATH, ...(process.env.NODE_V8_COVERAGE ? { NODE_V8_COVERAGE: process.env.NODE_V8_COVERAGE } : {}) } });
+  const first = run(JSON.stringify({ session_id: sid, stop_hook_active: true }));
+  assert.deepEqual([first.status, JSON.parse(first.stdout)], [0, { decision: "block", reason: promotionReason(["321"]) }]);
+  assert.deepEqual([run(JSON.stringify({ session_id: sid, stop_hook_active: true })).stdout, run("{not json").stdout], ["", ""]);
 });
 
 test("the Codex Stop hook finds the installed lib beside it, and without one there is no promotion", () => {

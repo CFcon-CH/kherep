@@ -145,7 +145,7 @@ export function decision(value: unknown, env: EnvLike = process.env): Continuati
 
 // Issue #731 PR-B. The promotion pending for this session, consumed: the
 // result side wrote <session_id>.promote for a page filed evidence-assumed for a
-// measured finding. Not gated on stop_hook_active: the file is removed before
+// measured finding. Not gated on stop_hook_active: the file is claimed by rename before
 // the reason is emitted, so it continues the turn at most once.
 export function promotion(value: unknown, home: string): string | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
@@ -190,9 +190,11 @@ export function strayWarning(value: unknown, env: EnvLike = process.env): string
 async function main(): Promise<void> {
   try {
     const payload: unknown = JSON.parse((await (await import("./lib/stdin-reader.mts")).readStdinBytes({ maxBytes: null })).toString("utf8"));
-    const result = withPromotion(decision(payload), promotion(payload, homeOf(process.argv[1] as string)));
+    const result = decision(payload);
     const warning = strayWarning(payload);
-    const output = warning ? { ...result, systemMessage: warning } : result;
+    // Issue #731 PR-B: the promotion is claimed last, right before the write.
+    const merged = withPromotion(result, promotion(payload, homeOf(process.argv[1] as string)));
+    const output = warning ? { ...merged, systemMessage: warning } : merged;
     if (output) process.stdout.write(JSON.stringify(output));
   } catch {
     // Fail open: a hook that cannot decide says nothing and lets the turn end.
