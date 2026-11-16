@@ -27,6 +27,7 @@
 
 // The process import is the global process; nothing needs it since lib/hook-syntax.mts replaced `node --check` (#278).
 import process from "node:process";
+import { warnUnclassifiable } from "./lib/tool-event-shape.mts";
 
 // The field this hook reads from a PreToolUse payload.
 interface ToolPayload {
@@ -69,14 +70,16 @@ let raw = "";
 process.stdin.on("data", (c) => (raw += c));
 process.stdin.on("end", () => {
   let d: ToolPayload = {};
+  // Every quiet allow (exit 0) adds the event-shape warning (issue #808).
+  const allow = (event: unknown): never => { warnUnclassifiable(event, "secret-output-guard"); process.exit(0); };
   try {
     d = JSON.parse(raw || "{}") as ToolPayload;
   } catch {
-    process.exit(0);
+    allow(undefined);
   }
 
   const cmd = ((d.tool_input && d.tool_input.command) || "") as string;
-  if (!cmd) process.exit(0);
+  if (!cmd) allow(d);
 
   function hasAmbiguousCompound(command: string): boolean {
     return /[\r\n;&`()<>]|\$\(|\|\|/.test(command);
@@ -84,7 +87,7 @@ process.stdin.on("end", () => {
 
   // Sichtbarer, bewusster Notausgang. Nur eine echte Shell-Prefix-Zuweisung
   // gilt; ein spaeteres Vorkommen oder mehrdeutige Compound-Syntax nicht.
-  if (/^\s*KHEREP_SECRET_OK=1\s+\S/.test(cmd) && !hasAmbiguousCompound(cmd)) process.exit(0);
+  if (/^\s*KHEREP_SECRET_OK=1\s+\S/.test(cmd) && !hasAmbiguousCompound(cmd)) allow(d);
 
   // Nur das VOLLSTAENDIGE Kommando darf eine Existenz-/Zaehlpruefung sein.
   // Ambige Compound-Syntax bleibt fail-closed. Ein abschliessendes Status-echo
@@ -176,5 +179,5 @@ process.stdin.on("end", () => {
     process.exit(2);
   }
 
-  process.exit(0);
+  allow(d);
 });

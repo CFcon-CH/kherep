@@ -11,8 +11,9 @@ import path from "node:path";
 import { test } from "node:test";
 
 import {
-  cellProblems, claudeInventory, inventory, read, readmeLinkProblems, REFERENCE, referenceRows, repo, type Row,
+  cellProblems, cellsOf, claudeInventory, inventory, read, readmeLinkProblems, REFERENCE, referenceRows, repo, type Row,
 } from "./hooks-reference.mts";
+import { TOOL_EVENT_CONTRACT } from "../claude/hooks/lib/tool-event-contract.mts";
 
 function loadReference(): Row[] {
   if (!fs.existsSync(path.join(repo, REFERENCE))) assert.fail(`${REFERENCE} is missing: it must hold one table row per wired hook`);
@@ -54,3 +55,24 @@ test("every row of docs/HOOKS.md has valid cells", () => {
 test("README.md links the hook reference from Documentation and Security model", () => {
   assert.deepEqual(readmeLinkProblems(read("README.md")), []);
 });
+
+// Issue #808. The event shape coverage table: one row per contract row plus the two wired
+// Codex guards without one, each cell derived from the contract and the wiring.
+test("the event shape coverage table of docs/HOOKS.md matches the tool event contract", () => {
+  const lines = read(REFERENCE).split("\n");
+  const start = lines.indexOf("| Guard | Claude | Codex |");
+  assert.ok(start >= 0 && lines[start + 1] === "|---|---|---|", "docs/HOOKS.md needs the coverage table header and separator");
+  const table: string[][] = [];
+  for (let i = start + 2; lines[i]?.startsWith("|"); i++) table.push(cellsOf(lines[i]!));
+  const wired = inventory();
+  const on = (stem: string, runtime: string): boolean => wired.get(stem)?.runtimes.has(runtime) ?? false;
+  const expected = [
+    ...Object.entries(TOOL_EVENT_CONTRACT).map(([guard, row]) => [`\`${guard}\``, on(guard, "Claude") ? "guard warns" : "not wired",
+      "codex" in row ? "adapter warns (native event)" : on(guard, "Codex") ? "guard warns" : "not wired"]),
+    ["`codex-dispatch-contract-guard`", "not wired", "denies"],
+    ["`mcp-intent-hook`", "not wired", "unproven"],
+  ];
+  assert.deepEqual(table, expected);
+  for (const stem of ["codex-dispatch-contract-guard", "mcp-intent-hook"]) assert.ok(on(stem, "Codex"), `${stem} is wired in Codex`);
+});
+

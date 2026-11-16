@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { normalizePathLike, type ScopePayload } from "./lib/workspace-scope.mts";
 import { referencesArtifact, referencesCredentials, shellWords, type PolicyInput } from "./lib/private-path-policy.mts";
+import { warnUnclassifiable } from "./lib/tool-event-shape.mts";
 
 // The fields this hook reads from a PreToolUse payload.
 interface ToolPayload extends ScopePayload {
@@ -51,12 +52,13 @@ function referencesInferenceHttp(command: unknown): boolean {
 
 async function main(): Promise<void> {
   let payload: ToolPayload | null;
+  // The two returns before any policy check are quiet allows: they add the event-shape warning (issue #808).
   try { payload = JSON.parse((await (await import("./lib/stdin-reader.mts")).readStdinBytes({ maxBytes: null })).toString("utf8")) as ToolPayload | null; }
-  catch { return; }
+  catch { warnUnclassifiable(undefined, "privacy-boundary-guard"); return; }
 
   const tool = payload && payload.tool_name;
   const cloudBoundary = CLOUD_BOUNDARY_TOOLS.has(tool) || (typeof tool === "string" && tool.startsWith("mcp__"));
-  if (!FILE_SHELL_TOOLS.has(tool) && !cloudBoundary) return;
+  if (!FILE_SHELL_TOOLS.has(tool) && !cloudBoundary) { warnUnclassifiable(payload, "privacy-boundary-guard"); return; }
   const scope = payload as ToolPayload;
   const input = scope.tool_input as (PolicyInput & { file_path?: unknown }) | null;
   if (!input || typeof input !== "object" || Array.isArray(input)) {

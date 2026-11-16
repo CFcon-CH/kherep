@@ -68,7 +68,7 @@ for (const guard of ["commit-guard", "deploy-guard"]) test(`${guard}: native fie
   assert.match(denied.stdout, new RegExp(`${guard} blocked`));
 });
 
-test("shell admits only exact notices from the two expected guard slots, retaining denials", t => {
+test("shell admits only each slot's own exact notice, retaining denials", t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "event-shape-shell-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   copyAdapter(root);
@@ -82,7 +82,8 @@ test("shell admits only exact notices from the two expected guard slots, retaini
   assert.equal(first.status, 0, first.stderr);
   const output = JSON.parse(first.stdout).hookSpecificOutput;
   assert.equal(output.permissionDecision, undefined);
-  assert.equal(output.additionalContext.split("\n").length, 2);
+  // Issue #808, stage 2a: the adapter classifies the native event for all four slots, silent guard files included.
+  assert.equal(output.additionalContext.split("\n").length, 4);
   assert.match(output.additionalContext, /^\[kherep:event-shape:WARN:commit-guard:/);
   const commitOnly = JSON.stringify({ hookSpecificOutput: { hookEventName: "PreToolUse", additionalContext: output.additionalContext.split("\n")[0] } });
   fs.writeFileSync(path.join(root, "main-checkout-guard.mts"), `process.stdout.write(${JSON.stringify(commitOnly)});`);

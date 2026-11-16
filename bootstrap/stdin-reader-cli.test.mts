@@ -9,6 +9,7 @@ import { pathToFileURL } from "node:url";
 import { declareCopy } from "./coverage-copy-fixture.mts";
 import { relativeSpecifiers } from "../claude/hooks/lib/hook-inventory.mts";
 import { cleanupHomes, codexHome } from "../codex/hooks/denials-fixture.mts";
+import { warningDocument, warningText, type ShapeReason } from "../claude/hooks/lib/tool-event-shape.mts";
 
 const REPO = path.resolve(import.meta.dirname, "..");
 const TRANSCRIPT_TEXT = "synthetic transcript contents, never print this";
@@ -128,11 +129,15 @@ test("checkout post-edit CLI skips Bash and retains its exact malformed-input er
   assert.deepEqual(sourceHashes(relative), dependencies);
 });
 
-test("checkout handback gate remains quiet for out-of-scope and malformed input", t => {
+// Issue #808: without a tool_name or a JSON envelope the gate still allows, with only the fixed event-shape warning.
+test("checkout handback gate allows out-of-scope and malformed input with only the event-shape warning", t => {
   const relative = "claude/hooks/obs-handback-gate.mts", dependencies = sourceHashes(relative);
   const f = fixture(t, relative), before = files(f.root);
-  assert.equal(run(f, JSON.stringify({ hook_event_name: "SessionStart" })), "");
-  assert.equal(run(f, "{not json"), "");
+  for (const [input, reason] of [[JSON.stringify({ hook_event_name: "SessionStart" }), "TOOL_NAME_MISSING"], ["{not json", "EVENT_ENVELOPE_INVALID"]] as [string, ShapeReason][]) {
+    const child = spawnSync(process.execPath, ["--disable-warning=ExperimentalWarning", f.entry], { cwd: f.root, env: f.env, input, encoding: "utf8", timeout: 10_000, windowsHide: true });
+    assert.deepEqual([child.status, child.stdout, child.stderr],
+      [0, warningDocument([{ guard: "obs-handback-gate", reason }]), `${warningText("obs-handback-gate", reason)}\n`]);
+  }
   assert.deepEqual(files(f.root), before);
   assert.deepEqual(sourceHashes(relative), dependencies);
 });
@@ -300,9 +305,9 @@ for (const direct of [false, true]) test(direct
   const relative = "claude/hooks/privacy-boundary-guard.mts";
   const injected = fixture(t, relative, direct, false), control = fixture(t, relative, direct, false);
   const dependencies = sourceHashes(relative);
-  assert.equal(Object.keys(dependencies).length, 7);
+  assert.equal(Object.keys(dependencies).length, 9); // + lib/tool-event-shape.mts and lib/tool-event-contract.mts (issue #808)
   if (!direct) {
-    assert.equal(injected.copied.size, 7);
+    assert.equal(injected.copied.size, 9);
     assert.deepEqual([...injected.copied].sort(), Object.keys(dependencies).sort());
     assert.deepEqual([...control.copied].sort(), Object.keys(dependencies).sort());
   }

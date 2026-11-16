@@ -175,6 +175,14 @@ test("shape helper is restored with all three computed dispatcher importers", (t
   assertRestored(ctx, result, "lib/tool-event-shape.mts", "claude/hooks/lib/tool-event-shape.mts");
 });
 
+test("the contract lib is restored as an import of the shape helper (issue #808)", (t) => {
+  const ctx = fixture(t);
+  fs.writeFileSync(path.join(ctx.hookDir, "lib", "tool-event-contract.mts"), "");
+  const result = run(ctx);
+  assert.match(String(result.context), /lib\/tool-event-contract\.mts \(imported by [^)]*lib\/tool-event-shape\.mts/, String(result.context));
+  assertRestored(ctx, result, "lib/tool-event-contract.mts", "claude/hooks/lib/tool-event-contract.mts");
+});
+
 test("3. a missing commit-guard.mts is restored", (t) => {
   const ctx = fixture(t);
   fs.rmSync(path.join(ctx.hookDir, "commit-guard.mts"));

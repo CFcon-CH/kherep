@@ -25,6 +25,8 @@ test("isolated Claude preview installs helper and wired chain and preserves oper
   assert.equal(first.status, 0, first.stdout + first.stderr);
   const helper = path.join(candidate, "hooks/lib/tool-event-shape.mts");
   assert.deepEqual(fs.readFileSync(helper), fs.readFileSync(path.resolve(import.meta.dirname, "../claude/hooks/lib/tool-event-shape.mts")));
+  assert.deepEqual(fs.readFileSync(path.join(candidate, "hooks/lib/tool-event-contract.mts")),
+    fs.readFileSync(path.resolve(import.meta.dirname, "../claude/hooks/lib/tool-event-contract.mts")));
   const settings = fs.readFileSync(path.join(candidate, "settings.json"));
   const json = JSON.parse(settings.toString());
   const pre = json.hooks.PreToolUse.find((group: { matcher?: string }) => group.matcher === "Bash");

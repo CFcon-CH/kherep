@@ -13,6 +13,7 @@ import test from "node:test";
 
 import { decide } from "./obs-handback-gate.mts";
 import { refusedReason } from "./lib/obs-handback-state.mts";
+import { warningDocument, type ShapeReason } from "./lib/tool-event-shape.mts";
 import { declareCopy } from "../../bootstrap/coverage-copy-fixture.mts";
 
 const TMP = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "obs-handback-gate-test-")));
@@ -113,10 +114,15 @@ test("T4 a second id is refused once, independently", () => {
   silent(run(b, BAD));
 });
 
+// Issue #808: a missing or non-string message also carries the fixed event-shape warning.
+const warned = (result: Run, reason: ShapeReason, label = "") =>
+  assert.deepEqual([result.status, result.stdout], [0, warningDocument([{ guard: "obs-handback-gate", reason }])], label);
+
 test("T5 a handback without a visible message passes without a marker", () => {
-  for (const message of [undefined, 42, "", "   "]) {
+  for (const [message, reason] of [[undefined, "COMMAND_MISSING"], [42, "COMMAND_INVALID"], [""], ["   "]] as [unknown, ShapeReason?][]) {
     const id = nextId();
-    silent(run(id, message), String(message));
+    if (reason) warned(run(id, message), reason, String(message));
+    else silent(run(id, message), String(message));
     assert.equal(markerOf(id), null);
   }
 });
@@ -161,10 +167,7 @@ test("T8 nothing from the message or the payload reaches stdout", () => {
 });
 
 test("T9 an unreadable payload passes", () => {
-  for (const stdin of ["{not json", "", "[]", "null"]) {
-    const result = runRaw(stdin);
-    assert.deepEqual([result.status, result.stdout], [0, ""], stdin);
-  }
+  for (const stdin of ["{not json", "", "[]", "null"]) warned(runRaw(stdin), "EVENT_ENVELOPE_INVALID", stdin);
 });
 
 test("T10 decide() returns null for an allow and the deny object otherwise", () => {

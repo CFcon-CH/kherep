@@ -11,6 +11,23 @@ increments the minor version; every other release increments the patch version.
 
 ### Added
 
+- Every wired `PreToolUse` guard reports an event it cannot classify (#808,
+  stage 2a). A data-only table, `claude/hooks/lib/tool-event-contract.mts`,
+  holds one row per guard: the tools it judges and the `tool_input` key it
+  reads, with a native Codex shape where the Codex adapter normalizes the event
+  first. `privacy-boundary-guard`, `secret-output-guard`,
+  `playwright-file-guard`, `dispatch-contract-guard`, `main-checkout-guard`,
+  `module-label-guard`, `atlassian-destructive-guard` and `obs-handback-gate`
+  now print the fixed `[kherep:event-shape:WARN:<guard>:<reason>]` notice on
+  the path where they allowed silently before; every deny, ask and exit code
+  stays as it was. On Codex the adapter classifies the native event for the
+  four shell slots and `codex-privacy-boundary-guard` from the table instead of
+  two hard-coded names, and the shell dispatcher admits each slot's own exact
+  warning. `docs/HOOKS.md` gains a coverage table per runtime, pinned by
+  `bootstrap/hooks-reference.test.mts`, and names what stays unproven,
+  including the matcher blind spot. The installers ship the new file with the
+  hook library. A real-runtime canary is still open, so #808 stays open.
+
 - Stall watch for red pull requests (#744). The scheduled workflow
   `.github/workflows/stall-watch.yml` runs `bootstrap/stall-watch-main.mts` from
   `main` every ten minutes. It reads the required checks of `main` live from the

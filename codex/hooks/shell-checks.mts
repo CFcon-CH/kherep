@@ -147,20 +147,20 @@ export async function shellChecks(payload: HookPayload, attributionHook?: string
         denials.push({ decision: "deny", reason: tagged(guard, why) });
       }
       else if (result.stdout.trim()) {
-        // Only these two slots may transport the exact closed shape warning.
-        // Every other notice or unexpected output keeps its fail-closed outcome.
+        // A slot with a codex contract row may transport only its own exact shape warning
+        // (issue #808). Every other notice or unexpected output keeps its fail-closed outcome.
         const output = JSON.parse(result.stdout) as { hookSpecificOutput?: { hookEventName?: string; permissionDecision?: string;
           permissionDecisionReason?: string } };
         if (output.hookSpecificOutput?.hookEventName === "PreToolUse" && output.hookSpecificOutput.permissionDecision === "deny") {
           decision ||= result.stdout;
           denials.push({ decision: "deny", reason: output.hookSpecificOutput.permissionDecisionReason ?? "", broken: result.broken === true });
-        } else if (guard === "commit-guard.mts" || guard === "deploy-guard.mts") {
+        } else {
           const { toolEventShapeLib } = await import("./hook-adapter-run.mts");
-          const lib = toolEventShapeLib();
-          const warnings = lib.parseShapeWarning(result.stdout, guard === "commit-guard.mts" ? "commit-guard" : "deploy-guard");
+          const lib = toolEventShapeLib(), slot = lib.codexShapeGuard(guard.replace(/\.mts$/, ""));
+          const warnings = slot && lib.parseShapeWarning(result.stdout, slot);
           if (!warnings) throw new Error("unsupported guard output");
           shapeNotices.push(...warnings.map(item => lib.warningText(item.guard, item.reason)));
-        } else throw new Error("unsupported guard output");
+        }
       }
     } catch {
       broken ||= fault;

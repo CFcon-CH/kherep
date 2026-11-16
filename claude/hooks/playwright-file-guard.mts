@@ -11,6 +11,7 @@
 
 // The process import is the global process; nothing needs it since lib/hook-syntax.mts replaced `node --check` (#278).
 import process from "node:process";
+import { warnUnclassifiable } from "./lib/tool-event-shape.mts";
 
 // The field this hook reads from a PreToolUse payload.
 interface NavigatePayload {
@@ -24,6 +25,7 @@ process.stdin.on("end", () => {
   try {
     d = JSON.parse(raw || "{}") as NavigatePayload;
   } catch {
+    warnUnclassifiable(undefined, "playwright-file-guard");
     process.exit(0);
   }
   const url = (d.tool_input && d.tool_input.url) || "";
@@ -40,6 +42,6 @@ process.stdin.on("end", () => {
         },
       })
     );
-  }
+  } else warnUnclassifiable(d, "playwright-file-guard"); // the quiet allow (issue #808)
   process.exit(0);
 });
