@@ -310,7 +310,9 @@ test("the observation-only CLI reports a model-selection refusal by its fixed co
   const f = fixture(t);
   f.run({ modelCatalog: catalog() });
   write(f.file(files.receipt), `${f.read(files.receipt)} `);
-  const cli = (...args: string[]) => spawnSync(process.execPath, [path.join(repoRoot, "codex", "install-observations.mts"), ...args], { encoding: "utf8" });
+  // Node 24.1 prints the type-stripping ExperimentalWarning on stderr; the assertions compare stderr exactly.
+  const cli = (...args: string[]) => spawnSync(process.execPath,
+    ["--disable-warning=ExperimentalWarning", path.join(repoRoot, "codex", "install-observations.mts"), ...args], { encoding: "utf8" });
   const refused = cli("--check", "--codex-home", f.codexHome, "--workspace", f.workspace);
   assert.equal(refused.status, 1);
   assert.equal(refused.stderr, `${ANCHOR_REFUSAL.receiptConflict}\n`);
