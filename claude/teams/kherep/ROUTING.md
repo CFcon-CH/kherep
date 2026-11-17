@@ -56,7 +56,7 @@ When an advisor model is configured (`advisorModel`, `/advisor`), planning runs 
 4. Approach check: the Maestro consults the advisor while the context is still small.
 5. Operator decisions on the real forks the approach check left open.
 6. Design: a design agent writes the design note and the builder brief.
-7. Design acceptance: an independent review on a different model family from the designer, then the operator's approval.
+7. Design acceptance: an independent review by a reviewer on a different model than the designer's, then the Maestro checks the design against primary sources, then the operator's approval.
 
 Build and verification follow as before. After verification, and once the result is durable, the Maestro consults the advisor again before reporting done.
 
@@ -64,11 +64,11 @@ Tiers decide which segments run. A trivial change (one line, documentation, mech
 
 Subagents inherit the configured advisor and apply the same pairing check against their own model. Each advisor call reads the full transcript anew, and no setting caps or forces the calls, so instructions are the only control:
 
-- When the design agent runs on the advisor's model, the two count as one model under any one-at-a-time limit. The Maestro does not consult the advisor while that design agent runs, and the design brief says `Do not consult the advisor.`
+- When the design agent runs on the advisor's model, only one of them runs at a time: the Maestro does not consult the advisor while that design agent runs, and the design brief says `Do not consult the advisor.`
 - Mechanical workers (observation, broker, lookup and local-inference wrappers) get the same line in their brief.
 - A long session is compacted or split at a segment boundary before the closing advisor call.
 
-These rules are instructions, not enforcement: whether a hook can observe an advisor call is UNKNOWN. Codex has no advisor; on Codex the design agent is never replaced.
+These rules are instructions, not enforcement. The advisor runs as a server-side tool: in one measured session, eight advisor calls were recorded as `server_tool_use` and no configured PreToolUse hook fired for any of them. Whether a catch-all matcher would see one is untested. Codex has no advisor; on Codex the design agent is never replaced.
 
 ## Privacy and authority
 
