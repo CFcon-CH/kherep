@@ -98,6 +98,6 @@ test('a repository merge entry is a version 2 field with exactly one known metho
   const policy=(version:number,entry:unknown)=>({version,enabled:true,runtimes:{claude:{...identity,operations:version===2?['pr.merge']:['issue.create'],repositories:[{slug:'example/project',id:55,merge:entry}]}}});
   assert.equal(validatePolicy(policy(2,{method:'squash'}),'claude',merge).repositories[0].merge?.method,'squash');
   assert.throws(()=>validatePolicy(policy(1,{method:'squash'}),'claude',request),{message:'policy-invalid'});
-  for (const bad of [{method:'fast-forward'},{},'rebase',{method:'rebase',extra:1}]) assert.throws(()=>validatePolicy(policy(2,bad),'claude',merge),{message:'policy-invalid'},JSON.stringify(bad));
+  for (const bad of [{method:'fast-forward'},{},'rebase',{method:'rebase',extra:1},{method:['rebase']}]) assert.throws(()=>validatePolicy(policy(2,bad),'claude',merge),{message:'policy-invalid'},JSON.stringify(bad));
   assert.throws(()=>validatePolicy(policy(2,undefined),'claude',merge),{message:'policy-invalid'});
 });
