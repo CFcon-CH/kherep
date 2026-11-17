@@ -228,6 +228,12 @@ increments the minor version; every other release increments the patch version.
 ### Fixed
 
 - The GitHub App broker no longer reports `verification-failed` for a
+  `pr.merge` that succeeded (#956). Under its `contents: write` installation
+  token GitHub can omit `merge_commit_sha` from the pull request answer, so
+  readback now accepts an absent or null `merge_commit_sha`; a present value
+  that is not a lowercase 40-hex SHA stays `verification-failed`; the checks of
+  `merged`, the merging bot and the head SHA are unchanged.
+- The GitHub App broker no longer reports `verification-failed` for a
   `run.rerun` that succeeded (#958). GitHub raises `run_attempt` a few seconds
   after the rerun POST, so a readback that still sees the old attempt now ends
   as `outcome-unknown` and a later `verify` with the same operationId settles
