@@ -46,12 +46,14 @@ export const MERGED = 'b'.repeat(40);
  * A fake api.github.com: identity endpoints plus pulls, comments, runs, refs and the
  * merge PUT. `mergeAnswer` 'ok' merges and answers; 'lost' merges and then drops the
  * answer; 'noop' answers without merging; a status refuses without merging.
+ * `omitMergeCommitSha` drops `merge_commit_sha` from the merged pull, as GitHub
+ * did under a contents-only installation token.
  */
 export function fakeGithub(selected:'claude'|'codex', refs:(branch:string)=>string|undefined=()=>undefined) {
   const bot=BOTS[selected==='claude'?0:1], appId=selected==='claude'?11:12, installationId=selected==='claude'?44:45;
   const calls:Call[]=[], all={actions:'write',checks:'read',contents:'write',issues:'write',metadata:'read',pull_requests:'write',workflows:'write'};
   const control={extraScope:false,wrongAuthor:false,dropLabels:false,runStatus:'completed',attemptAfter:2,conclusion:'cancelled',actorId:bot.id,
-    mergeAnswer:'ok' as 'ok'|'lost'|'noop'|number,mergedBy:undefined as unknown};
+    mergeAnswer:'ok' as 'ok'|'lost'|'noop'|number,mergedBy:undefined as unknown,omitMergeCommitSha:false};
   const user={id:bot.id,login:bot.login,type:'Bot'};
   const pulls=new Map<number,any>(), comments=new Map<number,any>();
   const run={id:9001,run_attempt:1,status:'completed',conclusion:'failure',repository:{id:55,full_name:'example/project'},triggering_actor:{id:1,login:'someone',type:'User'}};
@@ -82,6 +84,7 @@ export function fakeGithub(selected:'claude'|'codex', refs:(branch:string)=>stri
       if (!pr) return json({message:'Not Found'},404);
       if (typeof answer==='number') return json({message:'synthetic refusal'},answer);
       if (answer!=='noop') Object.assign(pr,{state:'closed',merged:true,merged_by:control.mergedBy??user,merge_commit_sha:MERGED});
+      if (answer!=='noop' && control.omitMergeCommitSha) delete pr.merge_commit_sha;
       if (answer==='lost') throw new Error('synthetic lost answer');
       return json({sha:MERGED,merged:answer!=='noop',message:'synthetic'});
     }

@@ -65,6 +65,19 @@ test('a lost PUT answer is outcome-unknown; verify and a retry settle it without
   const verified=await s.verify(operationId);assert.equal(verified.ok,true,JSON.stringify(verified));assert.equal(verified.mergeSha,undefined);
   assert.equal((await s.merge(operationId)).ok,true);assert.equal(s.puts().length,1);
 });
+test('a merged pull without merge_commit_sha verifies and keeps the PUT answer as mergeSha',async t=>{
+  const s=setup(t);s.api.control.omitMergeCommitSha=true;
+  const result=await s.merge();
+  assert.equal('merge_commit_sha' in s.api.pulls.get(80),false);
+  assert.equal(result.ok,true,JSON.stringify(result));assert.equal(result.status,'verified');
+  assert.equal(result.mergeSha,MERGED);assert.equal(result.attribution,'bot-actor');assert.equal(s.puts().length,1);
+});
+test('a lost PUT answer without merge_commit_sha is settled by verify without a second PUT',async t=>{
+  const s=setup(t), operationId=randomUUID();Object.assign(s.api.control,{mergeAnswer:'lost',omitMergeCommitSha:true});
+  assert.equal((await s.merge(operationId)).error,'outcome-unknown');
+  const verified=await s.verify(operationId);assert.equal(verified.ok,true,JSON.stringify(verified));assert.equal(verified.status,'verified');
+  assert.equal(s.puts().length,1);
+});
 test('readback refuses a merge by another actor or a pull that stayed unmerged',async t=>{
   const other=setup(t);other.api.control.mergedBy={id:999,login:'someone',type:'User'};
   assert.equal((await other.merge()).error,'verification-failed');
@@ -103,4 +116,10 @@ test('pr.merge readback refuses an incomplete receipt and a pull without a head'
   for (const receipt of [{prNumber:80, targetId:8000}, {targetId:8000, sha:HEAD}, {prNumber:80, sha:HEAD}]) await assert.rejects(()=>mergeHandler.readback(ctx({}), receipt as any), {message:'outcome-unknown'});
   const merged = {number:80, id:8000, merged:true, merged_by:bot, merge_commit_sha:'b'.repeat(40), base:{ref:'main', repo:{full_name:repository}}};
   await assert.rejects(()=>mergeHandler.readback(ctx(merged), {prNumber:80, targetId:8000, sha:HEAD} as any), {message:'verification-failed'});
+});
+test('pr.merge readback checks merge_commit_sha only when GitHub returns it',async()=>{
+  const receipt = {prNumber:80, targetId:8000, sha:HEAD} as any;
+  const merged = {number:80, id:8000, merged:true, merged_by:bot, base:{ref:'main', repo:{full_name:repository}}, head:{ref:'feat/m', sha:HEAD, repo:{full_name:repository}}};
+  for (const commit of [{}, {merge_commit_sha:null}, {merge_commit_sha:'b'.repeat(40)}]) await mergeHandler.readback(ctx({...merged, ...commit}), receipt);
+  for (const bad of ['not-a-sha', 'b'.repeat(39), 'B'.repeat(40), 42]) await assert.rejects(()=>mergeHandler.readback(ctx({...merged, merge_commit_sha:bad}), receipt), {message:'verification-failed'}, String(bad));
 });

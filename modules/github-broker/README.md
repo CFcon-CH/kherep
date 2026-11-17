@@ -200,8 +200,10 @@ no checks, reviews or rulesets itself: GitHub's branch rules enforce them when i
 answers `PUT /repos/{owner}/{repo}/pulls/{n}/merge` with `{sha, merge_method}`.
 The receipt is known before that PUT, so a lost answer is settled by `verify` or
 a retry with the same operationId, never by a second PUT. Readback requires
-`merged` true, `merged_by` this runtime's bot, the head still at the receipt
-SHA and a `merge_commit_sha`; the result names `mergeSha` when the PUT answered.
+`merged` true, `merged_by` this runtime's bot and the head still at the receipt
+SHA; it checks `merge_commit_sha` only when GitHub returns it, because the pull
+answer under a `contents: write` installation token can omit it. The result
+names `mergeSha` when the PUT answered.
 A PUT that GitHub refuses (405, 409, 422) ends as `outcome-unknown`, and `verify`
 or a retry then reports `verification-failed`; the receipt stays bound to that
 attempt, so a new merge attempt needs a new operationId.

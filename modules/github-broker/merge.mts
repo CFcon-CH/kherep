@@ -28,8 +28,11 @@ export const mergeHandler: Handler = {
   async readback(c, receipt) {
     if (!receipt.prNumber || !receipt.targetId || !receipt.sha) fail('outcome-unknown');
     const item = await pull(c.http, c.token, c.repo.slug, receipt.prNumber, 'verification-failed');
+    // GitHub omitted merge_commit_sha from the pull answer under a contents-only
+    // installation token (observed on PR #959), so it is checked only when present.
+    const commit = item.merge_commit_sha;
     if (item.id !== receipt.targetId || item.merged !== true || !isBotActor(c.identity, item.merged_by) || side(item.head).sha !== receipt.sha
-      || typeof item.merge_commit_sha !== 'string' || !SHA.test(item.merge_commit_sha)) fail('verification-failed');
+      || (commit != null && (typeof commit !== 'string' || !SHA.test(commit)))) fail('verification-failed');
   },
   ids:receipt => pickIds(receipt, ['prNumber', 'targetId', 'mergeSha']),
   attribution:() => 'bot-actor',
