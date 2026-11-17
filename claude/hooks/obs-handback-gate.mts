@@ -24,8 +24,8 @@
  *     is created exclusively: created, deny; it exists already, allow (the
  *     once-only rule, one refusal per id for both checks together); it cannot
  *     be created, allow, because a refusal the gate cannot remember may repeat
- *     on every attempt. A delivered malformed report
- *     is then judged by the PostToolUse recorder obs-handback-record.mts.
+ *     on every attempt. A delivered report is then judged by the PostToolUse
+ *     recorder obs-handback-record.mts.
  *   - any error: the canonical event-shape warning, exit 0. The gate never
  *     denies on its own error; a missing shape library fails to load (deny).
  *

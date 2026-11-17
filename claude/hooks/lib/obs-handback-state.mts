@@ -13,8 +13,8 @@
 // created once, exclusively, by the PreToolUse gate obs-handback-gate.mts when
 // it refuses that id's first malformed handback, or (issue #950) its first
 // `wrote` handback whose page lines a measured brief cannot read: one refusal
-// per id in total. It is retained: prune skips
-// it, and no hook removes it, because no event marks an agent id as never to
+// per id in total. It is retained: prune skips it, and no hook removes it,
+// because no event marks an agent id as never to
 // be resumed again. Deleting it is an operator action and re-arms the gate.
 //
 // The home is the parent of the invoked hooks directory, the rule of
@@ -232,8 +232,7 @@ export function hasMeasuredBrief(home: string, sessionId: unknown): boolean {
 // status line has no page line the join can read. Never throws: every step
 // reads best effort or parses a string.
 export function pageLinesUnreadable(home: string, sessionId: unknown, message: string): boolean {
-  const brief = measuredBrief(home, sessionId);
-  return brief !== null && joinPromotion(brief, claudeIds(message), claudePages(message)).unreadable.length > 0;
+  return joinPromotion(measuredBrief(home, sessionId), claudeIds(message), claudePages(message)).unreadable.length > 0;
 }
 
 // The ids of one pending file; none for a file that is unreadable or not one id line.
