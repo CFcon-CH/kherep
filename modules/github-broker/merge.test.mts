@@ -5,6 +5,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { MERGED, brokerRoot, fakeGithub, stubWindowsAcl } from './flow.fixture.mts';
 import { permissionsFor } from './operations.mts';
+import { mergeHandler } from './merge.mts';
 import { ReceiptStore } from './receipt.mts';
 import { run as claude } from './github-claude.mts';
 import { run as codex } from './github-codex.mts';
@@ -84,4 +85,22 @@ test('pr.merge refuses unknown fields and malformed targets before any network c
     assert.equal((await s.send({operationId:randomUUID(),operation:'pr.merge',...request})).error,'invalid-request',JSON.stringify(request));
   }
   assert.equal(s.api.calls.length,0);
+});
+// Direct handler calls cover the defensive branches the CLI path cannot reach.
+const bot = {id:7, login:'example[bot]', type:'Bot'};
+function ctx(answer:Record<string,unknown>, merge?:{method:string}) {
+  const http = async () => answer;
+  return {http, token:'t', target:{default_branch:'main'}, request:{operationId:randomUUID(), repository, operation:'pr.merge', prNumber:80, sha:HEAD},
+    identity:{botId:bot.id, botLogin:bot.login, repositories:[{slug:repository, id:55, ...(merge ? {merge} : {})}]}, repo:{slug:repository, id:55}} as any;
+}
+test('pr.merge handler refuses a merge entry that vanished and records no mergeSha for a malformed answer',async()=>{
+  await assert.rejects(()=>mergeHandler.mutate(ctx({sha:HEAD}), {} as any, ()=>{}), {message:'policy-invalid'});
+  const gone = ctx({sha:HEAD}); gone.identity.repositories = [];
+  await assert.rejects(()=>mergeHandler.mutate(gone, {} as any, ()=>{}), {message:'policy-invalid'});
+  assert.deepEqual(await mergeHandler.mutate(ctx({sha:'not-a-sha'},{method:'rebase'}), {} as any, ()=>{}), {});
+});
+test('pr.merge readback refuses an incomplete receipt and a pull without a head',async()=>{
+  for (const receipt of [{prNumber:80, targetId:8000}, {targetId:8000, sha:HEAD}, {prNumber:80, sha:HEAD}]) await assert.rejects(()=>mergeHandler.readback(ctx({}), receipt as any), {message:'outcome-unknown'});
+  const merged = {number:80, id:8000, merged:true, merged_by:bot, merge_commit_sha:'b'.repeat(40), base:{ref:'main', repo:{full_name:repository}}};
+  await assert.rejects(()=>mergeHandler.readback(ctx(merged), {prNumber:80, targetId:8000, sha:HEAD} as any), {message:'verification-failed'});
 });
