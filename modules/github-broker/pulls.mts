@@ -6,8 +6,8 @@ import type { Receipt } from './receipt.mts';
 import type { Context, Handler } from './operations.mts';
 const PR_FIELDS = ['title','body','state','base','head','draft','labels'] as const;
 type Code = 'target-refused'|'verification-failed';
-const owner = (value:unknown) => (value as {repo?:{full_name?:unknown}}|null)?.repo?.full_name;
-async function pull(http:Http, token:string, repo:string, prNumber:number, code:Code):Promise<Record<string,unknown>> {
+export const owner = (value:unknown) => (value as {repo?:{full_name?:unknown}}|null)?.repo?.full_name;
+export async function pull(http:Http, token:string, repo:string, prNumber:number, code:Code):Promise<Record<string,unknown>> {
   const item=await http('GET',`/repos/${repo}/pulls/${prNumber}`,token);
   if (item.number!==prNumber || !positive(item.id) || owner(item.base)!==repo) fail(code);
   return item;

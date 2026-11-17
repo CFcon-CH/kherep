@@ -224,7 +224,7 @@ export function fixedPairs(home: string, workspace: string): ManagedPair[] {
       live: joinPathLike(workspace, "tools/confluence-revision-staleness-git.mts"),
       source: "modules/atl-jira-brokers/confluence-revision-staleness-git.mts",
     },
-    ...["attribution.mts", "auth.mts", "broker.mts", "cli.mts", "commit-range.mts", "config.mts", "contract.mts", "credential.mts", "git-push.mts", "issues.mts", "key-access.mts", "operations.mts",
+    ...["attribution.mts", "auth.mts", "broker.mts", "cli.mts", "commit-range.mts", "config.mts", "contract.mts", "credential.mts", "git-push.mts", "issues.mts", "key-access.mts", "merge.mts", "operations.mts",
       "pulls.mts", "receipt.mts", "runs.mts", "transport.mts", "windows-access.mts", "github-claude.mts", "github-codex.mts", "github-claude-credential.mts", "github-codex-credential.mts"]
       .map((name) => ({
         live: joinPathLike(workspace, `tools/github-broker/${name}`), source: `modules/github-broker/${name}`,

@@ -11,6 +11,20 @@ increments the minor version; every other release increments the patch version.
 
 ### Added
 
+- The GitHub App broker operation `pr.merge` (#956). A request names
+  `prNumber` and the head `sha`; the token carries exactly `contents: write`.
+  Merging is off by default: only a repository whose version 2 policy entry
+  carries `merge: {method: rebase|squash|merge}` admits it, otherwise the
+  broker returns `policy-invalid` before any key read. Preflight reads the
+  pull request once and refuses with `target-refused` unless it is open,
+  unmerged, not a draft, based on the default branch, from the same
+  repository, at the request SHA and `mergeable`. The broker evaluates no
+  checks, reviews or rulesets; GitHub's branch rules enforce them at merge
+  time. The receipt is known before the one PUT, so a lost answer is settled
+  by `verify` or a retry and never by a second PUT; readback requires the
+  merge by this runtime's bot at the receipt SHA. A merge GitHub refuses
+  ends as `outcome-unknown`, then `verification-failed`, and a new attempt
+  needs a new operationId. Auto-merge stays unsupported.
 - The observation promotion trigger (#731, PR-B). A finding the dispatching
   session marked `measured:` but the observation agent filed evidence-assumed,
   for example without an exact code binding, is now followed up in the same

@@ -1,7 +1,7 @@
 import { fail, object } from './contract.mts';
 /** The one answer of a GET that was asked to treat 404 as absent. Compare by identity. */
 export const ABSENT: Record<string, unknown> = Object.freeze({});
-export type Http = (method:'GET'|'POST'|'PATCH', endpoint:string, token:string, body?:Record<string, unknown>, absent?:boolean) => Promise<Record<string, unknown>>;
+export type Http = (method:'GET'|'POST'|'PATCH'|'PUT', endpoint:string, token:string, body?:Record<string, unknown>, absent?:boolean) => Promise<Record<string, unknown>>;
 // Created/accepted/no-content answers may carry no body (workflow run rerun and cancel).
 const EMPTY_OK = [201, 202, 204];
 export function transport(fetcher: typeof fetch = fetch): Http {

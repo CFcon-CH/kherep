@@ -17,7 +17,7 @@ flowchart LR
   route -->|mutation| target[Public repository and target preflight]
   route -->|verify| readback
   target --> intent[Durable write-ahead receipt]
-  intent --> write[One fixed issue, pull request or run operation]
+  intent --> write[One fixed issue, pull request, merge or run operation]
   intent -->|branch.push| push[Fixed git push from a clean repository under the broker root, constructed environment, nonce in the git child only]
   push --> helper[Runtime credential helper: pending locked receipt under 120 s, one grant redeemed by the nonce]
   helper --> ctoken[Contents-write token to git's pipe only]
@@ -30,7 +30,13 @@ flowchart LR
 `broker.mts` runs one flow for every operation: policy, admission, key,
 authentication with the exact permission set from `operations.mts`, then the
 operation's handler for preflight, mutation, known IDs, readback and public IDs.
-`issues.mts`, `pulls.mts`, `runs.mts` and `git-push.mts` are those handlers.
+`issues.mts`, `pulls.mts`, `merge.mts`, `runs.mts` and `git-push.mts` are those handlers.
+`merge.mts` checks the pull request once (open, unmerged, not a draft, default-branch
+base, same-repository head at the request SHA, `mergeable` true), marks the
+receipt known before its one `PUT .../pulls/{n}/merge`, so a lost answer is
+settled by readback and never by a second PUT, and reads back `merged` by the
+bot at the receipt SHA. It evaluates no checks, reviews or rulesets: GitHub's
+branch rules enforce them at merge time.
 `git-push.mts` also owns the local preflight (local commit, fast-forward, default
 and `v*` branches, bot authorship of every new commit, no `.github/workflows`
 path) and the fixed push command, run by system Git from a fixed path with a fixed
@@ -55,7 +61,7 @@ child's environment alone) with the nonce it finds there, and writes the `conten
 token; the helper never sees the broker's.
 `contract.mts` owns strict input and fixed errors; `config.mts` selects canonical
 policy (schema 1 for issue operations, schema 2 for every operation and the
-allowed author bots) and validates runtime/repository scope, including a repository's optional `moduleLabels`, which `broker.mts` enforces on `issue.create` before reading a key. `key-access.mts` composes the metadata-only `windows-access.mts` gate and refuses unsafe
+allowed author bots) and validates runtime/repository scope, including a repository's optional `merge` method, without which `pr.merge` is `policy-invalid`, and its optional `moduleLabels`, which `broker.mts` enforces on `issue.create` before reading a key. `key-access.mts` composes the metadata-only `windows-access.mts` gate and refuses unsafe
 selected files. The Windows gate's per-level decision is one PowerShell function inside the constant script, so tests can evaluate real descriptors. `auth.mts` signs, constrains installation authentication and validates the public bot numeric ID before mutation. Canonical policy is fixed under the OS-account home, independently of runtime homes and environment selectors.
 `transport.mts` alone constructs fixed GitHub requests. `issues.mts` projects
 payloads and checks targets, fields and bot authors. `receipt.mts` owns atomic

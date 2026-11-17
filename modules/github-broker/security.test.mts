@@ -93,3 +93,11 @@ test('protected snapshot refuses a path replacement during the descriptor read',
   t.mock.method(fs,'readSync',(...args:unknown[])=>{const result=Reflect.apply(original,fs,args);if(!replaced){replaced=true;fs.renameSync(replacement,target);}return result;});
   await assert.rejects(readProtected(root,'snapshot.json',4096),{message:'key-access-denied'});assert.equal(replaced,true);
 });
+test('a repository merge entry is a version 2 field with exactly one known method',()=>{
+  const merge={...request,operation:'pr.merge' as const,prNumber:1,sha:'a'.repeat(40)};
+  const policy=(version:number,entry:unknown)=>({version,enabled:true,runtimes:{claude:{...identity,operations:version===2?['pr.merge']:['issue.create'],repositories:[{slug:'example/project',id:55,merge:entry}]}}});
+  assert.equal(validatePolicy(policy(2,{method:'squash'}),'claude',merge).repositories[0].merge?.method,'squash');
+  assert.throws(()=>validatePolicy(policy(1,{method:'squash'}),'claude',request),{message:'policy-invalid'});
+  for (const bad of [{method:'fast-forward'},{},'rebase',{method:'rebase',extra:1}]) assert.throws(()=>validatePolicy(policy(2,bad),'claude',merge),{message:'policy-invalid'},JSON.stringify(bad));
+  assert.throws(()=>validatePolicy(policy(2,undefined),'claude',merge),{message:'policy-invalid'});
+});

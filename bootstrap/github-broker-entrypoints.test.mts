@@ -14,7 +14,7 @@ const targets = [
 ];
 const closure = [
   'attribution.mts', 'auth.mts', 'broker.mts', 'cli.mts', 'commit-range.mts', 'config.mts', 'contract.mts', 'credential.mts', 'git-push.mts', 'issues.mts',
-  'key-access.mts', 'operations.mts', 'pulls.mts', 'receipt.mts', 'runs.mts', 'transport.mts', 'windows-access.mts',
+  'key-access.mts', 'merge.mts', 'operations.mts', 'pulls.mts', 'receipt.mts', 'runs.mts', 'transport.mts', 'windows-access.mts',
   'github-claude-credential.mts', 'github-claude.mts', 'github-codex-credential.mts', 'github-codex.mts',
 ];
 
