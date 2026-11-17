@@ -9,8 +9,8 @@ import path from "node:path";
 import test from "node:test";
 
 import {
-  clearDelivered, homeOf, markRefused, OBS_RESULT_FORMAT, prune, readDelivered, recordDelivered, refusedReason, stateDir,
-  validId, writeStopTrace,
+  clearDelivered, hasMeasuredBrief, homeOf, markRefused, OBS_RESULT_FORMAT, PAGE_LINE_FORMAT, pageLinesReason, pageLinesUnreadable, prune,
+  readDelivered, recordDelivered, refusedReason, stateDir, validId, writeStopTrace,
 } from "./obs-handback-state.mts";
 
 const TMP = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "obs-handback-state-test-")));
@@ -161,4 +161,42 @@ test("markRefused reports an unwritable state directory as failed", { skip: proc
 test("the gate reason carries the shared format on one line", () => {
   assert.ok(refusedReason("x").includes(OBS_RESULT_FORMAT));
   assert.doesNotMatch(refusedReason("x"), /\n/);
+});
+
+// Issue #950. The page line check of the gate: fixed texts, and a predicate
+// that reads only a measured brief of a valid session.
+const ONCE = "This refusal happens once; the next handback is delivered as sent and checked by the recorder.";
+test("the gate reasons are fixed one-line texts, and without page lines the #571 text is unchanged", () => {
+  assert.equal(refusedReason("x"), "Kherep obs-handback-gate: OBS-RESULT check (ROUTING.md, Session observations): the first non-empty line of your "
+    + "SubagentHandback message is not exactly one valid status line (x). Send the handback again with exactly one OBS-RESULT line as its first line, "
+    + "restated from what you actually did: `OBS-RESULT: wrote <n> <page ids>` with n equal to the number of numeric ids, or `OBS-RESULT: empty <reason>` "
+    + `or \`OBS-RESULT: failed <reason>\`, the reason not starting with wrote, empty or failed. Create no further pages. ${ONCE}`);
+  assert.equal(refusedReason("x", true), refusedReason("x").replace(ONCE, `A \`measured:\` brief is recorded for this session: ${PAGE_LINE_FORMAT} ${ONCE}`));
+  assert.equal(pageLinesReason(), "Kherep obs-handback-gate: page line check (claude-obs, Result): a `measured:` brief is recorded for this session and "
+    + "not every page id of your `OBS-RESULT: wrote` line has a page line in the required form. Send the handback again with the same status line and the "
+    + "same page list: after the status line one line per written page, exactly `<id> finding=<n|-> evidence=<confirmed|assumed|refuted|superseded> <title>`, "
+    + "`<n>` the 1-based position of the brief finding the page files, never above the number of findings in the brief, `-` when it files none, and the "
+    + `label the page actually carries. Create no further pages. ${ONCE}`);
+  assert.doesNotMatch(refusedReason("x", true) + pageLinesReason(), /\n/);
+});
+
+test("hasMeasuredBrief and pageLinesUnreadable read only a measured brief of a valid session", () => {
+  const h = home();
+  const sid = "950c0000-0000-4000-8000-000000000001";
+  const old = "OBS-RESULT: wrote 1 11\n11 A";
+  const both = (session: unknown, message = old) => [hasMeasuredBrief(h, session), pageLinesUnreadable(h, session, message)];
+  assert.deepEqual(both(sid), [false, false], "no brief");
+  assert.equal(fs.existsSync(path.join(h, ".cache")), false, "a read creates no state");
+  fs.mkdirSync(stateDir(h), { recursive: true });
+  fs.writeFileSync(file(h, `${sid}.brief`), "measured=1 findings=1\n");
+  assert.deepEqual(both(sid), [true, true]);
+  assert.deepEqual(both(sid, "OBS-RESULT: wrote 1 11\n11 finding=1 evidence=assumed A"), [true, false], "readable");
+  assert.deepEqual(both(sid, "OBS-RESULT: wrote 1 11\n11 finding=2 evidence=assumed A"), [true, true], "above the finding count");
+  assert.deepEqual(both(sid, "OBS-RESULT: empty nothing new"), [true, false], "no page id");
+  for (const bad of [sid.toUpperCase(), undefined, 42, "../x"]) assert.deepEqual(both(bad), [false, false], String(bad));
+  fs.writeFileSync(file(h, `${sid}.brief`), "measured=- findings=1\n");
+  assert.deepEqual(both(sid), [false, false], "nothing measured");
+  fs.rmSync(file(h, `${sid}.brief`));
+  fs.mkdirSync(file(h, `${sid}.brief`));
+  assert.deepEqual(both(sid), [false, false], "an unreadable brief");
 });

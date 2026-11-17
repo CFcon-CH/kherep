@@ -12,8 +12,9 @@
 //
 // The parent Stop hook delivers the hits once with PROMOTION_REASON. A result
 // whose labels cannot be read against a measured brief gets a warning naming
-// the page ids, never a block. Pure: no I/O, and no text names anything but
-// numeric page ids.
+// the page ids, never a block; on Claude the PreToolUse gate
+// obs-handback-gate.mts first refuses such a handback once per agent id
+// (issue #950). Pure: no I/O, and no text names anything but numeric page ids.
 import { findings } from "./obs-brief-policy.mts";
 
 export interface BriefRecord { measured: number[]; findings: number }

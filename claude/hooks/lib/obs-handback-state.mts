@@ -11,7 +11,9 @@
 //
 // Issue #571. <agent_id>.refused: one line `refused\t<tool_use_id or ->`,
 // created once, exclusively, by the PreToolUse gate obs-handback-gate.mts when
-// it refuses that id's first malformed handback. It is retained: prune skips
+// it refuses that id's first malformed handback, or (issue #950) its first
+// `wrote` handback whose page lines a measured brief cannot read: one refusal
+// per id in total. It is retained: prune skips
 // it, and no hook removes it, because no event marks an agent id as never to
 // be resumed again. Deleting it is an operator action and re-arms the gate.
 //
@@ -24,8 +26,8 @@ import fs from "node:fs";
 import path from "node:path";
 
 import {
-  briefRecord, type BriefRecord, formatBrief, joinPromotion, NO_BRIEF, NO_SESSION, type PageEvidence, parseBrief, promotionReason, unjoinable,
-  unjoinedWarning, unreadableWarning,
+  briefRecord, type BriefRecord, claudeIds, claudePages, formatBrief, joinPromotion, NO_BRIEF, NO_SESSION, type PageEvidence, parseBrief,
+  promotionReason, unjoinable, unjoinedWarning, unreadableWarning,
 } from "./obs-promotion-policy.mts";
 
 export interface Delivered { verdict: string; toolUseId: string }
@@ -59,11 +61,30 @@ export const OBS_RESULT_FORMAT = [
 ].join(" ");
 
 export const GATE_PREFIX = "Kherep obs-handback-gate:";
-export const refusedReason = (problem: string): string => [
+const REFUSED_ONCE = "This refusal happens once; the next handback is delivered as sent and checked by the recorder.";
+
+// Issue #950. The page line format of claude-obs.md (Result), for a session with a `measured:` brief.
+export const PAGE_LINE_FORMAT = [
+  "after the status line one line per written page, exactly `<id> finding=<n|-> evidence=<confirmed|assumed|refuted|superseded> <title>`,",
+  "`<n>` the 1-based position of the brief finding the page files, never above the number of findings in the brief,",
+  "`-` when it files none, and the label the page actually carries.",
+].join(" ");
+
+// withPages: a `measured:` brief is recorded for the session, so the one refusal also states the page line format.
+export const refusedReason = (problem: string, withPages = false): string => [
   `${GATE_PREFIX} OBS-RESULT check (ROUTING.md, Session observations): the first non-empty line of your SubagentHandback message is not exactly one valid status line (${problem}).`,
   "Send the handback again with exactly one OBS-RESULT line as its first line, restated from what you actually did:",
   OBS_RESULT_FORMAT,
-  "This refusal happens once; the next handback is delivered as sent and checked by the recorder.",
+  ...(withPages ? [`A \`measured:\` brief is recorded for this session: ${PAGE_LINE_FORMAT}`] : []),
+  REFUSED_ONCE,
+].join(" ");
+
+// Issue #950. A valid `wrote` status line whose page lines the promotion join cannot read.
+export const pageLinesReason = (): string => [
+  `${GATE_PREFIX} page line check (claude-obs, Result): a \`measured:\` brief is recorded for this session and not every page id of your \`OBS-RESULT: wrote\` line has a page line in the required form.`,
+  `Send the handback again with the same status line and the same page list: ${PAGE_LINE_FORMAT}`,
+  "Create no further pages.",
+  REFUSED_ONCE,
 ].join(" ");
 
 export function homeOf(invoked: string): string {
@@ -194,6 +215,25 @@ export function readBrief(home: string, id: string): BriefRecord | null {
   } catch {
     return null;
   }
+}
+
+// Issue #950. The session's brief when it marks a finding measured, else null.
+function measuredBrief(home: string, sessionId: unknown): BriefRecord | null {
+  const id = validSession(sessionId);
+  const brief = id ? readBrief(home, id) : null;
+  return brief?.measured.length ? brief : null;
+}
+
+export function hasMeasuredBrief(home: string, sessionId: unknown): boolean {
+  return measuredBrief(home, sessionId) !== null;
+}
+
+// True when the session has a measured brief and a page id of the message's
+// status line has no page line the join can read. Never throws: every step
+// reads best effort or parses a string.
+export function pageLinesUnreadable(home: string, sessionId: unknown, message: string): boolean {
+  const brief = measuredBrief(home, sessionId);
+  return brief !== null && joinPromotion(brief, claudeIds(message), claudePages(message)).unreadable.length > 0;
 }
 
 // The ids of one pending file; none for a file that is unreadable or not one id line.
