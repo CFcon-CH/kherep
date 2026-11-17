@@ -23,7 +23,8 @@ export interface JoinResult { hits: string[]; unreadable: string[] }
 const POSITION = "[1-9]\\d{0,3}";
 const BRIEF_LINE = new RegExp(`^measured=(-|${POSITION}(?:,${POSITION})*) findings=(0|${POSITION})\\n?$`);
 const PAGE_LINE = new RegExp(`^(?:[-*][ \\t]+)?(\\d{1,30}) finding=(${POSITION}|-) evidence=(confirmed|assumed|refuted|superseded)[ \\t]+\\S`);
-const WROTE_LINE = /^OBS-RESULT:[ \t]+wrote[ \t]+(.*)$/;
+// One separator after "wrote", then the rest: no two adjacent quantifiers can match the same blank (S8786).
+const WROTE_LINE = /^OBS-RESULT:[ \t]+wrote[ \t](.*)$/;
 const PAGE_ID = /^\d{1,30}$/;
 
 export const PROMOTION_PREFIX = "Kherep obs-promotion:";
