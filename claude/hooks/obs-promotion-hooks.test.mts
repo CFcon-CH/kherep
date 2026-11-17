@@ -14,10 +14,11 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
+import { decide as gate } from "./obs-handback-gate.mts";
 import { decide as record } from "./obs-handback-record.mts";
 import { decide as stop } from "./obs-result-check.mts";
 import { promotion, withPromotion } from "./observation-stop.mts";
-import { FAILED_MESSAGE, stateDir } from "./lib/obs-handback-state.mts";
+import { FAILED_MESSAGE, pageLinesReason, stateDir } from "./lib/obs-handback-state.mts";
 import { promotionReason } from "./lib/obs-promotion-policy.mts";
 
 const TMP = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "obs-promotion-hooks-test-")));
@@ -107,6 +108,33 @@ function handbackTranscript(message: string, ok?: boolean, id = "toolu_h"): stri
   fs.writeFileSync(file, `${entries.map((entry) => JSON.stringify(entry)).join("\n")}\n`);
   return file;
 }
+
+// Issue #950: the gate refuses the old page form once; only a delivered handback reaches the recorder.
+const OLD_FORM = "OBS-RESULT: wrote 2 11,12\n11 Build passes\n12 Endpoint answers";
+const reasonOf = (output: ReturnType<typeof gate>) => output?.hookSpecificOutput.permissionDecisionReason;
+
+test("a wrote handback in the old page form is refused once, and the corrected one is promoted once", () => {
+  const h = home();
+  brief(h, "measured=1,2 findings=2\n");
+  const sent = (message: string, id: string) => handback(message, { agent_id: "gate-1", tool_use_id: id });
+  assert.equal(reasonOf(gate(sent(OLD_FORM, "toolu_g1"), h)), pageLinesReason());
+  assert.equal(pending(h), null, "a refused handback is never recorded");
+  assert.equal(gate(sent(HIT, "toolu_g2"), h), null);
+  assert.equal(record(sent(HIT, "toolu_g2"), h), null);
+  assert.equal(pending(h), "11\n");
+  assert.equal(promotion({ session_id: SID }, h), promotionReason(["11"]));
+  assert.equal(promotion({ session_id: SID }, h), null);
+});
+
+test("a resend still in the old page form is delivered, and the recorder warns as before", () => {
+  const h = home();
+  brief(h, "measured=1 findings=1\n");
+  const sent = (id: string) => handback(UNLABELLED, { agent_id: "gate-2", tool_use_id: id });
+  assert.equal(reasonOf(gate(sent("toolu_g3"), h)), pageLinesReason());
+  assert.equal(gate(sent("toolu_g4"), h), null);
+  assert.match(String(record(sent("toolu_g4"), h)?.systemMessage), /^Kherep obs-promotion: the evidence labels of page\(s\) 13 could not be read/);
+  assert.equal(pending(h), null);
+});
 
 test("the stop hook joins a wrote final message itself", async () => {
   const h = home();

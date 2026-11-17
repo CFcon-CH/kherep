@@ -116,6 +116,20 @@ increments the minor version; every other release increments the patch version.
 
 ### Changed
 
+- The Claude `obs-handback-gate` now also refuses, once, a valid
+  `OBS-RESULT: wrote` handback whose page lines the promotion join cannot read
+  (#950). When the session recorded a brief with a `measured:` finding and a
+  page id of the status line has no `<id> finding=<n|-> evidence=<label>
+  <title>` line, or names a finding above the brief's count, the gate denies
+  the handback with a fixed reason that names no page id, title or session, so
+  `claude-obs` resends the same status line and page list with the page lines.
+  It shares the `<agent_id>.refused` marker of #571: one refusal per agent id
+  in total, and the next handback is delivered and warned about by the
+  recorder as before. A malformed status line in such a session is refused
+  with the page line format added to the #571 reason. Without a measured
+  brief, for `empty` and `failed`, on the final message path and in the hook
+  wiring nothing changes. Known limit: Codex has no gate on the handback, so
+  there an unreadable page label still only warns.
 - Codex model and effort selection is user-owned and anchored (#737). The
   installer reads `<CODEX_HOME>/kherep/model-policy.user.json` (never writes
   it), where the operator may choose any visible model or effort per role or

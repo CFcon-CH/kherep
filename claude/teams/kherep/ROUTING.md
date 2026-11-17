@@ -144,7 +144,8 @@ and a result without that line, as a failure it reports to the user in the same 
 read as a valid empty result. On Claude the check point is the SubagentStop hook
 `obs-result-check` together with the PostToolUse hook `obs-handback-record` and the PreToolUse gate
 `obs-handback-gate`: the gate refuses the first malformed handback of an agent id once, so
-`claude-obs` sends a corrected one; a report handed back through SubagentHandback is checked by the
+`claude-obs` sends a corrected one, and within that one refusal, when the session's brief has a
+`measured:` finding, also a `wrote` handback whose page lines the promotion join cannot read; a report handed back through SubagentHandback is checked by the
 recorder and a malformed line is reported to the operator; a final
 message without a handback is sent back to `claude-obs` once with a fixed instruction; both warn the
 operator when the line is still malformed or reads `failed`, and quote nothing.

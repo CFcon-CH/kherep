@@ -12,12 +12,19 @@
  *
  *   - tool_name is not SubagentHandback, or agent_type is not claude-obs: allow.
  *   - no visible message: allow; the recorder reports it.
- *   - a valid status line (wrote, empty or failed): allow.
+ *   - a valid empty or failed status line: allow.
+ *   - a valid wrote status line: allow, unless the session (a valid session_id)
+ *     has a recorded brief with a `measured:` finding and a page id of the
+ *     line has no page line the promotion join can read (issue #950); that
+ *     handback is refused with the fixed page line reason.
+ *   - a malformed status line is refused; with such a measured brief the reason
+ *     also states the page line format, since the refusal is the only one.
  *   - no valid agent_id: allow; without an id the bound cannot be kept.
- *   - otherwise the marker <home>/.cache/obs-result-check/<agent_id>.refused is
- *     created exclusively: created, deny; it exists already, allow (the
- *     once-only rule); it cannot be created, allow, because a refusal the gate
- *     cannot remember may repeat on every attempt. A delivered malformed report
+ *   - before a refusal the marker <home>/.cache/obs-result-check/<agent_id>.refused
+ *     is created exclusively: created, deny; it exists already, allow (the
+ *     once-only rule, one refusal per id for both checks together); it cannot
+ *     be created, allow, because a refusal the gate cannot remember may repeat
+ *     on every attempt. A delivered malformed report
  *     is then judged by the PostToolUse recorder obs-handback-record.mts.
  *   - any error: the canonical event-shape warning, exit 0. The gate never
  *     denies on its own error; a missing shape library fails to load (deny).
@@ -35,7 +42,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { homeOf, markRefused, refusedReason, validId } from "./lib/obs-handback-state.mts";
+import {
+  hasMeasuredBrief, homeOf, markRefused, pageLinesReason, pageLinesUnreadable, refusedReason, validId,
+} from "./lib/obs-handback-state.mts";
 import { checkObsResult } from "./lib/obs-result-policy.mts";
 import { warnUnclassifiable } from "./lib/tool-event-shape.mts";
 
@@ -53,13 +62,14 @@ export function decide(value: unknown, home: string): HookOutput | null {
   const message = input && typeof input === "object" ? input.message : undefined;
   if (typeof message !== "string" || !message.trim()) return null;
   const check = checkObsResult(message);
-  if ("status" in check) return null;
+  let reason: string;
+  if (!("status" in check)) reason = refusedReason(check.problem, hasMeasuredBrief(home, payload.session_id));
+  else if (check.status === "wrote" && pageLinesUnreadable(home, payload.session_id, message)) reason = pageLinesReason();
+  else return null;
   const id = validId(payload.agent_id);
   if (!id) return null;
   if (markRefused(home, id, payload.tool_use_id) !== "created") return null;
-  return {
-    hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: refusedReason(check.problem) },
-  };
+  return { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: reason } };
 }
 
 async function main(): Promise<void> {

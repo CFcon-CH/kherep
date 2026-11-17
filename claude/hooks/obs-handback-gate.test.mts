@@ -12,7 +12,7 @@ import path from "node:path";
 import test from "node:test";
 
 import { decide } from "./obs-handback-gate.mts";
-import { refusedReason } from "./lib/obs-handback-state.mts";
+import { pageLinesReason, refusedReason } from "./lib/obs-handback-state.mts";
 import { warningDocument, type ShapeReason } from "./lib/tool-event-shape.mts";
 import { declareCopy } from "../../bootstrap/coverage-copy-fixture.mts";
 
@@ -43,7 +43,7 @@ const MAIN = fixture("home");
 interface Run { stdout: string; status: number | null; output: Record<string, unknown> | null }
 
 function runRaw(stdin: string, hook = MAIN.hook()): Run {
-  const result = spawnSync(process.execPath, [hook], { input: stdin, encoding: "utf8", env: {
+  const result = spawnSync(process.execPath, ["--disable-warning=ExperimentalWarning", hook], { input: stdin, encoding: "utf8", env: {
     PATH: process.env.PATH, SYSTEMROOT: process.env.SYSTEMROOT,
     ...(process.env.NODE_V8_COVERAGE === undefined ? {} : { NODE_V8_COVERAGE: process.env.NODE_V8_COVERAGE }),
   } });
@@ -68,9 +68,8 @@ let seq = 0;
 const nextId = () => `rec-${++seq}`;
 const marker = (id: string, state = MAIN.state) => path.join(state, `${id}.refused`);
 const markerOf = (id: string, state = MAIN.state) => fs.existsSync(marker(id, state)) ? fs.readFileSync(marker(id, state), "utf8") : null;
-const deny = (problem: string) => ({
-  hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: refusedReason(problem) },
-});
+const denyWith = (reason: string) => ({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: reason } });
+const deny = (problem: string, withPages = false) => denyWith(refusedReason(problem, withPages));
 
 const silent = (result: Run, label = "") => assert.deepEqual([result.status, result.stdout], [0, ""], label);
 
@@ -207,4 +206,97 @@ test("T11 an aged marker survives the real stop path, and the same id is not ref
   assert.equal(fs.existsSync(file("age-0.delivered")), false, "pruned");
   assert.equal(fs.existsSync(file("age-0.stop")), false, "pruned");
   assert.equal(fs.readFileSync(file("age-0.refused"), "utf8"), "refused\ttoolu_age0\n");
+});
+
+// Issue #950. A `measured:` brief of the session makes the page lines part of
+// the one refusal. Briefs live in their own fixture under distinct session ids:
+// GOOD's page lines are not in the promotion form, so a brief beside the main
+// fixture's session would refuse it.
+const PAGES = fixture("pages");
+const MEASURED = "measured=1 findings=2\n";
+const NEW_FORM = "OBS-RESULT: wrote 2 11,22\n11 finding=1 evidence=assumed A\n22 finding=- evidence=confirmed B";
+let sids = 0;
+function sessionWith(line: string, state = PAGES.state): string {
+  const sid = `950a0000-0000-4000-8000-${String(++sids).padStart(12, "0")}`;
+  fs.mkdirSync(state, { recursive: true });
+  fs.writeFileSync(path.join(state, `${sid}.brief`), line);
+  return sid;
+}
+const inPages = (id: string, message: string, sid: unknown, extra: Record<string, unknown> = {}) =>
+  run(id, message, { session_id: sid, ...extra }, PAGES.hook());
+const pagesDeny = denyWith(pageLinesReason());
+
+test("T12 a wrote handback without page lines is refused once when the session has a measured brief", () => {
+  const sid = sessionWith(MEASURED);
+  const id = nextId();
+  const first = inPages(id, GOOD, sid, { tool_use_id: "toolu_p1" });
+  assert.equal(first.status, 0);
+  assert.deepEqual(first.output, pagesDeny);
+  assert.equal(markerOf(id, PAGES.state), "refused\ttoolu_p1\n");
+  silent(inPages(id, NEW_FORM, sid, { tool_use_id: "toolu_p2" }), "corrected");
+  silent(inPages(id, GOOD, sid, { tool_use_id: "toolu_p3" }), "still the old form: the recorder warns");
+  assert.equal(markerOf(id, PAGES.state), "refused\ttoolu_p1\n");
+});
+
+test("T13 every page id needs a page line within the brief's findings", () => {
+  const sid = sessionWith(MEASURED);
+  for (const message of ["OBS-RESULT: wrote 2 11,22\n11 finding=1 evidence=assumed A", "OBS-RESULT: wrote 1 11\n11 finding=3 evidence=assumed A",
+    "OBS-RESULT: wrote 1 11\n11 finding=1 evidence=probable A"]) {
+    assert.deepEqual(inPages(nextId(), message, sid).output, pagesDeny, message);
+  }
+  for (const message of [NEW_FORM, "OBS-RESULT: wrote 1 11\n- 11 finding=2 evidence=refuted A"]) {
+    const id = nextId();
+    silent(inPages(id, message, sid), message);
+    assert.equal(markerOf(id, PAGES.state), null);
+  }
+});
+
+test("T14 without a measured brief of a valid session the page lines are not checked", () => {
+  const bare = fixture("bare");
+  silent(run(nextId(), GOOD, { session_id: "950b0000-0000-4000-8000-000000000001" }, bare.hook()), "no brief");
+  assert.equal(fs.existsSync(path.join(bare.root, ".cache")), false, "an allow creates no state");
+  const measured = sessionWith(MEASURED);
+  const cases: [unknown, string][] = [[sessionWith("measured=- findings=2\n"), "measured=-"], [sessionWith("measured=3 findings=2\n"), "unparsable"],
+    [sessionWith("not a brief"), "no brief line"], [measured.toUpperCase(), "invalid session id"], [undefined, "no session id"]];
+  for (const [sid, label] of cases) {
+    const id = nextId();
+    silent(inPages(id, GOOD, sid), label);
+    assert.equal(markerOf(id, PAGES.state), null, label);
+  }
+});
+
+test("T15 an empty or failed status line passes whatever the brief", () => {
+  const sid = sessionWith(MEASURED);
+  for (const message of ["OBS-RESULT: empty nothing new", "OBS-RESULT: failed broker down created=11\n11 A"]) {
+    const id = nextId();
+    silent(inPages(id, message, sid), message);
+    assert.equal(markerOf(id, PAGES.state), null);
+  }
+});
+
+test("T16 one refusal per agent id across both checks; with a measured brief the status refusal states the page lines too", () => {
+  const sid = sessionWith(MEASURED);
+  const a = nextId();
+  assert.deepEqual(inPages(a, BAD, sid).output, deny(BAD_PROBLEM, true));
+  silent(inPages(a, GOOD, sid), "page lines after a status refusal");
+  const b = nextId();
+  assert.deepEqual(inPages(b, GOOD, sid).output, pagesDeny);
+  silent(inPages(b, BAD, sid), "a status line after a page line refusal");
+  // In this process, so that the gate's own lines are covered in place.
+  const home = fs.mkdtempSync(path.join(TMP, "decide-pages-"));
+  const own = sessionWith(MEASURED, path.join(home, ".cache", "obs-result-check"));
+  assert.deepEqual(decide(fields("in-2", GOOD, { session_id: own }), home), pagesDeny);
+  assert.equal(decide(fields("in-2", GOOD, { session_id: own }), home), null);
+  assert.deepEqual(decide(fields("in-3", BAD, { session_id: own }), home), deny(BAD_PROBLEM, true));
+  assert.equal(decide(fields("in-4", GOOD, { session_id: own, agent_id: 7 }), home), null, "no valid agent id");
+});
+
+test("T8 the page line refusal names no page id, title, session or payload value", () => {
+  const sid = sessionWith(MEASURED);
+  const id = nextId();
+  const result = inPages(id, `OBS-RESULT: wrote 1 987654321\n987654321 ${SECRET}`, sid);
+  assert.deepEqual(result.output, pagesDeny);
+  for (const fragment of ["Example Corp", "host.example.com", "987654321", sid, "/srv/", id, "toolu_01ABC", PAGES.root]) {
+    assert.ok(!result.stdout.includes(fragment), `${fragment} leaked: ${result.stdout}`);
+  }
 });
