@@ -1,4 +1,4 @@
-import { fail, isBotActor, pickIds, SHA } from './contract.mts';
+import { fail, isBotActor, pickIds, positive, SHA } from './contract.mts';
 import { owner, pull } from './pulls.mts';
 import type { Context, Handler } from './operations.mts';
 // pr.merge merges one open pull request at the exact head the caller names. The
@@ -24,7 +24,7 @@ export const mergeHandler: Handler = {
     const result = await c.http('PUT', `/repos/${c.repo.slug}/pulls/${c.request.prNumber}/merge`, c.token, {sha:c.request.sha, merge_method:method(c)});
     return typeof result.sha === 'string' && SHA.test(result.sha) ? {mergeSha:result.sha} : {};
   },
-  known:receipt => !!receipt.prNumber && !!receipt.targetId,
+  known:receipt => positive(receipt.prNumber) && positive(receipt.targetId),
   async readback(c, receipt) {
     if (!receipt.prNumber || !receipt.targetId || !receipt.sha) fail('outcome-unknown');
     const item = await pull(c.http, c.token, c.repo.slug, receipt.prNumber, 'verification-failed');

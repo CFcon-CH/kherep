@@ -4,7 +4,8 @@ import { exact, fail, GITHUB_OPERATIONS, ISSUE_OPERATIONS, object, positive, slu
 import type { Operation, Request, Runtime } from './contract.mts';
 import { readProtected } from './key-access.mts';
 /** A repository's opt-in to pr.merge: the one merge method the broker sends. */
-export type MergePolicy = {method:'rebase'|'squash'|'merge'};
+const MERGE_METHODS = ['rebase','squash','merge'] as const;
+export type MergePolicy = {method:typeof MERGE_METHODS[number]};
 export type Identity = { appId:number; clientId:string; botId:number; botLogin:string; installationId:number; keyRef:string; operations:Operation[]; repositories:{slug:string; id:number; moduleLabels?:string[]; merge?:MergePolicy}[];
   allowedAuthorBotIds?:number[]; authorEmails?:string[] };
 export function canonicalRoot(): string {
@@ -13,7 +14,7 @@ export function canonicalRoot(): string {
 }
 function validMerge(value: unknown): boolean {
   const m = object(value); exact(m, ['method']);
-  return ['rebase','squash','merge'].includes(String(m.method));
+  return typeof m.method === 'string' && (MERGE_METHODS as readonly string[]).includes(m.method);
 }
 function validModuleLabels(value: unknown): boolean {
   return Array.isArray(value) && value.length >= 1 && value.length <= 100 && value.every(l => typeof l === 'string' && l.length > 0);
@@ -48,9 +49,10 @@ export function validatePolicy(value: unknown, runtime: Runtime, request: Reques
       if (ids !== undefined && (!Array.isArray(ids) || !ids.length || new Set(ids).size !== ids.length || ids.some(id => !values.some(o => o.botId === id)))) fail('policy-invalid');
     }
     const selected = runtimes[runtime] as Identity | undefined;
-    if (!selected || !selected.repositories.some(r => r.slug === request.repository)) fail('policy-invalid');
+    const entry = selected?.repositories.find(r => r.slug === request.repository);
+    if (!selected || !entry) fail('policy-invalid');
     if (request.operation === 'identity' ? !v2 : request.operation !== 'verify' && !selected.operations.includes(request.operation)) fail('policy-invalid');
-    if (request.operation === 'pr.merge' && !selected.repositories.find(r => r.slug === request.repository)!.merge) fail('policy-invalid');
+    if (request.operation === 'pr.merge' && !entry.merge) fail('policy-invalid');
     const authors = (selected.allowedAuthorBotIds ?? [selected.botId]).map(id => values.find(o => o.botId === id)!);
     return {...selected, authorEmails: authors.map(o => noreply(o.botId, o.botLogin).toLowerCase())};
   } catch (e) { if (e instanceof Error && e.message === 'policy-disabled') throw e; fail('policy-invalid'); }
