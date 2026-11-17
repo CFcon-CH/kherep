@@ -46,6 +46,30 @@ If a required tool, route or host becomes unavailable, pause dependent work. Fre
 
 The shared guard checks field format only, not truth, provenance, permission or chronological compliance. Field presence is not proof of the actual lookup or its order. The two managed build roles remain positively classified by role; design, research, review and OBS retain their existing contracts. Follow-up assignments, shell-started workers and peer directives outside the matcher require builder clarification of incomplete assignments before action; this is a worker instruction, not hard native enforcement.
 
+### Planning and the advisor
+
+When an advisor model is configured (`advisorModel`, `/advisor`), planning runs in segments (issue #954). Each segment ends in an artifact in the work item or issue, so the next segment starts lean and each advisor call reads less:
+
+1. Triage: size the task as a tier.
+2. Intake: goal, done condition, scope, constraints, privacy.
+3. Grounding: Central Brain, code graph, primary documentation and live state, each carried as measured, relayed or UNKNOWN.
+4. Approach check: the Maestro consults the advisor while the context is still small.
+5. Operator decisions on the real forks the approach check left open.
+6. Design: a design agent writes the design note and the builder brief.
+7. Design acceptance: an independent review on a different model family from the designer, then the operator's approval.
+
+Build and verification follow as before. After verification, and once the result is durable, the Maestro consults the advisor again before reporting done.
+
+Tiers decide which segments run. A trivial change (one line, documentation, mechanics) skips the advisor and the design. A small fix (one or two files, clear defect) runs segments 1 to 5, and the approach check takes the place of the design agent. A feature runs every segment. Consequential work (infrastructure, release, security, migration) also runs an adversarial plan review in segment 7 and an operator gate after each segment.
+
+Subagents inherit the configured advisor and apply the same pairing check against their own model. Each advisor call reads the full transcript anew, and no setting caps or forces the calls, so instructions are the only control:
+
+- When the design agent runs on the advisor's model, the two count as one model under any one-at-a-time limit. The Maestro does not consult the advisor while that design agent runs, and the design brief says `Do not consult the advisor.`
+- Mechanical workers (observation, broker, lookup and local-inference wrappers) get the same line in their brief.
+- A long session is compacted or split at a segment boundary before the closing advisor call.
+
+These rules are instructions, not enforcement: whether a hook can observe an advisor call is UNKNOWN. Codex has no advisor; on Codex the design agent is never replaced.
+
 ## Privacy and authority
 
 Classify private inputs before selecting a tool. Credentials, customer internals, raw private sessions, private deployment inventories and explicitly marked private files stay outside cloud tools and agents. Use only a configured, explicitly authorized local processing route with a receipt that reveals no private content. If unavailable, stop the dependent operation without a cloud fallback.
