@@ -68,7 +68,9 @@ test("T1.3 one budget across three items: the third is denied, the total stays i
   const source = ["one", "two", "three"].map((name) => `tools.shell_command({command:'${name}'})`).join("; ");
   const begin = Date.now();
   const result = runAdaptedHook(guard, "pre", { tool_name: "functions.exec", tool_input: source }, 5_000, { deadline: Date.now() + 8_500 });
-  assert.ok(Date.now() - begin < 5_600, `took ${Date.now() - begin} ms`);
+  // The bound sits between the budgeted end (about 5 s) and the unbudgeted one (about 7 s).
+  // Windows CI needed up to about 1 s for the kill and teardown after the cap (#952).
+  assert.ok(Date.now() - begin < 6_500, `took ${Date.now() - begin} ms`);
   assert.match(reasonOf(result.stdout), /cannot run \((?:timed out after \d\.\d s|budget exhausted before item 3 of 3 \(\d+ ms used\))\)/);
   assert.equal(fs.readFileSync(log, "utf8"), "one\ntwo\n");
 });
