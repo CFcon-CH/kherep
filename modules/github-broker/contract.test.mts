@@ -31,3 +31,11 @@ test('labels are optional on issue.create only, bounded and unambiguous', async 
     assert.throws(() => parseRequest(JSON.stringify({ operationId: id, repository: 'example/project', ...other, labels })), /invalid-request/, other.operation);
   }
 });
+test('pr.merge takes exactly a required prNumber and a lowercase 40-hex sha', async () => {
+  const { parseRequest } = await import('./contract.mts');
+  const input = { operationId: id, repository: 'example/project', operation: 'pr.merge', prNumber: 7, sha: 'a'.repeat(40) };
+  assert.deepEqual(parseRequest(JSON.stringify(input)), input);
+  for (const bad of [{ sha: undefined }, { prNumber: undefined }, { sha: 'A'.repeat(40) }, { sha: 'a'.repeat(39) }, { method: 'squash' }, { title: 'x' }]) {
+    assert.throws(() => parseRequest(JSON.stringify({ ...input, ...bad })), /invalid-request/, JSON.stringify(bad));
+  }
+});

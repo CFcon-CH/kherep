@@ -1,6 +1,6 @@
 export type Runtime = 'claude' | 'codex';
 export const ISSUE_OPERATIONS = ['issue.create','issue.comment','issue.update'] as const;
-export const GITHUB_OPERATIONS = ['branch.push','pr.create','pr.update','pr.comment','run.rerun','run.cancel'] as const;
+export const GITHUB_OPERATIONS = ['branch.push','pr.create','pr.update','pr.comment','run.rerun','run.cancel','pr.merge'] as const;
 export type IssueOperation = typeof ISSUE_OPERATIONS[number];
 export type Operation = IssueOperation | typeof GITHUB_OPERATIONS[number];
 export type Request = { operationId: string; repository: string; operation: Operation | 'verify' | 'identity'; issueNumber?: number; title?: string; body?: string; labels?: string[]; state?: 'open' | 'closed'; stateReason?: 'completed' | 'not_planned' | 'reopened';
@@ -33,11 +33,11 @@ function validLabels(value: unknown): boolean {
 const FIELDS: Record<string, string[]> = {
   'issue.create':['title','body','labels'], 'issue.comment':['issueNumber','body'], 'issue.update':['issueNumber','title','body','state','stateReason'], verify:[], identity:[],
   'branch.push':['branch','sha'], 'pr.create':['head','base','title','body','draft','labels'], 'pr.update':['prNumber','title','body','state','base'], 'pr.comment':['prNumber','body'],
-  'run.rerun':['runId','failedOnly'], 'run.cancel':['runId'],
+  'run.rerun':['runId','failedOnly'], 'run.cancel':['runId'], 'pr.merge':['prNumber','sha'],
 };
 const REQUIRED: Record<string, string[]> = {
   'issue.create':['title'], 'issue.comment':['issueNumber','body'], 'issue.update':['issueNumber'], 'branch.push':['branch','sha'], 'pr.create':['head','base','title'],
-  'pr.update':['prNumber'], 'pr.comment':['prNumber','body'], 'run.rerun':['runId'], 'run.cancel':['runId'],
+  'pr.update':['prNumber'], 'pr.comment':['prNumber','body'], 'run.rerun':['runId'], 'run.cancel':['runId'], 'pr.merge':['prNumber','sha'],
 };
 export function parseRequest(text: string): Request {
   if (Buffer.byteLength(text) > 65536) fail('invalid-request');

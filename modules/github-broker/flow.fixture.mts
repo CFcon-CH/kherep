@@ -34,18 +34,24 @@ export function brokerRoot(t:T, selected:'claude'|'codex', edit:(policy:Record<s
   for (const dir of ['keys','receipts']) fs.mkdirSync(path.join(root,dir),{recursive:true,mode:0o700});
   for (const dir of [path.join(base,'.kherep'),root]) fs.chmodSync(dir,0o700);
   const runtimes=Object.fromEntries(['claude','codex'].map((runtime,i)=>[runtime,{appId:11+i,clientId:`Iv.synthetic${i}`,botId:BOTS[i].id,botLogin:BOTS[i].login,installationId:44+i,keyRef:`synthetic${i}.pem`,
-    operations:['issue.create','branch.push','pr.create','pr.update','pr.comment','run.rerun','run.cancel'],repositories:[{slug:'example/project',id:55}]}]));
+    operations:['issue.create','branch.push','pr.create','pr.update','pr.comment','run.rerun','run.cancel','pr.merge'],repositories:[{slug:'example/project',id:55}]}]));
   const policy={version:2,enabled:true,runtimes};edit(policy);
   fs.writeFileSync(path.join(root,'policy.json'),JSON.stringify(policy),{mode:0o600});
   fs.writeFileSync(path.join(root,'keys',runtimes[selected].keyRef),key,{mode:0o600});
   return root;
 }
 export type Call = {method:string; url:string; body:any; auth:string};
-/** A fake api.github.com: identity endpoints plus pulls, comments, runs and refs. */
+export const MERGED = 'b'.repeat(40);
+/**
+ * A fake api.github.com: identity endpoints plus pulls, comments, runs, refs and the
+ * merge PUT. `mergeAnswer` 'ok' merges and answers; 'lost' merges and then drops the
+ * answer; 'noop' answers without merging; a status refuses without merging.
+ */
 export function fakeGithub(selected:'claude'|'codex', refs:(branch:string)=>string|undefined=()=>undefined) {
   const bot=BOTS[selected==='claude'?0:1], appId=selected==='claude'?11:12, installationId=selected==='claude'?44:45;
   const calls:Call[]=[], all={actions:'write',checks:'read',contents:'write',issues:'write',metadata:'read',pull_requests:'write',workflows:'write'};
-  const control={extraScope:false,wrongAuthor:false,dropLabels:false,runStatus:'completed',attemptAfter:2,conclusion:'cancelled',actorId:bot.id};
+  const control={extraScope:false,wrongAuthor:false,dropLabels:false,runStatus:'completed',attemptAfter:2,conclusion:'cancelled',actorId:bot.id,
+    mergeAnswer:'ok' as 'ok'|'lost'|'noop'|number,mergedBy:undefined as unknown};
   const user={id:bot.id,login:bot.login,type:'Bot'};
   const pulls=new Map<number,any>(), comments=new Map<number,any>();
   const run={id:9001,run_attempt:1,status:'completed',conclusion:'failure',repository:{id:55,full_name:'example/project'},triggering_actor:{id:1,login:'someone',type:'User'}};
@@ -69,6 +75,15 @@ export function fakeGithub(selected:'claude'|'codex', refs:(branch:string)=>stri
     if (endpoint===`${repo}/pulls` && method==='POST') {
       const pr={id:7100+pulls.size,number:70+pulls.size,title:body.title,body:body.body??null,state:'open',draft:body.draft??false,labels:[],base:{ref:body.base,repo:{full_name:'example/project'}},head:{ref:body.head,repo:{full_name:'example/project'}},user:control.wrongAuthor?{id:999,login:'someone',type:'User'}:user};
       pulls.set(pr.number,pr);return json(pr,201);
+    }
+    const merge=/^\/repos\/example\/project\/pulls\/(\d+)\/merge$/.exec(endpoint);
+    if (merge && method==='PUT') {
+      const pr=pulls.get(Number(merge[1])),answer=control.mergeAnswer;
+      if (!pr) return json({message:'Not Found'},404);
+      if (typeof answer==='number') return json({message:'synthetic refusal'},answer);
+      if (answer!=='noop') Object.assign(pr,{state:'closed',merged:true,merged_by:control.mergedBy??user,merge_commit_sha:MERGED});
+      if (answer==='lost') throw new Error('synthetic lost answer');
+      return json({sha:MERGED,merged:answer!=='noop',message:'synthetic'});
     }
     const pull=/^\/repos\/example\/project\/(?:pulls|issues)\/(\d+)$/.exec(endpoint);
     if (pull) {

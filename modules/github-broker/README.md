@@ -34,6 +34,7 @@ The binding does not authenticate arbitrary callers sharing the same OS account.
 | `pr.comment` | required prNumber and body |
 | `run.rerun` | required runId, optional failedOnly |
 | `run.cancel` | required runId |
+| `pr.merge` | required prNumber and sha (the PR head, 40 lowercase hex) |
 
 Each operation authenticates with exactly one installation-token permission set,
 and a token that carries anything else besides `metadata: read` is refused:
@@ -41,13 +42,13 @@ and a token that carries anything else besides `metadata: read` is refused:
 | Operation | Token permissions |
 | --- | --- |
 | `issue.*` | `issues: write` |
-| `branch.push` | `contents: write` |
+| `branch.push`, `pr.merge` | `contents: write` |
 | `pr.create` | `pull_requests: write`, plus `issues: write` when labels are given |
 | `pr.update`, `pr.comment` | `pull_requests: write` |
 | `run.rerun`, `run.cancel` | `actions: write` |
 
-There is no merge, force-push, branch deletion, tag push, auto-merge or
-`workflows` permission.
+There is no auto-merge, force-push, branch deletion, tag push or `workflows`
+permission. `pr.merge` is off by default per repository (see the policy below).
 
 State is `open` or `closed`; stateReason is `completed`, `not_planned`, or
 `reopened`. Requests are at most 64 KiB, titles 256 codepoints, and bodies 32 KiB.
@@ -186,6 +187,22 @@ conclusion, which GitHub sets asynchronously, so an early readback fails with
 `verification-failed` and a later `verify` settles it. Successful results of
 these operations name their `operation`.
 
+`pr.merge` merges one pull request once, at the exact head the caller names, with
+the merge method of the repository's policy entry. Preflight reads the PR once and
+refuses with `target-refused`, before any receipt, unless it is open, unmerged and
+not a draft, its base is the repository default branch, its head is in the same
+repository (no fork), its head SHA equals the request `sha`, and `mergeable` is
+`true` (`null`, not yet computed, also refuses; retry later). The broker evaluates
+no checks, reviews or rulesets itself: GitHub's branch rules enforce them when it
+answers `PUT /repos/{owner}/{repo}/pulls/{n}/merge` with `{sha, merge_method}`.
+The receipt is known before that PUT, so a lost answer is settled by `verify` or
+a retry with the same operationId, never by a second PUT. Readback requires
+`merged` true, `merged_by` this runtime's bot, the head still at the receipt
+SHA and a `merge_commit_sha`; the result names `mergeSha` when the PUT answered.
+A PUT that GitHub refuses (405, 409, 422) ends as `outcome-unknown`, and `verify`
+or a retry then reports `verification-failed`; the receipt stays bound to that
+attempt, so a new merge attempt needs a new operationId.
+
 Production policy lives in `<OS account home>/.kherep/github-broker/policy.json`.
 The OS account home comes from `os.userInfo()`, ignoring HOME, USERPROFILE,
 runtime homes, checkout and current directory. Selected keys are flat references
@@ -196,10 +213,13 @@ Policy schema version 1 admits the issue operations only and stays valid for
 them. Version 2 has the same shape, admits every operation above (`identity`
 needs no listing) and allows `allowedAuthorBotIds` per runtime: the configured
 bot user IDs whose commits that runtime may push, default its own bot only.
+A version 2 repository entry may add `merge: {"method": "rebase"|"squash"|"merge"}`;
+`pr.merge`, even when listed in the runtime's operations, returns `policy-invalid`
+before any key read or provider call for a repository without that entry.
 Policy schema version 1 contains `enabled`, `runtimes.claude` and/or
 `runtimes.codex`. Each runtime names appId, clientId, botId, botLogin,
 installationId, keyRef (a flat `.pem` reference), allowed operations and
-repositories (`slug`, numeric `id`, optional `moduleLabels`). Configuration is maintained outside source
+repositories (`slug`, numeric `id`, optional `moduleLabels`, in version 2 optional `merge`). Configuration is maintained outside source
 control by an authorized operator. No request field grants publication authority.
 
 A repository entry with `moduleLabels` (1 to 100 names) refuses an `issue.create` with
@@ -220,7 +240,7 @@ retry automatically. Errors expose fixed codes, never provider messages or paths
 
 Version 1 receipts record issue operations; version 2 receipts add `kind`
 (`push`, `pull`, `run`) and the public targets `branch`, `sha`, `prNumber`,
-`runId`, `attempt` and `admittedAt`.
+`runId`, `attempt` and `admittedAt`, and for `pr.merge` the merge commit `mergeSha`.
 Durable receipts store payload/field hashes and necessary public target IDs, never
 bodies or secrets. An exclusive operation lock is never stolen based on age.
 Pending operations with unknown outcomes cannot replay. Known IDs survive

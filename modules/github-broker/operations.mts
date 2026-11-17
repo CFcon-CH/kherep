@@ -8,6 +8,7 @@ import { issueHandler } from './issues.mts';
 import { pushHandler } from './git-push.mts';
 import { pullHandler } from './pulls.mts';
 import { runHandler } from './runs.mts';
+import { mergeHandler } from './merge.mts';
 export type Dependencies = {root?:string; fetch?:typeof fetch; now?:()=>number; cwd?:string; push?:{url?:string; helperScript?:string}; env?:NodeJS.ProcessEnv};
 /** Everything one operation needs after policy, admission and authentication; `permit` creates the operation's one credential grant (see ReceiptStore.permit) and returns its nonce and remover. */
 export type Context = {http:Http; token:string; target:Record<string,unknown>; request:Request; identity:Identity; repo:{slug:string; id:number}; runtime:Runtime; now:number; deps:Dependencies; permit:()=>{nonce:string; revoke:()=>void}};
@@ -30,7 +31,7 @@ export type Handler = {
 export const HANDLERS: Record<Operation, Handler> = {
   'issue.create':issueHandler, 'issue.comment':issueHandler, 'issue.update':issueHandler,
   'branch.push':pushHandler, 'pr.create':pullHandler, 'pr.update':pullHandler, 'pr.comment':pullHandler,
-  'run.rerun':runHandler, 'run.cancel':runHandler,
+  'run.rerun':runHandler, 'run.cancel':runHandler, 'pr.merge':mergeHandler,
 };
 /**
  * The exact installation-token permissions per operation. Authentication requests
@@ -39,7 +40,7 @@ export const HANDLERS: Record<Operation, Handler> = {
  */
 export function permissionsFor(operation:Operation, labels:boolean):Permissions {
   if (operation.startsWith('issue.')) return {issues:'write'};
-  if (operation==='branch.push') return {contents:'write'};
+  if (operation==='branch.push'||operation==='pr.merge') return {contents:'write'};
   if (operation.startsWith('run.')) return {actions:'write'};
   return operation==='pr.create' && labels ? {pull_requests:'write', issues:'write'} : {pull_requests:'write'};
 }
