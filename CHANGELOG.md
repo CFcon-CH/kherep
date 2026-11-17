@@ -227,6 +227,12 @@ increments the minor version; every other release increments the patch version.
 
 ### Fixed
 
+- The GitHub App broker no longer reports `verification-failed` for a
+  `run.rerun` that succeeded (#958). GitHub raises `run_attempt` a few seconds
+  after the rerun POST, so a readback that still sees the old attempt now ends
+  as `outcome-unknown` and a later `verify` with the same operationId settles
+  it; a risen attempt triggered by an actor other than the bot stays
+  `verification-failed`.
 - The Worker no longer refuses a guarded reply or a queued attested message
   because the sending Node's clock runs a little ahead. A session identity
   proof dated after the Worker clock was invalid, so for about the clock offset

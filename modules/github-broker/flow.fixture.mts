@@ -104,5 +104,5 @@ export function fakeGithub(selected:'claude'|'codex', refs:(branch:string)=>stri
     if (endpoint.endsWith('/actions/runs/9001/cancel')) { Object.assign(run,{status:'completed',conclusion:control.conclusion});return new Response(null,{status:202}); }
     return json({message:'Not Found'},404);
   };
-  return {fetch:fetcher,calls,control,pulls,comments,mutations:()=>calls.filter(c=>c.method!=='GET'&&!c.url.endsWith('/access_tokens'))};
+  return {fetch:fetcher,calls,control,pulls,comments,run,mutations:()=>calls.filter(c=>c.method!=='GET'&&!c.url.endsWith('/access_tokens'))};
 }
