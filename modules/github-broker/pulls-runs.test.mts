@@ -76,6 +76,18 @@ test('run.rerun and run.cancel use actions scope, check state first and verify t
   s.api.control.runStatus='completed';assert.equal((await s.call({operation:'run.cancel',runId:9001})).error,'target-refused');
   s.api.control.attemptAfter=3;s.api.control.actorId=999;assert.equal((await s.call({operation:'run.rerun',runId:9001})).error,'verification-failed');
 });
+test('run.rerun settles a lagging attempt readback as outcome-unknown and a later verify confirms it',async t=>{
+  const s=setup(t),operationId=randomUUID(),bot=BOTS[0];
+  // GitHub still shows the pre-rerun attempt right after the POST; the actor is not yet the bot either.
+  s.api.control.attemptAfter=1;s.api.control.actorId=999;
+  const lagging=await s.run(JSON.stringify({operationId,repository,operation:'run.rerun',runId:9001}),s.deps);
+  assert.equal(lagging.error,'outcome-unknown',JSON.stringify(lagging));assert.equal(lagging.runId,9001);assert.equal(lagging.attempt,1);
+  assert.equal(s.api.mutations().length,1);
+  Object.assign(s.api.run,{run_attempt:2,triggering_actor:{id:bot.id,login:bot.login,type:'Bot'}});
+  const settled=await s.run(JSON.stringify({operationId,repository,operation:'verify'}),s.deps);
+  assert.equal(settled.ok,true,JSON.stringify(settled));assert.equal(settled.status,'verified');assert.equal(settled.attribution,'bot-actor');
+  assert.equal(s.api.mutations().length,1);
+});
 test('a token carrying an extra permission is refused before any mutation',async t=>{
   const s=setup(t);s.api.control.extraScope=true;
   for (const request of [{operation:'pr.create',head:'feat/x',base:'main',title:'T'},{operation:'run.rerun',runId:9001}]) assert.equal((await s.call(request)).error,'auth-refused');

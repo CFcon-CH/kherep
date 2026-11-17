@@ -182,10 +182,13 @@ sent; labels are set on the PR's issue after the PR exists, and a repository wit
 `moduleLabels` refuses a `pr.create` without a listed label like `issue.create`.
 `pr.update` and `pr.comment` act only on an existing PR of the repository.
 `run.rerun` accepts only a completed run and verifies a new attempt triggered by
-the bot; `run.cancel` accepts only a running one and verifies the `cancelled`
-conclusion, which GitHub sets asynchronously, so an early readback fails with
-`verification-failed` and a later `verify` settles it. Successful results of
-these operations name their `operation`.
+the bot. GitHub raises the attempt a few seconds after the rerun request, so a
+readback that still sees the old attempt ends as `outcome-unknown` and a later
+`verify` with the same operationId settles it. `run.cancel` accepts only a
+running one and verifies the `cancelled` conclusion, which GitHub sets
+asynchronously, so an early readback fails with `verification-failed` and a
+later `verify` settles it. Successful results of these operations name their
+`operation`.
 
 `pr.merge` merges one pull request once, at the exact head the caller names, with
 the merge method of the repository's policy entry. Preflight reads the PR once and

@@ -32,7 +32,9 @@ export const runHandler: Handler = {
       if (run.conclusion!=='cancelled') fail('verification-failed');
       return;
     }
-    if (Number(run.run_attempt)<=receipt.attempt || !isBotActor(c.identity,run.triggering_actor)) fail('verification-failed');
+    // GitHub raises run_attempt seconds after the POST; until then the outcome is open, verify the same operationId later.
+    if (Number(run.run_attempt)<=receipt.attempt) fail('outcome-unknown');
+    if (!isBotActor(c.identity,run.triggering_actor)) fail('verification-failed');
   },
   ids:receipt=>pickIds(receipt,['runId','attempt']),
   attribution:receipt=>receipt.operation==='run.rerun'?'bot-actor':'authenticated-installation',
