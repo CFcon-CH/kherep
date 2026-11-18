@@ -264,6 +264,22 @@ increments the minor version; every other release increments the patch version.
   `research-exec-parser.mts`, `control-plane-hook.mts` and
   `confluence-delivery-check.mts`. No production code, test, timeout or
   threshold changed.
+- Sonar now credits the `claude/hooks` and `claude/kherep` coverage from the
+  Claude hook tests (#965). Those tests run deploy-guard, guard-dispatch, the
+  integrity hook's libs, the observation hooks, the control-plane entry and
+  the whole installed hooks tree from temporary homes, and coverage of those
+  undeclared copies counted for nothing. The new fixture
+  `copy-declare-fixture.mts` copies a file or a tree and declares each
+  unchanged `.mts` copy; `copyRuntime`, `installIntegrity`, the dispatcher
+  fixture and the copying suites use it, and a copy a case alters afterwards
+  stays undeclared (`editsRecheck`, the wired R6 cases, the broken
+  coordinator). The lib suites of `restore-write.mts` and `workspace-scope.mts`
+  run a second time against the byte-equal files in
+  `kherep/hook-runtime/recovery/`. New tests cover the remaining refusal and
+  error branches of `replay-pending.mts`, `entry.mts`, `guard-dispatch.mts`,
+  `live-hook-integrity.mts`, `deploy-guard.mts`, `orphan-check-nudge.mts` and
+  `critical-file-integrity.mts` through hook stdin and stdout and exported
+  functions. No production code, test, timeout or threshold changed.
 - A node no longer sends its outbox the moment it reconnects, racing the
   Worker's handling of its `register` (#961). A message sent 31 ms after a
   reconnect was refused with `loop-resolution-required`. The daemon now holds
