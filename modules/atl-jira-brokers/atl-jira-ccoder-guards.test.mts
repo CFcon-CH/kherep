@@ -8,7 +8,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { runCli } from "./atl-jira-ccoder.mts";
-import { reply, routed as route, type Route } from "./broker-route.fixture.mts";
+import { bytes, reply, routed as route, type Route } from "./broker-route.fixture.mts";
 
 const JIRA_ENV = {
   KHEREP_ATL_SITE: "https://jira.example.com",
@@ -144,6 +144,51 @@ test("unlink reports a refused delete and reads nothing back", async () => {
   assert.equal(h.code, 1);
   assert.deepEqual(h.err, ["errorMessage: not allowed"]);
   assert.equal(h.calls.filter((call) => call.url.includes("fields=issuelinks")).length, 1);
+});
+
+test("refused writes and searches exit 1 with the site's messages", async () => {
+  const update = await run(["update", "--key", "OP-2", "--summary", "neu"], [["PUT", /\/issue\/OP-2$/, reply(400, { errorMessages: ["no"] })]]);
+  assert.deepEqual([update.code, update.out, update.err], [1, ["status: 400"], ["errorMessage: no"]]);
+  const search = await run(["search", "--jql", "project = OP"], [["GET", /\/search\/jql\?/, reply(400, { errorMessages: ["jql invalid"] })]]);
+  assert.deepEqual([search.code, search.out, search.err], [1, ["status: 400"], ["errorMessage: jql invalid"]]);
+});
+
+test("a blank download id is refused before any request", async () => {
+  const h = await run(["download", "--key", "OP-9", "--id", "  "], []);
+  assert.deepEqual([h.code, h.err, h.calls.length], [1, ["--id fehlt."], 0]);
+});
+
+test("download names unreadable list entries and still delivers the readable one", async () => {
+  const meta = { id: "10224", filename: "note.md", mimeType: "text/markdown", size: 6 };
+  const written: Buffer[] = [];
+  const { fetchImpl } = route([
+    ["GET", /\?fields=attachment$/, reply(200, { fields: { attachment: [{ id: "x" }, meta] } })],
+    ["GET", /\/attachment\/content\/10224/, bytes(200, Buffer.from("# Note"))],
+  ], [TOKEN, TENANT]);
+  const err: string[] = [];
+  const code = await runCli(["download", "--key", "OP-9", "--id", "10224"], {
+    env: JIRA_ENV, readFile: async () => "Client ID: synthetic-client\nClient Secret: synthetic-secret-1234\n",
+    fetch: fetchImpl, log: () => undefined, logError: (line) => err.push(line), stdoutIsTty: () => false,
+    writeOut: (chunk) => { written.push(chunk); },
+  });
+  assert.equal(code, 0, err.join("\n"));
+  assert.deepEqual(err, ["1 Anhang/Anhaenge am Vorgang sind nicht lesbar."]);
+  assert.equal(Buffer.concat(written).toString("utf8"), "# Note");
+});
+
+test("ambiguous transitions without a target name are listed with a placeholder", async () => {
+  const h = await run(transitionTo, [listing([{ id: "21", to: { id: "3", statusCategory: { key: "indeterminate" } } },
+    { id: "22", to: { id: "5", statusCategory: { key: "indeterminate" } } }])]);
+  assert.equal(h.code, 1);
+  assert.match(h.err.join("\n"), /trifft mehrere Uebergaenge: 21 \?, 22 \?/);
+});
+
+test("a Sub-task readback without a parent is refused", async () => {
+  const h = await run(["create", "--type", "Sub-task", "--parent", "OP-1", "--summary", "s"], [
+    ["POST", /\/issue$/, reply(201, { key: "OP-41" })],
+    ["GET", /\/issue\/OP-41\?fields=parent$/, reply(200, { fields: {} })],
+  ]);
+  assert.deepEqual([h.code, h.err], [1, ["Readback bestätigt den Elternvorgang nicht: erwartet OP-1, gelesen keinen."]]);
 });
 
 test("search prints the next page token and the site's warnings", async () => {

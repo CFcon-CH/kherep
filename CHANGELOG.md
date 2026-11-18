@@ -264,6 +264,17 @@ increments the minor version; every other release increments the patch version.
   `research-exec-parser.mts`, `control-plane-hook.mts` and
   `confluence-delivery-check.mts`. No production code, test, timeout or
   threshold changed.
+- The Atlassian brokers' refusal and error branches are now under test
+  (#965). The `modules/atl-jira-brokers` tests run every module source in
+  place, so there was no copy to declare; the remaining coverage gap was
+  untested behaviour. New tests drive both Jira brokers, both Confluence
+  brokers, the neighbour verbs, the evidence verb and the observation stdio
+  adapter through their CLIs and exported functions with a route-table fetch
+  (`broker-route.fixture.mts`) and synthetic temporary credential files:
+  token, tenant and credential failures, refused reads and writes, failed or
+  contradicting readbacks, project discovery, purge and stitch, malformed
+  requests and framing limits, and each entry point run as a process. No
+  production code, test, timeout or threshold changed.
 - A node no longer sends its outbox the moment it reconnects, racing the
   Worker's handling of its `register` (#961). A message sent 31 ms after a
   reconnect was refused with `loop-resolution-required`. The daemon now holds

@@ -27,7 +27,9 @@ test('request metadata that is not a plain bounded object is refused before publ
   assert.equal(published, 1);
 });
 
-test('ping answers, and a non-object request is invalid with a null id', async () => {
+test('initialize and ping answer, and a non-object request is invalid with a null id', async () => {
+  const init = await observationRpc({ jsonrpc: '2.0', id: 0, method: 'initialize' }, never) as { result: { serverInfo: { name: string } } };
+  assert.equal(init.result.serverInfo.name, 'kherep-observations');
   assert.deepEqual(await observationRpc({ jsonrpc: '2.0', id: 'p-1', method: 'ping' }, never), { jsonrpc: '2.0', id: 'p-1', result: {} });
   assert.deepEqual(await observationRpc(null, never), { jsonrpc: '2.0', id: null, error: { code: -32600, message: 'invalid-request' } });
 });
@@ -76,12 +78,15 @@ test('the process entry refuses extra arguments and answers an invalid publicati
   assert.equal(extra.status, 1);
   assert.equal(extra.stderr, 'observation-adapter-unavailable\n');
 
+  // Without CODEX_HOME the adapter falls back to <home>/.codex; home is this test's directory.
   const input = `${JSON.stringify(call({ name: 'publish_observations', arguments: { bogus: true } }))}\n`;
-  const invalid = spawnSync(process.execPath, [ADAPTER], { encoding: 'utf8', timeout: 20_000, env, input });
+  const invalid = spawnSync(process.execPath, [ADAPTER], {
+    encoding: 'utf8', timeout: 20_000, env: { PATH: env.PATH, HOME: home, USERPROFILE: home }, input,
+  });
   assert.equal(invalid.status, 0, invalid.stderr);
   const response = JSON.parse(invalid.stdout.trim());
   assert.deepEqual(response.result, { content: [{ type: 'text', text: 'OBS-RESULT: failed invalid-request' }], isError: true });
-  assert.equal(fs.existsSync(env.CODEX_HOME), false);
+  assert.equal(fs.existsSync(path.join(home, '.codex')), false);
 });
 
 test('imported without its own script path the adapter does not serve', () => {

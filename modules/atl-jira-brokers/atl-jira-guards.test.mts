@@ -125,9 +125,12 @@ test("download reports a content status other than 200 without bytes", async () 
 });
 
 test("get reports unreadable attachment entries and search passes the site's warnings on", async () => {
-  const get = routed([["GET", /\/issue\/OP-5\?fields=/, reply(200, { key: "OP-5", fields: { attachment: [{ id: "x" }] } })]]);
+  const get = routed([["GET", /\/issue\/OP-5\?fields=/, reply(200, {
+    key: "OP-5", fields: { status: { name: "In Progress" }, attachment: [{ id: "x" }] },
+  })]]);
   const read = await runCli(["get", "--key", "OP-5"], deps(get.fetchImpl));
   assert.equal(read.exitCode, 0);
+  assert.equal(read.output.state, "In Progress");
   assert.equal(read.output.attachmentsError, "1 Anhang/Anhaenge am Vorgang sind nicht lesbar.");
   assert.equal("summary" in read.output, false);
 

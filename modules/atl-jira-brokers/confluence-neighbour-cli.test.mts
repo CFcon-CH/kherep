@@ -4,6 +4,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { runCli, type Injected } from "./atl-confluence-ccoder.mts";
+import {
+  cmdChildren, cmdContext, cmdGetBody, cmdMove, cmdOrphans, cmdRelated, cmdSearch, cmdSpace, cmdStitch, type NeighbourCliContext,
+} from "./confluence-neighbour-cli.mts";
 import { reply, routed, type Route } from "./broker-route.fixture.mts";
 
 const CRED_PATH = "synthetic-credential-path";
@@ -34,7 +37,9 @@ function harness(routes: Route[], titles: string[] = []) {
     semantic: async (query) => { asked.push(query); return { titles }; },
     writeOut: () => { throw new Error("no payload expected"); },
   };
-  return { out, err, calls, asked, run: (argv: string[]) => runCli(argv, injected) };
+  // The context the broker would build, for calling the exported verbs directly.
+  const context = (): NeighbourCliContext => ({ ...injected, credEnv: "KHEREP_ATL_CRED_FILE_CLAUDE", session: {} } as NeighbourCliContext);
+  return { out, err, calls, asked, injected, context, run: (argv: string[]) => runCli(argv, injected) };
 }
 
 const PAGES = [
@@ -89,7 +94,7 @@ test("related refuses a blank title and a blank topic before any request", async
 
 test("related runs through the CLI with the injected semantic search", async () => {
   const h = harness([SPACE, INDEX(PAGES), CQL], ["Token expiry gotcha"]);
-  assert.equal(await h.run(["related", "--space", "KB", "--title", "Token cache rules", "--limit", "2"]), 0, h.err.join("\n"));
+  assert.equal(await h.run(["related", "--space", "KB", "--title", "Token cache rules"]), 0, h.err.join("\n"));
   assert.deepEqual(h.out, ["related\t102\tToken expiry gotcha\tShelf\ttoken\t", "count: 1"]);
   assert.deepEqual(h.err, []);
   assert.deepEqual(h.asked.length, 1);
@@ -115,4 +120,55 @@ test("a read-only stitch sweep over the space writes nothing", async () => {
   assert.ok(h.out.includes("orphans: 1"));
   assert.ok(h.out.includes("pages written: 0 (the sweep is read-only; link with stitch --id and decisions)"));
   assert.equal(h.calls.some((call) => call.method === "PUT"), false);
+});
+
+test("search refuses a blank query and maps an unexpected failure to unavailable, exit 2", async () => {
+  const blank = harness([]);
+  assert.equal(await blank.run(["search", "--space", "KB", "--query", "  "]), 2);
+  assert.deepEqual([blank.err, blank.out], [["--query is missing."], ["status: unavailable"]]);
+
+  const broken = harness([SPACE, INDEX(PAGES)]);
+  const run = (argv: string[]) => runCli(argv, { ...broken.injected, semantic: async () => { throw new Error("synthetic"); } });
+  assert.equal(await run(["search", "--space", "KB", "--query", "token"]), 2);
+  assert.deepEqual([broken.err, broken.out], [["Internal error."], ["status: unavailable"]]);
+});
+
+test("children lists each child and the count", async () => {
+  const h = harness([["GET", /\/pages\/100\/children\?limit=250$/, reply(200, { results: [{ id: "101", title: "Token cache rules" }] })]]);
+  assert.equal(await h.run(["children", "--id", "100"]), 0);
+  assert.deepEqual(h.out, ["101\tToken cache rules", "count: 1"]);
+});
+
+test("move falls back to the requested id when the write answer carries none", async () => {
+  const h = harness([
+    ["GET", /\/pages\/101\?body-format=storage$/, reply(200, { id: "101", title: "T", version: { number: 2 }, parentId: "100", body: { storage: { value: "" } } })],
+    ["PUT", /\/pages\/101$/, reply(200, { version: { number: 3 } })],
+    ["GET", /\/pages\/200\/children\?limit=250$/, reply(200, { results: [{ id: "101", title: "T" }] })],
+  ]);
+  assert.equal(await h.run(["move", "--id", "101", "--parent", "200"]), 0, h.err.join("\n"));
+  assert.equal(h.out.at(-1), "readback parent: 200");
+});
+
+test("the exported verbs refuse absent arguments before any request", async () => {
+  const h = harness([]);
+  const ctx = h.context();
+  const refusals: [() => Promise<number>, RegExp][] = [
+    [() => cmdContext(ctx, {}), /^--id is missing\.$/],
+    [() => cmdRelated(ctx, {}), /^--title is missing\.$/],
+    [() => cmdRelated(ctx, { title: "T", topic: undefined }), /^--topic is empty\.$/],
+    [() => cmdStitch(ctx, { id: undefined }), /^--id must be a numeric Confluence page id\./],
+    [() => cmdStitch(ctx, { id: "101", topic: undefined, out: "x" }), /^--topic is empty\./],
+    [() => cmdOrphans(ctx, {}), /--space must be a Confluence space key\./],
+    [() => cmdSpace(ctx, {}), /--space must be a Confluence space key\./],
+    [() => cmdChildren(ctx, {}), /--id must be a numeric Confluence id\./],
+    [() => cmdMove(ctx, {}), /--id must be a numeric Confluence id\./],
+    [() => cmdGetBody(ctx, { "body-only": "" }), /--id must be a numeric Confluence id\./],
+    [() => cmdGetBody(ctx, { "body-only": "", format: undefined }), /--format "" is not readable/],
+  ];
+  for (const [call, message] of refusals) {
+    await assert.rejects(call, (error: Error & { cliMessage?: string }) => message.test(error.cliMessage ?? error.message));
+  }
+  assert.equal(await cmdSearch(ctx, {}), 2);
+  assert.deepEqual(h.err, ["--query is missing."]);
+  assert.equal(h.calls.length, 0);
 });
