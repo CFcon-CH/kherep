@@ -9,6 +9,7 @@ import path from "node:path";
 
 import { runCli, type BrokerDeps, type FetchLike } from "./atl-jira.mts";
 import { reply, routed as route, throwing, type Route } from "./broker-route.fixture.mts";
+import { withoutTypeStrippingWarning } from "../../codex/lib/node-warning-fixture.mts";
 
 const BROKER = path.join(import.meta.dirname, "atl-jira.mts");
 const SEED_ENV = {
@@ -177,7 +178,7 @@ globalThis.fetch = async (url) => {
   });
   assert.equal(run.status, 0, run.stderr.toString("utf8"));
   assert.equal(run.stdout.toString("utf8"), "# Note");
-  assert.deepEqual(JSON.parse(run.stderr.toString("utf8")), {
+  assert.deepEqual(JSON.parse(withoutTypeStrippingWarning(run.stderr.toString("utf8"), 1)), {
     status: 200, attachmentId: "10224", filename: "note.md", mimeType: "text/markdown", bytes: 6,
   });
 });

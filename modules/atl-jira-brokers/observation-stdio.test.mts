@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { observationRpc, serveObservations } from './observation-stdio.mts';
+import { withoutTypeStrippingWarning } from '../../codex/lib/node-warning-fixture.mts';
 
 const ADAPTER = path.join(import.meta.dirname, 'observation-stdio.mts');
 const call = (params: unknown, id: unknown = 1) => ({ jsonrpc: '2.0', id, method: 'tools/call', params });
@@ -76,7 +77,7 @@ test('the process entry refuses extra arguments and answers an invalid publicati
   const env = { PATH: process.env.PATH ?? '', CODEX_HOME: path.join(home, 'absent') };
   const extra = spawnSync(process.execPath, [ADAPTER, 'unexpected'], { encoding: 'utf8', timeout: 20_000, env, input: '' });
   assert.equal(extra.status, 1);
-  assert.equal(extra.stderr, 'observation-adapter-unavailable\n');
+  assert.equal(withoutTypeStrippingWarning(extra.stderr, 1), 'observation-adapter-unavailable\n');
 
   // Without CODEX_HOME the adapter falls back to <home>/.codex; home is this test's directory.
   const input = `${JSON.stringify(call({ name: 'publish_observations', arguments: { bogus: true } }))}\n`;
