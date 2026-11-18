@@ -197,7 +197,16 @@ export async function startCodex(options: StartOptions, dependencies: StartDepen
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+function isMainModule(): boolean {
+  const entry = process.argv[1];
+  if (!entry) return false;
+  try {
+    return import.meta.url === pathToFileURL(path.resolve(entry)).href
+      || import.meta.url === pathToFileURL(fs.realpathSync(entry)).href;
+  } catch { return false; }
+}
+
+if (isMainModule()) {
   try {
     const args = process.argv.slice(2);
     if (args.length === 1 && args[0] === "--help") process.stdout.write(`${USAGE}\n`);
