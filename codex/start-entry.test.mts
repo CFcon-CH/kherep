@@ -5,10 +5,12 @@ import path from "node:path";
 import { test } from "node:test";
 import { pathToFileURL } from "node:url";
 
+import { withoutTypeStrippingWarning } from "./lib/node-warning-fixture.mts";
 import { catalog, fixture, newerCatalog, repoRoot, write } from "./model-selection-install.fixture.mts";
 
 const entry = path.join(repoRoot, "codex", "start.mts");
 const coverageEnv = process.env.NODE_V8_COVERAGE ? { NODE_V8_COVERAGE: process.env.NODE_V8_COVERAGE } : {};
+const launcherStderr = (stderr: string) => withoutTypeStrippingWarning(stderr, 1);
 
 test("the real start entry prints help, reports a bounded argument error, and is silent on import", (t) => {
   const f = fixture(t);
@@ -20,19 +22,20 @@ test("the real start entry prints help, reports a bounded argument error, and is
   assert.match(help.stdout, /^Usage: node codex\/start\.mts \[--workspace/);
   const invalid = run([entry, "--synthetic-invalid"]);
   assert.equal(invalid.status, 1);
-  assert.match(invalid.stderr, /^codex-start-invalid-arguments\r?\n/);
-  assert.match(run([entry, "--prepare-only", "--prepare-only"]).stderr, /^codex-start-invalid-arguments\r?\n/);
+  assert.match(launcherStderr(invalid.stderr), /^codex-start-invalid-arguments\r?\n/);
+  assert.match(launcherStderr(run([entry, "--prepare-only", "--prepare-only"]).stderr), /^codex-start-invalid-arguments\r?\n/);
   const injectedHome = path.join(f.root, "injected-home.mjs");
   write(injectedHome, 'import os from "node:os"; os.homedir = () => { throw new Error("private home diagnostic fixture"); };\n');
   const unresolvedHome = run(["--import", pathToFileURL(injectedHome).href, entry, "--prepare-only"], {});
   assert.equal(unresolvedHome.status, 1);
-  assert.match(unresolvedHome.stderr, /^codex-start-preflight-failed\r?\n/);
+  assert.match(launcherStderr(unresolvedHome.stderr), /^codex-start-preflight-failed\r?\n/);
   assert.doesNotMatch(unresolvedHome.stderr, /private home/);
   const url = new URL("./start.mts", import.meta.url).href;
   for (const beforeImport of ["", `process.argv[1] = ${JSON.stringify(path.join(f.root, "absent.mts"))};`]) {
     const imported = run(["--input-type=module", "-e", `${beforeImport} await import(${JSON.stringify(url)});`]);
     assert.equal(imported.status, 0, imported.stderr);
     assert.equal(imported.stdout, "");
+    assert.equal(launcherStderr(imported.stderr), "");
   }
   if (process.platform !== "win32") {
     const alias = path.join(f.root, "linked-source");
@@ -96,7 +99,7 @@ test("the POSIX start entry reads a real fixture catalog, prepares or launches, 
 
   const unsupportedDesktop = run(["--desktop"]);
   assert.equal(unsupportedDesktop.status, 1);
-  assert.match(unsupportedDesktop.stderr, /^codex-start-desktop-platform-unsupported\r?\n/);
+  assert.match(launcherStderr(unsupportedDesktop.stderr), /^codex-start-desktop-platform-unsupported\r?\n/);
 
   const interactive = run([], { FIXTURE_EXIT: "19" });
   assert.equal(interactive.status, 19, interactive.stderr);
@@ -106,6 +109,6 @@ test("the POSIX start entry reads a real fixture catalog, prepares or launches, 
 
   const failed = run([], { FIXTURE_UNLINK: "1" });
   assert.equal(failed.status, 1);
-  assert.match(failed.stderr, /^codex-start-launch-failed\r?\n/);
+  assert.match(launcherStderr(failed.stderr), /^codex-start-launch-failed\r?\n/);
   assert.equal(calls().at(-1).method, "model/list");
 });
