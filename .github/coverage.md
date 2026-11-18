@@ -96,6 +96,17 @@ The helper does not track changes made to a copy after declaration. Undeclared
 external temporary test copies, including runtime-imports copies, receive no
 coverage credit as before; this intentional loss is not a measured percentage gain.
 
+The hook-runtime fixtures declare their runtime copies: `copyRuntime` in
+`claude/hooks/hook-runtime-fixture.mts`, used by `runtimeHome`, the integrity
+sandbox and the wired suite, declares every copied `.mts` source. A case that
+alters its runtime copy after the copy, such as a replaced coordinator, uses
+`runtimeHome(prefix, { declare: false })` or its own copy and stays undeclared.
+
+Sonar's `sonar.coverage.exclusions` removes only
+`modules/control-plane/worker/vitest.config.mts` and `**/*.ps1` from the
+coverage population; no producer measures either (Vitest loads its config, and
+Istanbul instruments only Worker `src/`). Maintained `.mts` sources stay in it.
+
 The local `--source-root` flag is only a consistency assertion: every selected
 manifest root must equal that canonical directory URL. It cannot override
 individual foreign producer roots.

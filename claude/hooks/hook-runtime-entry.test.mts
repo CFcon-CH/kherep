@@ -120,7 +120,7 @@ describe("R6: a runtime that cannot admit denies PreToolUse and runs no main", (
     ["without its API", "export const nothing = 1;\n"],
   ] as const) {
     test(`a ${label} coordinator`, () => {
-      const home = runtimeHome();
+      const home = runtimeHome(undefined, { declare: false });
       const { main, trace } = sentinelMain(home.hooks);
       const run = spawnEntry(brokenRuntime(home.root, coordinator), "pretool", main);
       assert.equal(run.status, 0, run.stderr);
@@ -131,7 +131,7 @@ describe("R6: a runtime that cannot admit denies PreToolUse and runs no main", (
   }
 
   test("a coordinator that admits nothing and sends no ready: the main's result is not accepted", () => {
-    const home = runtimeHome();
+    const home = runtimeHome(undefined, { declare: false });
     const { main } = sentinelMain(home.hooks, "process.stdout.write(\"{}\");\n");
     const run = spawnEntry(brokenRuntime(home.root, "export async function preload() {}\n"), "pretool", main);
     assert.match(reasonOf(run.stdout), /cannot run \(not admitted: it ended before admission\)/);

@@ -227,6 +227,18 @@ increments the minor version; every other release increments the patch version.
 
 ### Fixed
 
+- Sonar now credits the hook runtime's coverage from the hook tests (#964).
+  The hook-runtime fixtures copy `claude/kherep/hook-runtime` into each
+  temporary home, and coverage of those undeclared copies counted for
+  nothing, so `coordinator.mts`, `entry.mts` and `coordinator-intent.mts`
+  stood near 40 % in Sonar. The new fixture helper `copyRuntime`, used by
+  `runtimeHome`, the integrity sandbox and the wired suite, declares every
+  copied `.mts` source with `declareCopy`. A case that alters its runtime copy
+  afterwards (`runtimeHome(prefix, { declare: false })`, the broken-coordinator
+  cases) stays undeclared. `sonar.coverage.exclusions` now leaves the Worker's
+  `vitest.config.mts` and the PowerShell scripts out of the coverage
+  population; no maintained `.mts` source is excluded. No test, gate, timeout
+  or threshold changed.
 - A node no longer sends its outbox the moment it reconnects, racing the
   Worker's handling of its `register` (#961). A message sent 31 ms after a
   reconnect was refused with `loop-resolution-required`. The daemon now holds
