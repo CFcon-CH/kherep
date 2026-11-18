@@ -25,29 +25,34 @@ const compare = ([a]: readonly [string, unknown], [b]: readonly [string, unknown
 
 // JSON.parse establishes grammar first. Walk the original bytes as well: its
 // reconstructed object alone cannot reveal duplicate (including escaped) keys.
-function validateJsonStructure(text: string, maxDepth: number): void {
+type JsonValueVisitor = (keyPath: readonly string[], start: number, end: number) => void;
+function validateJsonStructure(text: string, maxDepth: number, visitor?: JsonValueVisitor): void {
   let cursor = 0;
+  const keyPath: string[] = [];
   const space = (): void => { while (cursor < text.length && /[ \t\r\n]/.test(text[cursor]!)) cursor++; };
   const string = (): string => {
     const start = cursor++;
     while (text[cursor] !== '"') cursor += text[cursor] === "\\" ? 2 : 1;
     return JSON.parse(text.slice(start, ++cursor)) as string;
   };
-  const visit = (depth: number): void => {
+  const readValue = (depth: number): void => {
     if (depth > maxDepth) fail("depth", "json");
-    space();
     const kind = text[cursor];
     if (kind === "{" || kind === "[") {
       const end = kind === "{" ? "}" : "]", keys = new Set<string>();
       cursor++; space();
       if (text[cursor] === end) { cursor++; return; }
-      for (;;) {
+      for (let index = 0; ; index++) {
+        let key = String(index);
         if (kind === "{") {
-          const key = string();
+          key = string();
           if (keys.has(key)) fail("duplicate-key", "json");
           keys.add(key); space(); cursor++; // grammar already proves the colon
         }
-        visit(depth + 1); space();
+        if (visitor) keyPath.push(key);
+        visit(depth + 1);
+        if (visitor) keyPath.pop();
+        space();
         if (text[cursor++] === end) return;
         space(); // grammar already proves the comma
       }
@@ -55,19 +60,25 @@ function validateJsonStructure(text: string, maxDepth: number): void {
     if (kind === '"') { string(); return; }
     while (cursor < text.length && !/[ \t\r\n,}\]]/.test(text[cursor]!)) cursor++;
   };
+  const visit = (depth: number): void => {
+    space();
+    const start = cursor;
+    readValue(depth);
+    visitor?.(keyPath, start, cursor);
+  };
   visit(0);
 }
 
 // Shared strict JSON seam for the bounded user file and larger receipt document.
 // Both consumers retain duplicate-key evidence before reconstructing objects.
 const DEFAULT_JSON_LIMITS: Readonly<{ maxBytes: number; maxDepth: number }> = Object.freeze({ maxBytes: 65_536, maxDepth: 16 });
-export function parseModelPolicyJson(text: string, limits = DEFAULT_JSON_LIMITS): unknown {
+export function parseModelPolicyJson(text: string, limits = DEFAULT_JSON_LIMITS, visitor?: JsonValueVisitor): unknown {
   if (!Number.isSafeInteger(limits.maxBytes) || limits.maxBytes < 1 || limits.maxBytes > 1_048_576
     || !Number.isSafeInteger(limits.maxDepth) || limits.maxDepth < 1 || limits.maxDepth > 32) fail("invalid-json-limits", "json");
   if (typeof text !== "string" || Buffer.byteLength(text, "utf8") > limits.maxBytes) fail("input-size", "json");
   let value: unknown;
   try { value = JSON.parse(text); } catch { fail("invalid-json", "json"); }
-  validateJsonStructure(text, limits.maxDepth);
+  validateJsonStructure(text, limits.maxDepth, visitor);
   return value;
 }
 

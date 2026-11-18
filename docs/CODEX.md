@@ -86,6 +86,36 @@ The custom agent TOML is the activation channel: its `model` and `model_reasonin
 
 To recover from a verification refusal, restore the edited file from the backup under `backups/kherep/`, or remove `orchestra/model-selection-anchor.json` and run once with `--refresh-models`.
 
+### Start Codex with the latest visible models
+
+Use this entry from a Kherep Git checkout whose model policy and managed agent sources match the installed generation. The Codex home must already have a verified model-selection anchor and a signed-in native OpenAI provider. `--workspace` defaults to the current directory and accepts an existing absolute path.
+
+```powershell
+node codex/start.mts --workspace C:/path/to/project
+node codex/start.mts --desktop --workspace C:/path/to/project
+node codex/start.mts --prepare-only --workspace C:/path/to/project
+```
+
+The default command opens a new interactive CLI session with the validated root model and `--no-daemon`. `--desktop` starts a fully quit Windows ChatGPT Desktop app registered from Microsoft Store as `OpenAI.Codex_2p2nqsd0c76g0!App`. Run it from a normal Windows terminal using the standard `%USERPROFILE%\.codex` home. It verifies the registered package, uses that package's bundled Codex executable for the catalog, and activates the same installed app through Windows. The Desktop workspace argument checks the intended project for config overrides. Select that project inside Desktop. Use `--desktop --prepare-only` to run the same preflight and refresh without opening the app. A running app causes a refusal. Quit it through its native menu before retrying.
+
+Each invocation makes a new bounded native `model/list` request in the selected home and workspace. The newest visible, stable Sol, Astra, Luna and Terra IDs in the complete returned catalog determine the managed pairs. Kherep uses numeric generation order and checks each requested effort against the newest model. It refuses missing, ambiguous or regressed evidence and explicit pins to older or ineligible models. Native Codex may serve its own cache or account-scoped catalog. This operation measures the newest visible models in that returned catalog.
+
+The verified update changes only the managed model artifacts and top-level `model` and `model_reasoning_effort`. It keeps the shipped role defaults and honors the supported efforts in your model policy. It keeps an ownership-checked backup under `backups/kherep/model-start-*` when bytes change. A matching second run fetches the catalog again and keeps the same selection and backup. Saved threads continue to use Codex's native resume and saved settings. Direct launches from shortcuts, external tools, or a running app bypass this entry. Native account restrictions, picker choices and the settings of other Desktop projects still apply.
+
+If the parity receipt points to the exact predecessor recorded in the verified selection receipt, the start transaction repairs that pointer. With the same catalog and model policy, the repair keeps the current selection generation.
+
+| Refusal | Recovery |
+| --- | --- |
+| `codex-start-anchor-required`, `model-selection-*` | Verify the installed selection. Anchorless installations need the documented one-time refresh. |
+| `codex-start-catalog-unavailable`, `codex-start-catalog-invalid`, `codex-start-family-*`, `codex-start-catalog-regressed` | Check the native account and catalog in the same client context, then retry after the complete catalog is available. |
+| `codex-start-model-pin-conflict`, `codex-start-latest-effort-unsupported`, `codex-start-latest-selection-conflict` | Review the explicit choices in `kherep/model-policy.user.json` and the supported efforts of the newest models. |
+| `codex-start-project-config`, `codex-start-root-override-unsupported`, `codex-start-provider-unsupported` | Use a workspace and native config without conflicting project layers, custom catalog, profile, provider or root markers. |
+| `codex-start-source-or-target-drift`, `codex-start-observer-overlay-unsupported` | Use the matching checkout or follow the explicit full installer workflow for the current source. The start command requires a base anchored generation. |
+| `codex-start-desktop-*` | Check the installed Windows Store package and default home. Quit any running ChatGPT Desktop instance before retrying. |
+| `codex-start-transaction-failed`, `codex-start-rollback-conflict` | Inspect the most recent private `model-start-*` backup and verify the anchored generation. A rollback conflict leaves the concurrent writer's bytes in place. |
+
+See [Codex configuration precedence](https://learn.chatgpt.com/docs/config-file/config-basic), [the CLI reference](https://learn.chatgpt.com/docs/cli/reference), [the Windows app](https://learn.chatgpt.com/docs/windows/windows-app), and [Windows application activation](https://learn.microsoft.com/en-us/windows/win32/api/shobjidl_core/nf-shobjidl_core-iapplicationactivationmanager-activateapplication).
+
 ### Routing-only update
 
 For the exact predecessor at `2b592140fd25e5e1f49dc3547ca3a798ef418721`, the

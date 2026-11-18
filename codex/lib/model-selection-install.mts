@@ -15,6 +15,7 @@ export const CATALOG_REQUIRED = "model-selection-catalog-required";
 
 export interface InstallSelectionInput {
   repoRoot: string; codexHome: string; git: ModelSelectionGit; refresh: boolean; catalog?: unknown;
+  checkInstalledTarget?: (file: string) => void;
 }
 export interface InstallSelection {
   plan: ModelSelectionPlan; noOp: boolean; selectionId: string; resolution: EffectiveResolutionV2;
@@ -56,16 +57,20 @@ function readOutputs(codexHome: string, targets: readonly string[]): string[] {
 // source; an exact no-op reinstall does not.
 export function prepareInstallSelection(input: InstallSelectionInput): InstallSelection {
   const { codexHome, git } = input;
-  const anchorText = readOptional(homeFile(codexHome, MODEL_SELECTION_FILES.anchor), ANCHOR_REFUSAL.anchorInvalid);
+  const anchorFile = homeFile(codexHome, MODEL_SELECTION_FILES.anchor);
+  input.checkInstalledTarget?.(anchorFile);
+  const anchorText = readOptional(anchorFile, ANCHOR_REFUSAL.anchorInvalid);
   if (anchorText === undefined && !input.refresh && fs.existsSync(homeFile(codexHome, "orchestra/parity-receipt.json"))) {
     throw new ModelSelectionRefusal(ANCHOR_REFUSAL.refreshRequired,
       "this Codex home has no model-selection anchor; run the installer once with --refresh-models");
   }
   const sourceRevision = git.head();
-  const previous = anchorText === undefined ? undefined : verifyAnchoredState(codexHome, git, anchorText);
+  const previous = anchorText === undefined ? undefined : verifyAnchoredState(codexHome, git, anchorText, input.checkInstalledTarget);
   const source = readSourceSnapshot(git.workingTree());
   const inventory = buildSelectionInventory(source.rows, planAgentNames(source.rows, codexHome));
-  const userText = readOptional(homeFile(codexHome, MODEL_SELECTION_FILES.user), ANCHOR_REFUSAL.userUnreadable);
+  const userFile = homeFile(codexHome, MODEL_SELECTION_FILES.user);
+  input.checkInstalledTarget?.(userFile);
+  const userText = readOptional(userFile, ANCHOR_REFUSAL.userUnreadable);
   const renderOutputs = render(source.rows, source.capabilities);
   let rendered: RenderedModelOutput[] = [];
   const attempt = (catalog?: CatalogSupport): ModelSelectionPlan => planModelSelection({
