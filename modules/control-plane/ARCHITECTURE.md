@@ -1700,7 +1700,11 @@ authentication until the first live directory frame of that connection sets
 `NodeClient.workerCapabilities` (an older Worker's frame without `worker` sets
 `[]`), at most `OUTBOX_GATE_MS` (10 seconds) after `auth.ok`; then it sends as
 before. Records stay in `outbox/` meanwhile, without a state change; the
-Worker still deduplicates by `messageId`. Resolved unrelated legacy pairs
+Worker still deduplicates by `messageId`. On the Worker side, `NodeSession`
+handles `register` inside `ctx.blockConcurrencyWhile`, so no other WebSocket
+event of that Durable Object, a `send` or `directory.resolve` included, runs
+between the Registry call and `registrationAccepted`; a Registry failure is
+rethrown after the block, as before. Resolved unrelated legacy pairs
 retain their legacy depth and bind exact transport without acquiring loop
 lineage. Outside held scopes, unbound legacy behavior remains compatible. Historical legacy parents stay unbound outside those scopes even when their endpoints now have positive attestations; optional selected metadata cannot promote or veto that legacy chain. Matching holds, changed relevant snapshots and cryptographic failures still refuse. Existing fixed lineage/self-pair refusals precede mandatory selected-binding consistency checks; known lifecycle contradictions on a required bound path still refuse.
 
