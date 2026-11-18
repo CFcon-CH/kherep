@@ -13,6 +13,7 @@ import { test, type TestContext } from "node:test";
 import { ABSOLUTE_PATH } from "../../claude/hooks/lib/denial-journal.mts";
 import { holdLock as hold, killHolders, tryLock } from "../../claude/hooks/lib/lock-holder.fixture.mts";
 import { install } from "../install.mts";
+import { declareInstalled } from "./hook-adapter.fixture.mts";
 import { fixtureModelOptions } from "../lib/model-policy.fixture.mts";
 
 const REPO = path.resolve(import.meta.dirname, "..", "..");
@@ -35,6 +36,7 @@ function fixture(t: TestContext) {
       : args.join(" ") === "plugin marketplace list --json" ? '{"marketplaces":[]}' : "ok"),
     controlPlaneOutbox: path.join(root, "kherep config", "control-plane", "outbox"),
   });
+  declareInstalled(codexHome);
   const env: NodeJS.ProcessEnv = { ...process.env, CLAUDE_HOME: path.join(root, "no-claude-home"), KHEREP_WORKSPACE: path.join(root, "no-workspace") };
   delete env.CODEX_HOME;
   const cache = path.join(codexHome, ".cache", "hook-integrity");

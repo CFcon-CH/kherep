@@ -12,7 +12,7 @@ import { test, type TestContext } from "node:test";
 import { pathToFileURL } from "node:url";
 
 import { renderHooks } from "../lib/parity-config.mts";
-import { copyAdapter } from "./hook-adapter.fixture.mts";
+import { copyAdapter, copySource } from "./hook-adapter.fixture.mts";
 
 const REPO = path.resolve(import.meta.dirname, "..", "..");
 const SOURCE = path.join(import.meta.dirname, "shell-checks.mts");
@@ -28,7 +28,7 @@ function box(t: TestContext, { installed, guard, integrity, attribution }: { ins
   const trace = path.join(root, "trace.jsonl");
   const line = (who: string): string => `fs.appendFileSync(${JSON.stringify(trace)}, JSON.stringify({ who: ${JSON.stringify(who)}, t: ${now} }) + "\\n");`;
   fs.mkdirSync(path.join(dir, "lib"), { recursive: true });
-  fs.copyFileSync(SOURCE, path.join(dir, installed ? "codex-shell-checks.mts" : "shell-checks.mts"));
+  copySource("shell-checks.mts", path.join(dir, installed ? "codex-shell-checks.mts" : "shell-checks.mts"));
   for (const name of ["hook-adapter.mts", ...(installed ? ["codex-hook-adapter.mts"] : [])]) copyAdapter(dir, name);
   fs.copyFileSync(path.join(REPO, "claude", "hooks", "lib", "guard-recheck.mts"), path.join(dir, "lib", "guard-recheck.mts"));
   for (const name of GUARDS) fs.writeFileSync(path.join(dir, `${name}.mts`), `import fs from "node:fs";\n${line(name)}\n${guard}\n`);

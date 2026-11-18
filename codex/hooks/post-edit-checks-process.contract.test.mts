@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { after, test } from "node:test";
 
-import { copyAdapter } from "./hook-adapter.fixture.mts";
+import { copyAdapter, copySource } from "./hook-adapter.fixture.mts";
 
 const HERE = import.meta.dirname;
 const SOURCE = path.join(HERE, "post-edit-checks.mts");
@@ -22,7 +22,7 @@ function materialize(): string {
   for (const dependency of [
     "post-edit-checks.mts", "post-edit-tool-calls.mts", "research-exec-parser.mts",
   ]) {
-    fs.copyFileSync(path.join(HERE, dependency), path.join(HOOKS, dependency));
+    copySource(dependency, path.join(HOOKS, dependency));
   }
   copyAdapter(HOOKS);
   for (const watcher of WATCHERS) {

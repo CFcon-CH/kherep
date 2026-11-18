@@ -7,11 +7,11 @@ import { test } from "node:test";
 
 import { withoutTypeStrippingWarning } from "../lib/node-warning-fixture.mts";
 import { ENTRY_NODE_FLAG } from "../lib/parity-config.mts";
+import { copySource } from "./hook-adapter.fixture.mts";
 
 // Issue #503. The stable entry point runs the hook of the source its pointer
 // names, as that hook's own main module, and fails closed without the pointer.
 
-const ENTRY = path.join(import.meta.dirname, "control-plane-hook.mts");
 const STUB = (marker: string, record: string) => `import fs from "node:fs";
 import { pathToFileURL } from "node:url";
 fs.writeFileSync(${JSON.stringify(record)}, ${JSON.stringify(marker)});
@@ -30,7 +30,7 @@ function fixture(t: import("node:test").TestContext) {
   const hookDir = path.join(home, "hooks", "kherep-maestro");
   fs.mkdirSync(hookDir, { recursive: true });
   const entry = path.join(hookDir, "codex-control-plane-hook.mts");
-  fs.copyFileSync(ENTRY, entry);
+  copySource("control-plane-hook.mts", entry);
   const record = path.join(root, "record.txt");
   const source = (name: string, marker = name, hook = "deliver-hook.mts"): string => {
     const dir = path.join(root, name);
