@@ -5,6 +5,8 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
+import { declareCopy } from "./coverage-copy-fixture.mts";
+
 import {
   brokerPath,
   parseArgs,
@@ -44,8 +46,10 @@ function createCliFixture(): {
   fs.mkdirSync(bootstrap, { recursive: true });
   fs.mkdirSync(brokers, { recursive: true });
   fs.copyFileSync(path.join(here, "confluence-space.mts"), script);
+  declareCopy(path.join(here, "confluence-space.mts"), script);
   for (const file of ["render-profile-paths.mts", "shape.mts"]) {
     fs.copyFileSync(path.join(here, file), path.join(bootstrap, file));
+    declareCopy(path.join(here, file), path.join(bootstrap, file));
   }
   fs.writeFileSync(path.join(bootstrap, "confluence-nodes.mts"), [
     'export const PLACEMENT_NODES = ["Kherep"];',
