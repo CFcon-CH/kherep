@@ -10,6 +10,7 @@ import type { ModelCatalog } from "./model-policy.mts";
 export interface CatalogProcessOptions extends CatalogLimits {
   executable?: string;
   codexHome?: string;
+  cwd?: string;
   platform?: NodeJS.Platform;
   spawn?: AppServerSpawn;
   find?: () => string | null;
@@ -99,6 +100,7 @@ async function readCatalogProcess(options: CatalogProcessOptions): Promise<Model
   const command = codexCommand(executable, [...options.launchPrefix ?? [], ...CATALOG_SESSION_FLAGS, "app-server", "--listen", "stdio://"], platform);
   const child = (options.spawn ?? spawn as AppServerSpawn)(command.file, command.args, {
     stdio: "pipe", windowsHide: true, detached: true,
+    ...(options.cwd ? { cwd: options.cwd } : {}),
     ...(options.codexHome ? { env: { ...process.env, CODEX_HOME: options.codexHome } } : {}),
   });
   let exited = false, closed = false;

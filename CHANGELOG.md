@@ -227,6 +227,15 @@ increments the minor version; every other release increments the patch version.
 
 ### Fixed
 
+- The Worker test `actual reconnect old sender ...` in
+  `diagnostic-boundaries.test.mts` no longer races the register handler
+  (#968). The handler marks the socket registered before its own
+  "registration" delivery pass, which stores `binding-capability-missing`
+  for a node without the binding capability. The test only waited for
+  `registered`, so on a slow run its auth-phase `registration-pending` write
+  could land first and be overwritten. The test now waits up to 10 s for the
+  registration pass's write before its own call. Only the test changed; the
+  Worker is unchanged.
 - Coverage assembly no longer loses hits when one source ran at more than one
   path (#969). Node's type stripping appends `\n\n//# sourceURL=<url>`, so the
   top-level range of a file ended at a different offset for every producer
