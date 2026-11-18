@@ -227,6 +227,16 @@ increments the minor version; every other release increments the patch version.
 
 ### Fixed
 
+- A node no longer sends its outbox the moment it reconnects, racing the
+  Worker's handling of its `register` (#961). A message sent 31 ms after a
+  reconnect was refused with `loop-resolution-required`. The daemon now holds
+  outbox records after authentication until the Worker's first directory
+  answer on that connection, an older Worker's answer included, at most 10
+  seconds; records stay in `outbox/` meanwhile. A tick gap of at least 45
+  seconds (host sleep or a stalled event loop) now starts the connection
+  watchdog's 5-second confirmation at once, so a dead socket after wake is
+  replaced within about 5 seconds instead of about 50. Node-only; no Worker
+  change.
 - The GitHub App broker no longer reports `verification-failed` for a
   `pr.merge` that succeeded (#956). Under its `contents: write` installation
   token GitHub can omit `merge_commit_sha` from the pull request answer, so

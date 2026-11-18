@@ -405,7 +405,12 @@ Worker change is introduced.
 
 This catches dead sockets. Continuing auto-pongs can mask stalled application
 frames; the November 5 stall's continuous pong history is UNKNOWN. Sleep and
-blocked event loops also delay the watchdog itself. Native macOS/Windows,
+blocked event loops also delay the watchdog itself. Issue #961: the intake
+diagnostics tick (`node/intake-diagnostics.mts`) measures that delay; a lag of
+at least `PONG_DEADLINE_MS` calls `watchdog.wake()`, which from idle or probe
+sends one ping at once and enters the five-second grace, so a dead socket
+after wake expires about 5 seconds later instead of after 45 + 5. A pong in
+the grace returns to idle as usual; without such a gap nothing changes. Native macOS/Windows,
 blackhole recovery and live latency need separate acceptance after an authorized
 node upgrade and restart. No install or deployment is part of this change.
 
@@ -1683,8 +1688,19 @@ never-published local alias. Exact local IDs precede aliases; conflict,
 ambiguity and incomplete or unreadable metadata fail closed.
 
 Messages in an unordered participant-node scope containing a retained hold need
-complete selected ownership and enforcing consumers. Unresolved or old routes
-wait or refuse with `loop-resolution-required`. Resolved unrelated legacy pairs
+complete selected ownership and enforcing consumers. A guarded message between
+attested sessions needs a complete selected binding as well, held scope or not:
+`MessageStore` sets `bindingRequired` when the scope is held or when the mode is
+`guarded` and the current snapshot carries an `identityBinding`. Unresolved or old routes
+wait or refuse with `loop-resolution-required`. Issue #961: to narrow the race
+between a reconnect's first sends and the Worker's `register` handling (the
+`NodeSession` awaits Registry calls, so the order of the two answers is
+expected, not guaranteed), the node daemon holds its outbox after
+authentication until the first live directory frame of that connection sets
+`NodeClient.workerCapabilities` (an older Worker's frame without `worker` sets
+`[]`), at most `OUTBOX_GATE_MS` (10 seconds) after `auth.ok`; then it sends as
+before. Records stay in `outbox/` meanwhile, without a state change; the
+Worker still deduplicates by `messageId`. Resolved unrelated legacy pairs
 retain their legacy depth and bind exact transport without acquiring loop
 lineage. Outside held scopes, unbound legacy behavior remains compatible. Historical legacy parents stay unbound outside those scopes even when their endpoints now have positive attestations; optional selected metadata cannot promote or veto that legacy chain. Matching holds, changed relevant snapshots and cryptographic failures still refuse. Existing fixed lineage/self-pair refusals precede mandatory selected-binding consistency checks; known lifecycle contradictions on a required bound path still refuse.
 
