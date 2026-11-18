@@ -11,6 +11,8 @@ import fs from "node:fs";
 import os from "node:os";
 import { spawnSync } from "node:child_process";
 
+import { copyDeclared } from "./copy-declare-fixture.mts";
+
 let pass = 0;
 let fail = 0;
 
@@ -22,9 +24,7 @@ const PROJECT = path.join(TMP, "projects", "synthetic-project");
 fs.mkdirSync(path.dirname(HOOK), { recursive: true });
 fs.mkdirSync(PROJECT, { recursive: true });
 for (const relative of ["deploy-guard.mts", "lib/git-push-match.mts", "lib/forge-match.mts", "lib/deploy-transcript.mts", "lib/tool-event-shape.mts", "lib/tool-event-contract.mts"]) {
-  const target = path.join(TMP, "hooks", relative);
-  fs.mkdirSync(path.dirname(target), { recursive: true });
-  fs.copyFileSync(path.join(import.meta.dirname, relative), target);
+  copyDeclared(path.join(import.meta.dirname, relative), path.join(TMP, "hooks", relative));
 }
 let transcriptCounter = 0;
 

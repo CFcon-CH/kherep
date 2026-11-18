@@ -20,8 +20,8 @@ const PAYLOAD = JSON.stringify({ hook_event_name: "PreToolUse", tool_name: "Bash
 const roots: string[] = [];
 after(() => { for (const root of roots) fs.rmSync(root, { recursive: true, force: true }); });
 
-function fixture(prefix: string, heartbeat = true): DispatcherFixture {
-  const fx = dispatcherFixture(prefix, { heartbeat });
+function fixture(prefix: string, heartbeat = true, editsRecheck = false): DispatcherFixture {
+  const fx = dispatcherFixture(prefix, { heartbeat, editsRecheck });
   roots.push(fx.root);
   fs.writeFileSync(path.join(fx.hooks, "allow.mts"), "process.exit(0);\n");
   return fx;
@@ -112,7 +112,7 @@ test("a stdin stream error is named by its code: stdin read failed (EIO)", () =>
 });
 
 test("a syntax-broken lib/guard-recheck.mts is named by its error code, no message", () => {
-  const fx = fixture("guard-dispatch-labels-lib-", false);
+  const fx = fixture("guard-dispatch-labels-lib-", false, true);
   fs.writeFileSync(path.join(fx.hooks, "lib", "guard-recheck.mts"), "export const = ;\n");
   const run = dispatch(fx, [path.join(fx.hooks, "allow.mts")]);
   // Node error code first, the class name only where an engine has no code.

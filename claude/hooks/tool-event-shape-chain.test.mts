@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { after, test } from "node:test";
+import { copyDeclared, copyTreeDeclared } from "./copy-declare-fixture.mts";
 import { cleanup, runtimeHome, entry } from "./hook-runtime-fixture.mts";
 import { plantHeartbeat } from "./guard-dispatch-fixture.mts";
 
@@ -50,9 +51,9 @@ for (const guard of guards) test(`${guard}: unrelated names and valid empty comm
 
 test("Claude runtime and dispatcher transport both warnings and preserve a concurrent deny", () => {
   const home = runtimeHome("event-shape-chain-");
-  fs.cpSync(path.join(import.meta.dirname, "lib"), path.join(home.hooks, "lib"), { recursive: true });
+  copyTreeDeclared(path.join(import.meta.dirname, "lib"), path.join(home.hooks, "lib"));
   for (const file of ["guard-dispatch.mts", "commit-guard.mts", "deploy-guard.mts"])
-    fs.copyFileSync(path.join(import.meta.dirname, file), path.join(home.hooks, file));
+    copyDeclared(path.join(import.meta.dirname, file), path.join(home.hooks, file));
   const target = path.join(home.hooks, "guard-dispatch.mts");
   plantHeartbeat(home.root);
   const args = ["commit-guard.mts", "deploy-guard.mts"].map(file => path.join(home.hooks, file));

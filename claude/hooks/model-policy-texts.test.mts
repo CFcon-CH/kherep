@@ -8,6 +8,7 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import test, { after } from "node:test";
 
+import { copyDeclared, copyTreeDeclared } from "./copy-declare-fixture.mts";
 import { loadModelPolicy, policyFiles } from "./lib/model-policy.mts";
 import { OBSERVATION_REASON, observationReason } from "./observation-stop.mts";
 
@@ -21,8 +22,8 @@ let n = 0;
 function home(user?: string): string {
   const root = path.join(TMP, String(n++));
   fs.mkdirSync(path.join(root, "kherep"), { recursive: true });
-  fs.cpSync(path.join(HOOKS, "lib"), path.join(root, "hooks", "lib"), { recursive: true });
-  fs.copyFileSync(path.join(HOOKS, "orchestra-default.mts"), path.join(root, "hooks", "orchestra-default.mts"));
+  copyTreeDeclared(path.join(HOOKS, "lib"), path.join(root, "hooks", "lib"));
+  copyDeclared(path.join(HOOKS, "orchestra-default.mts"), path.join(root, "hooks", "orchestra-default.mts"));
   fs.copyFileSync(SHIPPED, path.join(root, "kherep", "model-policy.json"));
   if (user !== undefined) fs.writeFileSync(path.join(root, "kherep", "model-policy.user.json"), user);
   return root;

@@ -16,6 +16,7 @@ import test, { describe } from "node:test";
 
 import { decide, OBS_RESULT_REASON } from "./obs-result-check.mts";
 import { declareCopy } from "../../bootstrap/coverage-copy-fixture.mts";
+import { copyTreeDeclared } from "./copy-declare-fixture.mts";
 
 const TMP = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "obs-result-check-test-")));
 const SECRET = "Example Corp host.example.com";
@@ -25,7 +26,7 @@ function fixture(name: string): { root: string; hook: string } {
   fs.mkdirSync(path.join(root, "hooks"), { recursive: true });
   fs.copyFileSync(path.join(import.meta.dirname, "obs-result-check.mts"), path.join(root, "hooks", "obs-result-check.mts"));
   declareCopy(path.join(import.meta.dirname, "obs-result-check.mts"), path.join(root, "hooks", "obs-result-check.mts"));
-  fs.cpSync(path.join(import.meta.dirname, "lib"), path.join(root, "hooks", "lib"), { recursive: true });
+  copyTreeDeclared(path.join(import.meta.dirname, "lib"), path.join(root, "hooks", "lib"));
   return { root, hook: path.join(root, "hooks", "obs-result-check.mts") };
 }
 const { root: ROOT, hook: HOOK } = fixture("home");

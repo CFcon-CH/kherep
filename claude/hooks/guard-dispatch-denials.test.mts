@@ -9,6 +9,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { after, test, type TestContext } from "node:test";
 import { declareCopy } from "../../bootstrap/coverage-copy-fixture.mts";
+import { copyDeclared } from "./copy-declare-fixture.mts";
 
 import { denialFaultEnv, faultSpan, MARKER_SLOW_MS, type DenialFault } from "./denial-fault.fixture.mts";
 import { dispatcherFixture, type DispatcherFixture } from "./guard-dispatch-fixture.mts";
@@ -35,6 +36,7 @@ function fixture(lib: "present" | "missing" | "empty" | "throwing" | "hanging" =
   roots.push(fx.root);
   for (const [name, source] of Object.entries(GUARDS)) fs.writeFileSync(path.join(fx.hooks, name), source);
   if (lib !== "missing") for (const name of LIBS) fs.copyFileSync(path.join(import.meta.dirname, "lib", name), path.join(fx.hooks, "lib", name));
+  if (lib !== "missing") declareCopy(path.join(import.meta.dirname, "lib", "workspace-scope.mts"), path.join(fx.hooks, "lib", "workspace-scope.mts"));
   const target = path.join(fx.hooks, "lib", "denial-journal.mts");
   if (lib === "present" && capture) declareCopy(path.join(import.meta.dirname, "lib", "denial-journal.mts"), target);
   if (lib === "empty") fs.writeFileSync(target, "");
@@ -98,9 +100,9 @@ test("a header guard is journalled with its first violation, not its header", as
 
 test("the real commit-guard: an em dash renders as its violation", async () => {
   const fx = fixture();
-  fs.copyFileSync(path.join(import.meta.dirname, "commit-guard.mts"), path.join(fx.hooks, "commit-guard.mts"));
-  fs.copyFileSync(path.join(import.meta.dirname, "lib", "git-commit-match.mts"), path.join(fx.hooks, "lib", "git-commit-match.mts"));
-  for (const lib of ["tool-event-shape.mts", "tool-event-contract.mts"]) fs.copyFileSync(path.join(import.meta.dirname, "lib", lib), path.join(fx.hooks, "lib", lib));
+  for (const file of ["commit-guard.mts", "lib/git-commit-match.mts", "lib/tool-event-shape.mts", "lib/tool-event-contract.mts"]) {
+    copyDeclared(path.join(import.meta.dirname, file), path.join(fx.hooks, file));
+  }
   const env = { ...process.env };
   delete env.KHEREP_WORK_ITEM_REQUIRED;
   const commit = { tool_input: { command: "git commit -m \"x \u2014 y\"" } };

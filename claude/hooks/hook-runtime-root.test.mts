@@ -8,6 +8,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { after, test } from "node:test";
 
+import { copyDeclared } from "./copy-declare-fixture.mts";
 import { plantHeartbeat } from "./guard-dispatch-fixture.mts";
 import { alive, cleanup, describeProbe, entry, entryAsync, fakeOpener, holdExclusive, type Home, probeWriter, runtimeHome, type Step, until,
   type WriterProbe, writerFree } from "./hook-runtime-fixture.mts";
@@ -80,8 +81,8 @@ test("a main in a subdirectory waits for the root's writer like a main at the ro
 test("a nested guard under the dispatcher holds the root's database, also when it outlives its parents", async (t) => {
   const home = runtimeHome();
   fs.mkdirSync(path.join(home.hooks, "sub"));
-  fs.copyFileSync(path.join(import.meta.dirname, "guard-dispatch.mts"), path.join(home.hooks, "guard-dispatch.mts"));
-  fs.copyFileSync(path.join(import.meta.dirname, "lib", "guard-recheck.mts"), path.join(home.hooks, "lib", "guard-recheck.mts"));
+  copyDeclared(path.join(import.meta.dirname, "guard-dispatch.mts"), path.join(home.hooks, "guard-dispatch.mts"));
+  copyDeclared(path.join(import.meta.dirname, "lib", "guard-recheck.mts"), path.join(home.hooks, "lib", "guard-recheck.mts"));
   plantHeartbeat(home.root);
   const go = path.join(home.root, "go");
   const pids = path.join(home.root, "pids");
