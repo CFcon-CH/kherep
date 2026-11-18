@@ -14,7 +14,7 @@ import type { ClientOptions, NodeClient, SentState } from "./client.mts";
 import { ensureDir, type NodePaths } from "./config.mts";
 import { readLocalSessions } from "./exchange-sessions.mts";
 import { markReported, messageIds, readJson, unreportedStatuses, writeJsonAtomic, type UnreportedStatus } from "./inbox.mts";
-import { directoryDue, sendSchedule } from "./send-schedule.mts";
+import { directoryDue, outboxHeld, sendSchedule } from "./send-schedule.mts";
 export {
   addLocalSession, localSessionName, readLocalSessions, recordingSessions, writeLocalSessions, type LocalSession,
 } from "./exchange-sessions.mts";
@@ -223,8 +223,9 @@ function reportKey(record: { messageId: string; state: string; progress?: Messag
 // answer (proxyOf) goes out only when proxySend allows it at that moment;
 // without proxySend it is held. Issue #487: the daemon passes its inbox index
 // as unreported, and counts adds up the status and outbox frames sent (D1).
+// Issue #961: with outboxGate the outbox stays untouched while outboxHeld.
 export interface ExchangeCounts { status: number; outbox: number }
-export interface ExchangeSources { unreported?: (now: number) => UnreportedStatus[]; counts?: ExchangeCounts }
+export interface ExchangeSources { unreported?: (now: number) => UnreportedStatus[]; counts?: ExchangeCounts; outboxGate?: true }
 export function pollExchange(client: NodeClient, paths: NodePaths, inflight: Map<string, number>, send: (frame: string) => boolean,
   now: number = Date.now(), random: () => number = Math.random, proxySend?: ProxySend, sources: ExchangeSources = {}): void {
   pollSlots(client, paths, send, now);
@@ -237,7 +238,8 @@ export function pollExchange(client: NodeClient, paths: NodePaths, inflight: Map
   // A record that left the outbox was answered: it starts over if it comes back.
   for (const messageId of inflight.keys()) if (!listed.has(messageId)) inflight.delete(messageId);
   schedule.outbox.retain(inflight.keys());
-  for (const messageId of outbox) {
+  const held = sources.outboxGate === true && outboxHeld(client, now);
+  for (const messageId of held ? [] : outbox) {
     if (!schedule.outbox.due(messageId, now)) continue;
     let record: OutboxRecord | null | undefined;
     try {

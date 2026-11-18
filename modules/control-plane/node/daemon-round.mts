@@ -55,7 +55,7 @@ export async function exchangeRound(ctx: RoundContext): Promise<void> {
   // bookkeeping cleans a held record up after its bound.
   const counts: ExchangeCounts = { status: 0, outbox: 0 };
   const exchange = (records?: InboxRecord[]): void => pollExchange(client, paths, ctx.inflight, ctx.send, Date.now(), Math.random,
-    undefined, { unreported: (now) => ctx.inbox.unreported(now, records), counts });
+    undefined, { unreported: (now) => ctx.inbox.unreported(now, records), counts, outboxGate: true });
   const refreshed = await client.refreshPolicy(applied);
   if (!ctx.live()) return;
   let published = ctx.publishRegistration(refreshed);

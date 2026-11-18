@@ -2,9 +2,10 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import { writeRequest, readRequest } from "./task-records.mts";
 import { makeEnvelope } from "../protocol.mts";
+import { writeOutbox } from "./exchange.mts";
 import { heartbeatFixture, PING_FRAME, PONG_FRAME, flush } from "./daemon-heartbeat-fixture.mts";
 
-const scenarios = ["open-timeout", "pong-timeout", "healthy", "stale", "terminal-4403", "terminal-4409", "blocked-discovery", "blocked-frame", "auth-barrier", "rejected-chain", "sleep", "stop-opening", "stop-probe", "stop-grace", "stop-retry", "pending"];
+const scenarios = ["open-timeout", "pong-timeout", "healthy", "stale", "terminal-4403", "terminal-4409", "blocked-discovery", "blocked-frame", "auth-barrier", "rejected-chain", "sleep", "stop-opening", "stop-probe", "stop-grace", "stop-retry", "pending", "wake", "outbox-gate"];
 const scenario = process.argv[2];
 assert.ok(scenarios.includes(scenario));
 const f = await heartbeatFixture();
@@ -82,6 +83,23 @@ try {
     while (f.clock.fire() && old.sent.length < 2) { /* diagnostics may fire first */ }
     assert.equal(old.sent.at(-1), PING_FRAME); assert.equal(timeouts().length, 0);
     old.receive(PONG_FRAME); f.clock.advance(5_000); assert.equal(timeouts().length, 0);
+  } else if (scenario === "wake") {
+    // Issue #961: the intake lag at wake starts the short probe; a dead socket is replaced within about 5 s.
+    f.clock.time = 900_000;
+    while (f.clock.fire()) { /* every overdue timer runs once */ }
+    assert.equal(old.sent.at(-1), PING_FRAME); assert.equal(timeouts().length, 0);
+    f.clock.advance(4_999); assert.equal(timeouts().length, 0);
+    f.clock.advance(1); assert.equal(timeouts().length, 1); assert.equal(old.closes, 1);
+    f.clock.advance(500); assert.equal(f.sockets.length, 2);
+  } else if (scenario === "outbox-gate") {
+    // Issue #961: after auth the outbox waits for the Worker's directory answer on this connection.
+    f.auth(); await flush();
+    writeOutbox(f.paths, { messageId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc", fromSession: "source",
+      to: { nodeId: "ffffffff-ffff-4fff-8fff-ffffffffffff", session: "target" }, text: "synthetic", createdAt: new Date(0).toISOString() });
+    const sends = (): number => old.sent.filter(raw => raw.includes('"message.send"')).length;
+    f.intervals.get(2_000)!(); await flush(); assert.equal(sends(), 0, "held until the Worker answers");
+    old.receive(JSON.stringify(makeEnvelope("directory", { nodes: [], sessions: [], fetchedAt: new Date(0).toISOString() }, 0, 0))); await flush();
+    f.intervals.get(2_000)!(); await flush(); assert.equal(sends(), 1, "sent once after the directory answer");
   } else if (scenario === "pending") {
     // A completed task's connection-lifetime dedup set is not pending evidence.
     f.auth(); await flush();

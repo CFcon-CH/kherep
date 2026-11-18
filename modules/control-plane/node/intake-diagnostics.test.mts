@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { makeEnvelope, PING_FRAME, PONG_FRAME } from "../protocol.mts";
 import { FakeClock } from "./connection-test-fixture.mts";
+import { PONG_DEADLINE_MS } from "./connection-watchdog.mts";
 import { createIntakeDiagnostics, diagnosticNumbers, FRAME_CLASSES } from "./intake-diagnostics.mts";
 
 const frame = (type: Parameters<typeof makeEnvelope>[0], body = {}): string => JSON.stringify(makeEnvelope(type, body, 0, 0));
@@ -92,4 +93,15 @@ test("a suppressed second silence episode stays eligible after the rate limit ex
   assert.equal(f.lines.length, 1, "second silence is still rate limited");
   pongs(28); assert.equal(f.lines.length, 2, "continuing second silence eventually reports");
   d.stop();
+});
+
+// Issue #961: a gap of at least PONG_DEADLINE_MS (host sleep or a stalled loop) wakes the watchdog.
+test("a tick gap of at least the pong deadline signals wake, a shorter one does not", () => {
+  const clock = new FakeClock(), wakes: number[] = [];
+  const diagnostics = createIntakeDiagnostics({ clock, log: () => {}, pending: () => false, wake: () => wakes.push(clock.now()) });
+  clock.time = 1_000 + PONG_DEADLINE_MS - 1; clock.fire(); assert.deepEqual(wakes, [], "below the deadline");
+  const due = clock.time + 1_000;
+  clock.time = due + PONG_DEADLINE_MS; clock.fire(); assert.deepEqual(wakes, [due + PONG_DEADLINE_MS]);
+  clock.advance(10_000); assert.equal(wakes.length, 1, "regular ticks do not wake");
+  diagnostics.stop();
 });

@@ -1,4 +1,5 @@
 import { parseEnvelope, PING_FRAME, PONG_FRAME } from "../protocol.mts";
+import { PONG_DEADLINE_MS } from "./connection-watchdog.mts";
 import { nodeClock, type NodeClock } from "./node-clock.mts";
 
 // Stable numeric class order in logs and doctor. Never copy an incoming label.
@@ -12,6 +13,8 @@ export interface IntakeNumbers {
 interface Options {
   clock?: NodeClock; wall?: () => number; log(line: string): void; pending(): boolean;
   publish?(snapshot: IntakeNumbers): void;
+  // Issue #961: told when a tick ran at least PONG_DEADLINE_MS late.
+  wake?(): void;
 }
 const number = (value: number): number => Math.min(Number.MAX_SAFE_INTEGER, Math.max(0, Math.round(value)));
 function kind(data: string): number {
@@ -76,6 +79,7 @@ export function createIntakeDiagnostics(options: Options) {
     const now = clock.now();
     lagMs = number(now - due); maxLagMs = Math.max(lagMs, maxLagMs);
     if (lagMs > 5_000) report(2);
+    if (lagMs >= PONG_DEADLINE_MS) options.wake?.();
     if (options.pending()) pendingSince ??= now;
     else { pendingSince = null; silent = false; }
     if (pendingSince !== null && now - Math.max(pendingSince, appMs) > 30_000

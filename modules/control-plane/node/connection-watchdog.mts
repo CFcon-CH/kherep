@@ -49,6 +49,11 @@ export function createConnectionWatchdog(options: Options) {
       if (phase === "opening" || phase === "stopped") return;
       pongAt = clock.now(); phase = "idle"; arm(PING_INTERVAL_MS);
     },
+    // Issue #961: a gap of at least PONG_DEADLINE_MS seen elsewhere (host sleep,
+    // stalled loop) confirms at once with only the grace left; a pong keeps it.
+    wake(): void {
+      if (phase === "idle" || phase === "probe") { phase = "grace"; arm(PONG_GRACE_MS); ping(); }
+    },
     stop(): void { phase = "stopped"; clock.cancel(timer); },
   };
 }

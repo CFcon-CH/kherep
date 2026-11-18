@@ -105,3 +105,34 @@ test("an early scheduler callback re-arms the remaining deadline", () => {
   f.clock.advance(29_998); assert.equal(f.expired.length, 0);
   f.clock.advance(1); assert.equal(f.expired.length, 1);
 });
+
+// Issue #961: a detected wake gap replaces the 45 s probe deadline by one short grace.
+for (const phase of ["idle", "probe"] as const) {
+  test(`wake while ${phase} pings at once and expires after only the grace without a pong`, () => {
+    const f = fixture(); f.watchdog.open();
+    if (phase === "probe") f.clock.advance(30_000);
+    f.clock.time = 900_000; f.watchdog.wake();
+    assert.equal(f.pings.at(-1), 900_000);
+    f.clock.advance(4_999); assert.deepEqual(f.expired, []);
+    f.clock.advance(1); assert.equal(f.expired.length, 1);
+    assert.equal((f.expired[0] as { code: string }).code, "PONG_TIMEOUT"); assert.equal(f.clock.timers.size, 0);
+  });
+}
+test("a pong after wake keeps the socket and returns to the normal ping interval", () => {
+  const f = fixture(); f.watchdog.open(); f.clock.advance(10_000); f.watchdog.wake();
+  f.clock.advance(1_000); f.watchdog.pong();
+  f.clock.advance(29_999); assert.deepEqual(f.pings, [10_000]);
+  f.clock.advance(1); assert.deepEqual(f.pings, [10_000, 41_000]); assert.deepEqual(f.expired, []); f.watchdog.stop();
+});
+for (const phase of ["opening", "grace", "stopped"] as const) {
+  test(`wake while ${phase} changes nothing`, () => {
+    const f = fixture();
+    if (phase !== "opening") f.watchdog.open();
+    if (phase === "grace") f.clock.advance(75_000);
+    if (phase === "stopped") f.watchdog.stop();
+    const pings = f.pings.length, timers = [...f.clock.timers.values()].map(timer => timer.at);
+    f.watchdog.wake();
+    assert.equal(f.pings.length, pings); assert.deepEqual([...f.clock.timers.values()].map(timer => timer.at), timers);
+    f.watchdog.stop();
+  });
+}
