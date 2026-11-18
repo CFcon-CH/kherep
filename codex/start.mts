@@ -149,8 +149,7 @@ export async function startCodex(options: StartOptions, dependencies: StartDepen
     verifyHomePaths(codexHome);
     assertWorkspaceConfig(codexHome, cwd);
     const desktop = options.desktop ? dependencies.desktop ?? windowsDesktop() : undefined;
-    if (desktop && !/^[A-Za-z]:[\\/]/u.test(desktop.home) && process.platform === "win32") refuseStart("desktop-home-unsupported");
-    if (desktop && fs.realpathSync.native(desktop.home) !== codexHome) refuseStart("desktop-home-unsupported");
+    if (desktop && (!path.isAbsolute(desktop.home) || fs.realpathSync.native(desktop.home) !== codexHome)) refuseStart("desktop-home-unsupported");
     const git = options.git ?? modelSelectionGit(REPO);
     const release = acquireSelectionLock(codexHome);
     let launch: LaunchHandle;

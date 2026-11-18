@@ -12,6 +12,17 @@ export interface DesktopStart {
   activate(executable: string): Promise<void>;
 }
 
+export type DesktopExec = (file: string, args: string[], options: {
+  encoding: "utf8"; maxBuffer: number; timeout: number; windowsHide: boolean; env: NodeJS.ProcessEnv;
+}) => Promise<{ stdout: string }>;
+
+interface DesktopRuntime {
+  platform: NodeJS.Platform;
+  env: NodeJS.ProcessEnv;
+  home: string;
+  exec: DesktopExec;
+}
+
 // The fixed installed-only Windows activation surface. This script reports
 // only the package's own CLI path to the launcher, or one bounded exit code.
 // Native application activation is via IApplicationActivationManager, not
@@ -81,22 +92,23 @@ const refusalCodes = new Map([
   [22, "desktop-package-changed"], [23, "desktop-access-or-activation-failed"],
 ]);
 
-export function windowsDesktop(): DesktopStart {
-  if (process.platform !== "win32") refuseStart("desktop-platform-unsupported");
-  const systemRoot = process.env.SystemRoot;
+export function windowsDesktop({ platform = process.platform, env = process.env, home = os.homedir(), exec = run }: Partial<DesktopRuntime> = {}): DesktopStart {
+  if (platform !== "win32") refuseStart("desktop-platform-unsupported");
+  const systemRoot = env.SystemRoot;
   if (!systemRoot || !/^[A-Za-z]:\\/u.test(systemRoot)) refuseStart("desktop-access-or-activation-failed");
   // Explorer activation may inherit a different process environment. This
   // companion is for Windows' standard signed-in ChatGPT provider context.
-  if (["OPENAI_BASE_URL", "CODEX_API_KEY", "OPENAI_API_KEY", "OPENAI_IDENTITY_TOKEN_FILE"].some((key) => Boolean(process.env[key]))) {
+  if (["OPENAI_BASE_URL", "CODEX_API_KEY", "OPENAI_API_KEY", "OPENAI_IDENTITY_TOKEN_FILE"].some((key) => Boolean(env[key]))) {
     refuseStart("desktop-provider-environment-unsupported");
   }
-  const powershell = path.join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+  if (!/^[A-Za-z]:[\\/]/u.test(home)) refuseStart("desktop-home-unsupported");
+  const powershell = path.win32.join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
   const args = ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")];
   const invoke = async (expected = ""): Promise<string> => {
     try {
-      const result = await run(powershell, args, {
+      const result = await exec(powershell, args, {
         encoding: "utf8", maxBuffer: 8192, timeout: 20_000, windowsHide: true,
-        env: { ...process.env, [expectedExecutable]: expected },
+        env: { ...env, [expectedExecutable]: expected },
       });
       return result.stdout.trim();
     } catch (error) {
@@ -105,13 +117,13 @@ export function windowsDesktop(): DesktopStart {
     }
   };
   return {
-    home: path.join(os.homedir(), ".codex"),
+    home: path.win32.join(home, ".codex"),
     async probe() {
       const text = await invoke();
       let executable: unknown;
       try { executable = (JSON.parse(text) as { executable?: unknown }).executable; }
       catch { throw new ModelSelectionRefusal("codex-start-desktop-package-unsupported"); }
-      if (typeof executable !== "string" || !path.isAbsolute(executable) || !/[\\/]app[\\/]resources[\\/]codex\.exe$/iu.test(executable)) {
+      if (typeof executable !== "string" || !path.win32.isAbsolute(executable) || !/[\\/]app[\\/]resources[\\/]codex\.exe$/iu.test(executable)) {
         refuseStart("desktop-package-unsupported");
       }
       return executable;
