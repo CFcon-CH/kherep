@@ -10,6 +10,7 @@ import path from "node:path";
 import { runCli as claudeCli, type Injected } from "./atl-confluence-ccoder.mts";
 import { runCli as codexCli } from "./atl-confluence.mts";
 import { reply, routed, type Route } from "./broker-route.fixture.mts";
+import { withoutTypeStrippingWarning } from "../../codex/lib/node-warning-fixture.mts";
 
 const SITE = "https://wiki.example.com";
 const CRED_PATH = "synthetic-credential-path";
@@ -109,7 +110,7 @@ for (const broker of BROKERS) {
     assert.match(help.stdout, /selftest/);
     const unknown = spawnSync(process.execPath, [file, "nonsense"], { encoding: "utf8", timeout: 20_000, env });
     assert.equal(unknown.status, 1);
-    assert.match(unknown.stderr, /^Usage: /);
+    assert.match(withoutTypeStrippingWarning(unknown.stderr, 1), /^Usage: /);
   });
 
   test(`${broker.name} imported without its own script path stays a library and prints nothing`, () => {
