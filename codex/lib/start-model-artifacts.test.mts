@@ -48,6 +48,9 @@ test("checks only the declared workspace ancestry up to its Git boundary", (t) =
   fs.writeFileSync(path.join(home, "config.toml"), "model = 'managed'\n");
   assert.doesNotThrow(() => assertWorkspaceConfig(home, workspace));
   assert.throws(() => assertWorkspaceConfig(path.join(directory, "another-home"), workspace), { message: "codex-start-project-config" });
+  const caseAlias = path.join(project, ".CODEX");
+  assert.doesNotThrow(() => assertWorkspaceConfig(caseAlias, workspace, "win32"));
+  assert.throws(() => assertWorkspaceConfig(caseAlias, workspace, "linux"), { message: "codex-start-project-config" });
 });
 
 test("rejects non-regular, oversized and invalid UTF-8 managed inputs", (t) => {
