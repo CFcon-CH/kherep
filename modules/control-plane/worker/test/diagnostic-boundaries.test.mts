@@ -67,6 +67,13 @@ for (const registerOld of [false, true]) it(`actual reconnect ${registerOld ? "o
   if (registerOld) {
     socket.send(makeEnvelope("register", { facts: FACTS, runtimes: [{ name: "codex", kind: "cli" }], capabilities: BRAKE_CAPS }, 1, 0));
     await vi.waitFor(async () => { expect((await session(f.nodeId).loopCapabilityEvidence()).registered).toBe(true); });
+    // Issue #968: `registered` is set before the register handler's own
+    // "registration" pass, which stores binding-capability-missing for this
+    // node without the binding capability. Wait for that write so the manual
+    // auth-phase write below is the last one, not raced by it.
+    await vi.waitFor(async () => {
+      expect((await registry().mcpMessageStatus(f.nodeId, sent.status.messageId))?.diagnostic).toMatchObject({ code: "binding-capability-missing" });
+    }, { timeout: 10_000 });
     await session(f.nodeId).pushFrame("message.status", { messageId: sent.status.messageId, state: "queued" });
     expect(archivedStatus((await until(socket, "message.status", { messageId: sent.status.messageId })).at(-1)?.body)).toBe(true);
   }
