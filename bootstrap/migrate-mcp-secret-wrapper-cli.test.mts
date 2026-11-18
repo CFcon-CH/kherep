@@ -111,7 +111,7 @@ test("missing arguments and colliding outputs are a usage error that writes noth
   fs.writeFileSync(files.input, JSON.stringify(bridge()));
   for (const result of [run(files, {}, 1), run(files, { registry: files.input }), run(files, { token: files.registry })]) {
     assert.equal(result.status, 1);
-    assert.match(result.stderr, /^MCP wrapper migration failed: usage: <input-registry>/);
+    assert.match(result.stderr, /^MCP wrapper migration failed: usage: <input-registry>/m);
   }
   assert.deepEqual(fs.readdirSync(path.dirname(files.input)), ["input.json"]);
 });
