@@ -1,8 +1,9 @@
 import { readFileSync, realpathSync, statSync } from "node:fs";
 import { isAbsolute, relative, resolve, sep } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { canonicalFileUrl, classifyV8ScriptUrl, repositoryPathFromUrl, repositoryRelativeUrlPath } from "./coverage-source-urls.mts";
+import { trimSourceUrlSuffix } from "./coverage-source-url-suffix.mts";
 
 export const byCodeUnit = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 
@@ -23,10 +24,10 @@ type Range = { startOffset: number; endOffset: number; count: number };
 type V8Function = { ranges: Range[]; [key: string]: unknown };
 type Script = { url: string; functions: V8Function[]; [key: string]: unknown };
 type V8Report = { result: Script[]; "source-map-cache"?: Record<string, unknown>; [key: string]: unknown };
-export function relocateV8Report(value: unknown, sourceRootUrl: string, repositoryRoot: string, copies: ReadonlyMap<string, string> = new Map(), usedCopies = new Set<string>()): { report: V8Report; ignored: number } {
+export function relocateV8Report(value: unknown, sourceRootUrl: string, repositoryRoot: string, copies: ReadonlyMap<string, string> = new Map(), usedCopies = new Set<string>()): { report: V8Report; ignored: number; untrimmed: number } {
   if (!value || typeof value !== "object" || !Array.isArray((value as V8Report).result)) throw new Error("malformed V8 report");
   const report = value as V8Report;
-  let ignored = 0;
+  let ignored = 0, untrimmed = 0;
   function relocate(url: string): string | null {
     if (!url.startsWith("file:")) return null;
     canonicalFileUrl(url);
@@ -51,7 +52,11 @@ export function relocateV8Report(value: unknown, sourceRootUrl: string, reposito
     }
     const url = relocate(script.url);
     if (copies.has(script.url)) usedCopies.add(script.url);
-    if (url) scripts.push({ ...script, url }); else ignored++;
+    if (!url) { ignored++; continue; }
+    // Offsets are in UTF-16 code units of the original text; copies are byte-identical to it.
+    const functions = trimSourceUrlSuffix(script.url, script.functions, readFileSync(fileURLToPath(url), "utf8").length);
+    if (!functions) untrimmed++;
+    scripts.push({ ...script, url, functions: functions ?? script.functions });
   }
   const cache = report["source-map-cache"];
   if (cache !== undefined && (!cache || typeof cache !== "object" || Array.isArray(cache))) throw new Error("malformed V8 source-map-cache");
@@ -80,7 +85,7 @@ export function relocateV8Report(value: unknown, sourceRootUrl: string, reposito
     const relocatedMap = mapPath ? pathToFileURL(resolve(repositoryRoot, mapPath)).href : url;
     relocatedCache[url] = { ...entry, ...(typeof map.url === "string" && !map.url.startsWith("data:") ? { url: relocatedMap } : {}), data: { ...data, sourceRoot: "", sources } };
   }
-  return { report: { ...report, result: scripts, ...(cache === undefined ? {} : { "source-map-cache": relocatedCache }) }, ignored };
+  return { report: { ...report, result: scripts, ...(cache === undefined ? {} : { "source-map-cache": relocatedCache }) }, ignored, untrimmed };
 }
 export function normalizeLcovPaths(lcov: string, repositoryRoot: string, sourceRoot = repositoryRoot): string {
   return lcov.split("\n").map(line => {

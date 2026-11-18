@@ -38,7 +38,7 @@ payloads are not parsed. There is no alternate run, repository, token or cache.
 The accepted final manifest is `{runId, attempt, checkoutSha, producers}`.
 The outer attempt belongs to assembly; each inner attempt is its actual selected
 producer attempt. `summary.json` records producer names, attempts, artifact names,
-retained/ignored V8 counts and omitted wholly erased type-only files. Both final
+retained/ignored/untrimmed V8 counts and omitted wholly erased type-only files. Both final
 LCOV families use unique repository-relative slash-separated `SF:` paths.
 
 ## Selected producer completeness and order
@@ -79,7 +79,21 @@ This deliberate metric discontinuity is not execution gain or a monotonically
 conservative percentage. Compare source identities and LF/LH/BRF/BRH; a Sonar
 combined percentage requires its own server measurement.
 
-Retained V8 ranges and counts are preserved. Cached map keys, map locations, nested
+Node's type stripping keeps offsets and appends `\n\n//# sourceURL=<url>` to every
+`.mts` module, so one source ends at a different offset at every path: per
+producer root and per copy (#969). Without correction the merge treats these
+top-level ranges as different functions, keeps the last one and lists its
+branches once per path. Relocation reads the retained source as UTF-16 text and
+trims every range end that reaches past it back to its length, but only when the
+excess equals 16 plus the length of that script's own reported URL. A range that
+starts past the source is dropped, with its function if it is the function's own
+range. Any other excess leaves the script untouched; `summary.json` counts it
+per producer as `untrimmed` and the assembly log prints the total. Copies stay
+byte-verified, so the original's length is theirs. Measured on run 44292304991,
+Ubuntu, macOS, Windows and typescript reports all matched this formula, including
+sources with non-ASCII text.
+
+Retained V8 ranges and counts are otherwise preserved. Cached map keys, map locations, nested
 `sources` and `sourceRoot` are relocated using their original URL locations;
 mappings, names, line lengths and `sourcesContent` are retained. Unsupported
 maps for retained scripts fail. Every query-bearing cache key, location, sourceRoot,
