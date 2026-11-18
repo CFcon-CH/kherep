@@ -9,6 +9,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { declareCopy } from "../../bootstrap/coverage-copy-fixture.mts";
+import { copyRuntime } from "./hook-runtime-fixture.mts";
 
 const HOOKS_SOURCE = import.meta.dirname;
 export const ENTRY = path.resolve(HOOKS_SOURCE, "..", "kherep", "hook-runtime", "entry.mts");
@@ -21,7 +22,7 @@ export const entryFor = (hooksDir: string): string => path.join(path.dirname(hoo
 
 // This checkout's runtime beside hooksDir, once.
 function ensureRuntime(hooksDir: string): void {
-  if (!fs.existsSync(entryFor(hooksDir))) fs.cpSync(path.dirname(ENTRY), path.dirname(entryFor(hooksDir)), { recursive: true });
+  if (!fs.existsSync(entryFor(hooksDir))) copyRuntime(path.dirname(entryFor(hooksDir)));
 }
 
 // The hook and every non-test lib, byte for byte, into hooksDir, and the runtime beside it.

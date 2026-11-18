@@ -9,6 +9,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { declareCopy } from "../../bootstrap/coverage-copy-fixture.mts";
 import { initialize, openDatabase, type Opened } from "../kherep/hook-runtime/coordinator-db.mts";
 
 export const RUNTIME = path.resolve(import.meta.dirname, "..", "kherep", "hook-runtime");
@@ -17,13 +18,25 @@ const roots: string[] = [];
 
 export interface Home { root: string; hooks: string; db: string; runtime: string }
 
-export function runtimeHome(prefix = "hook-runtime-"): Home {
+// This checkout's runtime into dir, each .mts source declared as an unchanged copy so coverage of the
+// copy credits the original (issue #964). A caller that edits the copy afterwards must not use this.
+export function copyRuntime(dir: string): void {
+  fs.cpSync(RUNTIME, dir, { recursive: true });
+  for (const rel of fs.readdirSync(RUNTIME, { recursive: true, encoding: "utf8" })) {
+    const source = path.join(RUNTIME, rel);
+    if (rel.endsWith(".mts") && !rel.endsWith(".test.mts") && fs.lstatSync(source).isFile()) declareCopy(source, path.join(dir, rel));
+  }
+}
+
+// declare: false for a case that alters its runtime copy afterwards; that copy then earns no coverage credit.
+export function runtimeHome(prefix = "hook-runtime-", { declare = true } = {}): Home {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
   roots.push(root);
   const hooks = path.join(root, "hooks");
   fs.mkdirSync(path.join(hooks, "lib"), { recursive: true });
   const runtime = path.join(root, "kherep", "hook-runtime");
-  fs.cpSync(RUNTIME, runtime, { recursive: true });
+  if (declare) copyRuntime(runtime);
+  else fs.cpSync(RUNTIME, runtime, { recursive: true });
   return { root, hooks, db: path.join(hooks, ".kherep-integrity", "run.sqlite"), runtime };
 }
 

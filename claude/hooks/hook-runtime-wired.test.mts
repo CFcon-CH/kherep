@@ -10,6 +10,7 @@ import path from "node:path";
 import { after, test } from "node:test";
 
 import { initialize, openDatabase } from "../kherep/hook-runtime/coordinator-db.mts";
+import { copyRuntime } from "./hook-runtime-fixture.mts";
 
 const REPO = path.resolve(import.meta.dirname, "..", "..");
 const TMP = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "hook-runtime-wired-")));
@@ -21,7 +22,7 @@ interface Home { claude: string; settings: { hooks: Record<string, { matcher?: s
 function home(): Home {
   const claude = path.join(TMP, `case-${++seq}`, ".claude");
   fs.cpSync(path.join(REPO, "claude", "hooks"), path.join(claude, "hooks"), { recursive: true });
-  fs.cpSync(path.join(REPO, "claude", "kherep", "hook-runtime"), path.join(claude, "kherep", "hook-runtime"), { recursive: true });
+  copyRuntime(path.join(claude, "kherep", "hook-runtime"));
   const text = fs.readFileSync(path.join(REPO, "claude", "settings.user.json"), "utf8").replaceAll("__KHEREP_CLAUDE_HOME__", claude.replace(/\\/g, "/"));
   fs.writeFileSync(path.join(claude, "settings.user.json"), text);
   const recorded = spawnSync(process.execPath, [path.join(REPO, "bootstrap", "record-install-source.mts"), claude, REPO], { encoding: "utf8" });
