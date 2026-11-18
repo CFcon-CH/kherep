@@ -131,23 +131,33 @@ function receiptShape(text: string): ReceiptShape {
 // Verifies the anchored generation: anchor -> exact receipt bytes -> inventory
 // and policy rebuilt from the receipt's own commit (aliases from the receipt)
 // -> the current bytes of every recorded output, plus an optional overlay.
-export function verifyAnchoredState(codexHome: string, git: ModelSelectionGit, anchorText: string): AnchoredState {
+export function verifyAnchoredState(codexHome: string, git: ModelSelectionGit, anchorText: string,
+  checkTarget?: (file: string) => void): AnchoredState {
   const anchor = parseAnchor(anchorText);
-  const receiptText = readOptional(homeFile(codexHome, anchor.receipt.target), ANCHOR_REFUSAL.receiptMissing);
+  const receiptFile = homeFile(codexHome, anchor.receipt.target);
+  checkTarget?.(receiptFile);
+  const receiptText = readOptional(receiptFile, ANCHOR_REFUSAL.receiptMissing);
   if (receiptText === undefined) throw new ModelSelectionRefusal(ANCHOR_REFUSAL.receiptMissing);
   if (sha256(receiptText) !== anchor.receipt.sha256) throw new ModelSelectionRefusal(ANCHOR_REFUSAL.receiptConflict);
   const shape = receiptShape(receiptText);
   const reader = git.at(anchor.sourceRevision);
   const source = readSourceSnapshot(reader);
   const inventory = buildSelectionInventory(source.rows, new Map(shape.inventory.agents.map((row) => [row.bindingId, row.installedName])));
+  const targets = new Set([MODEL_DISPATCH_SNAPSHOT_TARGET, ...inventory.agents.map((row) => `agents/${row.installedName}.toml`)]);
+  if (shape.outputs.length !== targets.size || new Set(shape.outputs.map((row) => row.target)).size !== targets.size
+    || shape.outputs.some((row) => !targets.has(row.target))) throw new ModelSelectionRefusal(ANCHOR_REFUSAL.stateInvalid, "output-target");
   const actualOutputs = shape.outputs.map((row) => {
-    const content = readOptional(homeFile(codexHome, String(row.target), ANCHOR_REFUSAL.stateInvalid), ANCHOR_REFUSAL.outputMissing);
+    const file = homeFile(codexHome, String(row.target), ANCHOR_REFUSAL.stateInvalid);
+    checkTarget?.(file);
+    const content = readOptional(file, ANCHOR_REFUSAL.outputMissing);
     if (content === undefined) throw new ModelSelectionRefusal(ANCHOR_REFUSAL.outputMissing);
     return { target: row.target, kind: row.kind, sourceBinding: row.sourceBinding, content };
   });
   let overlay: { authority: ObserverOverlayAuthority; overlayText: string; expectedOverlaySha256: string } | undefined;
   if (anchor.overlay) {
-    const overlayText = readOptional(homeFile(codexHome, anchor.overlay.target), ANCHOR_REFUSAL.outputMissing);
+    const overlayFile = homeFile(codexHome, anchor.overlay.target);
+    checkTarget?.(overlayFile);
+    const overlayText = readOptional(overlayFile, ANCHOR_REFUSAL.outputMissing);
     if (overlayText === undefined) throw new ModelSelectionRefusal(ANCHOR_REFUSAL.outputMissing);
     const { authority } = observerOverlayAuthority(inventory, shape.resolution, anchor.overlay.sourceRevision, git.at(anchor.overlay.sourceRevision));
     overlay = { authority, overlayText, expectedOverlaySha256: anchor.overlay.sha256 };
