@@ -6,6 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { after, test } from "node:test";
 import { declareCopy } from "../../bootstrap/coverage-copy-fixture.mts";
+import { copyDeclared } from "./copy-declare-fixture.mts";
 
 import { denialFaultEnv, faultSpan, MARKER_SLOW_MS, readFaultReceipt, stallFor, type FaultReceipt } from "./denial-fault.fixture.mts";
 import { cleanup, entry, runtimeHome, type Home, type Run } from "./hook-runtime-fixture.mts";
@@ -19,7 +20,8 @@ function home(unchanged = true): Home {
   const h = runtimeHome("denied-calls-delivered-");
   fs.copyFileSync(path.join(import.meta.dirname, RECORDER), path.join(h.hooks, RECORDER));
   declareCopy(path.join(import.meta.dirname, RECORDER), path.join(h.hooks, RECORDER));
-  for (const lib of ["denial-journal.mts", "workspace-scope.mts"]) fs.copyFileSync(path.join(import.meta.dirname, "lib", lib), path.join(h.hooks, "lib", lib));
+  fs.copyFileSync(path.join(import.meta.dirname, "lib", "denial-journal.mts"), path.join(h.hooks, "lib", "denial-journal.mts"));
+  copyDeclared(path.join(import.meta.dirname, "lib", "workspace-scope.mts"), path.join(h.hooks, "lib", "workspace-scope.mts"));
   if (unchanged) declareCopy(path.join(import.meta.dirname, "lib", "denial-journal.mts"), path.join(h.hooks, "lib", "denial-journal.mts"));
   return h;
 }

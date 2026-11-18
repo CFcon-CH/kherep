@@ -9,7 +9,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { declareCopy } from "../../bootstrap/coverage-copy-fixture.mts";
+import { copyTreeDeclared } from "./copy-declare-fixture.mts";
 import { initialize, openDatabase, type Opened } from "../kherep/hook-runtime/coordinator-db.mts";
 
 export const RUNTIME = path.resolve(import.meta.dirname, "..", "kherep", "hook-runtime");
@@ -21,11 +21,7 @@ export interface Home { root: string; hooks: string; db: string; runtime: string
 // This checkout's runtime into dir, each .mts source declared as an unchanged copy so coverage of the
 // copy credits the original (issue #964). A caller that edits the copy afterwards must not use this.
 export function copyRuntime(dir: string): void {
-  fs.cpSync(RUNTIME, dir, { recursive: true });
-  for (const rel of fs.readdirSync(RUNTIME, { recursive: true, encoding: "utf8" })) {
-    const source = path.join(RUNTIME, rel);
-    if (rel.endsWith(".mts") && !rel.endsWith(".test.mts") && fs.lstatSync(source).isFile()) declareCopy(source, path.join(dir, rel));
-  }
+  copyTreeDeclared(RUNTIME, dir);
 }
 
 // declare: false for a case that alters its runtime copy afterwards; that copy then earns no coverage credit.

@@ -15,6 +15,7 @@ import { decide } from "./obs-handback-gate.mts";
 import { pageLinesReason, refusedReason } from "./lib/obs-handback-state.mts";
 import { warningDocument, type ShapeReason } from "./lib/tool-event-shape.mts";
 import { declareCopy } from "../../bootstrap/coverage-copy-fixture.mts";
+import { copyTreeDeclared } from "./copy-declare-fixture.mts";
 
 const TMP = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "obs-handback-gate-test-")));
 const SECRET = "Example Corp host.example.com";
@@ -31,7 +32,7 @@ function fixture(name: string, ...hooks: string[]): { root: string; state: strin
     fs.copyFileSync(path.join(import.meta.dirname, file), path.join(root, "hooks", file));
     declareCopy(path.join(import.meta.dirname, file), path.join(root, "hooks", file));
   }
-  fs.cpSync(path.join(import.meta.dirname, "lib"), path.join(root, "hooks", "lib"), { recursive: true });
+  copyTreeDeclared(path.join(import.meta.dirname, "lib"), path.join(root, "hooks", "lib"));
   return {
     root,
     state: path.join(root, ".cache", "obs-result-check"),

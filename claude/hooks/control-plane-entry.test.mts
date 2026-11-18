@@ -8,6 +8,7 @@ import { test, type TestContext } from "node:test";
 import { readPointer as readCodexPointer } from "../../codex/hooks/control-plane-hook.mts";
 import { withoutTypeStrippingWarning } from "../../codex/lib/node-warning-fixture.mts";
 import { readPointer } from "../kherep/control-plane/claude-control-plane-hook.mts";
+import { copyDeclared } from "./copy-declare-fixture.mts";
 
 // Issue #592. The stable Claude entry point runs the hook of the source its
 // pointer names inside its own process, as that hook's main module, and fails
@@ -36,7 +37,7 @@ function fixture(t: TestContext) {
   const entryDir = path.join(home, "kherep", "control-plane");
   fs.mkdirSync(entryDir, { recursive: true });
   const entry = path.join(entryDir, "claude-control-plane-hook.mts");
-  fs.copyFileSync(ENTRY, entry);
+  copyDeclared(ENTRY, entry);
   const record = path.join(root, "record.txt");
   const source = (name: string, marker = name, hook = "deliver-hook.mts", body = STUB(marker, record)): string => {
     const dir = path.join(root, name);

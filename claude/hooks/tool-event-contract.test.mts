@@ -11,6 +11,7 @@ import path from "node:path";
 import { after, test } from "node:test";
 
 import { declareCopy } from "../../bootstrap/coverage-copy-fixture.mts";
+import { copyTreeDeclared } from "./copy-declare-fixture.mts";
 import { warningText, type ShapeGuard, type ShapeReason } from "./lib/tool-event-shape.mts";
 
 const HERE = import.meta.dirname;
@@ -54,7 +55,7 @@ fs.writeFileSync(path.join(labelled, ".github", "module-labels.json"), JSON.stri
 // obs-handback-gate keeps its once-only markers under <home>, the parent of its hooks directory.
 const obsHooks = path.join(root, "home", "hooks");
 fs.mkdirSync(obsHooks, { recursive: true });
-fs.cpSync(path.join(HERE, "lib"), path.join(obsHooks, "lib"), { recursive: true });
+copyTreeDeclared(path.join(HERE, "lib"), path.join(obsHooks, "lib"));
 fs.copyFileSync(path.join(HERE, "obs-handback-gate.mts"), path.join(obsHooks, "obs-handback-gate.mts"));
 declareCopy(path.join(HERE, "obs-handback-gate.mts"), path.join(obsHooks, "obs-handback-gate.mts"));
 

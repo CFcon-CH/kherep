@@ -45,8 +45,8 @@ const GUARDS: Record<string, string> = {
 interface Box { root: string; hooks: string; dispatch: string; trace: string }
 
 // heartbeatAgeMs null: no heartbeat at all.
-function box(heartbeatAgeMs: number | null): Box {
-  const fixture = dispatcherFixture("guard-dispatch-recheck-", { heartbeat: false });
+function box(heartbeatAgeMs: number | null, editsRecheck = false): Box {
+  const fixture = dispatcherFixture("guard-dispatch-recheck-", { heartbeat: false, editsRecheck });
   roots.push(fixture.root);
   const trace = path.join(fixture.root, "trace.jsonl");
   fs.writeFileSync(path.join(fixture.hooks, "live-hook-integrity.mts"), INTEGRITY);
@@ -139,7 +139,7 @@ test("an unrunnable live-hook-integrity.mts is named and spawns nothing", () => 
 });
 
 test("an empty lib/guard-recheck.mts is one unavailable line; the verdict is unchanged", () => {
-  const b = box(31 * MIN);
+  const b = box(31 * MIN, true);
   fs.writeFileSync(path.join(b.hooks, "lib", "guard-recheck.mts"), "");
   const run = dispatch(b, "json-deny.mts");
   assert.equal(run.output?.permissionDecision, "deny");
@@ -155,7 +155,7 @@ function fakeRunner(b: Box, recheckAfter: string): void {
 }
 
 test("a lib whose import never settles: one unavailable line within 2 s, the deny stays", () => {
-  const b = box(31 * MIN);
+  const b = box(31 * MIN, true);
   fs.writeFileSync(path.join(b.hooks, "lib", "guard-recheck.mts"), "await new Promise(() => {});\n");
   const begin = Date.now();
   const run = dispatch(b, "json-deny.mts");
@@ -167,7 +167,7 @@ test("a lib whose import never settles: one unavailable line within 2 s, the den
 });
 
 test("a lib that leaves a handle open: the dispatcher still exits right after its output", () => {
-  const b = box(31 * MIN);
+  const b = box(31 * MIN, true);
   fakeRunner(b, `async function recheckAfter() { setInterval(() => {}, 1000); return "re-check fixture left an interval"; }`);
   const begin = Date.now();
   const run = dispatch(b, "allow.mts");

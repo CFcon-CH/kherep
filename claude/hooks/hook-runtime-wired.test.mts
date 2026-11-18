@@ -10,6 +10,7 @@ import path from "node:path";
 import { after, test } from "node:test";
 
 import { initialize, openDatabase } from "../kherep/hook-runtime/coordinator-db.mts";
+import { copyTreeDeclared } from "./copy-declare-fixture.mts";
 import { copyRuntime } from "./hook-runtime-fixture.mts";
 
 const REPO = path.resolve(import.meta.dirname, "..", "..");
@@ -19,9 +20,10 @@ let seq = 0;
 
 interface Home { claude: string; settings: { hooks: Record<string, { matcher?: string; hooks: { command: string }[] }[]> } }
 
-function home(): Home {
+// `edited`: hooks/ files the case alters afterwards, left undeclared (issue #965).
+function home(edited: string[] = []): Home {
   const claude = path.join(TMP, `case-${++seq}`, ".claude");
-  fs.cpSync(path.join(REPO, "claude", "hooks"), path.join(claude, "hooks"), { recursive: true });
+  copyTreeDeclared(path.join(REPO, "claude", "hooks"), path.join(claude, "hooks"), edited);
   copyRuntime(path.join(claude, "kherep", "hook-runtime"));
   const text = fs.readFileSync(path.join(REPO, "claude", "settings.user.json"), "utf8").replaceAll("__KHEREP_CLAUDE_HOME__", claude.replace(/\\/g, "/"));
   fs.writeFileSync(path.join(claude, "settings.user.json"), text);
@@ -54,7 +56,7 @@ for (const [label, breakIt] of [
   ["syntax-broken", (file: string) => fs.writeFileSync(file, "export const x = ;\n")],
 ] as const) {
   test(`R6: a ${label} guard-dispatch.mts denies through the rendered command, is restored, and the next call runs`, () => {
-    const h = home();
+    const h = home(["guard-dispatch.mts"]);
     const dispatcher = path.join(h.claude, "hooks", "guard-dispatch.mts");
     const original = fs.readFileSync(dispatcher);
     breakIt(dispatcher);
@@ -74,7 +76,7 @@ for (const [label, breakIt] of [
 // Second review of 1dd1ca9 (P3-2): Claude Code sets no CLAUDE_HOME, so the entry's one
 // repair must find the home it belongs to by itself, also when it is not ~/.claude.
 test("R6: without CLAUDE_HOME, a broken dispatcher of a home other than ~/.claude is still restored", () => {
-  const h = home();
+  const h = home(["guard-dispatch.mts"]);
   const dispatcher = path.join(h.claude, "hooks", "guard-dispatch.mts");
   const original = fs.readFileSync(dispatcher);
   fs.writeFileSync(dispatcher, "");

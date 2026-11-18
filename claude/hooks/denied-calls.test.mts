@@ -6,7 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { after, test } from "node:test";
-import { declareCopy } from "../../bootstrap/coverage-copy-fixture.mts";
+import { copyDeclared } from "./copy-declare-fixture.mts";
 
 import { homeOf } from "./denied-calls.mts";
 import { journalPaths } from "./lib/denial-journal.mts";
@@ -67,11 +67,8 @@ test("the home is the installation's: parent of hooks/, or of hooks/kherep-maest
   const root = home();
   const hooks = path.join(root, "hooks", "kherep-maestro");
   fs.mkdirSync(path.join(hooks, "lib"), { recursive: true });
-  fs.copyFileSync(CLI, path.join(hooks, "denied-calls.mts"));
-  for (const lib of ["denial-report.mts", "denial-journal.mts", "workspace-scope.mts"]) {
-    fs.copyFileSync(path.join(import.meta.dirname, "lib", lib), path.join(hooks, "lib", lib));
-    if (lib === "denial-journal.mts") declareCopy(path.join(import.meta.dirname, "lib", lib), path.join(hooks, "lib", lib));
-  }
+  copyDeclared(CLI, path.join(hooks, "denied-calls.mts"));
+  for (const lib of ["denial-report.mts", "denial-journal.mts", "workspace-scope.mts"]) copyDeclared(path.join(import.meta.dirname, "lib", lib), path.join(hooks, "lib", lib));
   fs.writeFileSync(journalPaths(root, "a1").journal, callWith([]));
   const run = cli(["render", "a1"], path.join(hooks, "denied-calls.mts"));
   assert.equal(run.stdout.split("\n")[0], "DENIED-CALLS: none", run.stderr);

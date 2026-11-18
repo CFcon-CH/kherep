@@ -22,7 +22,7 @@ interface Run { status: number | null; stdout: string; stderr: string; ms: numbe
 
 // Runs the dispatcher with a fresh heartbeat; kills it at 35 s, past Claude Code's cancel.
 function run(integrity: string, guards: Record<string, string>, closeStdin = true, lib?: string): Promise<Run> {
-  const { root, hooks, dispatch } = dispatcherFixture("guard-dispatch-deadline-");
+  const { root, hooks, dispatch } = dispatcherFixture("guard-dispatch-deadline-", { editsRecheck: lib !== undefined });
   roots.push(root);
   if (lib) fs.writeFileSync(path.join(hooks, "lib", "guard-recheck.mts"), lib);
   fs.writeFileSync(path.join(hooks, "live-hook-integrity.mts"), integrity);

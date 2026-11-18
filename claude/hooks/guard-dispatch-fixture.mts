@@ -24,7 +24,8 @@ export function plantHeartbeat(root: string, ageMs = 0): void {
   fs.utimesSync(file, then, then);
 }
 
-export function dispatcherFixture(prefix: string, { heartbeat = true } = {}): DispatcherFixture {
+// The re-check lib is a declared copy (issue #965) unless the suite rewrites it (editsRecheck).
+export function dispatcherFixture(prefix: string, { heartbeat = true, editsRecheck = false } = {}): DispatcherFixture {
   // Real path: macOS tmpdir is a symlink, and Node names the main module by its real path.
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
   const hooks = path.join(root, "hooks");
@@ -33,6 +34,7 @@ export function dispatcherFixture(prefix: string, { heartbeat = true } = {}): Di
   fs.copyFileSync(path.join(import.meta.dirname, "guard-dispatch.mts"), dispatch);
   declareCopy(path.join(import.meta.dirname, "guard-dispatch.mts"), dispatch);
   fs.copyFileSync(path.join(import.meta.dirname, "lib", "guard-recheck.mts"), path.join(hooks, "lib", "guard-recheck.mts"));
+  if (!editsRecheck) declareCopy(path.join(import.meta.dirname, "lib", "guard-recheck.mts"), path.join(hooks, "lib", "guard-recheck.mts"));
   if (heartbeat) plantHeartbeat(root);
   return { root, hooks, dispatch };
 }
