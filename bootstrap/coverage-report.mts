@@ -38,13 +38,13 @@ async function main(args: string[]): Promise<void> {
       const expected = pathToFileURL(realpathSync(options["--source-root"]) + "/").href;
       for (const { manifest } of artifacts) if (manifest.sourceRootUrl !== expected) throw new Error(`per-producer source root mismatch: ${manifest.producer}`);
     }
-    const provenance: { producer: string; attempt: string; name: string; retained: number; ignored: number }[] = [];
+    const provenance: { producer: string; attempt: string; name: string; retained: number; ignored: number; untrimmed: number }[] = [];
     const union = mkdtempSync(join(tmpdir(), "kherep-v8-union-"));
-    let ignored = 0, raw = 0;
+    let ignored = 0, untrimmed = 0, raw = 0;
     try {
       for (const { manifest, directory, name: artifactName } of artifacts) {
-        if (manifest.producer === "worker") { provenance.push({ producer: manifest.producer, attempt: manifest.attempt, name: artifactName, retained: 0, ignored: 0 }); continue; }
-        let retained = 0, producerIgnored = 0;
+        if (manifest.producer === "worker") { provenance.push({ producer: manifest.producer, attempt: manifest.attempt, name: artifactName, retained: 0, ignored: 0, untrimmed: 0 }); continue; }
+        let retained = 0, producerIgnored = 0, producerUntrimmed = 0;
         const names = rawFiles(directory), declarationFile = join("raw", copyDeclarationsFile);
         const copies = existsSync(join(directory, declarationFile)) ? readCopyDeclarations(readNonempty(directory, declarationFile), root) : new Map<string, string>();
         const usedCopies = new Set<string>();
@@ -52,10 +52,11 @@ async function main(args: string[]): Promise<void> {
           const value: unknown = JSON.parse(readNonempty(directory, join("raw", name)));
           const result = relocateV8Report(value, manifest.sourceRootUrl, root, copies, usedCopies);
           ignored += result.ignored; producerIgnored += result.ignored; retained += result.report.result.length; raw++;
+          untrimmed += result.untrimmed; producerUntrimmed += result.untrimmed;
           writeFileSync(join(union, `${manifest.producer}-${name}`), JSON.stringify(result.report));
         }
         if (retained === 0) throw new Error("no retained V8 scripts for producer: " + manifest.producer);
-        provenance.push({ producer: manifest.producer, attempt: manifest.attempt, name: artifactName, retained, ignored: producerIgnored });
+        provenance.push({ producer: manifest.producer, attempt: manifest.attempt, name: artifactName, retained, ignored: producerIgnored, untrimmed: producerUntrimmed });
         if (usedCopies.size !== copies.size) console.log(`coverage: ${copies.size - usedCopies.size} declared copies without a report in ${manifest.producer}`);
       }
       const nodeDir = join(output, "node"); mkdirSync(nodeDir, { recursive: true });
@@ -72,7 +73,7 @@ async function main(args: string[]): Promise<void> {
       console.log(`coverage: dropped erased type-only files: ${corrected.dropped.join(", ") || "none"}`);
       writeFileSync(join(output, "manifest.json"), JSON.stringify({ ...identity, producers: artifacts.map(artifact => artifact.manifest) }) + "\n");
       verify(output, root, identity);
-      console.log(`coverage: union ${raw} V8 files, ignored ${ignored} internal/dependency/external scripts`);
+      console.log(`coverage: union ${raw} V8 files, ignored ${ignored} internal/dependency/external scripts, ${untrimmed} scripts past their source without the exact sourceURL suffix kept untrimmed`);
     } finally { rmSync(union, { recursive: true, force: true }); }
     return;
   }
