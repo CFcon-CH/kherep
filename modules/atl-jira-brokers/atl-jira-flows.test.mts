@@ -144,12 +144,15 @@ test("the broker run as a process prints help as one JSON line on stdout", () =>
   assert.match(String(JSON.parse(lines[0]).usage), /download/);
 });
 
-test("imported without a script path the module stays a library and prints nothing", () => {
-  const run = spawnSync(process.execPath, ["--input-type=module", "-e", `await import(${JSON.stringify(BROKER)});`], {
-    encoding: "utf8", timeout: 20_000, env: { PATH: process.env.PATH ?? "" },
-  });
-  assert.equal(run.status, 0);
-  assert.equal(run.stdout, "");
+test("imported without its own script path the module stays a library and prints nothing", () => {
+  // No script path at all, and one that does not exist: neither may run the entry point.
+  for (const argv of [[], [path.join(os.tmpdir(), `kherep-absent-${process.pid}`, "entry.mts")]]) {
+    const run = spawnSync(process.execPath, ["--input-type=module", "-e", `await import(${JSON.stringify(BROKER)});`, ...argv], {
+      encoding: "utf8", timeout: 20_000, env: { PATH: process.env.PATH ?? "" },
+    });
+    assert.equal(run.status, 0);
+    assert.equal(run.stdout, "");
+  }
 });
 
 test("a download run as a process writes the bytes to stdout and the envelope to stderr", (t) => {

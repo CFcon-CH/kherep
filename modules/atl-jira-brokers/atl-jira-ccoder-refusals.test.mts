@@ -3,6 +3,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import os from "node:os";
 import path from "node:path";
 
 import { runCli, type BrokerContext } from "./atl-jira-ccoder.mts";
@@ -160,10 +161,13 @@ test("the broker run as a process sets exit code 1 on a refused call", () => {
   assert.match(proc.stderr, /Nutzung:/);
 });
 
-test("imported without a script path the module stays a library and prints nothing", () => {
-  const proc = spawnSync(process.execPath, ["--input-type=module", "-e", `await import(${JSON.stringify(BROKER)});`], {
-    encoding: "utf8", timeout: 20_000, env: { PATH: process.env.PATH ?? "" },
-  });
-  assert.equal(proc.status, 0);
-  assert.equal(proc.stdout, "");
+test("imported without its own script path the module stays a library and prints nothing", () => {
+  // No script path at all, and one that does not exist: neither may run the entry point.
+  for (const argv of [[], [path.join(os.tmpdir(), `kherep-absent-${process.pid}`, "entry.mts")]]) {
+    const proc = spawnSync(process.execPath, ["--input-type=module", "-e", `await import(${JSON.stringify(BROKER)});`, ...argv], {
+      encoding: "utf8", timeout: 20_000, env: { PATH: process.env.PATH ?? "" },
+    });
+    assert.equal(proc.status, 0);
+    assert.equal(proc.stdout, "");
+  }
 });
