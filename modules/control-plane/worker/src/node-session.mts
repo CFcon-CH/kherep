@@ -358,10 +358,21 @@ export class NodeSession extends DurableObject<Env> {
         if (!isRegisterBody(body)) return this.sendControl(ws, "error", { error: "invalid register body" });
         {
           const a = ws.deserializeAttachment() as Attachment;
-          const accepted = await registry.updateRegistration(nodeId, body.facts, body.runtimes, body.capabilities, a.connectionToken);
-          // A superseded socket never certifies the current connection.
-          if (accepted && this.loopCapabilityEvidence().token === a.connectionToken) ws.serializeAttachment({ ...ws.deserializeAttachment() as Attachment,
-            registrationAccepted: true, loopCapability: loopCapability(body.capabilities), selectedBindingCapability: body.capabilities.includes(SELECTED_BINDING_CAPABILITY), diagnosticCapabilities: body.capabilities } satisfies Attachment);
+          // Issue #961: no frame or RPC call (a send, a resolve callback) may
+          // see the commit without the accepted registration. The block ends
+          // before routeEffects, which can resolve against this object. A
+          // throw inside it would reset the object, so it is rethrown after.
+          // https://developers.cloudflare.com/durable-objects/api/state/#blockconcurrencywhile
+          const failure = await this.ctx.blockConcurrencyWhile(async () => {
+            try {
+              const accepted = await registry.updateRegistration(nodeId, body.facts, body.runtimes, body.capabilities, a.connectionToken);
+              // A superseded socket never certifies the current connection.
+              if (accepted && this.loopCapabilityEvidence().token === a.connectionToken) ws.serializeAttachment({ ...ws.deserializeAttachment() as Attachment,
+                registrationAccepted: true, loopCapability: loopCapability(body.capabilities), selectedBindingCapability: body.capabilities.includes(SELECTED_BINDING_CAPABILITY), diagnosticCapabilities: body.capabilities } satisfies Attachment);
+              return null;
+            } catch (error) { return { error }; }
+          });
+          if (failure) throw failure.error;
         }
         if (this.authedSocket() === ws) {
           await this.armDeliveryRetry();
