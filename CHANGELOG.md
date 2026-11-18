@@ -239,6 +239,18 @@ increments the minor version; every other release increments the patch version.
   `vitest.config.mts` and the PowerShell scripts out of the coverage
   population; no maintained `.mts` source is excluded. No test, gate, timeout
   or threshold changed.
+- Sonar now credits the `codex/hooks` coverage from the Codex hook tests
+  (#965). Those tests run the shell dispatcher, the hook adapter and its
+  modules, the control-plane entry and the installed hook-integrity hook from
+  temporary or installed homes, and coverage of those undeclared copies
+  counted for nothing. The shared fixture `hook-adapter.fixture.mts` gains
+  `copySource` and `declareInstalled`, and `copyAdapter` declares its copies;
+  a case that edits a copy afterwards keeps it undeclared. New tests cover
+  the remaining branches through hook stdin and stdout and the exported
+  functions of `hook-integrity-repair.mts`, `post-edit-tool-calls.mts`,
+  `research-exec-parser.mts`, `control-plane-hook.mts` and
+  `confluence-delivery-check.mts`. No production code, test, timeout or
+  threshold changed.
 - A node no longer sends its outbox the moment it reconnects, racing the
   Worker's handling of its `register` (#961). A message sent 31 ms after a
   reconnect was refused with `loop-resolution-required`. The daemon now holds
