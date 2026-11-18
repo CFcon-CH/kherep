@@ -14,7 +14,7 @@ import { test, type TestContext } from "node:test";
 
 import { nodePaths, type NodePaths } from "../../modules/control-plane/node/config.mts";
 import { recordMcpIntentReceipt } from "../../modules/control-plane/node/mcp-local.mts";
-import { copyAdapter } from "./hook-adapter.fixture.mts";
+import { copyAdapter, copySource } from "./hook-adapter.fixture.mts";
 
 const REPO = path.resolve(import.meta.dirname, "..", "..");
 const ADAPTER = path.join(import.meta.dirname, "hook-adapter.mts");
@@ -211,7 +211,7 @@ function installedBox(t: TestContext, guardBody: string): { adapter: string; gua
   fs.mkdirSync(path.join(dir, "lib"), { recursive: true });
   const adapter = path.join(dir, "codex-hook-adapter.mts");
   copyAdapter(dir, "codex-hook-adapter.mts");
-  fs.copyFileSync(path.join(import.meta.dirname, "shell-checks.mts"), path.join(dir, "codex-shell-checks.mts"));
+  copySource("shell-checks.mts", path.join(dir, "codex-shell-checks.mts"));
   fs.copyFileSync(path.join(REPO, "claude", "hooks", "lib", "guard-recheck.mts"), path.join(dir, "lib", "guard-recheck.mts"));
   fs.writeFileSync(path.join(dir, "codex-hook-integrity.mts"), "console.log('all 2 files OK (0 restored), heartbeat refreshed');\n");
   const peers: Record<string, Record<string, string>> = {};

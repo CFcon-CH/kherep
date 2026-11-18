@@ -10,7 +10,7 @@ import os from "node:os";
 import path from "node:path";
 import { test, type TestContext } from "node:test";
 
-import { ADAPTER_MODULES, copyAdapter } from "./hook-adapter.fixture.mts";
+import { ADAPTER_MODULES, copyAdapter, copySource } from "./hook-adapter.fixture.mts";
 
 const REPO = path.resolve(import.meta.dirname, "..", "..");
 const PAYLOAD = JSON.stringify({ hook_event_name: "PreToolUse", tool_name: "shell_command", tool_input: { command: "git status" } });
@@ -42,9 +42,9 @@ function box(t: TestContext): Box {
   const dir = path.join(root, "hooks", "kherep-maestro");
   fs.mkdirSync(path.join(dir, "lib"), { recursive: true });
   fs.mkdirSync(path.join(root, ".cache", "hook-integrity"), { recursive: true });
-  fs.copyFileSync(path.join(import.meta.dirname, "shell-checks.mts"), path.join(dir, "codex-shell-checks.mts"));
-  copyAdapter(dir, "hook-adapter.mts");
-  copyAdapter(dir, "codex-hook-adapter.mts");
+  copySource("shell-checks.mts", path.join(dir, "codex-shell-checks.mts"));
+  copyAdapter(dir, "hook-adapter.mts", false); // the tests break and restore these copies
+  copyAdapter(dir, "codex-hook-adapter.mts", false);
   fs.copyFileSync(path.join(REPO, "claude", "hooks", "lib", "guard-recheck.mts"), path.join(dir, "lib", "guard-recheck.mts"));
   for (const name of GUARDS) fs.writeFileSync(path.join(dir, `${name}.mts`), "process.exit(0);\n");
   fs.writeFileSync(path.join(dir, "codex-hook-integrity.mts"), INTEGRITY);
