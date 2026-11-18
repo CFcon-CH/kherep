@@ -91,8 +91,8 @@ const MODEL_KEY = "model";
 const EFFORT_KEY = "model_reasoning_effort";
 const KEY_VALUE = /^[ \t]*(?:([\w-]+)|("(?:[^"\\]|\\.)*")|'([^']*)')[ \t]*(?=[.=])/u;
 
-export function assertWorkspaceConfig(codexHome: string, workspace: string): void {
-  const comparable = (value: string) => process.platform === "win32" ? value.toLowerCase() : value;
+export function assertWorkspaceConfig(codexHome: string, workspace: string, platform: NodeJS.Platform = process.platform): void {
+  const comparable = (value: string) => platform === "win32" ? value.toLowerCase() : value;
   const homeConfig = comparable(path.join(codexHome, CONFIG));
   const ancestors: string[] = [];
   for (let directory = workspace; ; directory = path.dirname(directory)) {
