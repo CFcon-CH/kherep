@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { after, test } from "node:test";
 
-import { copyAdapter } from "./hook-adapter.fixture.mts";
+import { copyAdapter, copySource } from "./hook-adapter.fixture.mts";
 import { declareCopy } from "../../bootstrap/coverage-copy-fixture.mts";
 
 const HERE = import.meta.dirname;
@@ -26,10 +26,9 @@ function materialize(destination = INSTALLED): string {
   for (const dependency of [
     "post-edit-checks.mts", "post-edit-tool-calls.mts", "research-exec-parser.mts",
   ]) {
-    fs.copyFileSync(path.join(HERE, dependency), path.join(destination, dependency));
+    copySource(dependency, path.join(destination, dependency));
   }
   copyAdapter(destination);
-  declareCopy(SOURCE, path.join(destination, "post-edit-checks.mts"));
   declareCopy(path.join(SHARED, "lib", "stdin-reader.mts"), path.join(destination, "stdin-reader.mts"));
   for (const watcher of WATCHERS) {
     fs.copyFileSync(path.join(SHARED, `${watcher}.mts`), path.join(destination, `${watcher}.mts`));

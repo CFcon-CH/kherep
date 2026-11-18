@@ -5,14 +5,14 @@ import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { runAdaptedHook } from "./hook-adapter-run.mts";
-import { copyAdapter } from "./hook-adapter.fixture.mts";
+import { copyAdapter, copySource } from "./hook-adapter.fixture.mts";
 import { warningDocument } from "../../claude/hooks/lib/tool-event-shape.mts";
 
 for (const guard of ["commit-guard", "deploy-guard"] as const) test(`${guard}: raw noncanonical notices fail closed through adapter and shell`, async t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "event-shape-raw-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   copyAdapter(root);
-  fs.copyFileSync(path.join(import.meta.dirname, "shell-checks.mts"), path.join(root, "shell-checks.mts"));
+  copySource("shell-checks.mts", path.join(root, "shell-checks.mts"));
   for (const name of ["commit-guard", "deploy-guard", "main-checkout-guard", "module-label-guard"])
     fs.writeFileSync(path.join(root, `${name}.mts`), "// synthetic silent guard\n");
   const canonical = warningDocument([{ guard, reason: "COMMAND_MISSING" }]);
@@ -72,7 +72,7 @@ test("shell admits only each slot's own exact notice, retaining denials", t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "event-shape-shell-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   copyAdapter(root);
-  fs.copyFileSync(path.join(import.meta.dirname, "shell-checks.mts"), path.join(root, "shell-checks.mts"));
+  copySource("shell-checks.mts", path.join(root, "shell-checks.mts"));
   const shared = path.resolve(import.meta.dirname, "../../claude/hooks");
   fs.cpSync(path.join(shared, "lib"), path.join(root, "lib"), { recursive: true });
   for (const name of ["commit-guard", "deploy-guard"]) fs.copyFileSync(path.join(shared, `${name}.mts`), path.join(root, `${name}.mts`));

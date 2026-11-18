@@ -8,7 +8,7 @@ import os from "node:os";
 import path from "node:path";
 import { declareCopy } from "../../bootstrap/coverage-copy-fixture.mts";
 
-import { copyAdapter } from "./hook-adapter.fixture.mts";
+import { copyAdapter, copySource } from "./hook-adapter.fixture.mts";
 
 const roots: string[] = [];
 const CLAUDE_LIB = path.resolve(import.meta.dirname, "..", "..", "claude", "hooks", "lib");
@@ -16,15 +16,16 @@ export const JOURNAL_LIBS = ["denial-journal.mts", "workspace-scope.mts"];
 
 export interface CodexHome { root: string; hookDir: string }
 
-// lib: the state of the installed journal lib.
+// lib: the state of the installed journal lib. adapterEdited: the test edits hook-adapter.mts afterwards, so that copy stays undeclared (issue #965).
 export function codexHome(guards: Record<string, string>, lib: "present" | "missing" | "empty" | "throwing" | "hanging" = "present",
-  capture = true): CodexHome {
+  capture = true, adapterEdited = false): CodexHome {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "codex-denials-")));
   roots.push(root);
   const hookDir = path.join(root, "hooks", "kherep-maestro");
   fs.mkdirSync(path.join(hookDir, "lib"), { recursive: true });
-  for (const name of ["codex-hook-adapter.mts", "hook-adapter.mts"]) copyAdapter(hookDir, name);
-  fs.copyFileSync(path.join(import.meta.dirname, "shell-checks.mts"), path.join(hookDir, "codex-shell-checks.mts"));
+  copyAdapter(hookDir, "codex-hook-adapter.mts");
+  copyAdapter(hookDir, "hook-adapter.mts", !adapterEdited);
+  copySource("shell-checks.mts", path.join(hookDir, "codex-shell-checks.mts"));
   for (const [name, source] of Object.entries(guards)) fs.writeFileSync(path.join(hookDir, name), source);
   if (lib !== "missing") for (const name of JOURNAL_LIBS) fs.copyFileSync(path.join(CLAUDE_LIB, name), path.join(hookDir, "lib", name));
   const target = path.join(hookDir, "lib", "denial-journal.mts");

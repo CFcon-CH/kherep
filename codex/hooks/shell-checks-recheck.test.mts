@@ -14,6 +14,7 @@ import os from "node:os";
 import path from "node:path";
 import { test, type TestContext } from "node:test";
 
+import { declareCopy } from "../../bootstrap/coverage-copy-fixture.mts";
 import { ADAPTER_MODULES } from "./hook-adapter.fixture.mts";
 
 const MIN = 60_000;
@@ -77,6 +78,8 @@ function box(t: TestContext, installed = true): Box {
     fs.writeFileSync(path.join(dir, name), text);
     fs.writeFileSync(path.join(root, "pristine", name), text);
   }
+  // Issue #965: the tests edit only the two adapter entries and the guards.
+  for (const name of ["shell-checks.mts", ...ADAPTER_MODULES]) declareCopy(path.join(import.meta.dirname, name), path.join(dir, name === "shell-checks.mts" ? "codex-shell-checks.mts" : name));
   fs.copyFileSync(path.join(REPO, "claude", "hooks", "lib", "guard-recheck.mts"), path.join(dir, "lib", "guard-recheck.mts"));
   for (const lib of ["tool-event-shape.mts", "tool-event-contract.mts"]) fs.copyFileSync(path.join(REPO, "claude", "hooks", "lib", lib), path.join(dir, "lib", lib));
   const attribution = path.join(root, "attribution", "attribution-hook.mts");

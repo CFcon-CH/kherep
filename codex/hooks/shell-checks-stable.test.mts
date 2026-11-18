@@ -6,7 +6,7 @@ import path from "node:path";
 import { test } from "node:test";
 
 import { withoutTypeStrippingWarning } from "../lib/node-warning-fixture.mts";
-import { copyAdapter } from "./hook-adapter.fixture.mts";
+import { copyAdapter, copySource } from "./hook-adapter.fixture.mts";
 
 const PROCESSES = 5; // the dispatcher and its four guards, each warning at most once
 
@@ -26,7 +26,7 @@ function fixture(t: import("node:test").TestContext) {
   const home = path.join(root, "codex");
   const hookDir = path.join(home, "hooks", "kherep-maestro");
   fs.mkdirSync(hookDir, { recursive: true });
-  fs.copyFileSync(path.join(import.meta.dirname, "shell-checks.mts"), path.join(hookDir, "shell-checks.mts"));
+  copySource("shell-checks.mts", path.join(hookDir, "shell-checks.mts"));
   copyAdapter(hookDir);
   const entry = path.join(hookDir, "codex-control-plane-hook.mts");
   fs.copyFileSync(path.join(import.meta.dirname, "control-plane-hook.mts"), entry);

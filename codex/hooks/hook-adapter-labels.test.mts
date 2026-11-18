@@ -11,7 +11,7 @@ import { test, type TestContext } from "node:test";
 
 import { faultEnv, fired } from "../../claude/hooks/fault-preload.fixture.mts";
 import { ABSOLUTE_PATH } from "../../claude/hooks/lib/denial-journal.mts";
-import { copyAdapter } from "./hook-adapter.fixture.mts";
+import { copyAdapter, copySource } from "./hook-adapter.fixture.mts";
 import { runAdaptedHook } from "./hook-adapter.mts";
 
 const REPO = path.resolve(import.meta.dirname, "..", "..");
@@ -46,7 +46,7 @@ function installed(t: TestContext, linked = false): { root: string; dir: string;
   fs.mkdirSync(path.join(dir, "lib"), { recursive: true });
   copyAdapter(dir, "codex-hook-adapter.mts");
   copyAdapter(dir); // the shell dispatcher imports ./hook-adapter.mts
-  fs.copyFileSync(path.join(import.meta.dirname, "shell-checks.mts"), path.join(dir, "codex-shell-checks.mts"));
+  copySource("shell-checks.mts", path.join(dir, "codex-shell-checks.mts"));
   fs.copyFileSync(path.join(REPO, "claude", "hooks", "lib", "guard-recheck.mts"), path.join(dir, "lib", "guard-recheck.mts"));
   const guards = { "commit-guard.mts": "process.exit(1);\n", "deploy-guard.mts": "process.exit(0);\n",
     "main-checkout-guard.mts": "process.exit(0);\n", "module-label-guard.mts": "process.exit(0);\n", "empty.mts": "", "quiet.mts": "process.exit(2);\n" };

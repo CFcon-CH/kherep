@@ -88,7 +88,7 @@ test("a marker append that settles late: the dispatcher exits after it, the mark
 });
 
 test("an adapter that does not load: the deny stands and the call leaves the marker", async () => {
-  const home = codexHome(GUARDS, "present", false);
+  const home = codexHome(GUARDS, "present", false, true);
   fs.writeFileSync(path.join(home.hookDir, "hook-adapter.mts"), "");
   const result = await shell(home, shellPayload());
   assert.match(JSON.parse(result.stdout).hookSpecificOutput.permissionDecisionReason, /adapter could not load/);
@@ -99,7 +99,7 @@ test("an adapter that does not load: the deny stands and the call leaves the mar
 // keeps the CLI alive. The watchdog owns only this child and waits for its close after killing it.
 for (const brokenAdapter of [false, true]) {
   test(`a stuck marker cannot retain the CLI after its deny (${brokenAdapter ? "broken adapter" : "journal timeout"})`, async (t) => {
-    const referenceHome = codexHome(GUARDS, "hanging"), home = codexHome(GUARDS, "hanging"), receipt = path.join(home.root, "fault-receipt.json");
+    const referenceHome = codexHome(GUARDS, "hanging", true, brokenAdapter), home = codexHome(GUARDS, "hanging", true, brokenAdapter), receipt = path.join(home.root, "fault-receipt.json");
     if (brokenAdapter) for (const h of [referenceHome, home]) fs.writeFileSync(path.join(h.hookDir, "hook-adapter.mts"), "");
     const reference = await shell(referenceHome, shellPayload());
     const result = await run([path.join(home.hookDir, "codex-shell-checks.mts")], shellPayload(),
