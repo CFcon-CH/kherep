@@ -237,6 +237,11 @@ increments the minor version; every other release increments the patch version.
   watchdog's 5-second confirmation at once, so a dead socket after wake is
   replaced within about 5 seconds instead of about 50. Node-only; no Worker
   change.
+- The Worker's `NodeSession` now handles a node's `register` inside
+  `blockConcurrencyWhile` (#961), so a `send` or `directory.resolve` that
+  arrives while the Registry call is pending waits until `registrationAccepted`
+  is set instead of being refused with `loop-resolution-required`. Takes
+  effect only after the Worker is deployed.
 - The GitHub App broker no longer reports `verification-failed` for a
   `pr.merge` that succeeded (#956). Under its `contents: write` installation
   token GitHub can omit `merge_commit_sha` from the pull request answer, so
