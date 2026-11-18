@@ -4,10 +4,10 @@ import type { AgentIdentity, AgentInventory } from "./model-agent-inventory.mts"
 import type { ModelChoice, ModelMetadata, UserModelPolicy } from "./model-policy-user.mts";
 
 export const ROLES = ["root", "designer", "builder", "support", "researcher", "observer", "broker"] as const;
-const FAMILIES = ["astra", "sol", "terra", "luna"] as const;
+export const MODEL_FAMILIES = ["astra", "sol", "terra", "luna"] as const;
 export const EFFORTS = ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"];
 export type ModelRole = typeof ROLES[number];
-export interface RolePolicy { family: typeof FAMILIES[number]; reasoning: string }
+export interface RolePolicy { family: typeof MODEL_FAMILIES[number]; reasoning: string }
 export interface ModelPolicy { schemaVersion: 1; sourceSha256: string; roles: Record<ModelRole, RolePolicy> }
 export interface CatalogModel { id: string; model: string; hidden: boolean; supportedReasoningEfforts: { reasoningEffort: string }[] }
 export interface ModelCatalog { complete: true; models: CatalogModel[] }
@@ -41,7 +41,7 @@ export function parseModelPolicy(text: string): ModelPolicy {
     if (!setting || !current || setting[1] in current) throw new Error("Invalid or duplicate model policy setting");
     Object.assign(current, { [setting[1]]: setting[2] });
   }
-  if (!schema || ROLES.some((role) => !roles[role] || !FAMILIES.includes(roles[role].family as RolePolicy["family"])
+  if (!schema || ROLES.some((role) => !roles[role] || !MODEL_FAMILIES.includes(roles[role].family as RolePolicy["family"])
     || !EFFORTS.includes(roles[role].reasoning ?? ""))) throw new Error("Incomplete or unsupported model policy");
   return { schemaVersion: 1, sourceSha256: createHash("sha256").update(text).digest("hex"), roles: roles as ModelPolicy["roles"] };
 }
@@ -70,11 +70,11 @@ export function validateCatalog(value: unknown): ModelCatalog {
   return { complete: true, models: sanitized };
 }
 
-function generation(model: string, family: string): bigint[] | null {
+export function generation(model: string, family: string): bigint[] | null {
   const match = model.match(/^gpt-([1-9]\d?(?:\.(?:0|[1-9]\d?))?)-(astra|sol|terra|luna)$/);
   return match?.[2] === family ? match[1].split(".").map(BigInt) : null;
 }
-function compare(a: bigint[], b: bigint[]): number {
+export function compareGeneration(a: bigint[], b: bigint[]): number {
   for (let index = 0; index < Math.max(a.length, b.length); index++) {
     const left = a[index] ?? 0n, right = b[index] ?? 0n;
     if (left !== right) return left > right ? 1 : -1;
@@ -96,10 +96,10 @@ export function resolveModels(policy: ModelPolicy, rawCatalog: unknown): ModelRe
     const wanted = policy.roles[role];
     const candidates = catalog.models.filter((entry) => !entry.hidden && generation(entry.model, wanted.family) !== null
       && entry.supportedReasoningEfforts.some((effort) => effort.reasoningEffort === wanted.reasoning))
-      .sort((a, b) => compare(generation(b.model, wanted.family)!, generation(a.model, wanted.family)!));
+      .sort((a, b) => compareGeneration(generation(b.model, wanted.family)!, generation(a.model, wanted.family)!));
     const chosen = candidates[0];
     if (!chosen) throw new Error(`No visible model with supported reasoning for role ${role}, family ${wanted.family}`);
-    if (candidates[1] && compare(generation(chosen.model, wanted.family)!, generation(candidates[1].model, wanted.family)!) === 0) {
+    if (candidates[1] && compareGeneration(generation(chosen.model, wanted.family)!, generation(candidates[1].model, wanted.family)!) === 0) {
       throw new Error(`Ambiguous model generation for family ${wanted.family}`);
     }
     roles[role] = { model: chosen.model, reasoning: wanted.reasoning };
@@ -207,8 +207,8 @@ export function resolveEffectiveSelections(input: ResolutionInputs): EffectiveRe
     const wanted = policy.roles[role];
     const candidates = catalog.catalog.models.filter(entry => !entry.hidden && generation(entry.model, wanted.family) !== null
       && entry.supportedReasoningEfforts.some(row => row.reasoningEffort === wanted.reasoning))
-      .sort((a, b) => compare(generation(b.model, wanted.family)!, generation(a.model, wanted.family)!));
-    const ambiguous = candidates[1] && compare(generation(candidates[0]!.model, wanted.family)!, generation(candidates[1].model, wanted.family)!) === 0;
+      .sort((a, b) => compareGeneration(generation(b.model, wanted.family)!, generation(a.model, wanted.family)!));
+    const ambiguous = candidates[1] && compareGeneration(generation(candidates[0]!.model, wanted.family)!, generation(candidates[1].model, wanted.family)!) === 0;
     fresh[role] = { model: ambiguous ? null : candidates[0]?.model ?? null, effort: wanted.reasoning };
   }
   const retainedDefault = (value: DefaultRealization): DefaultRealization => {

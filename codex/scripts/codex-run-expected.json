@@ -20,6 +20,7 @@
       { "name": "POSIX native command shell passes every accepted argument literally", "reason": null },
       { "name": "metadata app-server closes its exact owned process group after catalog success", "reason": null },
       { "name": "metadata deadline kills the owned server without any real Codex or auth call", "reason": null },
+      { "name": "the POSIX start entry reads a real fixture catalog, prepares or launches, and reports launch failure", "reason": null },
       { "name": "resolveWorkspace keeps a POSIX workspace on a POSIX host", "reason": null }
     ],
     "linux": [
