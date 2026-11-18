@@ -227,6 +227,19 @@ increments the minor version; every other release increments the patch version.
 
 ### Fixed
 
+- Coverage assembly no longer loses hits when one source ran at more than one
+  path (#969). Node's type stripping appends `\n\n//# sourceURL=<url>`, so the
+  top-level range of a file ended at a different offset for every producer
+  root and every declared copy. The merge kept only one of them and listed the
+  top-level branches once per path; a process that imported
+  `control-plane-hook.mts` in-process cut its copies' 100/105 lines to 83/105.
+  `relocateV8Report` now trims range ends past the source back to its length
+  when the excess is exactly the suffix of that script's own URL, drops ranges
+  that start inside it and leaves any other excess untouched, counted as
+  `untrimmed` per producer in `summary.json`. On the raw reports of run
+  44292304991 (Ubuntu, macOS, one Windows suite and typescript) no file lost an
+  executed line, 5 lines were gained and the deduplicated branch total went
+  from 38900/43204 to 37461/41384.
 - Sonar now credits the hook runtime's coverage from the hook tests (#964).
   The hook-runtime fixtures copy `claude/kherep/hook-runtime` into each
   temporary home, and coverage of those undeclared copies counted for
