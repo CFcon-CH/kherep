@@ -73,6 +73,11 @@ test("--body-file is read through the injected reader and an unreadable one is r
   const sent = JSON.parse(h.calls.find((call) => call.method === "POST" && call.url.endsWith("/comment"))?.body ?? "{}");
   assert.match(JSON.stringify(sent.body), /Text aus Datei/);
 
+  const empty = run([], { files: { "synthetic-empty.md": "" } });
+  assert.equal(await empty.cli(["comment", "--key", "OP-2", "--body-file", "synthetic-empty.md"]), 1);
+  assert.deepEqual(empty.err, ["--body oder --body-file fehlt."]);
+  assert.equal(empty.calls.length, 0);
+
   const missing = run([]);
   assert.equal(await missing.cli(["comment", "--key", "OP-2", "--body-file", "synthetic-missing.md"]), 1);
   assert.deepEqual(missing.err, ["--body-file nicht lesbar."]);
