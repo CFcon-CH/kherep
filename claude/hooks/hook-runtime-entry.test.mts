@@ -13,6 +13,7 @@ import { pathToFileURL } from "node:url";
 
 import { preloadArg as coordinatorArg } from "../kherep/hook-runtime/coordinator.mts";
 import { alive, cleanup, entry, entryAsync, holdExclusive, RUNTIME, runtimeHome, until, writerFree } from "./hook-runtime-fixture.mts";
+import { copyDeclared, copyTreeDeclared } from "./copy-declare-fixture.mts";
 import { plantHeartbeat } from "./guard-dispatch-fixture.mts";
 
 after(cleanup);
@@ -34,7 +35,8 @@ function sentinelMain(hooks: string, body = ""): { main: string; trace: string }
 // A copy of the runtime beside a home, with coordinator.mts replaced by `coordinator`.
 function brokenRuntime(root: string, coordinator: string | null): string {
   const dir = path.join(root, "kherep", "hook-runtime");
-  fs.cpSync(RUNTIME, dir, { recursive: true });
+  // coordinator.mts is replaced below, so only the other runtime files are declared copies (issue #965).
+  copyTreeDeclared(RUNTIME, dir, ["coordinator.mts"]);
   if (coordinator === null) fs.rmSync(path.join(dir, "coordinator.mts"));
   else fs.writeFileSync(path.join(dir, "coordinator.mts"), coordinator);
   return path.join(dir, "entry.mts");
@@ -208,8 +210,8 @@ test("only the runtime's own experimental warnings are dropped from a hook's std
 
 test("a guard under the admitted dispatcher keeps its exit-2 reason free of the runtime's warnings", () => {
   const home = runtimeHome();
-  fs.copyFileSync(path.join(import.meta.dirname, "guard-dispatch.mts"), path.join(home.hooks, "guard-dispatch.mts"));
-  fs.copyFileSync(path.join(import.meta.dirname, "lib", "guard-recheck.mts"), path.join(home.hooks, "lib", "guard-recheck.mts"));
+  copyDeclared(path.join(import.meta.dirname, "guard-dispatch.mts"), path.join(home.hooks, "guard-dispatch.mts"));
+  copyDeclared(path.join(import.meta.dirname, "lib", "guard-recheck.mts"), path.join(home.hooks, "lib", "guard-recheck.mts"));
   plantHeartbeat(home.root);
   fs.writeFileSync(path.join(home.hooks, "guard.mts"), `${warns(SQLITE, STRIP)}process.stderr.write("own reason\\n");\nprocess.exitCode = 2;\n`);
   const run = entry("pretool", path.join(home.hooks, "guard-dispatch.mts"), [path.join(home.hooks, "guard.mts")],

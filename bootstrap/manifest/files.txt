@@ -18,6 +18,7 @@ hooks/denied-calls-delivered.test.mts
 hooks/guard-dispatch-denials.test.mts
 hooks/denial-fault.fixture.mts
 hooks/hook-runtime-fixture.mts
+hooks/copy-declare-fixture.mts
 hooks/acl-fixture.mts
 hooks/hook-runtime-child.mts
 hooks/hook-runtime-db.test.mts

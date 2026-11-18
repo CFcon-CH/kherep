@@ -9,6 +9,8 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import test, { after } from "node:test";
 
+import { copyDeclared, copyTreeDeclared } from "./copy-declare-fixture.mts";
+
 const HOOKS = import.meta.dirname;
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), "dispatch-policy-"));
 after(() => fs.rmSync(TMP, { recursive: true, force: true }));
@@ -20,8 +22,8 @@ let homes = 0;
 function home(user?: string, shipped = true): string {
   const root = path.join(TMP, String(homes++));
   fs.mkdirSync(path.join(root, "kherep"), { recursive: true });
-  fs.cpSync(path.join(HOOKS, "lib"), path.join(root, "hooks", "lib"), { recursive: true });
-  fs.copyFileSync(path.join(HOOKS, "dispatch-contract-guard.mts"), path.join(root, "hooks", "dispatch-contract-guard.mts"));
+  copyTreeDeclared(path.join(HOOKS, "lib"), path.join(root, "hooks", "lib"));
+  copyDeclared(path.join(HOOKS, "dispatch-contract-guard.mts"), path.join(root, "hooks", "dispatch-contract-guard.mts"));
   if (shipped) fs.copyFileSync(path.join(HOOKS, "..", "kherep", "model-policy.json"), path.join(root, "kherep", "model-policy.json"));
   if (user !== undefined) fs.writeFileSync(path.join(root, "kherep", "model-policy.user.json"), user);
   return root;

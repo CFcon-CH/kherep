@@ -9,6 +9,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { declareCopy } from "../../bootstrap/coverage-copy-fixture.mts";
+import { copyDeclared } from "./copy-declare-fixture.mts";
 import { copyRuntime } from "./hook-runtime-fixture.mts";
 
 const HOOKS_SOURCE = import.meta.dirname;
@@ -30,10 +31,9 @@ export function installIntegrity(hooksDir: string): void {
   fs.mkdirSync(path.join(hooksDir, "lib"), { recursive: true });
   ensureRuntime(hooksDir);
   fs.copyFileSync(path.join(HOOKS_SOURCE, HOOK), path.join(hooksDir, HOOK));
+  // The libs are declared copies (issue #965); a suite that alters one copies them itself.
   for (const name of fs.readdirSync(path.join(HOOKS_SOURCE, "lib"))) {
-    if (name.endsWith(".mts") && !name.endsWith(".test.mts")) {
-      fs.copyFileSync(path.join(HOOKS_SOURCE, "lib", name), path.join(hooksDir, "lib", name));
-    }
+    if (name.endsWith(".mts") && !name.endsWith(".test.mts")) copyDeclared(path.join(HOOKS_SOURCE, "lib", name), path.join(hooksDir, "lib", name));
   }
 }
 
