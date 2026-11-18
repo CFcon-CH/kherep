@@ -18,6 +18,7 @@ import { parseArgs } from "./confluence-space.mts";
 import { resolveProfilePath } from "./render-profile-paths.mts";
 import { renderSettings } from "./render-profile.mts";
 import type { Settings } from "./render-profile-settings.mts";
+import { declareCopy } from "./coverage-copy-fixture.mts";
 
 // Some Node releases the engines range admits, 24.1.0 among them, print this
 // warning when a child loads a .mts file. Only this exact pair of lines is
@@ -85,6 +86,7 @@ function spaceFixture(root: string): SpaceFixture {
   fs.mkdirSync(brokers, { recursive: true });
   for (const file of ["confluence-space.mts", "render-profile-paths.mts", "shape.mts"]) {
     fs.copyFileSync(path.join(HERE, file), path.join(bootstrap, file));
+    declareCopy(path.join(HERE, file), path.join(bootstrap, file));
   }
   fs.writeFileSync(path.join(bootstrap, "confluence-nodes.mts"), [
     'export const PLACEMENT_NODES = ["Kherep"];',
