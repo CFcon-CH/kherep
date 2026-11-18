@@ -120,6 +120,8 @@ const daemon = startDaemon(config, paths, line => logs.push(line), async () => [
 try {
   socket.listeners.get("open")?.({});
   socket.message(frame("event", { name: "auth.ok" })); await flush();
+  // The Worker's answer to directory.get opens the outbox gate (issue #961).
+  socket.message(frame("directory", { nodes: [], sessions: [], fetchedAt: new Date(0).toISOString() })); await flush();
   const tick = timers.get(EXCHANGE_INTERVAL_MS)![0];
   tick(); await flush(); assert.equal(entered, 1);
   // Issue #493 D2: the counters lines from "handled" on; PONG_FRAME pads a round past the threshold.
@@ -132,8 +134,8 @@ try {
     await flush();
     assert.equal(Array.from({ length: 40 }, (_, n) => readMcpIntentReceipt(paths, id(1000 + n))).filter(r => r?.ok).length, 40);
     release(); await flush();
-    // auth.ok on the chain plus the 40 receipts in the window, each counted once (issue #493 D2: by kind).
-    assert.deepEqual(counted(), ["handled 41 inbound items: frame:mcp.intent.receipt 40, auth 1"]);
+    // auth.ok and the directory on the chain plus the 40 receipts in the window, each counted once (issue #493 D2: by kind).
+    assert.deepEqual(counted(), ["handled 42 inbound items: frame:mcp.intent.receipt 40, auth 1, frame:directory 1"]);
     console.log("INTAKE_WINDOW_PASS");
   } else if (scenario === "excluded") {
     const control = { name: "task.control.execute", operationId: id(80), requestId: id(81), taskId: id(99), action: "status",

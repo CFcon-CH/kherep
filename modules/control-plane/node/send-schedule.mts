@@ -57,3 +57,14 @@ export function sendSchedule(connection: object): SendSchedule {
 export function directoryDue(schedule: SendSchedule, now: number): boolean {
   return schedule.directorySentAt === undefined || now - schedule.directorySentAt >= DIRECTORY_COALESCE_MS;
 }
+
+// Issue #961: after authentication the outbox waits for the Worker's first
+// directory answer on this connection. The node sends directory.get after
+// register on the same socket, so that answer is the first sign that the
+// Worker took up this connection; it narrows the race, it does not prove the
+// registration. A missing or malformed answer holds the outbox at most
+// OUTBOX_GATE_MS after authentication.
+export const OUTBOX_GATE_MS = 10_000;
+export function outboxHeld(client: { workerCapabilities: readonly string[] | null; authenticatedAt: number }, now: number): boolean {
+  return client.workerCapabilities === null && now - client.authenticatedAt < OUTBOX_GATE_MS;
+}

@@ -151,6 +151,8 @@ export class NodeClient {
   // until that frame, again at every close and every auth.ok. Never read from
   // directory.json, so a stale file or an old connection proves nothing.
   workerCapabilities: readonly string[] | null = null;
+  // Issue #961: when the last auth.ok was handled (the outbox gate, send-schedule.mts).
+  authenticatedAt = -Infinity;
 
   constructor(options: ClientOptions) {
     this.options = options;
@@ -251,6 +253,7 @@ export class NodeClient {
         this.slotGeneration++;this.slotAddresses.clear();this.slotSelections.clear();
         this.authenticated = true;
         this.workerCapabilities = null;
+        this.authenticatedAt = this.now();
         this.lastSnapshot = null;
         this.lastRuntimes = await this.options.runtimes();
         this.registrationDirty = true;

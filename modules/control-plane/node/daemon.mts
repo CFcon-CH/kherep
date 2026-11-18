@@ -253,7 +253,8 @@ export function startDaemon(config: NodeConfig, paths: NodePaths, log: (line: st
     ...exchangeOptions(paths), selectedReferences, bindingStorageReady: bindingStorage.snapshot, bindingStorageFault: storageFault, log,
   });
   let knownPending = (): boolean => false;
-  const diagnostics = createIntakeDiagnostics({ log, clock, pending: () => knownPending(), publish: intake => {
+  let wakeConnection = (): void => {}; // issue #961: the current connection's watchdog.wake
+  const diagnostics = createIntakeDiagnostics({ log, clock, pending: () => knownPending(), wake: () => wakeConnection(), publish: intake => {
     state = { ...state, intake }; recordDaemonState(paths, state, log);
   } });
   const timed = lockRounds(laneTimer(log, lanes.slowLaneMs), DAEMON_RECORD_LOCK_WAIT_MS);
@@ -337,6 +338,7 @@ export function startDaemon(config: NodeConfig, paths: NodePaths, log: (line: st
       generation.retireConnection({ code: 4000, error: socketError });
       try { ws.close(4000, "heartbeat timeout"); } catch { /* retry does not depend on close */ }
     } });
+    wakeConnection = () => watchdog.wake();
     const publishRegistration = (frames: string[]): boolean => {
       if (frames.length === 0) return true;
       for (const frame of frames) if (!send(frame)) return false;
