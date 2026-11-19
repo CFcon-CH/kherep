@@ -56,7 +56,14 @@ test("git hooks below a regular file fail their stat with the error code only", 
   const box = sandbox();
   fs.rmSync(box.githooks, { recursive: true });
   fs.writeFileSync(box.githooks, "not a directory\n");
-  assert.deepEqual(lines(box), FILES.map((name) => `kherep/githooks/${name}: UNCHECKED - stat failed (ENOTDIR). Neither proven healthy nor proven broken.`));
+  // POSIX stat below a regular file fails with ENOTDIR; Windows answers ENOENT, so the hook
+  // takes the files as missing and the restore then fails with EEXIST at the blocking file.
+  const expected = process.platform === "win32"
+    ? FILES.map((name) => new RegExp(`^kherep/githooks/${name.replace(".", "\\.")}: wired but not present on disk -> NOT restored \\(copy failed \\(EEXIST\\)\\)\\. .+ IS OFF\\.$`))
+    : FILES.map((name) => new RegExp(`^kherep/githooks/${name.replace(".", "\\.")}: UNCHECKED - stat failed \\(ENOTDIR\\)\\. Neither proven healthy nor proven broken\\.$`));
+  const got = lines(box);
+  assert.equal(got.length, expected.length);
+  got.forEach((line, i) => assert.match(String(line), expected[i]));
 });
 
 test("a live file whose versioned source is missing is not compared and not reported", () => {
