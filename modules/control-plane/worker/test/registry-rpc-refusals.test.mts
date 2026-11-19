@@ -32,7 +32,7 @@ describe("Registry connection and activity refusals", () => {
       .toEqual({ ok: false, error: "invalid intent metadata" });
   });
 
-  it("returns the runtime version and endpoint a node registered", async () => {
+  it("returns the registered runtime version and omits an unset endpoint", async () => {
     const nodeId = await enroll(await newKey());
     await registry().updateRegistration(nodeId, FACTS, [{ name: "codex", kind: "cli", version: "1.2.3" }], []);
     expect((await registry().getNode(nodeId))?.runtimes).toEqual([{ name: "codex", kind: "cli", version: "1.2.3" }]);
