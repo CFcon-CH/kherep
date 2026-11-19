@@ -41,7 +41,10 @@ test("a guard below a regular file fails its stat with the error code only", () 
   fs.writeFileSync(path.join(fx.hooks, "plain.mts"), "process.exit(0);\n");
   const output = dispatch(fx, [path.join(fx.hooks, "plain.mts", "guard.mts")]);
   assert.equal(output.permissionDecision, "deny");
-  assert.equal(output.permissionDecisionReason, failed("plain.mts/guard.mts", "stat failed: ENOTDIR"));
+  // POSIX stat below a regular file fails with ENOTDIR; Windows answers ENOENT, which the
+  // dispatcher reports as missing. Both deny the call.
+  const reason = process.platform === "win32" ? "missing" : "stat failed: ENOTDIR";
+  assert.equal(output.permissionDecisionReason, failed("plain.mts/guard.mts", reason));
 });
 
 test("a guard printing another event's hook output is no PreToolUse decision", () => {
