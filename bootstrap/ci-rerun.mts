@@ -56,8 +56,10 @@ function time(value: unknown, what: string): number {
   return ms;
 }
 
-export const lostShaped = (job: unknown): boolean => field(job, "conclusion") === "cancelled"
-  && Array.isArray(field(job, "steps")) && (field(job, "steps") as unknown[]).length === 0 && field(job, "runner_id") === 0;
+export function lostShaped(job: unknown): boolean {
+  const steps = field(job, "steps");
+  return field(job, "conclusion") === "cancelled" && Array.isArray(steps) && steps.length === 0 && field(job, "runner_id") === 0;
+}
 
 export function classifyJob(job: unknown, annotations: unknown): Verdict {
   const raw = text(field(job, "name"));
