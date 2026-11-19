@@ -1,4 +1,6 @@
 import { checkObsCandidate } from './observation-candidate.mts';
+import { reasonWhy } from './confluence-candidates.mts';
+import { obsWhy } from './observation-result.mts';
 export type Finding = {
     title: string;
     bodyStorage: string;
@@ -50,12 +52,14 @@ export function ordinaryXhtml(storage: string): boolean {
 }
 const exactKeys = (value: unknown, keys: string[]): value is Record<string, unknown> => Boolean(value) && typeof value === 'object'
     && !Array.isArray(value) && Object.keys(value as object).sort((left, right) => Number(left > right) - Number(left < right)).join() === keys.join();
-function linksShape(links: unknown): links is FindingLinks {
+// Issue #989: the reason bound is the receipt check's own (10 to 300 printable);
+// the lenient form skips it only to learn whether the reason is the sole defect.
+function linksShape(links: unknown, lenient: boolean): links is FindingLinks {
     return exactKeys(links, ['approved', 'candidates']) && typeof links.candidates === 'string' && /^[a-f0-9]{64}$/.test(links.candidates)
         && Array.isArray(links.approved) && links.approved.length <= 10 && links.approved.every(item => exactKeys(item, ['id', 'reason'])
-        && pageId(item.id) && typeof item.reason === 'string' && item.reason.length <= 1000);
+        && pageId(item.id) && typeof item.reason === 'string' && (lenient || reasonWhy(item.reason) === null));
 }
-export function observationRequest(value: unknown): ObservationRequest | null {
+function checkedRequest(value: unknown, lenient: boolean): ObservationRequest | null {
     if (!value || typeof value !== 'object' || Array.isArray(value))
         return null;
     const r = value as ObservationRequest;
@@ -67,7 +71,7 @@ export function observationRequest(value: unknown): ObservationRequest | null {
     // adapter's own sixth key and are checked here, by shape only. Whether the
     // decisions fit the receipt is the publisher's links-refused phase.
     const plain = r.observations.map(f => f && typeof f === 'object' && !Array.isArray(f) ? Object.fromEntries(Object.entries(f).filter(([key]) => key !== 'links')) : f);
-    if ('problem' in checkObsCandidate(JSON.stringify({ observations: plain })) || !r.observations.every(f => linksShape(f.links)))
+    if ('problem' in checkObsCandidate(JSON.stringify({ observations: plain })) || !r.observations.every(f => linksShape(f.links, lenient)))
         return null;
     for (const f of r.observations) {
         if (f.title.length > 200 || f.bodyStorage.length > 24000
@@ -79,6 +83,28 @@ export function observationRequest(value: unknown): ObservationRequest | null {
     }
     return r;
 }
-export function failed(code: string, ids: readonly string[] = []): string {
-    return `OBS-RESULT: failed ${code}${ids.length ? ` created=${ids.join(',')}` : ''}`;
+export function observationRequest(value: unknown): ObservationRequest | null {
+    return checkedRequest(value, false);
+}
+/** The receipt for a refused request: `why=<pos>:reason-invalid` only when the link reasons are its sole defect. */
+export function invalidRequest(value: unknown): string {
+    const lenient = checkedRequest(value, true);
+    const entries = (lenient?.observations ?? []).flatMap((f, index) => f.links.approved.some(item => reasonWhy(item.reason) !== null)
+        ? [{ position: index + 1, code: 'reason-invalid' }] : []);
+    return failed('invalid-request', [], obsWhy('invalid-request', entries));
+}
+// Issue #989: a refused link check names its fixed codes; the publisher whitelists them.
+export class LinksRefused extends Error {
+    readonly codes: readonly string[];
+    constructor(codes: readonly string[]) {
+        super('links-refused');
+        this.codes = codes;
+    }
+}
+// A why phase precedes the first create, so `why=` and `created=` never share a line;
+// should both ever arrive, the created ids win and the why text is dropped.
+export function failed(code: string, ids: readonly string[] = [], why = ''): string {
+    if (ids.length)
+        return `OBS-RESULT: failed ${code} created=${ids.join(',')}`;
+    return `OBS-RESULT: failed ${code}${why ? ` why=${why}` : ''}`;
 }
