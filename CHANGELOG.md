@@ -258,6 +258,9 @@ increments the minor version; every other release increments the patch version.
   8.4 times longer at 100 000, past the bound of `max(8 * t(n), 5 ms)`. The
   floor is now 50 ms and the fastest of nine runs counts; the pre-#906 regex
   still fails it by seconds.
+- The capability check, secrets preparation and secret output guard timing
+  tests now measure child CPU time beyond a short control (#992). Scheduler
+  delays no longer count toward the two-second limit.
 - The Codex parity skill and the safety note in every projected Codex skill no
   longer name a "Central memory" that can be selected (#985). The Codex
   installer accepts only the unconfigured memory provider, so the

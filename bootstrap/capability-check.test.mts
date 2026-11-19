@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { test } from "node:test";
+import { pathToFileURL } from "node:url";
 
 import { readJson } from "./capability-check.mts";
 import { activeMcpEntries, allMcpEntries, hasCredentialArg } from "./capability-mcp.mts";
@@ -103,6 +104,26 @@ test("source-only capability check does not require operator plugin enablement",
 test("live owned agents are named by their frontmatter, a name on a later line included", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "capability-names-"));
   try {
+    const preload = path.join(root, "cpu-preload.mjs");
+    const cpuFile = path.join(root, "cpu-ms");
+    fs.writeFileSync(preload, `import fs from "node:fs";
+process.on("exit", () => {
+  const usage = process.cpuUsage();
+  fs.writeFileSync(process.env.KHEREP_TEST_CPU_FILE, String((usage.user + usage.system) / 1000));
+});
+`);
+    function cpuMs(run: () => void): number {
+      fs.rmSync(cpuFile, { force: true });
+      run();
+      try {
+        const raw = fs.readFileSync(cpuFile, "utf8");
+        const value = Number(raw);
+        return /^\d+(?:\.\d+)?$/.test(raw) && Number.isFinite(value) ? value : NaN;
+      } catch {
+        return NaN;
+      }
+    }
+
     const claudeHome = path.join(root, ".claude");
     fs.mkdirSync(path.join(claudeHome, "agents"), { recursive: true });
     fs.mkdirSync(path.join(claudeHome, "plugins"), { recursive: true });
@@ -113,20 +134,23 @@ test("live owned agents are named by their frontmatter, a name on a later line i
     fs.writeFileSync(path.join(claudeHome, "agents", "dc-plugin-build-runner.md"), "name:   ");
     const env: NodeJS.ProcessEnv = { ...process.env, CLAUDE_HOME: claudeHome };
     for (const key of ["KHEREP_USER_HOME", "KHEREP_WORKSPACE", "KHEREP_PROFILE", "CAPABILITY_STRICT"]) delete env[key];
-    const check = () => spawnSync(process.execPath, [path.join(import.meta.dirname, "capability-check.mts"), "--live", "--profile", "mac"],
-      { encoding: "utf8", env });
-    // The bound is on the time beyond a run without the long file, so the start-up does not count (#914).
-    let started = performance.now();
-    check();
-    const control = performance.now() - started;
+    const check = () => {
+      const result = spawnSync(process.execPath, [
+        "--import", pathToFileURL(preload).href, path.join(import.meta.dirname, "capability-check.mts"), "--live", "--profile", "mac",
+      ], { encoding: "utf8", env: { ...env, KHEREP_TEST_CPU_FILE: cpuFile } });
+      assert.equal(result.status, 1, result.stderr);
+      assert.match(result.stdout, /^PASS \| live owned agent kherep-builder$/m);
+      assert.match(result.stdout, /^FAIL \| live owned agent dc-plugin-build-runner$/m);
+      return result.stdout;
+    };
+    // Subtract the short run's CPU time to account for CLI startup (#992).
+    const control = cpuMs(check);
     fs.writeFileSync(path.join(claudeHome, "agents", "forge-deploy-validator.md"), `name:${"\n".repeat(100_000)}`);
-    started = performance.now();
-    const result = check();
-    const beyond = performance.now() - started - control;
-    assert.ok(beyond < 2000, `the check took ${beyond.toFixed(0)} ms beyond a run without the long file`);
-    assert.match(result.stdout, /^PASS \| live owned agent kherep-builder$/m);
-    assert.match(result.stdout, /^FAIL \| live owned agent dc-plugin-build-runner$/m);
-    assert.match(result.stdout, /^FAIL \| live owned agent forge-deploy-validator$/m);
+    const subject = cpuMs(() => assert.match(check(), /^FAIL \| live owned agent forge-deploy-validator$/m));
+    const beyond = subject - control;
+    const diagnostic = `CPU frontmatter name control=${control} subject=${subject} delta=${beyond}`;
+    console.log(diagnostic);
+    assert.ok(beyond < 2000, `${diagnostic} (limit 2000 ms)`);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

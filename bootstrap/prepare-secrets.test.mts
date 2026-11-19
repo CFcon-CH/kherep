@@ -4,11 +4,15 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 const subject = path.join(import.meta.dirname, 'prepare-secrets.mts');
 type Secrets = Record<string, Buffer>;
+type CpuTiming = { preload: string; cpuFile: string };
 const baseline = (): Secrets => ({ mcp_json: Buffer.from('{"mcpServers":{}}\n') });
 const yamlFor = (values: Secrets): Buffer => Buffer.from(`data:\n${Object.entries(values).map(([key, value]) => `  ${key}: ${value.toString('base64')}`).join('\n')}\n`);
-const invoke = (outDir: string, yaml: Buffer) => spawnSync(process.execPath, [subject, outDir], { input: yaml, encoding: 'utf8' });
+const invoke = (outDir: string, yaml: Buffer, timing?: CpuTiming) => spawnSync(process.execPath, [
+    ...(timing ? ['--import', pathToFileURL(timing.preload).href] : []), subject, outDir,
+], { input: yaml, encoding: 'utf8', env: timing ? { ...process.env, KHEREP_TEST_CPU_FILE: timing.cpuFile } : undefined });
 let passed = 0;
 function test(name: string, fn: (root: string) => void): void {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kherep-prepare-secrets-'));
@@ -25,8 +29,8 @@ function test(name: string, fn: (root: string) => void): void {
         fs.rmSync(root, { recursive: true, force: true });
     }
 }
-function rejected(root: string, values: Secrets, pattern: RegExp, yaml = yamlFor(values)): void {
-    const outDir = path.join(root, 'out'), result = invoke(outDir, yaml);
+function rejected(root: string, values: Secrets, pattern: RegExp, yaml = yamlFor(values), timing?: CpuTiming): void {
+    const outDir = path.join(root, 'out'), result = invoke(outDir, yaml, timing);
     assert.notEqual(result.status, 0);
     assert.match(result.stderr, pattern);
     assert.equal(fs.existsSync(outDir), false);
@@ -60,14 +64,38 @@ test('reads a value line with tabs, trailing blanks or CRLF', root => { ['  mcp_
     assert.equal(fs.readFileSync(path.join(out, 'mcp.json'), 'utf8'), '{}');
 }); });
 test('ignores an empty, inner-blank or unindented value line, a long one in linear time', root => {
-    // The bound is on the time beyond the last short line, so the CLI start-up does not count (#914).
+    const timing = { preload: path.join(root, 'cpu-preload.mjs'), cpuFile: path.join(root, 'cpu-ms') };
+    fs.writeFileSync(timing.preload, `import fs from "node:fs";
+process.on("exit", () => {
+  const usage = process.cpuUsage();
+  fs.writeFileSync(process.env.KHEREP_TEST_CPU_FILE, String((usage.user + usage.system) / 1000));
+});
+`);
+    function cpuMs(run: () => void): number {
+        fs.rmSync(timing.cpuFile, { force: true });
+        run();
+        try {
+            const raw = fs.readFileSync(timing.cpuFile, 'utf8');
+            const value = Number(raw);
+            return /^\d+(?:\.\d+)?$/.test(raw) && Number.isFinite(value) ? value : NaN;
+        } catch {
+            return NaN;
+        }
+    }
+
+    // Subtract the last short run's CPU time to account for CLI startup (#992).
     let control = 0;
     for (const line of ['  mcp_json:', '  mcp_json: e30= x', 'mcp_json: e30=', ` mcp_json:${' '.repeat(50_000)}a${' '.repeat(50_000)}b`]) {
-        const started = performance.now();
-        rejected(root, {}, /missing or empty decrypted secret key: mcp_json/, yamlLine(line));
-        const elapsed = performance.now() - started;
-        if (line.length < 100) { control = elapsed; continue; }
-        assert.ok(elapsed - control < 2000, `${line.length} characters took ${(elapsed - control).toFixed(0)} ms beyond a short line`);
+        const elapsed = cpuMs(() => rejected(root, {}, /missing or empty decrypted secret key: mcp_json/, yamlLine(line), timing));
+        if (line.length < 100) {
+            assert.ok(Number.isFinite(elapsed), 'missing or invalid CPU measurement for a short line');
+            control = elapsed;
+            continue;
+        }
+        const beyond = elapsed - control;
+        const diagnostic = `CPU long value line control=${control} subject=${elapsed} delta=${beyond}`;
+        console.log(diagnostic);
+        assert.ok(beyond < 2000, `${diagnostic} (limit 2000 ms)`);
     }
 });
 if (!process.exitCode)
