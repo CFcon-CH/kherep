@@ -253,6 +253,12 @@ increments the minor version; every other release increments the patch version.
 
 ### Fixed
 
+- The Codex parity skill and the safety note in every projected Codex skill no
+  longer name a "Central memory" that can be selected (#985). The Codex
+  installer accepts only the unconfigured memory provider, so the
+  `kherep-maestro-parity` skill drops it from its description and its
+  verification step, and the projected note now reads "This installation has
+  no memory provider." Behavior is unchanged.
 - The publication audit test "long runs without an address are scanned in
   linear time" no longer fails on slow runners (#983). It timed a full
   `auditRepository` run, with its git spawn and file I/O, against a 200 ms

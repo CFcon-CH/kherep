@@ -17,7 +17,7 @@ test("maps Claude layout concepts to their real Codex destinations", () => {
   assert.doesNotMatch(adapted, /\.codex\/teams|~\/\.codex\\|\.claude\.local/);
 });
 
-test("projected skills report unconfigured memory and require explicit native policy selection", () => {
+test("projected skills report no memory provider and require explicit native policy selection", () => {
   const source = [
     "---",
     "name: memory-check",
@@ -27,8 +27,9 @@ test("projected skills report unconfigured memory and require explicit native po
     "# Memory check",
   ].join("\n");
   const adapted = adaptSkillText(source);
-  assert.match(adapted, /Central memory is unconfigured/);
-  assert.match(adapted, /stop when an operation requires an unavailable memory service/);
+  assert.match(adapted, /This installation has no memory provider/);
+  assert.match(adapted, /stop when an operation requires a memory service/);
+  assert.doesNotMatch(adapted, /Central\s+memory/i);
   assert.doesNotMatch(adapted, /Central Brain MCP/);
   assert.match(adapted, /raw Claude sessions, transcripts, configuration, plugins, or hooks remain forbidden/);
   assert.doesNotMatch(adapted, /Never access or modify Claude-owned configuration, plugins, hooks, sessions, or memory/);
