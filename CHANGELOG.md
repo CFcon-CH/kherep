@@ -259,6 +259,14 @@ increments the minor version; every other release increments the patch version.
   `kherep-maestro-parity` skill drops it from its description and its
   verification step, and the projected note now reads "This installation has
   no memory provider." Behavior is unchanged.
+- The `clq-accept-gate` linear-time test no longer fails on slow shared
+  runners (#990). It bounded the wall-clock time of the spawned hook beyond a
+  short-receipt control run at 2000 ms, which counts scheduler stalls; a runner
+  measured 2009 ms while the scan itself takes about 1 ms. The timed runs now
+  load a test preload that writes the child's CPU time on exit, and the test
+  bounds CPU time beyond the control at 2000 ms. The pre-#906 regexes cost
+  about 15.7 s and 19.4 s of CPU on the same inputs, so the test still catches
+  them. The block results for the long inputs are asserted as before.
 - The publication audit test "long runs without an address are scanned in
   linear time" no longer fails on slow runners (#983). It timed a full
   `auditRepository` run, with its git spawn and file I/O, against a 200 ms
