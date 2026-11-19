@@ -253,6 +253,11 @@ increments the minor version; every other release increments the patch version.
 
 ### Fixed
 
+- The publication audit linear-time test no longer fails at millisecond scale
+  (#995). On the Node 22.18 floor a 1 ms scan of 25 000 characters measured
+  8.4 times longer at 100 000, past the bound of `max(8 * t(n), 5 ms)`. The
+  floor is now 50 ms and the fastest of nine runs counts; the pre-#906 regex
+  still fails it by seconds.
 - The Codex parity skill and the safety note in every projected Codex skill no
   longer name a "Central memory" that can be selected (#985). The Codex
   installer accepts only the unconfigured memory provider, so the

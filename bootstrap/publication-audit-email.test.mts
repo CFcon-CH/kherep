@@ -39,11 +39,11 @@ const N = 25_000;
 const longRuns = [(size: number) => 'a'.repeat(size), (size: number) => 'a@'.repeat(size / 2),
   (size: number) => 'a@' + 'a.'.repeat(size / 2)];
 
-// The fastest of five scans after a warm-up, so one scheduler or collector pause cannot decide.
+// The fastest of nine scans after a warm-up, so one scheduler or collector pause cannot decide.
 function fastest(text: string): number {
   emailAddresses(text);
   let best = Infinity;
-  for (let run = 0; run < 5; run += 1) {
+  for (let run = 0; run < 9; run += 1) {
     const started = performance.now();
     emailAddresses(text);
     best = Math.min(best, performance.now() - started);
@@ -57,12 +57,13 @@ test('long runs without an address need no review', (t) => {
 
 test('long runs without an address are scanned in linear time', (t) => {
   // Issue #983: only the scanner is timed, n against 4n characters. Linear growth is about four times,
-  // quadratic growth sixteen; the floor keeps near-zero timings from dividing timer noise.
+  // quadratic growth sixteen. The floor keeps millisecond timings, where JIT tiering or one collector
+  // pause can exceed eight times, from deciding (#995); the pre-#906 regex takes seconds at these sizes.
   for (const shape of longRuns) {
     const small = fastest(shape(N));
     const large = fastest(shape(4 * N));
     const label = `${JSON.stringify(shape(4).slice(0, 4))}: ${4 * N} characters took ${large.toFixed(2)} ms, ${N} took ${small.toFixed(2)} ms`;
     t.diagnostic(label);
-    assert.ok(large <= Math.max(8 * small, 5), label);
+    assert.ok(large <= Math.max(8 * small, 50), label);
   }
 });
