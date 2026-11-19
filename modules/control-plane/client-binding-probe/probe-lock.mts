@@ -20,10 +20,17 @@ import {
 //     the action persisted stays; it is never rolled back or rerun.
 // EPERM, EACCES and EBUSY on the create mean "still held" (Windows delete
 // pending, lock-contention.mts). Every open of one call, reclaim gates
-// included, draws on one allowance of LOCK_ATTEMPTS opens.
+// included, draws on one allowance of LOCK_ATTEMPTS opens. An open that finds
+// the complete record of a live owner in another process is given back to the
+// allowance for LIVE_OWNER_WAIT_MS from the start of the call (issue #982): that
+// owner is working, and how long it holds is no measure of this call's opens.
 
 export const LOCK_HELD_CODES: ReadonlySet<string> = new Set(["EEXIST", ...TRANSIENT_CREATE_CODES]);
 export const LOCK_ATTEMPTS = CONTENTION_ATTEMPTS;
+// One hook run makes one lock call and must end below its timeout of 10 s
+// (README, hook configuration): this wait (5 s) + the allowance tail (50 opens
+// x 4 ms, about 0.8 s at a 15.6 ms timer) + Node startup + the action (ms) < 10 s.
+export const LIVE_OWNER_WAIT_MS = 5_000;
 export const RECLAIM_DEPTH = 4;
 export const OWNER_MAX_BYTES = 256;
 const OWNER_KEYS = "version,pid,token,at";
@@ -31,7 +38,7 @@ const TOKEN = /^[0-9a-f]{32}$/;
 
 interface ProbeOwner { version: 1; pid: number; token: string; at: string }
 type OwnerRead = { kind: "missing" } | { kind: "unknown" } | { kind: "owner"; owner: ProbeOwner; bytes: string };
-interface Budget { left: number }
+interface Budget { left: number; liveUntil: number }
 interface PendingRelease { file: string; bytes: string }
 
 // At most one per process: a failed release ends its call.
@@ -162,13 +169,17 @@ function hold<T>(file: string, handle: number, action: () => T): T {
   return result;
 }
 
-// Whether the held lock is gone now (released meanwhile, or a dead owner's
-// record reclaimed), so the next open needs no pause.
-function cleared(file: string, depth: number, budget: Budget): boolean {
+// "cleared": the held lock is gone now (released meanwhile, or a dead owner's
+// record reclaimed), so the next open needs no pause. "live": a complete record
+// of a live owner in another process; this process's own pid is never waited
+// out on the clock, because nothing releases it while this call blocks.
+function heldBy(file: string, depth: number, budget: Budget): "cleared" | "live" | "held" {
   const read = readProbeOwner(file);
-  if (read.kind === "missing") return true;
-  if (read.kind === "unknown" || ownerState(read.owner) !== "absent") return false;
-  return reclaim(file, read.bytes, depth, budget) === "removed";
+  if (read.kind === "missing") return "cleared";
+  if (read.kind === "unknown") return "held";
+  const state = ownerState(read.owner);
+  if (state === "absent") return reclaim(file, read.bytes, depth, budget) === "removed" ? "cleared" : "held";
+  return state === "alive" && read.owner.pid !== process.pid ? "live" : "held";
 }
 
 function acquire<T>(file: string, depth: number, budget: Budget, action: () => T): T {
@@ -182,7 +193,9 @@ function acquire<T>(file: string, depth: number, budget: Budget, action: () => T
       const outcome = classifyExclusiveCreate(error);
       if (outcome === "other") throw error;
       held = error;
-      if (outcome === "exists" && cleared(file, depth, budget)) continue;
+      const state = outcome === "exists" ? heldBy(file, depth, budget) : "held";
+      if (state === "cleared") continue;
+      if (state === "live" && performance.now() < budget.liveUntil) budget.left++;
       pauseSync(CONTENTION_PAUSE_MS);
       continue;
     }
@@ -212,5 +225,5 @@ export function withProbeLock<T>(stateDir: string, name: string, action: () => T
   settlePendingRelease();
   const file = probeLockFile(stateDir, name);
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
-  return acquire(file, 0, { left: LOCK_ATTEMPTS }, action);
+  return acquire(file, 0, { left: LOCK_ATTEMPTS, liveUntil: performance.now() + LIVE_OWNER_WAIT_MS }, action);
 }

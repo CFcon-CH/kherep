@@ -111,7 +111,9 @@ test("a live owner stays held however old its lock is", (t) => {
   fs.writeFileSync(lock, record(process.pid));
   const old = new Date(Date.now() - 3_600_000);
   fs.utimesSync(lock, old, old);
+  const opens = wxOpens(t);
   blocked(dir);
+  assert.equal(opens.length, LOCK_ATTEMPTS, "this process's own pid is not waited out on the clock (#982)");
   assert.equal(fs.readFileSync(lock, "utf8"), record(process.pid));
 });
 
