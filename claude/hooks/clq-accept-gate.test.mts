@@ -8,9 +8,14 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
+import { pathToFileURL } from "node:url";
 
 const HOOK = path.join(import.meta.dirname, "clq-accept-gate.mts");
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), "clq-test-"));
+// A timed run loads this preload, which writes the child's CPU milliseconds on exit (#990).
+const CPU_PRELOAD = path.join(TMP, "cpu-preload.mjs");
+const CPU_FILE = path.join(TMP, "cpu-ms");
+fs.writeFileSync(CPU_PRELOAD, 'import fs from "node:fs";\nprocess.on("exit", () => {\n  const u = process.cpuUsage();\n  fs.writeFileSync(process.env.CLQ_CPU_FILE, String((u.user + u.system) / 1000));\n});\n');
 
 let pass = 0;
 let fail = 0;
@@ -22,13 +27,15 @@ function hash(s: string): number {
 }
 
 // Returns true if the hook BLOCKED (emitted decision:block).
-function runHook(stdinObj: Record<string, unknown>, envExtra: Record<string, string> = {}): boolean {
+function runHook(stdinObj: Record<string, unknown>, envExtra: Record<string, string> = {}, timed = false): boolean {
   let out = "";
+  const args = timed ? ["--import", pathToFileURL(CPU_PRELOAD).href, HOOK] : [HOOK];
+  const cpuEnv = timed ? { CLQ_CPU_FILE: CPU_FILE } : {};
   try {
-    out = execFileSync("node", [HOOK], {
+    out = execFileSync("node", args, {
       input: JSON.stringify(stdinObj),
       encoding: "utf8",
-      env: { ...process.env, KHEREP_WORKSPACE: "", ...envExtra },
+      env: { ...process.env, KHEREP_WORKSPACE: "", ...envExtra, ...cpuEnv },
     });
   } catch {
     out = "";
@@ -55,7 +62,7 @@ function scopedTranscript(text: string): string {
   return file;
 }
 
-function caseRun(name: string, text: string, extra: { cwd?: string; stop_hook_active?: boolean }, expectBlock: boolean): void {
+function caseRun(name: string, text: string, extra: { cwd?: string; stop_hook_active?: boolean }, expectBlock: boolean, timed = false): void {
   const tp = scopedTranscript(text);
   const cwd = extra.cwd || "D:\\Work\\kherep";
   const workspace = cwd.startsWith("/Users/example/Work") ? "/Users/example/Work" : "D:\\Work";
@@ -63,7 +70,7 @@ function caseRun(name: string, text: string, extra: { cwd?: string; stop_hook_ac
     transcript_path: tp,
     cwd,
     ...extra,
-  }, { KHEREP_WORKSPACE: workspace });
+  }, { KHEREP_WORKSPACE: workspace }, timed);
   const ok = blocked === expectBlock;
   ok ? pass++ : fail++;
   console.log(`${ok ? "PASS" : "FAIL"} | ${name} | expected ${expectBlock ? "BLOCK" : "ALLOW"}, got ${blocked ? "BLOCK" : "ALLOW"}`);
@@ -167,22 +174,27 @@ caseRun("Evidence value on a later line", "Dispatched: 1 agents\nEvidence:\n\n  
 for (const line of ["Evidence: none", "Evidence: N/A", "evidence: na", "Evidence: unknown", "Evidence: x", "See Evidence: file"]) {
   caseRun(`placeholder, one character or mid-line: ${line}`, `Dispatched: 1 agents\n${line}`, {}, true);
 }
+// CPU milliseconds of the timed hook run inside fn; NaN when the preload wrote nothing.
+function cpuMs(fn: () => void): number {
+  fs.rmSync(CPU_FILE, { force: true });
+  fn();
+  try { return Number(fs.readFileSync(CPU_FILE, "utf8")); } catch { return NaN; }
+}
+
 (function linearReceiptScan() {
-  // The bound is on the time beyond a short receipt run just before, so the hook start-up does not count (#914).
+  // The bound is on the child's CPU time beyond a short receipt run just before, so the hook
+  // start-up does not count (#914) and neither do scheduler stalls on a shared runner (#990).
   const controlTranscript = scopedTranscript("Dispatched: 1 agents\nOutcomes: x");
   for (const [name, text] of [
     ["100 000 line feeds before the receipt", `${"\n".repeat(100_000)}Dispatched: 1 agents\nOutcomes: x`],
     ["50 000 line feeds around a placeholder", `Dispatched: 1\n${"\n".repeat(50_000)}Evidence:${"\n".repeat(50_000)}none`],
   ]) {
-    let started = Date.now();
-    runHook({ transcript_path: controlTranscript, cwd: "D:\\Work\\kherep" }, { KHEREP_WORKSPACE: "D:\\Work" });
-    const control = Date.now() - started;
-    started = Date.now();
-    caseRun(name, text, {}, true);
-    const beyond = Date.now() - started - control;
+    const control = cpuMs(() => runHook({ transcript_path: controlTranscript, cwd: "D:\\Work\\kherep" }, { KHEREP_WORKSPACE: "D:\\Work" }, true));
+    const subject = cpuMs(() => caseRun(name, text, {}, true, true));
+    const beyond = subject - control;
     const ok = beyond < 2000;
     ok ? pass++ : fail++;
-    console.log(`${ok ? "PASS" : "FAIL"} | ${name} within 2 s beyond a short receipt | ${beyond} ms`);
+    console.log(`${ok ? "PASS" : "FAIL"} | ${name} within 2 s CPU beyond a short receipt | ${beyond.toFixed(1)} ms (subject ${subject.toFixed(1)}, control ${control.toFixed(1)})`);
   }
 })();
 
