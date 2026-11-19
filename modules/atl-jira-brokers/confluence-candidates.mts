@@ -148,28 +148,40 @@ export function parseDecisions(text: string): Decision[] {
   });
 }
 
+// Issue #989: a problem also carries the fixed code the Codex receipt line
+// names it by. Only the Codex adapter reads it; the stitch CLI prints `why`.
+type Coded = Problem & { code: string };
+const plain = ({ id, why }: Coded): Problem => ({ id, why });
+
+// The one reason bound: the publish policy refuses with it before any I/O.
+export function reasonWhy(reason: string): string | null {
+  if (!reason) return "no reason given";
+  if (/[\x00-\x1f\x7f-\x9f]/.test(reason)) return "reason has non-printable characters";
+  if (reason.length < REASON_MIN) return `reason shorter than ${REASON_MIN} characters`;
+  if (reason.length > REASON_MAX) return `reason longer than ${REASON_MAX} characters`;
+  return null;
+}
+
 // The checks both receipt kinds share: space, age, and every decision.
-function sharedProblems(receipt: Receipt, decisions: readonly Decision[], spaceKey: string, now: number, source: string): Problem[] {
-  const problems: Problem[] = [];
-  const whole = (why: string) => problems.push({ id: source, why });
-  if (receipt.spaceKey.toUpperCase() !== spaceKey.toUpperCase()) whole("the receipt is for another space");
+function sharedProblems(receipt: Receipt, decisions: readonly Decision[], spaceKey: string, now: number, source: string): Coded[] {
+  const problems: Coded[] = [];
+  const whole = (why: string, code: string) => problems.push({ id: source, why, code });
+  if (receipt.spaceKey.toUpperCase() !== spaceKey.toUpperCase()) whole("the receipt is for another space", "another-space");
   const at = Date.parse(receipt.searchedAt);
-  if (!Number.isFinite(at)) whole("the receipt has no readable search time");
-  else if (now - at > RECEIPT_MAX_AGE_MS) whole("the receipt is older than 2 h");
-  else if (at - now > CLOCK_SKEW_MS) whole("the receipt is dated in the future");
+  if (!Number.isFinite(at)) whole("the receipt has no readable search time", "receipt-undated");
+  else if (now - at > RECEIPT_MAX_AGE_MS) whole("the receipt is older than 2 h", "receipt-expired");
+  else if (at - now > CLOCK_SKEW_MS) whole("the receipt is dated in the future", "receipt-future");
 
   const offered = new Set(receipt.candidates.map((candidate) => candidate.id));
   const decided = new Set<string>();
   for (const { id, reason } of decisions) {
-    if (!/^\d+$/.test(id)) problems.push({ id: id || "-", why: "not a numeric page id" });
-    else if (!offered.has(id)) problems.push({ id, why: "not a candidate in the receipt" });
-    if (decided.has(id)) problems.push({ id, why: "decided more than once" });
+    if (!/^\d+$/.test(id)) problems.push({ id: id || "-", why: "not a numeric page id", code: "id-invalid" });
+    else if (!offered.has(id)) problems.push({ id, why: "not a candidate in the receipt", code: "not-candidate" });
+    if (decided.has(id)) problems.push({ id, why: "decided more than once", code: "duplicate-id" });
     decided.add(id);
     // The reason lands in a trace line and in Confluence version history.
-    if (!reason) problems.push({ id, why: "no reason given" });
-    else if (/[\x00-\x1f\x7f-\x9f]/.test(reason)) problems.push({ id, why: "reason has non-printable characters" });
-    else if (reason.length < REASON_MIN) problems.push({ id, why: `reason shorter than ${REASON_MIN} characters` });
-    else if (reason.length > REASON_MAX) problems.push({ id, why: `reason longer than ${REASON_MAX} characters` });
+    const why = reasonWhy(reason);
+    if (why) problems.push({ id, why, code: "reason-invalid" });
   }
   return problems;
 }
@@ -182,19 +194,25 @@ export function checkDecisions(
 ): Problem[] {
   if (!receipt || receipt.kind !== RECEIPT_KIND) return [{ id: expected.source, why: "the candidates file is not a stitch receipt" }];
   const problems = receipt.source === expected.source ? [] : [{ id: expected.source, why: "the receipt is for another page" }];
-  return [...problems, ...sharedProblems(receipt, decisions, expected.spaceKey, expected.now, expected.source)];
+  return [...problems, ...sharedProblems(receipt, decisions, expected.spaceKey, expected.now, expected.source).map(plain)];
+}
+
+type RelatedExpected = { title: string; spaceKey: string; sessionId: string; turnId: string; now: number };
+function relatedProblems(receipt: Receipt | null, decisions: readonly Decision[], expected: RelatedExpected): Coded[] {
+  const whole = (why: string, code: string): Coded => ({ id: "-", why, code });
+  if (!receipt || receipt.kind !== RELATED_RECEIPT_KIND) return [whole("the token names no related-candidates receipt", "receipt-malformed")];
+  const problems: Coded[] = [];
+  if (receipt.sessionId !== expected.sessionId || receipt.turnId !== expected.turnId) problems.push(whole("the receipt is for another turn", "another-turn"));
+  if (receipt.source.title !== expected.title) problems.push(whole("the receipt is for another title", "another-title"));
+  return [...problems, ...sharedProblems(receipt, decisions, expected.spaceKey, expected.now, "-")];
 }
 
 // The Codex adapter's form: the receipt must belong to this turn and title.
-export function checkRelatedLinks(
-  receipt: Receipt | null,
-  decisions: readonly Decision[],
-  expected: { title: string; spaceKey: string; sessionId: string; turnId: string; now: number },
-): Problem[] {
-  const whole = (why: string): Problem => ({ id: "-", why });
-  if (!receipt || receipt.kind !== RELATED_RECEIPT_KIND) return [whole("the token names no related-candidates receipt")];
-  const problems: Problem[] = [];
-  if (receipt.sessionId !== expected.sessionId || receipt.turnId !== expected.turnId) problems.push(whole("the receipt is for another turn"));
-  if (receipt.source.title !== expected.title) problems.push(whole("the receipt is for another title"));
-  return [...problems, ...sharedProblems(receipt, decisions, expected.spaceKey, expected.now, "-")];
+export function checkRelatedLinks(receipt: Receipt | null, decisions: readonly Decision[], expected: RelatedExpected): Problem[] {
+  return relatedProblems(receipt, decisions, expected).map(plain);
+}
+
+// The same check as distinct fixed codes in emission order (issue #989).
+export function relatedLinkCodes(receipt: Receipt | null, decisions: readonly Decision[], expected: RelatedExpected): string[] {
+  return [...new Set(relatedProblems(receipt, decisions, expected).map((problem) => problem.code))];
 }

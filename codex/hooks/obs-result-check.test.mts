@@ -154,3 +154,9 @@ for (const code of ['space-lookup-unavailable', 'space-unresolved', 'space-looku
     'space-lookup-network-unavailable', 'space-lookup-timeout']) test(`lookup failure ${code} warns without requesting a retry`, () => {
     assert.match(message(run({ last_assistant_message: `OBS-RESULT: failed ${code}` })), /same turn/);
 });
+
+// Issue #989: a refusal naming its findings is a valid failed receipt, never a correction.
+for (const stop_hook_active of [false, true]) test(`a failed receipt with why= warns without a block (stop_hook_active ${stop_hook_active})`, () => {
+    for (const text of ['OBS-RESULT: failed links-refused why=1:another-title,2:not-candidate', 'OBS-RESULT: failed invalid-request why=1:reason-invalid'])
+        assert.match(message(run({ stop_hook_active, last_assistant_message: text })), /same turn/);
+});

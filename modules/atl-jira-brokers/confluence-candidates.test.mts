@@ -12,12 +12,15 @@ import {
   parseDecisions,
   parseReceipt,
   RECEIPT_KIND,
+  reasonWhy,
+  relatedLinkCodes,
   RELATED_RECEIPT_KIND,
   selectCandidates,
   type RelatedReceipt,
   type StitchReceipt,
 } from "./confluence-candidates.mts";
 import type { IndexedPage, SpaceIndex } from "./confluence-related.mts";
+import { OBS_WHY } from "./observation-result.mts";
 
 function indexOf(pages: IndexedPage[]): SpaceIndex {
   const index: SpaceIndex = { byId: new Map(), byTitle: new Map(), parents: new Set() };
@@ -171,4 +174,38 @@ test("every decision-level refusal is named per id, all at once", () => {
     { id: "11", why: "decided more than once" },
     { id: "11", why: "reason longer than 300 characters" },
   ]);
+});
+
+// Issue #989: the Codex receipt line names each refusal by a fixed code.
+test("relatedLinkCodes names every refusal branch by one fixed code", () => {
+  const cases: [RelatedReceipt | StitchReceipt | null, { id: string; reason: string }[], string[]][] = [
+    [RELATED, [{ id: "13", reason: REASON }], []],
+    [null, [], ["receipt-malformed"]],
+    [RECEIPT, [], ["receipt-malformed"]],
+    [{ ...RELATED, turnId: "t2" }, [], ["another-turn"]],
+    [{ ...RELATED, sessionId: "s2" }, [], ["another-turn"]],
+    [{ ...RELATED, source: { title: "Logon task workaround " } }, [], ["another-title"]],
+    [{ ...RELATED, spaceKey: "X" }, [], ["another-space"]],
+    [{ ...RELATED, searchedAt: "yesterday" }, [], ["receipt-undated"]],
+    [{ ...RELATED, searchedAt: "2026-11-02T07:00:00Z" }, [], ["receipt-expired"]],
+    [{ ...RELATED, searchedAt: "2026-11-02T11:00:00Z" }, [], ["receipt-future"]],
+    [RELATED, [{ id: "abc", reason: REASON }], ["id-invalid"]],
+    [RELATED, [{ id: "99", reason: REASON }], ["not-candidate"]],
+    [RELATED, [{ id: "11", reason: REASON }, { id: "11", reason: REASON }], ["duplicate-id"]],
+    [RELATED, [{ id: "11", reason: "short" }, { id: "13", reason: "" }], ["reason-invalid"]],
+    [{ ...RELATED, turnId: "t2", source: { title: "Other" } }, [{ id: "99", reason: REASON }], ["another-turn", "another-title", "not-candidate"]],
+  ];
+  for (const [receipt, decisions, codes] of cases) {
+    assert.deepEqual(relatedLinkCodes(receipt, decisions, TURN), codes, codes.join() || "none");
+    for (const code of codes) assert.ok(OBS_WHY["links-refused"].includes(code), code);
+  }
+});
+
+test("reasonWhy is the 10 to 300 printable bound the policy and the receipt check share", () => {
+  for (const reason of ["x".repeat(10), "x".repeat(300)]) assert.equal(reasonWhy(reason), null, String(reason.length));
+  assert.equal(reasonWhy(""), "no reason given");
+  assert.equal(reasonWhy("x".repeat(9)), "reason shorter than 10 characters");
+  assert.equal(reasonWhy("x".repeat(301)), "reason longer than 300 characters");
+  assert.equal(reasonWhy("Same task\n and trigger."), "reason has non-printable characters");
+  assert.equal(reasonWhy("Same task\u0085 and trigger."), "reason has non-printable characters");
 });
