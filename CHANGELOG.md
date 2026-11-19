@@ -253,6 +253,22 @@ increments the minor version; every other release increments the patch version.
 
 ### Fixed
 
+- A client binding probe call no longer fails with `storage_error` while
+  another live process holds its lock or its `.reclaim` gate for longer than
+  the 50-attempt allowance covers (#982). Every open that found a
+  held lock drew on one allowance of 50 opens of at least 4 ms, so a contender
+  gave up after about 200 ms although the holder was alive and working, as in
+  the CI failure with `EEXIST` on `create.lock.reclaim`.
+  An open that finds the complete owner record of a live process other than
+  the caller's own now does not count for up to `LIVE_OWNER_WAIT_MS` (5 s,
+  measured on the monotonic clock) from the start of the call. The caller's own
+  pid, an empty, incomplete, malformed, oversized, symlinked or unverifiable
+  lock, and `EPERM`, `EACCES` or `EBUSY` keep the 50-open bound unchanged. One
+  call is bounded by 5 s plus the allowance, below the hook's 10 s timeout. A
+  lock that names a reused pid, or a suspended holder, now delays each call by
+  up to 5 s before `storage_error`. New tests in `probe-lock-wait.test.mts`
+  release the holder only after the contender's 60th open, so they do not
+  depend on the host's open rate.
 - The Worker test `actual reconnect old sender ...` in
   `diagnostic-boundaries.test.mts` no longer races the register handler
   (#968). The handler marks the socket registered before its own
