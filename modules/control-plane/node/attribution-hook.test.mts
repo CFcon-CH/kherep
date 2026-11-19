@@ -194,3 +194,37 @@ test("a Codex broker call leaves the pending marker its push consumes", () => {
     tool_input: { command: BROKER } }, "codex", d);
   assert.equal(fs.readdirSync(d.paths.attributionPending).length, 1);
 });
+
+test("attribution skips malformed broker lines and records only a valid PR receipt in an unborn repository", () => {
+  const dir = path.join(workspace, `unborn-${++seq}`);
+  fs.mkdirSync(dir, { recursive: true });
+  git(dir, ["init", "-q", "-b", "main"]);
+  const d = deps(() => assert.fail("broker attribution never needs gh pr view"));
+  const invalid = ["diagnostic before JSON", "null",
+    receipt({ operation: "pr.create", repository: "too/many/parts", prNumber: 15 }),
+    receipt({ operation: "pr.create", prNumber: "15" })];
+  handleAttributionHook(post(dir, BROKER, { stdout: invalid.join("\r\n") }), "claude", d);
+  assert.deepEqual(readAttribution(d.paths), []);
+
+  const output = [...invalid, receipt({ operation: "pr.create", prNumber: 16 })].join("\r\n");
+  handleAttributionHook({ ...post(dir, BROKER, output, "PowerShell"), session_id: null }, "claude", d);
+  const [entry, ...rest] = readAttribution(d.paths);
+  assert.deepEqual(rest, []);
+  assert.equal(entry?.repo, "example/broker");
+  assert.equal(entry?.pr, 16);
+  assert.equal(entry?.prSource, "stdout");
+  assert.equal(entry?.sha, null);
+  assert.equal(entry?.branch, "main");
+  assert.equal(entry?.sessionId, "unknown");
+  assert.equal(entry?.runtime, "unknown");
+  assert.equal(entry?.sessionSource, "none");
+});
+
+test("the attribution entry point reports unknown runtimes without failing the calling tool", () => {
+  const hook = path.join(import.meta.dirname, "attribution-hook.mts");
+  const run = spawnSync(process.execPath, [hook, "--runtime", "synthetic"], { encoding: "utf8", timeout: 10_000,
+    env: { ...process.env, KHEREP_CONFIG_DIR: path.join(root, "unsupported-runtime"), KHEREP_WORKSPACE: workspace } });
+  assert.equal(run.status, 0, run.stderr);
+  assert.equal(run.stdout, "");
+  assert.match(run.stderr, /kherep attribution-hook: unknown --runtime; expected codex/);
+});
