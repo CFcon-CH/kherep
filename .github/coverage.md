@@ -135,6 +135,8 @@ and upload succeed. If only functional Codex failed, its successful rerun may
 reuse all fourteen earlier producer artifacts; no fake Codex report is created.
 Historical fifteen-producer runs retain their old source contract and are not
 reinterpreted as fourteen-producer successes.
+The automatic failed-only reruns of `.github/workflows/ci-rerun.yml` (#973)
+follow this contract unchanged.
 
 A scanner-only rerun uses the preserved assembly outputs. Before the scan uses
 the Sonar secret, it checks the exact artifact name, final manifest identity,

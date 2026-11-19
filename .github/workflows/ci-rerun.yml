@@ -1,0 +1,55 @@
+name: CI rerun
+
+# Issue #973. Re-runs the failed jobs of a CI run when every red job is a macOS job
+# GitHub never gave a runner ("not acquired"), or coverage-report failing only
+# because of such a job. Every completed CI run, a sweep over the last six hours
+# off the top of the hour and a manual dispatch all ask the same decision on fresh
+# API reads. At most seven automatic reruns per run. The default branch's script
+# runs; no pull request code, install, cache or secret. A manual dispatch defaults
+# to a dry run. Contract: CONTRIBUTING.md.
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+  schedule:
+    - cron: "3-59/10 * * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Print the decision instead of requesting a rerun
+        type: boolean
+        default: true
+      run_id:
+        description: Numeric id of one CI run to evaluate; empty sweeps the last six hours
+        type: number
+        required: false
+
+permissions: {}
+
+concurrency:
+  group: ci-rerun
+  cancel-in-progress: false
+
+jobs:
+  # The job id is not one of the required check names of main.
+  ci-rerun:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    permissions:
+      actions: write
+      checks: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: lts/*
+      - name: Rerun CI jobs lost to runner capacity
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          CI_RERUN_DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || 'false' }}
+          CI_RERUN_RUN_ID: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.id || inputs.run_id }}
+          CI_RERUN_RUN_ATTEMPT: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.run_attempt || '' }}
+        run: node bootstrap/ci-rerun-main.mts

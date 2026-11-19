@@ -11,6 +11,22 @@ increments the minor version; every other release increments the patch version.
 
 ### Added
 
+- Automatic failed-only rerun of CI runs that lost a macOS job to GitHub
+  runner capacity (#973). The workflow `.github/workflows/ci-rerun.yml` runs
+  `bootstrap/ci-rerun-main.mts` from `main` when a CI run completes, as a sweep
+  over the last six hours every ten minutes, and on manual dispatch (a dry run
+  by default). It requests `rerun-failed-jobs` only when every red job of a
+  failed `push` or `pull_request` run from this repository is a `macos-latest`
+  job cancelled without a runner or step whose only failure annotation is "not
+  acquired", or `coverage-report` failing only in its gate step because of
+  such a job. No newer CI run of the same pull request or branch may exist.
+  At most seven automatic reruns run per CI run, and a later attempt waits ten
+  minutes; the cap ends in a warning. The token has `actions: write`,
+  `checks: read` and `contents: read`; the client admits one write, that POST
+  with an empty body. A failed read, a refused request or a rerun that does
+  not start within 60 seconds fails the run. The stall watch's REST client
+  gains `get`. Live acceptance of a `GITHUB_TOKEN` rerun is not yet proven.
+
 - The GitHub App broker operation `pr.merge` (#956). A request names
   `prNumber` and the head `sha`; the token carries exactly `contents: write`.
   Merging is off by default: only a repository whose version 2 policy entry
@@ -300,6 +316,16 @@ increments the minor version; every other release increments the patch version.
   contradicting readbacks, project discovery, purge and stitch, malformed
   requests and framing limits, and each entry point run as a process. No
   production code, test, timeout or threshold changed.
+- Sonar now credits the bootstrap coverage of the Confluence space CLI and
+  covers more refusal branches (#965, PR #975). `confluence-space.test.mts`
+  and `confluence-broker.test.mts` declare their byte-identical copies of
+  `confluence-space.mts`, `render-profile-paths.mts` and `shape.mts` with
+  `declareCopy`. New tests cover refusal and error branches of
+  `atl-credential.mts`, `confluence-space.mts`,
+  `migrate-mcp-secret-wrapper.mts`, `migrate-mcp-http-auth.mts`,
+  `plugin-contract.mts`, `reconcile-plugins.mts`, `npm-globals.mts` and
+  `publication-audit.mts`; `terminal-preload.fixture.mts` drives the
+  interactive prompts from a pipe. No production code changed.
 - A node no longer sends its outbox the moment it reconnects, racing the
   Worker's handling of its `register` (#961). A message sent 31 ms after a
   reconnect was refused with `loop-resolution-required`. The daemon now holds
