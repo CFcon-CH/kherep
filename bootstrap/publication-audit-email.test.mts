@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import test from 'node:test';
-import { auditRepository } from './publication-audit.mts';
+import { auditRepository, emailAddresses } from './publication-audit.mts';
 
 const at = (local: string, domain: string): string => `${local}@${domain}`;
 
@@ -35,16 +35,34 @@ test('reserved, dotless and incomplete addresses need no review', (t) => {
   }
 });
 
+const N = 25_000;
+const longRuns = [(size: number) => 'a'.repeat(size), (size: number) => 'a@'.repeat(size / 2),
+  (size: number) => 'a@' + 'a.'.repeat(size / 2)];
+
+// The fastest of five scans after a warm-up, so one scheduler or collector pause cannot decide.
+function fastest(text: string): number {
+  emailAddresses(text);
+  let best = Infinity;
+  for (let run = 0; run < 5; run += 1) {
+    const started = performance.now();
+    emailAddresses(text);
+    best = Math.min(best, performance.now() - started);
+  }
+  return best;
+}
+
+test('long runs without an address need no review', (t) => {
+  for (const shape of longRuns) assert.deepEqual(auditRepository(repository(t, shape(4 * N)), []).issues, []);
+});
+
 test('long runs without an address are scanned in linear time', (t) => {
-  const control = repository(t, 'a');
-  let started = performance.now();
-  auditRepository(control, []);
-  const baseline = performance.now() - started;
-  for (const text of ['a'.repeat(100_000), 'a@'.repeat(50_000), 'a@' + 'a.'.repeat(50_000)]) {
-    const root = repository(t, text);
-    started = performance.now();
-    assert.deepEqual(auditRepository(root, []).issues, []);
-    const elapsed = performance.now() - started - baseline;
-    assert.ok(elapsed < 200, `${text.length} characters took ${elapsed.toFixed(1)} ms beyond the audit of one character`);
+  // Issue #983: only the scanner is timed, n against 4n characters. Linear growth is about four times,
+  // quadratic growth sixteen; the floor keeps near-zero timings from dividing timer noise.
+  for (const shape of longRuns) {
+    const small = fastest(shape(N));
+    const large = fastest(shape(4 * N));
+    const label = `${JSON.stringify(shape(4).slice(0, 4))}: ${4 * N} characters took ${large.toFixed(2)} ms, ${N} took ${small.toFixed(2)} ms`;
+    t.diagnostic(label);
+    assert.ok(large <= Math.max(8 * small, 5), label);
   }
 });
