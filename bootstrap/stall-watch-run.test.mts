@@ -60,6 +60,14 @@ test("list follows next links, and more pages than allowed is an error", async (
   await assert.rejects(ok.list("/x", null, 1), /more than 1 page/);
 });
 
+test("get reads one object and throws on a non-2xx answer (#973)", async () => {
+  const calls: Call[] = [];
+  const gh = client(calls, { "GET /one": { body: { id: 1 } }, "GET /gone": { status: 404, body: {} } });
+  assert.deepEqual(await gh.get("/one"), { id: 1 });
+  await assert.rejects(gh.get("/gone"), /GET \/gone answered HTTP 404/);
+  assert.deepEqual(calls.map((c) => c.method), ["GET", "GET"]);
+});
+
 test("a next link outside the API origin is refused", async () => {
   const calls: Call[] = [];
   const evil = client(calls, { "GET /x?per_page=100": { body: [1], link: `<https://elsewhere.example/x?page=2>; rel="next"` } });

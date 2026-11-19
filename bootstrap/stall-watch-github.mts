@@ -1,5 +1,7 @@
-// Thin GitHub REST layer for bootstrap/stall-watch.mts (issue #744).
+// Thin GitHub REST layer for bootstrap/stall-watch.mts (issue #744) and
+// bootstrap/ci-rerun.mts (issue #973).
 //
+// `get` reads one object.
 // `list` follows the `Link: rel="next"` header with per_page=100 and fails
 // when a list has more pages than the caller allows: a capped read is an
 // error, never a short list. A next link that leaves the API origin is refused,
@@ -8,6 +10,7 @@
 import { field } from "./shape.mts";
 
 export interface GithubClient {
+  get(path: string): Promise<unknown>;
   list(path: string, key: string | null, maxPages: number): Promise<unknown[]>;
   post(path: string, body: unknown): Promise<void>;
 }
@@ -42,6 +45,9 @@ export function githubClient(options: ClientOptions): GithubClient {
   }
 
   return {
+    async get(path) {
+      return (await call(`${api}${path}`)).json();
+    },
     async list(path, key, maxPages) {
       const items: unknown[] = [];
       const label = path.split("?")[0];
