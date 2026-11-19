@@ -1,6 +1,6 @@
 ---
 name: kherep-maestro-parity
-description: Verify or repair the Kherep Maestro projection in Codex on Windows or macOS. Use when the user asks whether Maestro, routing, skills, agents, hooks, plugins, MCP, wiki, or explicitly selected Central memory are installed consistently across workstations.
+description: Verify or repair the Kherep Maestro projection in Codex on Windows or macOS. Use when the user asks whether Maestro, routing, skills, agents, hooks, plugins, MCP, or the configured wiki are installed consistently across workstations.
 ---
 
 # Kherep Maestro Parity
@@ -12,4 +12,4 @@ description: Verify or repair the Kherep Maestro projection in Codex on Windows 
 5. Report each capability as `ready`, `configured-not-authenticated`, `missing`, or `not-applicable`.
 6. Do not modify `~/.claude` or any Claude plugin, hook, setting, worker, provider, or memory database.
 7. Repair Codex only through the versioned Orchestra installer. On Windows run `codex/install.ps1`; on macOS run `codex/install.sh`.
-8. After repair, start a fresh Codex task and functionally verify routing, skill discovery, agent discovery, hooks, the configured wiki, and explicitly selected Central memory.
+8. After repair, start a fresh Codex task and functionally verify routing, skill discovery, agent discovery, hooks, and the configured wiki.

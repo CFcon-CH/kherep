@@ -29,7 +29,7 @@ export function adaptSkillText(value: unknown): string {
     "<!-- kherep-codex-projection -->",
     "## Codex projection safety",
     "",
-    "Central memory is unconfigured. Do not assume memory access or a supported provider; stop when an operation requires an unavailable memory service.",
+    "This installation has no memory provider. Do not assume memory access; stop when an operation requires a memory service.",
     "All raw Claude sessions, transcripts, configuration, plugins, or hooks remain forbidden. Do not read or modify Claude-private memory databases. Use Codex paths and tools for all other state; stop if no supported Codex equivalent exists.",
     "",
   ].join("\n");
