@@ -256,3 +256,41 @@ test("stdio errors and arguments never expose credential material", (t) => {
   assert.equal(oversized.stdout, "");
   assert.doesNotMatch(`${oversized.stdout}\n${oversized.stderr}`, new RegExp(TOKEN_A));
 });
+
+test("the bridge allows ws loopback but rejects insecure or non-origin endpoints before sending credentials", async t => {
+  const { root, paths } = fixture(t, "ws://127.0.0.1:8765/");
+  const requests: string[] = [];
+  const fetchImpl = async (input: string | URL | Request) => { requests.push(String(input)); return jsonResponse({ result: {} }); };
+  await forward(rpc(), root, { fetch: fetchImpl });
+  assert.deepEqual(requests, ["http://127.0.0.1:8765/mcp"]);
+
+  const base = JSON.parse(fs.readFileSync(paths.config, "utf8"));
+  for (const controlUrl of ["not a URL", "ws://control.example.invalid/", "https://control.example.invalid/prefix",
+    "https://control.example.invalid/?q=1", "https://control.example.invalid/#fragment", "https://synthetic@control.example.invalid/"]) {
+    writeConfig(paths.config, { ...base, controlUrl });
+    await assert.rejects(forward(rpc(), root, { fetch: fetchImpl }), { code: "remote_mcp_config_invalid" });
+  }
+  assert.deepEqual(requests, ["http://127.0.0.1:8765/mcp"]);
+});
+
+test("stdio keeps request IDs across CRLF and final unterminated lines, while notifications stay silent", t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "kherep-mcp-stdio-empty-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const bridge = path.join(import.meta.dirname, "mcp-stdio-bridge.mts");
+  const invalid = spawnSync(process.execPath, [bridge, "--config-root", "relative"], { encoding: "utf8", timeout: 10_000 });
+  assert.equal(invalid.status, 1);
+  assert.equal(invalid.stdout, "");
+  assert.equal(invalid.stderr.replace(TYPE_STRIPPING_WARNING, "").trim(), "remote_mcp_invalid_arguments");
+
+  const notifications = JSON.stringify([JSON.parse(rpc(null)), JSON.parse(rpc(null))]);
+  const run = spawnSync(process.execPath, [bridge, "--config-root", root], { encoding: "utf8", timeout: 10_000,
+    input: `\r\n${rpc(7)}\r\n${notifications}\r\nbad JSON\r\n${rpc(8)}` });
+  assert.equal(run.status, 0, run.stderr);
+  assert.equal(run.stderr.replace(TYPE_STRIPPING_WARNING, "").trim(), "");
+  const unavailable = { code: -32000, message: "remote_mcp_config_unavailable" };
+  assert.deepEqual(run.stdout.trim().split(/\r?\n/).map(line => JSON.parse(line)), [
+    { jsonrpc: "2.0", id: 7, error: unavailable },
+    { jsonrpc: "2.0", id: null, error: { code: -32000, message: "remote_mcp_input_invalid" } },
+    { jsonrpc: "2.0", id: 8, error: unavailable },
+  ]);
+});
