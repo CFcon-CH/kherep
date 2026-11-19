@@ -5,23 +5,31 @@
  * exit 2 = block, exit 0 = allow.
  * Run: node secret-output-guard.test.mts
  */
-import path from "node:path";
+import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 const HOOK = path.join(import.meta.dirname, "secret-output-guard.mts");
 let pass = 0;
 let fail = 0;
+type CpuTiming = { preload: string; cpuFile: string };
 
-function runHook(command: string, toolName?: string): { blocked: boolean; stderr: string } {
-  const res = spawnSync("node", [HOOK], {
+function runHook(command: string, toolName?: string, timing?: CpuTiming): { status: number | null; stderr: string } {
+  const res = spawnSync(process.execPath, [...(timing ? ["--import", pathToFileURL(timing.preload).href] : []), HOOK], {
     input: JSON.stringify({ tool_name: toolName || "Bash", tool_input: { command } }),
     encoding: "utf8",
+    env: timing ? { ...process.env, KHEREP_TEST_CPU_FILE: timing.cpuFile } : undefined,
   });
-  return { blocked: res.status === 2, stderr: res.stderr || "" };
+  return { status: res.status, stderr: res.stderr || "" };
 }
 
-function expectBlocked(label: string, command: string, ruleId?: string, toolName?: string): void {
-  const { blocked, stderr } = runHook(command, toolName);
+function expectBlocked(label: string, command: string, ruleId?: string, toolName?: string, timing?: CpuTiming): void {
+  const { status, stderr } = runHook(command, toolName, timing);
+  if (timing) assert.equal(status, 2, `unexpected exit from timed BLOCK case: ${label}`);
+  const blocked = status === 2;
   if (blocked && (!ruleId || stderr.includes(`(${ruleId})`))) {
     pass++;
     console.log(`  ok   BLOCK  ${label}`);
@@ -31,9 +39,10 @@ function expectBlocked(label: string, command: string, ruleId?: string, toolName
   }
 }
 
-function expectAllowed(label: string, command: string, toolName?: string): void {
-  const { blocked, stderr } = runHook(command, toolName);
-  if (!blocked) {
+function expectAllowed(label: string, command: string, toolName?: string, timing?: CpuTiming): void {
+  const { status, stderr } = runHook(command, toolName, timing);
+  if (timing) assert.equal(status, 0, `unexpected exit from timed ALLOW case: ${label}`);
+  if (status !== 2) {
     pass++;
     console.log(`  ok   ALLOW  ${label}`);
   } else {
@@ -182,21 +191,47 @@ for (const command of ["kubectl\nget secret x -o yaml", "kubectl get secret x\n-
   "kubectl target secret -o yaml", "get secret x -o yaml", "kubectl get secret x -o wide", "kubectl get pods -o yaml"]) {
   expectAllowed(`no k8s dump ${JSON.stringify(command)}`, command);
 }
-for (const [label, command, ruleId] of [
-  ["status echo before 50 000 blanks", `env && echo${" ".repeat(50_000)}!`, "env-dump"],
-  ["5 000 times kubectl get secret", "kubectl get secret ".repeat(5_000), ""],
-  ["-o before 50 000 blanks", `kubectl get secret -o${" ".repeat(50_000)}x`, ""],
-]) {
-  // The bound is on the time beyond a short command run just before, so the hook start-up does not count (#914).
-  let started = Date.now();
-  runHook("echo ok");
-  const control = Date.now() - started;
-  started = Date.now();
-  if (ruleId) expectBlocked(label, command, ruleId);
-  else expectAllowed(label, command);
-  const beyond = Date.now() - started - control;
-  if (beyond < 2000) { pass++; console.log(`  ok   TIME   ${label} (${beyond} ms beyond a short command)`); }
-  else { fail++; console.log(`  FAIL TIME   ${label} (${beyond} ms beyond a short command, limit 2000)`); }
+const root = fs.mkdtempSync(path.join(os.tmpdir(), "secret-output-timing-"));
+try {
+  const timing = { preload: path.join(root, "cpu-preload.mjs"), cpuFile: path.join(root, "cpu-ms") };
+  fs.writeFileSync(timing.preload, `import fs from "node:fs";
+process.on("exit", () => {
+  const usage = process.cpuUsage();
+  fs.writeFileSync(process.env.KHEREP_TEST_CPU_FILE, String((usage.user + usage.system) / 1000));
+});
+`);
+  function cpuMs(run: () => void): number {
+    fs.rmSync(timing.cpuFile, { force: true });
+    run();
+    try {
+      const raw = fs.readFileSync(timing.cpuFile, "utf8");
+      const value = Number(raw);
+      return /^\d+(?:\.\d+)?$/.test(raw) && Number.isFinite(value) ? value : NaN;
+    } catch {
+      return NaN;
+    }
+  }
+
+  for (const [label, command, ruleId] of [
+    ["status echo before 50 000 blanks", `env && echo${" ".repeat(50_000)}!`, "env-dump"],
+    ["5 000 times kubectl get secret", "kubectl get secret ".repeat(5_000), ""],
+    ["-o before 50 000 blanks", `kubectl get secret -o${" ".repeat(50_000)}x`, ""],
+  ]) {
+    // Subtract the short command's CPU time to account for hook startup (#992).
+    const control = cpuMs(() => {
+      assert.equal(runHook("echo ok", undefined, timing).status, 0, "unexpected exit from short control command");
+    });
+    const subject = cpuMs(() => {
+      if (ruleId) expectBlocked(label, command, ruleId, undefined, timing);
+      else expectAllowed(label, command, undefined, timing);
+    });
+    const beyond = subject - control;
+    const diagnostic = `CPU ${label} control=${control} subject=${subject} delta=${beyond}`;
+    if (beyond < 2000) { pass++; console.log(`  ok   TIME   ${diagnostic}`); }
+    else { fail++; console.log(`  FAIL TIME   ${diagnostic} (limit 2000 ms)`); }
+  }
+} finally {
+  fs.rmSync(root, { recursive: true, force: true });
 }
 
 console.log(`\n${pass} pass, ${fail} fail`);
