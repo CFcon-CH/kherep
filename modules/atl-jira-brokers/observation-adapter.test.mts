@@ -189,7 +189,7 @@ for (const mode of ['missing-author', 'wrong-author', 'partial-related', 'relate
             assert.equal(fs.existsSync(path.join(f.home, '.cache', 'observation-publisher', 'candidates')), false);
         }
         const result = await publishObservations(r, f.broker, f.store);
-        if (searchFails) assert.equal(result, 'OBS-RESULT: failed links-refused');
+        if (searchFails) assert.equal(result, 'OBS-RESULT: failed links-refused why=1:receipt-missing');
         assert.match(result, /^OBS-RESULT: failed /);
         assert.doesNotMatch(result, /CANARY/);
         assert.equal(f.calls.filter(c => c.method === 'POST' && c.route === '/wiki/api/v2/pages').length, mode === 'wrong-author' ? 1 : 0);

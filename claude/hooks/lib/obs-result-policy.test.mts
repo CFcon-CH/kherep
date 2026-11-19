@@ -101,3 +101,8 @@ test("a reason starts after the blanks; a line break or a glued word makes no st
   assert.deepEqual(checkObsResult(`OBS-RESULT: failed${" ".repeat(50_000)}x\u2028y`), none);
   assert.ok(performance.now() - started < 200, "linear on a long blank run");
 });
+
+// Issue #989: the Codex refusal line with fixed codes reads as a failed receipt here too.
+test("a links-refused line with why= codes is a failed receipt", () => {
+  valid("OBS-RESULT: failed links-refused why=1:another-title", "failed");
+});

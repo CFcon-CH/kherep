@@ -100,3 +100,18 @@ test('imported without its own script path the adapter does not serve', () => {
     assert.equal(proc.stdout, '');
   }
 });
+
+// Issue #989: a refusal with fixed codes passes through verbatim; a malformed why= is an unknown outcome.
+test('a links-refused or invalid-request receipt with why= is a verbatim error result, a malformed one is unknown', async () => {
+  const args = { name: 'publish_observations', arguments: {} };
+  for (const text of ['OBS-RESULT: failed links-refused why=1:another-title,2:not-candidate', 'OBS-RESULT: failed links-refused why=unknown',
+    'OBS-RESULT: failed invalid-request why=2:reason-invalid']) {
+    const response = await observationRpc(call(args), async () => text) as { result: unknown };
+    assert.deepEqual(response.result, { content: [{ type: 'text', text }], isError: true });
+  }
+  for (const text of ['OBS-RESULT: failed links-refused why=1:CANARY', 'OBS-RESULT: failed authority-denied why=unknown',
+    'OBS-RESULT: failed links-refused why=1:another-title created=101']) {
+    const response = await observationRpc(call(args), async () => text);
+    assert.deepEqual((response as { error: unknown }).error, { code: -32603, message: 'publication-outcome-unknown' });
+  }
+});

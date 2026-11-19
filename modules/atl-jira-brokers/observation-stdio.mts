@@ -6,7 +6,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { publishObservations } from './observation-publisher.mts';
 import { observationBroker } from './observation-broker.mts';
-import { observationRequest } from './observation-policy.mts';
+import { invalidRequest, observationRequest } from './observation-policy.mts';
 import { receiptStore } from './observation-receipt.mts';
 import { checkObsResult } from './observation-result.mts';
 export const OBSERVATION_TOOL = {
@@ -152,7 +152,7 @@ async function main() {
     await serveObservations(process.stdin, line => process.stdout.write(line), async (request) => {
         const validated = observationRequest(request);
         if (!validated)
-            return 'OBS-RESULT: failed invalid-request';
+            return invalidRequest(request);
         if (!validated.observations.length)
             return 'OBS-RESULT: empty no-admissible-findings';
         return publishObservations(validated, observationBroker(home), receiptStore(path.join(home, '.cache', 'observation-publisher')));

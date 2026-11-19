@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { publishObservations, type ObservationBroker, type Target } from './observation-publisher.mts';
 import { receiptStore } from './observation-receipt.mts';
+import { LinksRefused } from './observation-policy.mts';
 const finding = { title: 'Synthetic transport measurement', bodyStorage: '<p>Origin: measured synthetic test -> pass</p>',
     evidence: 'assumed', labels: ['type-observation', 'evidence-assumed', 'status-author-model'], placement: { project: 'Kherep', app: '-' }, links: { candidates: 'a'.repeat(64), approved: [] as { id: string; reason: string }[] } };
 const request = () => ({ sessionId: 'synthetic-session', turnId: 'turn-1', observations: [structuredClone(finding)] });
@@ -149,9 +150,57 @@ test('a refused link decision fails links-refused before any create', async (t) 
     const r = request();
     r.observations.push({ ...structuredClone(finding), title: 'Second' });
     let checked = 0;
-    f.broker.links = async () => { f.calls.push('links'); if (++checked === 2) throw new Error('links-refused'); return { approved: [], reviewed: 0 }; };
-    assert.equal(await publishObservations(r, f.broker, f.store), 'OBS-RESULT: failed links-refused');
+    f.broker.links = async () => { f.calls.push('links'); if (++checked === 2) throw new LinksRefused(['another-title']); return { approved: [], reviewed: 0 }; };
+    assert.equal(await publishObservations(r, f.broker, f.store), 'OBS-RESULT: failed links-refused why=2:another-title');
     assert.deepEqual(f.calls, ['authority', 'space', 'identity', 'links', 'links']);
-    assert.equal(await publishObservations(r, f.broker, f.store), 'OBS-RESULT: failed links-refused');
+    assert.equal(await publishObservations(r, f.broker, f.store), 'OBS-RESULT: failed links-refused why=2:another-title');
     assert.equal(f.calls.length, 5);
+});
+// Issue #989: every finding is checked, and each refusal names its position and fixed codes.
+for (const [name, errors, expected] of [
+    ['two refusing findings are both reported', [null, new LinksRefused(['not-candidate']), new LinksRefused(['another-turn', 'another-title'])],
+        'why=2:not-candidate,3:another-turn,3:another-title'],
+    ['a plain error is unknown for its finding', [new Error('CANARY_PRIVATE_PATH'), null, null], 'why=1:unknown'],
+    ['a code outside the vocabulary is unknown and never echoed', [null, new LinksRefused(['CANARY_PRIVATE_PATH']), null], 'why=2:unknown'],
+    ['an empty code list is unknown', [null, null, new LinksRefused([])], 'why=3:unknown'],
+    ['more than two codes keep the first two in priority order', [new LinksRefused(['not-candidate', 'reason-invalid', 'another-title', 'another-turn']), null, null],
+        'why=1:another-turn,1:another-title'],
+] as const) test(`links-refused: ${name}`, async (t) => {
+    const f = fixture(t);
+    const r = request();
+    r.observations.push({ ...structuredClone(finding), title: 'Second' }, { ...structuredClone(finding), title: 'Third' });
+    let at = 0;
+    f.broker.links = async () => { f.calls.push('links'); const error = errors[at++]; if (error) throw error; return { approved: [], reviewed: 0 }; };
+    const result = await publishObservations(r, f.broker, f.store);
+    assert.equal(result, `OBS-RESULT: failed links-refused ${expected}`);
+    assert.deepEqual(f.calls, ['authority', 'space', 'identity', 'links', 'links', 'links']);
+    assert.doesNotMatch(result, /CANARY/);
+});
+test('a refused line with why= is journaled as digest, ids and result and replayed byte for byte', async (t) => {
+    const f = fixture(t);
+    f.broker.links = async () => { f.calls.push('links'); throw new LinksRefused(['receipt-unreadable']); };
+    const first = await publishObservations(request(), f.broker, f.store);
+    assert.equal(first, 'OBS-RESULT: failed links-refused why=1:receipt-unreadable');
+    const files = fs.readdirSync(f.root).filter(name => name.endsWith('.json'));
+    assert.equal(files.length, 1);
+    const saved = JSON.parse(fs.readFileSync(path.join(f.root, files[0]), 'utf8'));
+    assert.deepEqual(Object.keys(saved).sort(), ['digest', 'ids', 'result']);
+    assert.deepEqual([saved.ids, saved.result], [[], first]);
+    const calls = f.calls.length;
+    assert.equal(await publishObservations(request(), f.broker, f.store), first);
+    const changed = request();
+    changed.observations[0].title = 'Corrected';
+    assert.equal(await publishObservations(changed, f.broker, f.store), 'OBS-RESULT: failed receipt-conflict');
+    assert.equal(f.calls.length, calls);
+});
+test('a bad link reason is refused before any I/O and a corrected request in the same turn publishes', async (t) => {
+    const f = fixture(t);
+    const r = request();
+    r.observations[0].links.approved = [{ id: '11', reason: 'too short' }];
+    let claims = 0;
+    const store = { claim: (key: string, digest: string) => { claims++; return f.store.claim(key, digest); } };
+    assert.equal(await publishObservations(r, f.broker, store), 'OBS-RESULT: failed invalid-request why=1:reason-invalid');
+    assert.deepEqual([f.calls, claims], [[], 0]);
+    r.observations[0].links.approved = [];
+    assert.equal(await publishObservations(r, f.broker, store), 'OBS-RESULT: wrote 1 101');
 });
