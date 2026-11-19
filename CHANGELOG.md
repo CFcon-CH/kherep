@@ -253,6 +253,15 @@ increments the minor version; every other release increments the patch version.
 
 ### Fixed
 
+- The publication audit test "long runs without an address are scanned in
+  linear time" no longer fails on slow runners (#983). It timed a full
+  `auditRepository` run, with its git spawn and file I/O, against a 200 ms
+  limit, so the window measured process start-up rather than the scanner; a
+  Windows runner exceeded it by 339 ms. The test now times the exported
+  `emailAddresses` alone, fastest of five runs after a warm-up, for n and 4n
+  characters of each input shape, and requires `t(4n) <= max(8 * t(n), 5 ms)`:
+  linear growth is about four times, quadratic sixteen. The untimed check that
+  these inputs raise no audit issue is a separate test.
 - A client binding probe call no longer fails with `storage_error` while
   another live process holds its lock or its `.reclaim` gate for longer than
   the 50-attempt allowance covers (#982). Every open that found a

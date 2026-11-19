@@ -67,7 +67,7 @@ const EMAIL_DOMAIN = /[A-Za-z0-9.-]/;
 const LETTER = /[A-Za-z]/;
 
 // Every address-shaped text: local part, @, and a domain that ends in a dot and two or more letters.
-function emailAddresses(text: string): string[] {
+export function emailAddresses(text: string): string[] {
   const found: string[] = [];
   let floor = 0; // the end of the previous address: a local part never reaches back over it
   for (let at = text.indexOf('@'); at >= 0; at = text.indexOf('@', at + 1)) {
