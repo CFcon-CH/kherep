@@ -227,6 +227,15 @@ increments the minor version; every other release increments the patch version.
 
 ### Fixed
 
+- The Worker test `actual reconnect old sender ...` in
+  `diagnostic-boundaries.test.mts` no longer races the register handler
+  (#968). The handler marks the socket registered before its own
+  "registration" delivery pass, which stores `binding-capability-missing`
+  for a node without the binding capability. The test only waited for
+  `registered`, so on a slow run its auth-phase `registration-pending` write
+  could land first and be overwritten. The test now waits up to 10 s for the
+  registration pass's write before its own call. Only the test changed; the
+  Worker is unchanged.
 - Coverage assembly no longer loses hits when one source ran at more than one
   path (#969). Node's type stripping appends `\n\n//# sourceURL=<url>`, so the
   top-level range of a file ended at a different offset for every producer
@@ -280,6 +289,17 @@ increments the minor version; every other release increments the patch version.
   `live-hook-integrity.mts`, `deploy-guard.mts`, `orphan-check-nudge.mts` and
   `critical-file-integrity.mts` through hook stdin and stdout and exported
   functions. No production code, test, timeout or threshold changed.
+- The Atlassian brokers' refusal and error branches are now under test
+  (#965). The `modules/atl-jira-brokers` tests run every module source in
+  place, so there was no copy to declare; the remaining coverage gap was
+  untested behaviour. New tests drive both Jira brokers, both Confluence
+  brokers, the neighbour verbs, the evidence verb and the observation stdio
+  adapter through their CLIs and exported functions with a route-table fetch
+  (`broker-route.fixture.mts`) and synthetic temporary credential files:
+  token, tenant and credential failures, refused reads and writes, failed or
+  contradicting readbacks, project discovery, purge and stitch, malformed
+  requests and framing limits, and each entry point run as a process. No
+  production code, test, timeout or threshold changed.
 - A node no longer sends its outbox the moment it reconnects, racing the
   Worker's handling of its `register` (#961). A message sent 31 ms after a
   reconnect was refused with `loop-resolution-required`. The daemon now holds
