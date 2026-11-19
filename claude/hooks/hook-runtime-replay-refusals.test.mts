@@ -12,6 +12,7 @@ import { after, test } from "node:test";
 import { openDatabase } from "../kherep/hook-runtime/coordinator-db.mts";
 import { recordIntent } from "../kherep/hook-runtime/coordinator-intent.mts";
 import { inspect, parse, replay, type ReplayArgs } from "../kherep/hook-runtime/replay-pending.mts";
+import { withoutTypeStrippingWarning } from "../../codex/lib/node-warning-fixture.mts";
 import { cleanup, database, type Home, runtimeHome } from "./hook-runtime-fixture.mts";
 
 after(cleanup);
@@ -49,7 +50,7 @@ test("the command line: usage exits 2 with its usage text; a refusal exits 1; a 
   for (const argv of [[], ["inspect"], ["inspect", "--hooks-root", "relative/hooks"]]) {
     const run = cli(...argv);
     assert.deepEqual([run.status, run.stdout], [2, "replay-pending: usage\n"], JSON.stringify(argv));
-    assert.match(run.stderr, /^usage: replay-pending\.mts inspect --hooks-root <root> \| replay /);
+    assert.match(withoutTypeStrippingWarning(run.stderr, 1), /^usage: replay-pending\.mts inspect --hooks-root <root> \| replay /);
   }
   const bare = runtimeHome("hook-runtime-replay-refusals-");
   const refused = cli("inspect", "--hooks-root", bare.hooks);
