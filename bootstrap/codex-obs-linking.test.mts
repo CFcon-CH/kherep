@@ -45,3 +45,10 @@ test("the Codex prompts and routing no longer describe a targeted stitch", () =>
 test("the Claude text never mentions the Codex candidates tool", () => {
   assert.doesNotMatch(CLAUDE_OBS, /related_candidates/);
 });
+
+// Issue #989: the receipt binds the exact title, and a refusal's why= codes are copied verbatim.
+test("codex-obs keeps each title fixed after the candidates call and copies why= verbatim", () => {
+  assert.match(CODEX_OBS, /Fix each title before the call and do not change it afterwards: the receipt binds that exact\s+title, character for character/);
+  assert.match(CODEX_OBS, /a token is valid only for the finding it was requested for\. A changed title fails\s+`links-refused`\./);
+  assert.match(CODEX_OBS, /`links-refused` and\s+`invalid-request` may carry ` why=<position>:<code>\[,\.\.\.\]` \(fixed adapter codes, finding\s+positions\); copy it verbatim, never add, drop or reword it\./);
+});

@@ -3,98 +3,15 @@
 // off-topic pages A and B that share title words with it. The fake search
 // answers in the measured ranking: on the topic sentence the on-topic pages
 // C1-C4 come first. codex-obs approves C1 and C2; only those are linked.
-import test from 'node:test';
+import test, { mock } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
-import { observationBroker } from './observation-broker.mts';
-import { publishObservations } from './observation-publisher.mts';
-import { receiptStore } from './observation-receipt.mts';
 import { observationRpc } from './observation-stdio.mts';
 import { observationLinking, type LinkingContext } from './observation-linking.mts';
 import type { Finding } from './observation-policy.mts';
-import type { ConfluenceContext } from './confluence-session.mts';
-
-const W = 'Synthetic logon task workaround for the agent account state';
-const PAGES = [
-    { id: '41', title: 'Owner probe retry when the account lookup fails' },
-    { id: '42', title: 'Codex session idle state after a switch' },
-    { id: '51', title: 'Scheduled task does not start at logon' },
-    { id: '52', title: 'Task trigger delay after logon' },
-    { id: '53', title: 'Run a hook as the interactive user' },
-    { id: '54', title: 'Session 0 isolation blocks the tray app' },
-];
-const RANKING = ['51', '52', '53', '54', '41'];
-const TOPIC = 'A logon-triggered scheduled task never starts under the service account; running it as the interactive user fixes it.';
-const R1 = 'Same logon-trigger task that never starts; this page has the root cause.';
-const R2 = 'Documents the trigger delay the workaround has to tolerate at logon.';
-
-function fixture(t: { after(fn: () => void): void }, options: { searchFails?: boolean } = {}) {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'observation-linking-'));
-    t.after(() => fs.rmSync(home, { recursive: true, force: true }));
-    fs.mkdirSync(path.join(home, 'kherep'));
-    fs.writeFileSync(path.join(home, 'kherep', 'confluence.json'), JSON.stringify({
-        observationPublishingAuthorized: true, spaceKey: 'SYNTHETIC', spaceId: '10', nodes: { Kherep: '20' } }));
-    const pages = new Map(PAGES.map(p => [p.id, { ...p, spaceId: '10', parentId: '20', status: 'current', version: { number: 1 },
-        body: { storage: { value: `<p>${p.title}</p>` } } }]));
-    const calls: { method: string; route: string; body?: any }[] = [];
-    let page: any;
-    const labels: string[] = [];
-    const context: ConfluenceContext = { env: { KHEREP_ATL_SITE: 'https://synthetic.invalid', KHEREP_ATL_CRED_FILE_CODEX: '/synthetic', KHEREP_PROFILE: 'mac' },
-        credEnv: 'KHEREP_ATL_CRED_FILE_CODEX', readFile: async () => 'client_id: synthetic\nclient_secret: synthetic', now: Date.now, session: {},
-        fetch: async (url, opts) => {
-            const route = url.replace(/^https:\/\/api\.atlassian\.com\/ex\/confluence\/synthetic-cloud(?=\/|$)/, '');
-            const method = opts?.method ?? 'GET';
-            const body = opts?.body ? JSON.parse(opts.body.toString()) : undefined;
-            calls.push({ method, route, body });
-            const id = /^\/wiki\/api\/v2\/pages\/(\d+)/.exec(route)?.[1] ?? '';
-            let json: any;
-            if (url === 'https://auth.atlassian.com/oauth/token') json = { access_token: 'synthetic', expires_in: 3600 };
-            else if (url.endsWith('/_edge/tenant_info')) json = { cloudId: 'synthetic-cloud' };
-            else if (route === '/wiki/rest/api/user/current') json = { accountId: 'synthetic-service' };
-            else if (route.startsWith('/wiki/api/v2/spaces?')) json = { results: [{ id: '10', key: 'SYNTHETIC', name: 'Synthetic' }] };
-            else if (route.startsWith('/wiki/api/v2/spaces/10/pages?')) json = { results: [{ id: '20', title: 'Kherep' }, ...pages.values(), ...(page ? [page] : [])] };
-            else if (route.startsWith('/wiki/rest/api/search?')) {
-                if (options.searchFails) return { status: 503, ok: false, json: async () => ({}), text: async () => '{}' };
-                json = { results: [] };
-            }
-            else if (route === '/wiki/api/v2/pages' && method === 'POST') {
-                page = { id: '100', status: 'current', title: body.title, parentId: body.parentId, spaceId: body.spaceId, authorId: 'synthetic-service',
-                    version: { number: 1 }, body: { storage: { value: body.body.value } } };
-                json = page;
-            }
-            else if (route === '/wiki/api/v2/pages/20') json = { id: '20', spaceId: '10', title: 'Kherep', status: 'current' };
-            else if (route.startsWith('/wiki/api/v2/pages/100/labels?')) json = { results: labels.map(name => ({ name })) };
-            else if (route === '/wiki/rest/api/content/100/label' && method === 'POST') { labels.push(...body.map((v: any) => v.name)); json = { results: [] }; }
-            else if (id === '100') json = page;
-            else if (pages.has(id) && method === 'PUT') {
-                pages.set(id, { ...pages.get(id)!, version: body.version, body: { storage: { value: body.body.value } } });
-                json = pages.get(id);
-            }
-            else if (pages.has(id)) json = pages.get(id);
-            else throw new Error(`Unexpected synthetic route: ${method} ${route}`);
-            return { status: 200, ok: true, json: async () => json, text: async () => JSON.stringify(json) };
-        } };
-    const semantic = async () => {
-        const items = RANKING.map(id => ({ id, title: pages.get(id)!.title, snippet: `<p>${pages.get(id)!.title}.</p>` }));
-        return { titles: items.map(item => item.title), items };
-    };
-    const broker = observationBroker(home, context, { semantic });
-    const dir = path.join(home, '.cache', 'observation-publisher', 'candidates');
-    const writes = () => calls.filter(c => (c.method === 'POST' || c.method === 'PUT') && c.route.startsWith('/wiki/')).map(c => `${c.method} ${c.route}`);
-    return { home, dir, calls, writes, broker, pages, store: receiptStore(path.join(home, 'receipts')) };
-}
-type Fixture = ReturnType<typeof fixture>;
-
-const finding = (links: unknown) => ({ title: W, bodyStorage: '<p>Origin: measured synthetic logon test</p>', evidence: 'assumed',
-    labels: ['type-observation', 'evidence-assumed', 'status-author-model'], placement: { project: 'Kherep', app: '-' }, links });
-const publish = (f: Fixture, links: unknown, turnId = 'turn') =>
-    publishObservations({ sessionId: 'synthetic', turnId, observations: [finding(links)] }, f.broker, f.store);
-async function candidates(f: Fixture, overrides: Record<string, string> = {}) {
-    const out = await f.broker.candidates({ sessionId: 'synthetic', turnId: 'turn', title: W, topic: TOPIC, ...overrides });
-    return { out, token: /^OBS-CANDIDATES: ok ([a-f0-9]{64}) \d+/.exec(out.text)?.[1] ?? '' };
-}
+import { publishObservations } from './observation-publisher.mts';
+import { candidates, finding, fixture, PAGES, publish, R1, R2, RANKING, TOPIC, W, type Fixture } from './observation-linking.fixture.mts';
 
 test('the candidates call writes nothing and returns rows plus a token', async t => {
     const f = fixture(t);
@@ -129,24 +46,92 @@ test('approving {C1, C2} links only C1 and C2, with the reasons in the version m
 test('an id outside the receipt and an unknown token are links-refused with zero POST or PUT', async t => {
     const f = fixture(t);
     const { token } = await candidates(f);
-    assert.equal(await publish(f, { candidates: token, approved: [{ id: '42', reason: 'Shares the word state with W.' }] }), 'OBS-RESULT: failed links-refused');
-    assert.equal(await publish(f, { candidates: 'b'.repeat(64), approved: [] }, 'turn-2'), 'OBS-RESULT: failed links-refused');
+    assert.equal(await publish(f, { candidates: token, approved: [{ id: '42', reason: 'Shares the word state with W.' }] }), 'OBS-RESULT: failed links-refused why=1:not-candidate');
+    assert.equal(await publish(f, { candidates: 'b'.repeat(64), approved: [] }, 'turn-2'), 'OBS-RESULT: failed links-refused why=1:receipt-missing');
     assert.deepEqual(f.writes(), []);
 });
 
 test('a token from another turn, space or title, or older than 2 h, is refused', async t => {
     const f = fixture(t);
     const other = await candidates(f, { turnId: 'other-turn' });
-    assert.equal(await publish(f, { candidates: other.token, approved: [] }, 'turn-a'), 'OBS-RESULT: failed links-refused');
+    assert.equal(await publish(f, { candidates: other.token, approved: [] }, 'turn-a'), 'OBS-RESULT: failed links-refused why=1:another-turn');
     const titled = await candidates(f, { title: 'A different observation title' });
-    assert.equal(await publish(f, { candidates: titled.token, approved: [] }, 'turn'), 'OBS-RESULT: failed links-refused');
-    for (const [turn, change] of [['turn-b', { spaceKey: 'OTHER' }], ['turn-c', { searchedAt: new Date(Date.now() - 2 * 3600_000 - 1000).toISOString() }]] as const) {
+    assert.equal(await publish(f, { candidates: titled.token, approved: [] }, 'turn'), 'OBS-RESULT: failed links-refused why=1:another-title');
+    for (const [turn, change, code] of [['turn-b', { spaceKey: 'OTHER' }, 'another-space'],
+        ['turn-c', { searchedAt: new Date(Date.now() - 2 * 3600_000 - 1000).toISOString() }, 'receipt-expired']] as const) {
         const { token } = await candidates(f, { turnId: turn });
         const file = path.join(f.dir, `${token}.json`);
         fs.writeFileSync(file, JSON.stringify({ ...JSON.parse(fs.readFileSync(file, 'utf8')), ...change }));
-        assert.equal(await publish(f, { candidates: token, approved: [] }, turn), 'OBS-RESULT: failed links-refused', turn);
+        assert.equal(await publish(f, { candidates: token, approved: [] }, turn), `OBS-RESULT: failed links-refused why=1:${code}`, turn);
     }
     assert.deepEqual(f.writes(), []);
+});
+
+// Issue #989: why a receipt cannot be used, as a fixed code per finding.
+const errno = (code: string) => Object.assign(new Error(`${code} CANARY_PRIVATE_PATH`), { code });
+for (const [code, expected] of [['ENOENT', 'receipt-missing'], ['ENOTDIR', 'receipt-missing'], ['EACCES', 'receipt-unreadable'],
+    ['EBUSY', 'receipt-unreadable'], ['EPERM', 'receipt-unreadable']] as const)
+    for (const member of ['lstatSync', 'readFileSync'] as const) test(`${member} failing with ${code} is ${expected}`, async t => {
+        const f = fixture(t);
+        const { token } = await candidates(f);
+        const original = fs[member] as (...args: unknown[]) => unknown;
+        const spy = mock.method(fs, member, (...args: unknown[]) => {
+            if (String(args[0]).endsWith(`${token}.json`)) throw errno(code);
+            return original(...args);
+        });
+        t.after(() => spy.mock.restore());
+        assert.equal(await publish(f, { candidates: token, approved: [] }), `OBS-RESULT: failed links-refused why=1:${expected}`);
+        assert.deepEqual(f.writes(), []);
+    });
+test('an unreadable candidates directory is receipt-unreadable, never missing', { skip: process.platform === 'win32' || process.getuid?.() === 0 }, async t => {
+    const f = fixture(t);
+    const { token } = await candidates(f);
+    fs.chmodSync(f.dir, 0o000);
+    try {
+        assert.equal(await publish(f, { candidates: token, approved: [] }), 'OBS-RESULT: failed links-refused why=1:receipt-unreadable');
+    } finally { fs.chmodSync(f.dir, 0o700); }
+});
+test('a directory, a symlink, an oversize or a garbage file at the token path is receipt-malformed', async t => {
+    const f = fixture(t);
+    const { token: real } = await candidates(f);
+    const make: [string, (file: string) => void][] = [['dir', file => fs.mkdirSync(file)], ['garbage', file => fs.writeFileSync(file, 'not json')],
+        ['oversize', file => fs.writeFileSync(file, ' '.repeat(512 * 1024 + 1))], ['wrong-kind', file => fs.writeFileSync(file, '{"kind":"other"}')]];
+    if (process.platform !== 'win32') make.push(['symlink', file => fs.symlinkSync(path.join(f.dir, `${real}.json`), file)]);
+    for (const [index, [name, create]] of make.entries()) {
+        const token = String(index + 1).repeat(64);
+        create(path.join(f.dir, `${token}.json`));
+        assert.equal(await publish(f, { candidates: token, approved: [] }, `turn-${name}`), 'OBS-RESULT: failed links-refused why=1:receipt-malformed', name);
+    }
+    assert.deepEqual(f.writes(), []);
+});
+async function twoFindings(f: Fixture, change?: (receipt: { candidates: { id: string }[] }) => void) {
+    const first = await candidates(f), second = await candidates(f, { title: 'Second synthetic title' });
+    if (change) {
+        const file = path.join(f.dir, `${second.token}.json`), receipt = JSON.parse(fs.readFileSync(file, 'utf8'));
+        change(receipt);
+        fs.writeFileSync(file, JSON.stringify(receipt));
+    }
+    return [first.token, second.token];
+}
+const pair = (f: Fixture, links: unknown[]) => publishObservations({ sessionId: 'synthetic', turnId: 'turn', observations: [
+    finding(links[0]), { ...finding(links[1]), title: 'Second synthetic title' }] }, f.broker, f.store);
+test('swapped tokens name both findings and an id from the other receipt is not-candidate', async t => {
+    const f = fixture(t);
+    const [one, two] = await twoFindings(f, receipt => { receipt.candidates = receipt.candidates.filter(c => c.id !== '51'); });
+    assert.equal(await pair(f, [{ candidates: two, approved: [] }, { candidates: one, approved: [] }]),
+        'OBS-RESULT: failed links-refused why=1:another-title,2:another-title');
+    const g = fixture(t);
+    const [three, four] = await twoFindings(g, receipt => { receipt.candidates = receipt.candidates.filter(c => c.id !== '51'); });
+    assert.equal(await pair(g, [{ candidates: three, approved: [{ id: '51', reason: R1 }] }, { candidates: four, approved: [{ id: '51', reason: R1 }] }]),
+        'OBS-RESULT: failed links-refused why=2:not-candidate');
+    assert.deepEqual([...f.writes(), ...g.writes()], []);
+});
+test('a receipt dated more than 5 min ahead is receipt-future', async t => {
+    const f = fixture(t);
+    const { token } = await candidates(f);
+    const file = path.join(f.dir, `${token}.json`);
+    fs.writeFileSync(file, JSON.stringify({ ...JSON.parse(fs.readFileSync(file, 'utf8')), searchedAt: new Date(Date.now() + 10 * 60_000).toISOString() }));
+    assert.equal(await publish(f, { candidates: token, approved: [] }), 'OBS-RESULT: failed links-refused why=1:receipt-future');
 });
 
 test('nothing approved writes the no-link sentence and makes zero PUTs', async t => {

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { ordinaryXhtml, observationRequest } from './observation-policy.mts';
+import { failed, invalidRequest, ordinaryXhtml, observationRequest } from './observation-policy.mts';
 import { publishObservations, type ObservationBroker } from './observation-publisher.mts';
 const finding = {title:'Synthetic finding',bodyStorage:'<p>Synthetic prose</p>',evidence:'assumed',
   labels:['type-observation','evidence-assumed','status-author-model'],placement:{project:'Kherep',app:'-'},links: { candidates: 'a'.repeat(64), approved: [] as { id: string; reason: string }[] }};
@@ -74,4 +74,25 @@ test('links are required and checked by shape before any I/O', () => {
         if (links === undefined) delete r.observations[0].links; else r.observations[0].links = links;
         assert.equal(observationRequest(r), null, JSON.stringify(links));
     }
+});
+// Issue #989: the policy refuses a link reason with the receipt check's own bound,
+// and names the findings when the reason is the request's only defect.
+const linked = (...reasons: unknown[]) => ({ ...request('<p>Synthetic prose</p>'), observations: reasons.map(reason =>
+    ({ ...finding, links: { candidates: 'a'.repeat(64), approved: [{ id: '11', reason }] } })) });
+test('a link reason outside 10 to 300 printable characters is an invalid request', () => {
+    for (const reason of ['r'.repeat(10), 'r'.repeat(300)]) assert.ok(observationRequest(linked(reason)), String(reason.length));
+    for (const reason of ['', 'r'.repeat(9), 'r'.repeat(301), 'line one\nline two', 'tab\there and there', 42])
+        assert.equal(observationRequest(linked(reason)), null, JSON.stringify(reason));
+});
+test('invalidRequest names reason-only defects and stays bare for any other defect', () => {
+    assert.equal(invalidRequest(linked('r'.repeat(20), 'short')), 'OBS-RESULT: failed invalid-request why=2:reason-invalid');
+    assert.equal(invalidRequest(linked('', 'r'.repeat(20), 'r'.repeat(301))), 'OBS-RESULT: failed invalid-request why=1:reason-invalid,3:reason-invalid');
+    for (const value of [{ ...linked('short'), sessionId: 'BAD ID' }, linked(42), { ...linked('short'), extra: true }, null, [], 'text',
+        { ...linked('short'), observations: [{ ...linked('short').observations[0], bodyStorage: '<img src="x">' }] }])
+        assert.equal(invalidRequest(value), 'OBS-RESULT: failed invalid-request', JSON.stringify(value));
+});
+test('failed never renders why= together with created=', () => {
+    assert.equal(failed('links-refused', [], '1:another-title'), 'OBS-RESULT: failed links-refused why=1:another-title');
+    assert.equal(failed('links-refused', ['101'], 'unknown'), 'OBS-RESULT: failed links-refused created=101');
+    assert.equal(failed('create-unverified', ['101']), 'OBS-RESULT: failed create-unverified created=101');
 });

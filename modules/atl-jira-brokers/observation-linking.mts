@@ -6,7 +6,7 @@
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { candidateRow, checkRelatedLinks, parseReceipt, RECEIPT_MAX_AGE_MS, RELATED_RECEIPT_KIND, type RelatedReceipt } from './confluence-candidates.mts';
+import { candidateRow, parseReceipt, RECEIPT_MAX_AGE_MS, RELATED_RECEIPT_KIND, relatedLinkCodes, type Receipt, type RelatedReceipt } from './confluence-candidates.mts';
 import { SCOPES, v2, type ConfluenceSession } from './confluence-contract.mts';
 import { findSpace, getPage, updatePage } from './confluence-content.mts';
 import { existingRelated, findRelated, relatedSection, withRelated, type NeighbourDeps } from './confluence-neighbours.mts';
@@ -14,7 +14,7 @@ import { replaceTags } from './confluence-topic-query.mts';
 import { outgoingIds, requireResolvableAnchors } from './confluence-related.mts';
 import type { semanticProposals } from './confluence-semantic.mts';
 import { DEFAULT_PER_PAGE, writeApproved, type Approved } from './confluence-stitch.mts';
-import { pageId, safeId, type Finding } from './observation-policy.mts';
+import { LinksRefused, pageId, safeId, type Finding } from './observation-policy.mts';
 import type { Authority } from './observation-publisher.mts';
 
 export interface Linked {
@@ -47,6 +47,27 @@ function prune(dir: string, now: number): void {
         }
         catch { /* best effort */ }
     }
+}
+
+// Issue #989: why a token's receipt cannot be used, as one fixed code. A missing
+// file is ENOENT or ENOTDIR only; any other read error is unreadable, never missing.
+function readReceipt(dir: string, token: string): Receipt | null {
+    if (!TOKEN.test(token))
+        throw new LinksRefused(['receipt-missing']);
+    const file = path.join(dir, `${token}.json`);
+    let text: string | undefined;
+    try {
+        const stat = fs.lstatSync(file);
+        if (stat.isFile() && !stat.isSymbolicLink() && stat.size <= 512 * 1024)
+            text = fs.readFileSync(file, 'utf8');
+    }
+    catch (error) {
+        const code = (error as NodeJS.ErrnoException | null)?.code;
+        throw new LinksRefused([code === 'ENOENT' || code === 'ENOTDIR' ? 'receipt-missing' : 'receipt-unreadable']);
+    }
+    if (text === undefined)
+        throw new LinksRefused(['receipt-malformed']);
+    return parseReceipt(text);
 }
 
 export function observationLinking(ctx: LinkingContext) {
@@ -118,18 +139,11 @@ export function observationLinking(ctx: LinkingContext) {
         },
         // The terminal `links-refused` check, run for every finding before any write.
         async links(spaceKey: string, turn: { sessionId: string; turnId: string }, finding: Finding): Promise<Linked> {
-            const token = finding.links.candidates;
-            let receipt = null;
-            if (TOKEN.test(token)) {
-                const file = path.join(candidatesDir(ctx.home), `${token}.json`);
-                const stat = fs.lstatSync(file, { throwIfNoEntry: false });
-                if (stat?.isFile() && !stat.isSymbolicLink() && stat.size <= 512 * 1024)
-                    receipt = parseReceipt(fs.readFileSync(file, 'utf8'));
-            }
-            const problems = checkRelatedLinks(receipt, finding.links.approved,
+            const receipt = readReceipt(candidatesDir(ctx.home), finding.links.candidates);
+            const codes = relatedLinkCodes(receipt, finding.links.approved,
                 { title: finding.title, spaceKey, sessionId: turn.sessionId, turnId: turn.turnId, now: now() });
-            if (problems.length || !receipt)
-                throw new Error('links-refused');
+            if (codes.length || receipt?.kind !== RELATED_RECEIPT_KIND)
+                throw new LinksRefused(codes);
             const offered = new Map(receipt.candidates.map(candidate => [candidate.id, candidate]));
             return { reviewed: receipt.candidates.length, approved: finding.links.approved.map(({ id, reason }) => {
                     const { area, title } = offered.get(id)!;

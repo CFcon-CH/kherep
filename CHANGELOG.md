@@ -253,6 +253,32 @@ increments the minor version; every other release increments the patch version.
 
 ### Fixed
 
+- A refused Codex observation link now says why (#989). `links-refused`
+  checks every finding before the first create and names each refusal as
+  `OBS-RESULT: failed links-refused why=<position>:<code>[,...]` from a fixed
+  list: `receipt-missing`, `receipt-unreadable`, `receipt-malformed`,
+  `another-turn`, `another-title`, `another-space`, `receipt-undated`,
+  `receipt-expired`, `receipt-future`, `id-invalid`, `not-candidate`,
+  `duplicate-id`, `reason-invalid` and `unknown`, at most two codes per
+  finding in that order; `why=unknown` alone covers a refusal with no
+  finding-level code. A missing receipt file is ENOENT or ENOTDIR only; any
+  other read error is `receipt-unreadable`, not a missing receipt. A link
+  reason must now be 10 to 300 printable characters at the request policy, the
+  same bound the receipt check uses: a reason outside it, including one with a
+  control character, used to fail as a journaled `links-refused` and now fails
+  as `invalid-request` before any I/O, with `why=<position>:reason-invalid`
+  when the reasons are the request's only defect; it is not journaled, so a
+  corrected request for the same turn can publish. `why=` and `created=` never
+  appear together, the line is journaled and replayed like any other receipt,
+  and the bare `failed links-refused` of older journals stays valid. An older
+  hook or adapter rejects the new line as malformed until the node is
+  reinstalled. `codex-obs` keeps each title fixed after the candidates call and
+  copies the suffix verbatim. The observation-only Codex upgrade recognizes
+  the previous files (`codex/parity/observation-link-reasons-predecessor.json`).
+  `confluence-candidates.mts` gains exports that the new Codex adapter imports
+  from the shared `tools/` copy; running a pre-#989 `bootstrap/install.sh`
+  after the Codex upgrade puts the old copy back and breaks those imports, as
+  in #736, until a current installer runs. The title compare stays exact.
 - The Codex parity skill and the safety note in every projected Codex skill no
   longer name a "Central memory" that can be selected (#985). The Codex
   installer accepts only the unconfigured memory provider, so the

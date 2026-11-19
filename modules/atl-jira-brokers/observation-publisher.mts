@@ -1,5 +1,6 @@
 import { lookupFailure } from './observation-lookup.mts';
-import { observationRequest, failed, pageId, type Finding } from './observation-policy.mts';
+import { observationRequest, failed, invalidRequest, LinksRefused, pageId, type Finding } from './observation-policy.mts';
+import { OBS_WHY, obsWhy, type ObsWhyEntry } from './observation-result.mts';
 import { contentDigest, receiptKey, type ReceiptStore } from './observation-receipt.mts';
 import type { Linked } from './observation-linking.mts';
 export interface Authority {
@@ -26,7 +27,7 @@ export interface ObservationBroker {
     identity(): Promise<string | null>;
     parent(spaceId: string, nodeId: string, app: string): Promise<string>;
     // Issue #736: the approved links, checked against the candidates receipt
-    // before any write. Throws links-refused; nothing is written then.
+    // before any write. Throws LinksRefused with fixed codes; nothing is written then.
     links(spaceKey: string, turn: { sessionId: string; turnId: string }, finding: Finding): Promise<Linked>;
     related(spaceId: string, key: string, finding: Finding, parent: string, linked: Linked): Promise<string>;
     create(spaceId: string, finding: Finding, parent: string, body: string): Promise<string>;
@@ -38,7 +39,7 @@ export interface ObservationBroker {
 export async function publishObservations(input: unknown, broker: ObservationBroker, store: ReceiptStore): Promise<string> {
     const request = observationRequest(input);
     if (!request)
-        return failed('invalid-request');
+        return invalidRequest(input);
     if (!request.observations.length)
         return 'OBS-RESULT: empty no-admissible-findings';
     let held: ReturnType<ReceiptStore['claim']>;
@@ -49,7 +50,7 @@ export async function publishObservations(input: unknown, broker: ObservationBro
         return failed('receipt-unavailable');
     }
     const receipt = held.receipt;
-    let phase = 'authority-unavailable';
+    let phase = 'authority-unavailable', why = '';
     try {
         if (receipt.digest !== contentDigest(request))
             return failed('receipt-conflict', receipt.ids);
@@ -82,10 +83,23 @@ export async function publishObservations(input: unknown, broker: ObservationBro
         phase = 'related-unavailable';
         if (request.observations.some(finding => /^0{64}$/.test(finding.links.candidates)))
             throw new Error();
+        // Issue #989: every finding is checked; each refusal names its position
+        // and whitelisted codes, anything else is `unknown`. No free text reaches the line.
         phase = 'links-refused';
-        const linked: Linked[] = [];
-        for (const finding of request.observations)
-            linked.push(await broker.links(space.key, request, finding));
+        const linked: Linked[] = [], refused: ObsWhyEntry[] = [];
+        for (const [index, finding] of request.observations.entries()) {
+            try {
+                linked.push(await broker.links(space.key, request, finding));
+            }
+            catch (error) {
+                const codes = error instanceof LinksRefused ? error.codes.filter(code => OBS_WHY['links-refused'].includes(code)) : [];
+                refused.push(...(codes.length ? codes : ['unknown']).map(code => ({ position: index + 1, code })));
+            }
+        }
+        if (refused.length) {
+            why = obsWhy('links-refused', refused);
+            throw new Error();
+        }
         for (const [index, finding] of request.observations.entries()) {
             phase = 'placement-unresolved';
             const node = request.namedNode ?? finding.placement.project;
@@ -129,7 +143,8 @@ export async function publishObservations(input: unknown, broker: ObservationBro
         return receipt.result;
     }
     catch (error) {
-        const result = failed(phase === 'space-lookup-unavailable' ? lookupFailure(error) : phase, receipt.ids);
+        const result = phase === 'links-refused' ? failed(phase, receipt.ids, why || 'unknown')
+            : failed(phase === 'space-lookup-unavailable' ? lookupFailure(error) : phase, receipt.ids);
         try {
             receipt.result = result;
             held.save();
