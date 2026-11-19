@@ -146,6 +146,16 @@ increments the minor version; every other release increments the patch version.
 
 ### Changed
 
+- The control-plane Worker suite covers more refusal and error branches
+  (#965). New tests drive NodeSession frames, liveness alarms, the stale
+  handshake sweep, native Lead confirmation, MCP inbox reads and reference
+  resolution over the socket and the Durable Object RPC; the operator,
+  message-hold, task and enrollment routes over HTTP; and TaskControlRegistry,
+  Registry, McpRegistry, Access claims and the identity diagnostic helpers
+  through their public calls. Worker `src` changes nowhere. Uncovered lines
+  plus branches in the Istanbul LCOV of Worker `src` fall from 455 to about
+  245; `node-session.mts` falls from 103 to 12.
+
 - The Claude `obs-handback-gate` now also refuses, once, a valid
   `OBS-RESULT: wrote` handback whose page lines the promotion join cannot read
   (#950). When the session recorded a brief with a `measured:` finding and a
