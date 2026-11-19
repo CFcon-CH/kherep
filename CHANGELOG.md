@@ -251,6 +251,18 @@ increments the minor version; every other release increments the patch version.
   required; an npm copy that nothing uses can be removed with
   `npm uninstall -g @openai/codex` once another `codex` is on `PATH`.
 
+- The MCP server `kherep-linkedin-cli` from both capability contracts (#987).
+  LinkedIn posting runs through Claude's account-level connector, and no
+  source for the old server exists, so a Codex parity run no longer reports it
+  missing. The Codex contract lists it under `retiredMcpServers`: an install
+  removes its tables from `config.toml`, inside the managed block or added
+  after it, and reports it as `removed`, or `absent` once gone. The Claude
+  contract only drops it: the capability check stops requiring it, and in
+  live mode a remaining entry shows as an unexpected configured MCP server.
+  The Claude installer has no retire path for MCP entries. The
+  `kherep-linkedin-draft` skill stays. Operator action: on a Claude node, a
+  leftover `kherep-linkedin-cli` entry is removed by hand.
+
 ### Fixed
 
 - A refused Codex observation link now says why (#989). `links-refused`
