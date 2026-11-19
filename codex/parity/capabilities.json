@@ -100,13 +100,13 @@
     }
   },
   "mcpServers": [
-    "kherep-linkedin-cli",
     "codebase-memory-mcp",
     "forge-knowledge",
     "n8n"
   ],
   "retiredMcpServers": [
-    "rovo"
+    "rovo",
+    "kherep-linkedin-cli"
   ],
   "pluginMcpServers": {
     "context7": {

@@ -21,7 +21,6 @@
   ],
   "mcpServers": [
     "atlassian",
-    "kherep-linkedin-cli",
     "claude-baton",
     "codebase-memory-mcp",
     "forge-knowledge",

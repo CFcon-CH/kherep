@@ -88,9 +88,6 @@ function fixtureMcpServer(root: string, name: string): Record<string, unknown> {
       env: { FIXTURE_TOKEN: FIXTURE_AUTHORIZATION },
     };
   }
-  if (name === "kherep-linkedin-cli") {
-    return { type: "http", url: `https://${name}.example.invalid/mcp` };
-  }
   // The fall-through shape is static-bearer HTTP: the only source whose secret
   // lives in the registry entry itself, so it is what proves the bridge keeps
   // the header out of config.toml and out of the receipt. Exactly one manifest
@@ -623,7 +620,7 @@ test("targets the v2 Atlassian MCP server and retires v1 rovo", () => {
   // Claude registry: Codex reaches it as its own service account only.
   assert.equal(Object.hasOwn(CAPABILITIES.pluginMcpServers || {}, ATLASSIAN_MCP_SERVER), false);
   assert.equal(CAPABILITIES.mcpServers.includes(ATLASSIAN_MCP_SERVER), false);
-  assert.deepEqual(CAPABILITIES.retiredMcpServers, ["rovo"]);
+  assert.deepEqual(CAPABILITIES.retiredMcpServers, ["rovo", "kherep-linkedin-cli"]);
   assert.equal(CAPABILITIES.mcpServers.includes("rovo"), false);
   assert.equal(JSON.stringify(CAPABILITIES).includes("atlassian-rovo@openai-curated"), false);
 });
@@ -886,6 +883,43 @@ for (const rovo of ["removed by the host", "still in the block"]) {
     const without = fs.readFileSync(install({ ...installOptions, installAtlassianTools: false }).targets.config, "utf8");
     assert.equal(without.includes("[mcp_servers.atlassian]"), false);
     assert.equal(outside(without), outside(seeded));
+  });
+}
+
+// Issue #987. The kherep-linkedin-cli server is retired: LinkedIn posting runs
+// through the account-level connector. An install removes its table wherever it
+// sits, inside the managed block or added by the operator after it, together
+// with its sub-tables, and keeps every other table byte for byte.
+const LINKEDIN_CLI_TABLE = "[mcp_servers.kherep-linkedin-cli]\nenabled = true\nrequired = false\n"
+  + 'url = "https://kherep-linkedin-cli.example.invalid/mcp"\n\n';
+const LINKEDIN_CLI_TOOL_TABLE = '[mcp_servers.kherep-linkedin-cli.tools.post]\napproval_mode = "prompt"\n\n';
+for (const placement of ["inside the managed block", "outside the managed block"]) {
+  test(`retires a kherep-linkedin-cli table ${placement}`, (t) => {
+    const { root, codexHome, installOptions } = fixture();
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const configTarget = path.join(codexHome, "config.toml");
+    const current = fs.readFileSync(install(installOptions).targets.config, "utf8");
+    assert.ok(current.indexOf("[mcp_servers.context7]") < current.indexOf(CONFIG_END), "context7 renders inside the block");
+    const operator = '[mcp_servers.keep]\ncommand = "keep"\n';
+    const expected = `${current}\n${operator}`;
+    const seeded = placement === "inside the managed block"
+      ? `${current.replace("[mcp_servers.context7]", `${LINKEDIN_CLI_TABLE}[mcp_servers.context7]`)}\n${operator}`
+      : `${current}\n${LINKEDIN_CLI_TABLE}${LINKEDIN_CLI_TOOL_TABLE}${operator}`;
+    fs.writeFileSync(configTarget, seeded);
+
+    const result = install(installOptions);
+    const config = fs.readFileSync(configTarget, "utf8");
+    assert.equal(config.includes("kherep-linkedin-cli"), false);
+    assert.equal(config, expected, "every other table, the operator's included, is unchanged");
+    assert.equal(fs.readFileSync(path.join(result.backupRoot, "config.toml"), "utf8"), seeded);
+    assert.deepEqual(result.receipt.retiredMcpServers.find((entry) => entry.name === "kherep-linkedin-cli"),
+      { name: "kherep-linkedin-cli", status: "removed" });
+    assert.equal(result.receipt.mcpServers.some((entry) => entry.name === "kherep-linkedin-cli"), false);
+
+    const repeated = install(installOptions);
+    assert.equal(fs.readFileSync(configTarget, "utf8"), config, "a reinstall is idempotent");
+    assert.deepEqual(repeated.receipt.retiredMcpServers.find((entry) => entry.name === "kherep-linkedin-cli"),
+      { name: "kherep-linkedin-cli", status: "absent" });
   });
 }
 
@@ -1457,6 +1491,8 @@ test("preserves an unmanaged Fixture service MCP table", (t) => {
   assert.match(config, /command = "keep"/);
   assert.equal(result.receipt.mcpServers.find((entry) => entry.name === "fixture_service"), undefined);
 });
+// Any manifest server whose registry source is missing exercises this path;
+// forge-knowledge took over from the retired kherep-linkedin-cli (issue #987).
 test("repairs a mapped legacy HTTP table to a canonical native source", (t) => {
   const { root, codexHome, installOptions } = fixture();
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
@@ -1464,7 +1500,7 @@ test("repairs a mapped legacy HTTP table to a canonical native source", (t) => {
   registry.mcpServers["legacy-source"] = {
     type: "http", url: "https://oauth.example.invalid/mcp",
   };
-  delete registry.mcpServers["kherep-linkedin-cli"];
+  delete registry.mcpServers["forge-knowledge"];
   fs.writeFileSync(installOptions.claudeRegistryFile, JSON.stringify(registry), { mode: 0o600 });
   const configTarget = path.join(codexHome, "config.toml");
   const bridge = path.join(codexHome, "orchestra", "registry-http-bridge.mts");
@@ -1488,8 +1524,8 @@ test("repairs a mapped legacy HTTP table to a canonical native source", (t) => {
     ...installOptions,
     mcpCompatibility: {
       ...installOptions.mcpCompatibility,
-      sourceNames: { "kherep-linkedin-cli": "legacy-source" },
-      legacyServerNames: { "kherep-linkedin-cli": ["legacy-source"] },
+      sourceNames: { "forge-knowledge": "legacy-source" },
+      legacyServerNames: { "forge-knowledge": ["legacy-source"] },
       legacyEnvPrefixes: ["LEGACY_"],
     },
   };
@@ -1497,18 +1533,18 @@ test("repairs a mapped legacy HTTP table to a canonical native source", (t) => {
   const first = install(options);
   const config = fs.readFileSync(configTarget, "utf8");
   assert.doesNotMatch(config, /\[mcp_servers\.legacy-source\]/);
-  assert.match(config, /\[mcp_servers\.kherep-linkedin-cli\][\s\S]*url = "https:\/\/oauth\.example\.invalid\/mcp"/);
+  assert.match(config, /\[mcp_servers\.forge-knowledge\][\s\S]*url = "https:\/\/oauth\.example\.invalid\/mcp"/);
   assert.equal(fs.readFileSync(path.join(first.backupRoot, "config.toml"), "utf8"), `${legacy}\n`);
   assert.deepEqual(
-    first.receipt.mcpServers.find((entry) => entry.name === "kherep-linkedin-cli"),
-    { name: "kherep-linkedin-cli", status: "repaired-preserved-existing" },
+    first.receipt.mcpServers.find((entry) => entry.name === "forge-knowledge"),
+    { name: "forge-knowledge", status: "repaired-preserved-existing" },
   );
   const { mcpCompatibility: _compatibility, ...normalInstall } = options;
   const second = install(normalInstall);
   assert.equal(fs.readFileSync(configTarget, "utf8"), config);
   assert.deepEqual(
-    second.receipt.mcpServers.find((entry) => entry.name === "kherep-linkedin-cli"),
-    { name: "kherep-linkedin-cli", status: "preserved-existing" },
+    second.receipt.mcpServers.find((entry) => entry.name === "forge-knowledge"),
+    { name: "forge-knowledge", status: "preserved-existing" },
   );
 });
 
