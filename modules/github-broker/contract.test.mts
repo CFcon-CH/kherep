@@ -39,3 +39,11 @@ test('pr.merge takes exactly a required prNumber and a lowercase 40-hex sha', as
     assert.throws(() => parseRequest(JSON.stringify({ ...input, ...bad })), /invalid-request/, JSON.stringify(bad));
   }
 });
+test('branch.delete takes exactly a required branch, lowercase 40-hex sha and positive prNumber', async () => {
+  const { parseRequest } = await import('./contract.mts');
+  const input = { operationId: id, repository: 'example/project', operation: 'branch.delete', branch: 'feat/old', sha: 'a'.repeat(40), prNumber: 7 };
+  assert.deepEqual(parseRequest(JSON.stringify(input)), input);
+  for (const bad of [{ branch: undefined }, { sha: undefined }, { prNumber: undefined }, { branch: '-x' }, { branch: 'refs/heads/x/' }, { sha: 'A'.repeat(40) }, { prNumber: 0 }, { force: true }]) {
+    assert.throws(() => parseRequest(JSON.stringify({ ...input, ...bad })), /invalid-request/, JSON.stringify(bad));
+  }
+});

@@ -23,6 +23,7 @@ test('permission map requests exactly one scope set per operation',()=>{
   assert.deepEqual(permissionsFor('pr.create',true),{pull_requests:'write',issues:'write'});
   for (const op of ['pr.update','pr.comment'] as const) assert.deepEqual(permissionsFor(op,true),{pull_requests:'write'});
   for (const op of ['run.rerun','run.cancel'] as const) assert.deepEqual(permissionsFor(op,false),{actions:'write'});
+  assert.deepEqual(permissionsFor('branch.delete',false),{contents:'write'});
 });
 for (const runtime of ['claude','codex'] as const) test(`${runtime} identity returns the bot commit identity without key or network`,async t=>{
   const s=setup(t,runtime);fs.rmSync(path.join(s.root,'keys'),{recursive:true});
@@ -112,6 +113,7 @@ test('contract refuses unknown fields and malformed targets of the new operation
     {operation:'pr.create',head:'feat/x',base:'main'},{operation:'pr.create',head:'owner:feat',base:'main',title:'T'},{operation:'pr.create',head:'feat/x',base:'main',title:'T',draft:'yes'},
     {operation:'pr.update',prNumber:1},{operation:'pr.update',prNumber:1,state:'merged'},{operation:'pr.update',prNumber:1,stateReason:'completed'},
     {operation:'pr.comment',prNumber:0,body:'x'},{operation:'run.rerun'},{operation:'run.cancel',runId:1,failedOnly:true},{operation:'pr.merge',prNumber:1},
+    {operation:'branch.delete',branch:'feat/x',sha:'a'.repeat(40)},{operation:'branch.delete',branch:'-x',sha:'a'.repeat(40),prNumber:1},{operation:'branch.delete',branch:'feat/x',sha:'A'.repeat(40),prNumber:1},{operation:'branch.delete',branch:'feat/x',sha:'a'.repeat(40),prNumber:0},{operation:'branch.delete',branch:'feat/x',sha:'a'.repeat(40),prNumber:1,force:true},
   ]) assert.equal((await s.call(request)).error,'invalid-request',JSON.stringify(request));
   assert.equal(s.api.calls.length,0);
 });

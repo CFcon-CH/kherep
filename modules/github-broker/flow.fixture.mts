@@ -34,13 +34,13 @@ export function brokerRoot(t:T, selected:'claude'|'codex', edit:(policy:Record<s
   for (const dir of ['keys','receipts']) fs.mkdirSync(path.join(root,dir),{recursive:true,mode:0o700});
   for (const dir of [path.join(base,'.kherep'),root]) fs.chmodSync(dir,0o700);
   const runtimes=Object.fromEntries(['claude','codex'].map((runtime,i)=>[runtime,{appId:11+i,clientId:`Iv.synthetic${i}`,botId:BOTS[i].id,botLogin:BOTS[i].login,installationId:44+i,keyRef:`synthetic${i}.pem`,
-    operations:['issue.create','branch.push','pr.create','pr.update','pr.comment','run.rerun','run.cancel','pr.merge'],repositories:[{slug:'example/project',id:55}]}]));
+    operations:['issue.create','branch.push','pr.create','pr.update','pr.comment','run.rerun','run.cancel','pr.merge','branch.delete'],repositories:[{slug:'example/project',id:55}]}]));
   const policy={version:2,enabled:true,runtimes};edit(policy);
   fs.writeFileSync(path.join(root,'policy.json'),JSON.stringify(policy),{mode:0o600});
   fs.writeFileSync(path.join(root,'keys',runtimes[selected].keyRef),key,{mode:0o600});
   return root;
 }
-export type Call = {method:string; url:string; body:any; auth:string};
+export type Call = {method:string; url:string; query:string; body:any; auth:string};
 export const MERGED = 'b'.repeat(40);
 /**
  * A fake api.github.com: identity endpoints plus pulls, comments, runs, refs and the
@@ -48,12 +48,17 @@ export const MERGED = 'b'.repeat(40);
  * answer; 'noop' answers without merging; a status refuses without merging.
  * `omitMergeCommitSha` drops `merge_commit_sha` from the merged pull, as GitHub
  * did under a contents-only installation token.
+ * Branch deletion: the pull list filters on the head branch name only (so a fork's
+ * pull can reach the handler), `rules` and `protectedBranch` answer the rules and
+ * branch reads, `pullRefs` overrides refs/pull/<n>/head (null: 404), and
+ * `deleteAnswer` works like `mergeAnswer`; deleted branches read as absent.
  */
 export function fakeGithub(selected:'claude'|'codex', refs:(branch:string)=>string|undefined=()=>undefined) {
   const bot=BOTS[selected==='claude'?0:1], appId=selected==='claude'?11:12, installationId=selected==='claude'?44:45;
   const calls:Call[]=[], all={actions:'write',checks:'read',contents:'write',issues:'write',metadata:'read',pull_requests:'write',workflows:'write'};
   const control={extraScope:false,wrongAuthor:false,dropLabels:false,runStatus:'completed',attemptAfter:2,conclusion:'cancelled',actorId:bot.id,
-    mergeAnswer:'ok' as 'ok'|'lost'|'noop'|number,mergedBy:undefined as unknown,omitMergeCommitSha:false};
+    mergeAnswer:'ok' as 'ok'|'lost'|'noop'|number,mergedBy:undefined as unknown,omitMergeCommitSha:false,
+    rules:[] as unknown[],protectedBranch:false as unknown,pullRefs:new Map<number,string|null>(),deleteAnswer:'ok' as 'ok'|'lost'|'noop'|number,deleted:new Set<string>()};
   const user={id:bot.id,login:bot.login,type:'Bot'};
   const pulls=new Map<number,any>(), comments=new Map<number,any>();
   const run={id:9001,run_attempt:1,status:'completed',conclusion:'failure',repository:{id:55,full_name:'example/project'},triggering_actor:{id:1,login:'someone',type:'User'}};
@@ -61,7 +66,7 @@ export function fakeGithub(selected:'claude'|'codex', refs:(branch:string)=>stri
   const fetcher:typeof fetch=async(url,init)=>{
     const u=new URL(String(url)),endpoint=u.pathname,method=init?.method??'GET',body=init?.body?JSON.parse(String(init.body)):undefined;
     const auth=(init?.headers as Record<string,string>).Authorization.slice(7);
-    calls.push({method,url:endpoint,body,auth});assert.equal(u.origin,'https://api.github.com');
+    calls.push({method,url:endpoint,query:u.search,body,auth});assert.equal(u.origin,'https://api.github.com');
     if (endpoint==='/app') {
       const [a,b,c]=auth.split('.');assert.equal(verify('RSA-SHA256',Buffer.from(`${a}.${b}`),pair.publicKey,Buffer.from(c,'base64url')),true);
       return json({id:appId,client_id:`Iv.synthetic${appId-11}`,slug:bot.login.slice(0,-5),permissions:all});
@@ -73,7 +78,25 @@ export function fakeGithub(selected:'claude'|'codex', refs:(branch:string)=>stri
     const repo='/repos/example/project';
     if (endpoint===repo) return json({id:55,full_name:'example/project',private:false,default_branch:'main'});
     const ref=/^\/repos\/example\/project\/git\/ref\/heads\/(.+)$/.exec(endpoint);
-    if (ref) { const sha=refs(ref[1]); return sha?json({ref:`refs/heads/${ref[1]}`,object:{type:'commit',sha}}):json({message:'Not Found'},404); }
+    const head=(branch:string)=>control.deleted.has(branch)?undefined:refs(branch);
+    if (ref) { const sha=head(ref[1]); return sha?json({ref:`refs/heads/${ref[1]}`,object:{type:'commit',sha}}):json({message:'Not Found'},404); }
+    if (endpoint===`${repo}/pulls` && method==='GET') {
+      const q=u.searchParams, state=q.get('state'), branch=q.get('head')?.split(':')[1], base=q.get('base');
+      return json([...pulls.values()].filter(p=>(state==='all'||p.state===state)&&(!branch||p.head?.ref===branch)&&(!base||p.base?.ref===base)).slice(0,Number(q.get('per_page')??30)));
+    }
+    const pullRef=/^\/repos\/example\/project\/git\/ref\/pull\/(\d+)\/head$/.exec(endpoint);
+    if (pullRef) { const n=Number(pullRef[1]), sha=control.pullRefs.has(n)?control.pullRefs.get(n):pulls.get(n)?.head?.sha; return sha?json({ref:`refs/pull/${n}/head`,object:{type:'commit',sha}}):json({message:'Not Found'},404); }
+    if (endpoint.startsWith(`${repo}/rules/branches/`)) return json(control.rules);
+    const branch=/^\/repos\/example\/project\/branches\/(.+)$/.exec(endpoint);
+    if (branch) { const sha=head(branch[1]); return sha?json({name:branch[1],protected:control.protectedBranch,commit:{sha}}):json({message:'Not Found'},404); }
+    const removal=/^\/repos\/example\/project\/git\/refs\/heads\/(.+)$/.exec(endpoint);
+    if (removal && method==='DELETE') {
+      const answer=control.deleteAnswer;
+      if (typeof answer==='number') return json({message:'synthetic refusal'},answer);
+      if (answer!=='noop') control.deleted.add(removal[1]);
+      if (answer==='lost') throw new Error('synthetic lost answer');
+      return new Response(null,{status:204});
+    }
     if (endpoint===`${repo}/pulls` && method==='POST') {
       const pr={id:7100+pulls.size,number:70+pulls.size,title:body.title,body:body.body??null,state:'open',draft:body.draft??false,labels:[],base:{ref:body.base,repo:{full_name:'example/project'}},head:{ref:body.head,repo:{full_name:'example/project'}},user:control.wrongAuthor?{id:999,login:'someone',type:'User'}:user};
       pulls.set(pr.number,pr);return json(pr,201);

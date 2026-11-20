@@ -1,16 +1,19 @@
 export type Runtime = 'claude' | 'codex';
 export const ISSUE_OPERATIONS = ['issue.create','issue.comment','issue.update'] as const;
-export const GITHUB_OPERATIONS = ['branch.push','pr.create','pr.update','pr.comment','run.rerun','run.cancel','pr.merge'] as const;
+export const GITHUB_OPERATIONS = ['branch.push','pr.create','pr.update','pr.comment','run.rerun','run.cancel','pr.merge','branch.delete'] as const;
 export type IssueOperation = typeof ISSUE_OPERATIONS[number];
 export type Operation = IssueOperation | typeof GITHUB_OPERATIONS[number];
 export type Request = { operationId: string; repository: string; operation: Operation | 'verify' | 'identity'; issueNumber?: number; title?: string; body?: string; labels?: string[]; state?: 'open' | 'closed'; stateReason?: 'completed' | 'not_planned' | 'reopened';
   branch?: string; sha?: string; head?: string; base?: string; draft?: boolean; prNumber?: number; runId?: number; failedOnly?: boolean };
 export type ErrorCode = 'invalid-request' | 'label-required' | 'policy-disabled' | 'policy-invalid' | 'key-access-denied' | 'auth-refused' | 'target-refused' | 'transport-failed' | 'verification-failed' | 'operation-conflict' | 'operation-busy' | 'receipt-invalid' | 'receipt-full' | 'outcome-unknown' | 'git-unavailable';
+/** The fixed reasons a `target-refused` may name (branch.delete only); never provider text. */
+export type RefusalReason = 'default-branch' | 'pull-list-incomplete' | 'open-pull-request' | 'pull-not-found' | 'pull-not-closed' | 'foreign-head' | 'pull-head-mismatch'
+  | 'foreign-author' | 'open-base-pull-request' | 'branch-rules' | 'pull-ref-mismatch' | 'protected-branch' | 'head-moved' | 'unexpected-answer';
 export class BrokerError extends Error {
-  code: ErrorCode;
-  constructor(code: ErrorCode) { super(code); this.code = code; }
+  code: ErrorCode; reason?: RefusalReason;
+  constructor(code: ErrorCode, reason?: RefusalReason) { super(code); this.code = code; if (reason) this.reason = reason; }
 }
-export function fail(code: ErrorCode): never { throw new BrokerError(code); }
+export function fail(code: ErrorCode, reason?: RefusalReason): never { throw new BrokerError(code, reason); }
 export function object(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) fail('invalid-request');
   return value as Record<string, unknown>;
@@ -33,11 +36,11 @@ function validLabels(value: unknown): boolean {
 const FIELDS: Record<string, string[]> = {
   'issue.create':['title','body','labels'], 'issue.comment':['issueNumber','body'], 'issue.update':['issueNumber','title','body','state','stateReason'], verify:[], identity:[],
   'branch.push':['branch','sha'], 'pr.create':['head','base','title','body','draft','labels'], 'pr.update':['prNumber','title','body','state','base'], 'pr.comment':['prNumber','body'],
-  'run.rerun':['runId','failedOnly'], 'run.cancel':['runId'], 'pr.merge':['prNumber','sha'],
+  'run.rerun':['runId','failedOnly'], 'run.cancel':['runId'], 'pr.merge':['prNumber','sha'], 'branch.delete':['branch','sha','prNumber'],
 };
 const REQUIRED: Record<string, string[]> = {
   'issue.create':['title'], 'issue.comment':['issueNumber','body'], 'issue.update':['issueNumber'], 'branch.push':['branch','sha'], 'pr.create':['head','base','title'],
-  'pr.update':['prNumber'], 'pr.comment':['prNumber','body'], 'run.rerun':['runId'], 'run.cancel':['runId'], 'pr.merge':['prNumber','sha'],
+  'pr.update':['prNumber'], 'pr.comment':['prNumber','body'], 'run.rerun':['runId'], 'run.cancel':['runId'], 'pr.merge':['prNumber','sha'], 'branch.delete':['branch','sha','prNumber'],
 };
 export function parseRequest(text: string): Request {
   if (Buffer.byteLength(text) > 65536) fail('invalid-request');

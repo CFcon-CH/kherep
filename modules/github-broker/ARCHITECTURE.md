@@ -17,7 +17,7 @@ flowchart LR
   route -->|mutation| target[Public repository and target preflight]
   route -->|verify| readback
   target --> intent[Durable write-ahead receipt]
-  intent --> write[One fixed issue, pull request, merge or run operation]
+  intent --> write[One fixed issue, pull request, merge, branch delete or run operation]
   intent -->|branch.push| push[Fixed git push from a clean repository under the broker root, constructed environment, nonce in the git child only]
   push --> helper[Runtime credential helper: pending locked receipt under 120 s, one grant redeemed by the nonce]
   helper --> ctoken[Contents-write token to git's pipe only]
@@ -30,7 +30,15 @@ flowchart LR
 `broker.mts` runs one flow for every operation: policy, admission, key,
 authentication with the exact permission set from `operations.mts`, then the
 operation's handler for preflight, mutation, known IDs, readback and public IDs.
-`issues.mts`, `pulls.mts`, `merge.mts`, `runs.mts` and `git-push.mts` are those handlers.
+`issues.mts`, `pulls.mts`, `merge.mts`, `branch-delete.mts`, `runs.mts` and `git-push.mts` are those handlers.
+`branch-delete.mts` reads the pull requests with the branch as head, those with it
+as base, the active rules, the saved `refs/pull/<n>/head` and, last, the branch;
+each refusal is `target-refused` with a fixed reason from `RefusalReason` in
+`contract.mts`. It marks the receipt known before its one `DELETE` of the branch
+ref and reads back the ref as absent. Its handler declares `requests: 12`, the
+only raise of the transport's default limit of ten; `transport.mts` admits
+`DELETE` for a `git/refs/heads/` path only and returns a JSON array as `items`
+only in its explicit list mode, the one mode that also accepts a query string.
 `merge.mts` checks the pull request once (open, unmerged, not a draft, default-branch
 base, same-repository head at the request SHA, `mergeable` true), marks the
 receipt known before its one `PUT .../pulls/{n}/merge`, so a lost answer is

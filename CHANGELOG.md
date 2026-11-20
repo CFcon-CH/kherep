@@ -27,6 +27,23 @@ increments the minor version; every other release increments the patch version.
   not start within 60 seconds fails the run. The stall watch's REST client
   gains `get`. Live acceptance of a `GITHUB_TOKEN` rerun is not yet proven.
 
+- The GitHub App broker operation `branch.delete`. A request names `branch`,
+  its head `sha` and the `prNumber` of a closed pull request (merged or not);
+  the token carries exactly `contents: write`. Preflight refuses with
+  `target-refused` and a fixed `reason` unless the branch is not the default
+  branch, has no active ruleset rule and is not protected, still points at the
+  request SHA, is the head of no open pull request and the base of none, and
+  that SHA is the head of the named closed pull request of this repository,
+  authored by a bot that `allowedAuthorBotIds` admits, and equals
+  `refs/pull/<n>/head`. The one `DELETE /repos/{owner}/{repo}/git/refs/heads/{branch}`
+  follows a known receipt, so a lost answer is settled by `verify` or a retry
+  and never by a second DELETE; readback requires the ref to be absent. A
+  verified result names `deleted` or `absent`. The REST delete is not
+  conditional, so a push between the last read and the DELETE is not refused.
+  The transport gains `DELETE` for branch refs only, an explicit list mode that
+  alone reads arrays and a bounded query string, and a per-operation request
+  limit (twelve for this operation, ten for all others). The operation stays off
+  until the operator lists it in the runtime's `operations` (#1002).
 - The GitHub App broker operation `pr.merge` (#956). A request names
   `prNumber` and the head `sha`; the token carries exactly `contents: write`.
   Merging is off by default: only a repository whose version 2 policy entry
