@@ -7,10 +7,10 @@ import { protectedDirectory, readProtectedSync } from './key-access.mts';
 import { checkWindowsAccess } from './windows-access.mts';
 // Version 1 records an issue operation; version 2 a push, pull request or run
 // operation, with its kind and public targets (a merge adds the merge commit
-// `mergeSha` when GitHub answered). Neither ever holds a body or token.
-export type Receipt = {version:1|2; kind?:'push'|'pull'|'run'; digest:string; operation:Operation; status:'pending'|'known'|'verified'; fieldHashes:Record<string,string>; issueNumber?:number; targetId?:number;
-  branch?:string; sha?:string; prNumber?:number; runId?:number; attempt?:number; admittedAt?:number; mergeSha?:string};
-const KIND:Record<string,Receipt['kind']>={'branch.push':'push','pr.create':'pull','pr.update':'pull','pr.comment':'pull','run.rerun':'run','run.cancel':'run','pr.merge':'pull'};
+// `mergeSha` when GitHub answered; a branch deletion its `result`). Neither ever holds a body or token.
+export type Receipt = {version:1|2; kind?:'push'|'pull'|'run'|'branch'; digest:string; operation:Operation; status:'pending'|'known'|'verified'; fieldHashes:Record<string,string>; issueNumber?:number; targetId?:number;
+  branch?:string; sha?:string; prNumber?:number; runId?:number; attempt?:number; admittedAt?:number; mergeSha?:string; result?:'deleted'|'absent'};
+const KIND:Record<string,Receipt['kind']>={'branch.push':'push','pr.create':'pull','pr.update':'pull','pr.comment':'pull','run.rerun':'run','run.cancel':'run','pr.merge':'pull','branch.delete':'branch'};
 const hash = (value:unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 export class ReceiptStore {
   directory:string; file:string; lock:string; grant:string; root:string;
@@ -67,9 +67,10 @@ export class ReceiptStore {
         exact(r,['version','digest','operation','status','fieldHashes','issueNumber','targetId']);
         if (!(ISSUE_OPERATIONS as readonly string[]).includes(String(r.operation))) fail('receipt-invalid');
       } else {
-        exact(r,['version','kind','digest','operation','status','fieldHashes','targetId','branch','sha','prNumber','runId','attempt','admittedAt','mergeSha']);
+        exact(r,['version','kind','digest','operation','status','fieldHashes','targetId','branch','sha','prNumber','runId','attempt','admittedAt','mergeSha','result']);
         if (r.version!==2 || !(GITHUB_OPERATIONS as readonly string[]).includes(String(r.operation)) || r.kind!==KIND[String(r.operation)]) fail('receipt-invalid');
-        if (r.branch!==undefined && !refName(r.branch) || [r.sha,r.mergeSha].some(v=>v!==undefined && !SHA.test(String(v))) || [r.prNumber,r.runId,r.attempt,r.admittedAt].some(v=>v!==undefined && !positive(v))) fail('receipt-invalid');
+        if (r.branch!==undefined && !refName(r.branch) || [r.sha,r.mergeSha].some(v=>v!==undefined && !SHA.test(String(v))) || [r.prNumber,r.runId,r.attempt,r.admittedAt].some(v=>v!==undefined && !positive(v))
+          || r.result!==undefined && (r.kind!=='branch' || r.result!=='deleted' && r.result!=='absent')) fail('receipt-invalid');
       }
       if (!/^[a-f0-9]{64}$/.test(String(r.digest)) || !['pending','known','verified'].includes(String(r.status))) fail('receipt-invalid');
       const fields=object(r.fieldHashes);exact(fields,['title','body','labels','state','state_reason','base','head','draft']);
@@ -97,9 +98,10 @@ function exclusive(file:string, root:string, content=''):void {
   const fd=fs.openSync(file,'wx',0o600);
   try {if(process.platform==='win32') checkWindowsAccess(file,root);if (content) fs.writeFileSync(fd,content);fs.fsyncSync(fd);}finally{fs.closeSync(fd);}
 }
-// A settled receipt names its target: issue and PR number with target ID, branch with sha, or run with attempt.
+// A settled receipt names its target: issue and PR number with target ID, branch with sha (a deletion also its PR), or run with attempt.
 function known(r:Receipt):boolean {
   if (r.kind==='push') return !!r.branch && !!r.sha;
+  if (r.kind==='branch') return !!r.branch && !!r.sha && positive(r.prNumber);
   if (r.kind==='run') return positive(r.runId) && positive(r.attempt);
   return r.kind==='pull' ? positive(r.prNumber) && positive(r.targetId) : positive(r.issueNumber) && positive(r.targetId);
 }

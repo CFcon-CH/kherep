@@ -13,7 +13,7 @@ const targets = [
   { name: 'projection', file: 'lib/github-broker-projection.mts', exported: 'githubBrokerFiles' },
 ];
 const closure = [
-  'attribution.mts', 'auth.mts', 'broker.mts', 'cli.mts', 'commit-range.mts', 'config.mts', 'contract.mts', 'credential.mts', 'git-push.mts', 'issues.mts',
+  'attribution.mts', 'auth.mts', 'branch-delete.mts', 'broker.mts', 'cli.mts', 'commit-range.mts', 'config.mts', 'contract.mts', 'credential.mts', 'git-push.mts', 'issues.mts',
   'key-access.mts', 'merge.mts', 'operations.mts', 'pulls.mts', 'receipt.mts', 'runs.mts', 'transport.mts', 'windows-access.mts',
   'github-claude-credential.mts', 'github-claude.mts', 'github-codex-credential.mts', 'github-codex.mts',
 ];

@@ -35,6 +35,7 @@ The binding does not authenticate arbitrary callers sharing the same OS account.
 | `run.rerun` | required runId, optional failedOnly |
 | `run.cancel` | required runId |
 | `pr.merge` | required prNumber and sha (the PR head, 40 lowercase hex) |
+| `branch.delete` | required branch, sha (the branch head) and prNumber (a closed pull request of this branch) |
 
 Each operation authenticates with exactly one installation-token permission set,
 and a token that carries anything else besides `metadata: read` is refused:
@@ -42,13 +43,14 @@ and a token that carries anything else besides `metadata: read` is refused:
 | Operation | Token permissions |
 | --- | --- |
 | `issue.*` | `issues: write` |
-| `branch.push`, `pr.merge` | `contents: write` |
+| `branch.push`, `pr.merge`, `branch.delete` | `contents: write` |
 | `pr.create` | `pull_requests: write`, plus `issues: write` when labels are given |
 | `pr.update`, `pr.comment` | `pull_requests: write` |
 | `run.rerun`, `run.cancel` | `actions: write` |
 
-There is no auto-merge, force-push, branch deletion, tag push or `workflows`
-permission. `pr.merge` is off by default per repository (see the policy below).
+There is no auto-merge, force-push, tag push or `workflows` permission, and the
+only branch deletion is `branch.delete` of a closed pull request's head branch.
+`pr.merge` is off by default per repository (see the policy below).
 
 State is `open` or `closed`; stateReason is `completed`, `not_planned`, or
 `reopened`. Requests are at most 64 KiB, titles 256 codepoints, and bodies 32 KiB.
@@ -208,6 +210,39 @@ A PUT that GitHub refuses (405, 409, 422) ends as `outcome-unknown`, and `verify
 or a retry then reports `verification-failed`; the receipt stays bound to that
 attempt, so a new merge attempt needs a new operationId.
 
+`branch.delete` removes the head branch of one closed pull request (merged or
+not). Before any receipt it refuses with `target-refused` and a fixed `reason`
+unless, in this order: the branch is not the default branch (`default-branch`);
+the list of pull requests with this head (`state=all`, `per_page=30`) has fewer
+than 30 items (`pull-list-incomplete`) and none of them is open
+(`open-pull-request`); the named prNumber is in it (`pull-not-found`), closed
+(`pull-not-closed`), its head is in this repository (`foreign-head`) with this
+branch name at the request sha (`pull-head-mismatch`), and its author is a bot
+whose noreply address `allowedAuthorBotIds` admits for this runtime
+(`foreign-author`); no open pull request uses the branch as its base
+(`open-base-pull-request`); no active ruleset rule applies to it
+(`branch-rules`); `refs/pull/<n>/head` points at the request sha
+(`pull-ref-mismatch`); and, read last, the branch is unprotected
+(`protected-branch`) and still at the request sha (`head-moved`). A malformed
+provider answer refuses with `unexpected-answer`. A branch already absent at the
+last read is not deleted again, after all the checks before it passed. Otherwise
+the receipt is known before the one
+`DELETE /repos/{owner}/{repo}/git/refs/heads/{branch}`, so a lost answer is
+settled by `verify` or a retry, never by a second DELETE. Readback requires the
+ref to be absent. A verified result names `result`: `deleted` when this
+operation's DELETE was answered and the ref then read absent, `absent` when no
+answered DELETE of this operation exists (already gone, or an answer lost). A
+failure, and `verify` of a receipt that is known but not yet verified, names no
+`result`. A DELETE GitHub refuses ends as `outcome-unknown`, then
+`verification-failed`, and a new attempt needs a new operationId.
+The REST delete takes no expected SHA, so the head check and the DELETE are a
+check-then-act: a push that lands between the branch read and the DELETE is
+deleted with the branch and is kept only by the pusher. A pull request opened on
+the branch inside that window is closed by GitHub, its commits kept in
+`refs/pull/<n>/head`. The branch read uses `/branches/{branch}` and readback
+`/git/ref/heads/{branch}`; if the two disagree the result is
+`verification-failed`, never a false success.
+
 Production policy lives in `<OS account home>/.kherep/github-broker/policy.json`.
 The OS account home comes from `os.userInfo()`, ignoring HOME, USERPROFILE,
 runtime homes, checkout and current directory. Selected keys are flat references
@@ -217,7 +252,8 @@ can supply a synthetic root; no CLI, request or environment root override exists
 Policy schema version 1 admits the issue operations only and stays valid for
 them. Version 2 has the same shape, admits every operation above (`identity`
 needs no listing) and allows `allowedAuthorBotIds` per runtime: the configured
-bot user IDs whose commits that runtime may push, default its own bot only.
+bot user IDs whose commits that runtime may push, and whose closed pull request
+branches `branch.delete` may remove, default its own bot only.
 A version 2 repository entry may add `merge: {"method": "rebase"|"squash"|"merge"}`;
 `pr.merge`, even when listed in the runtime's operations, returns `policy-invalid`
 before any key read or provider call for a repository without that entry.
@@ -239,13 +275,16 @@ The selected key stays inside the broker. RS256 JWT claims use a 60-second clock
 allowance and five-minute future expiration. App slug/client/installation checks and a numeric public bot-ID lookup precede
 each mutation. Authentication includes an explicit one-repository token exchange with the operation's permission set; the token exists only in
 process memory. Optional provider scope fields are validated when present.
-Transport fixes `https://api.github.com`, API version `2026-03-10`, ten requests,
-15 seconds per request, 1 MiB response, and refuses redirects. Mutations never
+Transport fixes `https://api.github.com`, API version `2026-03-10`, ten requests
+(twelve for `branch.delete`), 15 seconds per request, 1 MiB response, and refuses
+redirects. It sends `DELETE` only to a `git/refs/heads/` branch ref, and reads a
+JSON array, with a bounded query string, only in an explicit list mode. Mutations never
 retry automatically. Errors expose fixed codes, never provider messages or paths.
 
 Version 1 receipts record issue operations; version 2 receipts add `kind`
-(`push`, `pull`, `run`) and the public targets `branch`, `sha`, `prNumber`,
-`runId`, `attempt` and `admittedAt`, and for `pr.merge` the merge commit `mergeSha`.
+(`push`, `pull`, `run`, `branch`) and the public targets `branch`, `sha`, `prNumber`,
+`runId`, `attempt` and `admittedAt`, for `pr.merge` the merge commit `mergeSha`, and
+for `branch.delete` its `result`.
 Durable receipts store payload/field hashes and necessary public target IDs, never
 bodies or secrets. An exclusive operation lock is never stolen based on age.
 Pending operations with unknown outcomes cannot replay. Known IDs survive

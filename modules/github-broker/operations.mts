@@ -9,10 +9,11 @@ import { pushHandler } from './git-push.mts';
 import { pullHandler } from './pulls.mts';
 import { runHandler } from './runs.mts';
 import { mergeHandler } from './merge.mts';
+import { branchDeleteHandler } from './branch-delete.mts';
 export type Dependencies = {root?:string; fetch?:typeof fetch; now?:()=>number; cwd?:string; push?:{url?:string; helperScript?:string}; env?:NodeJS.ProcessEnv};
 /** Everything one operation needs after policy, admission and authentication; `permit` creates the operation's one credential grant (see ReceiptStore.permit) and returns its nonce and remover. */
 export type Context = {http:Http; token:string; target:Record<string,unknown>; request:Request; identity:Identity; repo:{slug:string; id:number}; runtime:Runtime; now:number; deps:Dependencies; permit:()=>{nonce:string; revoke:()=>void}};
-export type Kind = 'issue'|'push'|'pull'|'run';
+export type Kind = 'issue'|'push'|'pull'|'run'|'branch';
 export type Handler = {
   kind:Kind;
   /** Values whose hashes the receipt keeps for the exact readback. */
@@ -27,11 +28,13 @@ export type Handler = {
   attribution:(receipt:Receipt)=>string;
   /** After a verified write of this run only: records it in the attribution log; false when nothing was written. */
   recorded?:(c:Context, receipt:Receipt)=>boolean;
+  /** Provider requests one invocation may make, authentication included; default 10. */
+  requests?:number;
 };
 export const HANDLERS: Record<Operation, Handler> = {
   'issue.create':issueHandler, 'issue.comment':issueHandler, 'issue.update':issueHandler,
   'branch.push':pushHandler, 'pr.create':pullHandler, 'pr.update':pullHandler, 'pr.comment':pullHandler,
-  'run.rerun':runHandler, 'run.cancel':runHandler, 'pr.merge':mergeHandler,
+  'run.rerun':runHandler, 'run.cancel':runHandler, 'pr.merge':mergeHandler, 'branch.delete':branchDeleteHandler,
 };
 /**
  * The exact installation-token permissions per operation. Authentication requests
@@ -40,7 +43,7 @@ export const HANDLERS: Record<Operation, Handler> = {
  */
 export function permissionsFor(operation:Operation, labels:boolean):Permissions {
   if (operation.startsWith('issue.')) return {issues:'write'};
-  if (operation==='branch.push'||operation==='pr.merge') return {contents:'write'};
+  if (operation==='branch.push'||operation==='pr.merge'||operation==='branch.delete') return {contents:'write'};
   if (operation.startsWith('run.')) return {actions:'write'};
   return operation==='pr.create' && labels ? {pull_requests:'write', issues:'write'} : {pull_requests:'write'};
 }

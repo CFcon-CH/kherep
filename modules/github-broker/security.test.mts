@@ -34,6 +34,34 @@ test('transport fixes origin, version, redirect and bounds with fixed errors',as
   for (const body of ['{','x'.repeat(1048577)]) await assert.rejects(transport(async()=>new Response(body))('GET','/app','synthetic'),{message:'transport-failed'});
   await assert.rejects(transport(async()=>{throw new Error('private-canary');})('GET','/app','synthetic'),{message:'transport-failed'});
 });
+test('transport sends DELETE to one branch ref only and refuses every other DELETE before fetch',async()=> {
+  let count=0;const http=(status=204)=>transport(async()=>{count++;return new Response(null,{status});});
+  assert.deepEqual(await http()('DELETE','/repos/example/project/git/refs/heads/feat/old','synthetic'),{});assert.equal(count,1);
+  for (const endpoint of ['/repos/example/project/git/refs/tags/x','/repos/example/project/releases/1','/repos/example/project/pulls/1','/repos/example/project/git/ref/heads/x',
+    '/repos/example/project/git/refs/heads/a..b','/repos/example/project/git/refs/heads/x?force=1','/repos/example/git/refs/heads/x']) await assert.rejects(http()('DELETE',endpoint,'synthetic'),{message:'transport-failed'},endpoint);
+  assert.equal(count,1);
+  await assert.rejects(http(404)('DELETE','/repos/example/project/git/refs/heads/x','synthetic',undefined,true),{message:'transport-failed'});
+});
+test('transport reads a list only in explicit list mode, and a query only there',async()=> {
+  let count=0;const http=(body:string|null,status=200)=>transport(async()=>{count++;return new Response(body,{status});});
+  const query='/repos/example/project/pulls?state=all&head=example:feat/old.v2-x_y&per_page=30';
+  assert.deepEqual(await http('[{"id":1}]')('GET',query,'synthetic',undefined,false,true),{items:[{id:1}]});
+  assert.deepEqual(await http('[]')('GET','/repos/example/project/rules/branches/feat/old','synthetic',undefined,false,true),{items:[]});
+  for (const [body,status] of [['{"id":1}',200],['',200],[null,204]] as const) await assert.rejects(http(body,status)('GET',query,'synthetic',undefined,false,true),{message:'transport-failed'},String(body));
+  await assert.rejects(http('[{"id":1}]')('GET','/repos/example/project/pulls/1','synthetic'),{message:'transport-failed'});
+  count=0;
+  await assert.rejects(http('[]')('GET',query,'synthetic'),{message:'transport-failed'});
+  await assert.rejects(http('[]')('POST',query,'synthetic',{},false,true),{message:'transport-failed'});
+  for (const bad of ['?state=all head','?state=all#x','?state=all?x','?head=a..b','?','?head=%20']) await assert.rejects(http('[]')('GET',`/repos/example/project/pulls${bad}`,'synthetic',undefined,false,true),{message:'transport-failed'},bad);
+  assert.equal(count,0);
+});
+test('transport refuses the request after its limit: ten by default, the given limit otherwise',async()=> {
+  for (const limit of [undefined,12]) {
+    let count=0;const http=transport(async()=>{count++;return new Response('{}');},limit);
+    for (let i=0;i<(limit ?? 10);i++) await http('GET','/app','synthetic');
+    await assert.rejects(http('GET','/app','synthetic'),{message:'transport-failed'});assert.equal(count,limit ?? 10);
+  }
+});
 test('authentication downscopes exactly and rejects wrong identity before token exchange',async()=> {
   const calls:unknown[][]=[];
   const http = async (...args:unknown[])=>{calls.push(args);return [{id:11,client_id:'Iv.synthetic',slug:'synthetic',permissions:{issues:'write'}},{id:44,app_id:11,suspended_at:null,permissions:{issues:'write'}},{token:'synthetic-token',expires_at:new Date(now+60000).toISOString(),permissions:{issues:'write',metadata:'read'}},{id:33,login:'synthetic[bot]',type:'Bot'},{id:55,full_name:'example/project',private:false}][calls.length-1];};

@@ -126,7 +126,7 @@ export function pushArgs(helper:string, url:string, sha:string, branch:string):s
 export function helperScript(runtime:Runtime):string {
   return fileURLToPath(new URL(`./github-${runtime}-credential.mts`,import.meta.url));
 }
-async function remoteSha(c:Context, branch:string, code:'target-refused'|'verification-failed'):Promise<string|undefined> {
+export async function remoteSha(c:Context, branch:string, code:'target-refused'|'verification-failed'):Promise<string|undefined> {
   const ref=await c.http('GET',`/repos/${c.repo.slug}/git/ref/heads/${branch}`,c.token,undefined,true);
   if (ref===ABSENT) return undefined;
   const object=ref.object as Record<string,unknown>|null;
