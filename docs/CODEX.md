@@ -55,7 +55,7 @@ The first CLI model resolution requires a signed-in Codex context in the selecte
 }
 ```
 
-An agent key is the basename of its source Markdown file, for example `codex-obs`, `atlassian-broker`, `kherep-builder` or `code-architect`. Precedence is field by field: shipped role default, then shipped agent default, then your role choice, then your agent choice. A model you name must be visible in the Codex model catalog, and the final model and effort pair must be supported by that model; otherwise the install stops before writing anything. The file accepts only `model` and `effort` choices plus optional `models` metadata that can narrow, never widen, what the catalog supports. It never grants a role, tool, sandbox or other authority. The installer only reads this file and never writes it.
+An agent key is the basename of its source Markdown file, for example `codex-obs`, `atlassian-broker`, `kherep-builder` or `code-architect`. Precedence is field by field: shipped role default, then shipped agent default, then your role choice, then your agent choice. A model you name must be visible in the Codex model catalog, and the final model and effort pair must be supported by that model; otherwise the install stops before writing anything. The `model` in the example is a placeholder for the newest model of a family: a managed start (`node codex/start.mts`) accepts a pin only for the newest visible model of its family and refuses an older generation with `codex-start-model-pin-conflict`. The file accepts only `model` and `effort` choices plus optional `models` metadata that can narrow, never widen, what the catalog supports. It never grants a role, tool, sandbox or other authority. The installer only reads this file and never writes it.
 
 The installer records each generation in `orchestra/model-selection-receipt.json` (inputs, catalog snapshot, per-field provenance and the hash of every generated agent TOML and of the dispatch snapshot) and writes `orchestra/model-selection-anchor.json` last. The anchor pins the exact receipt bytes; `orchestra/parity-receipt.json` keeps only a pointer to it. A later install verifies the anchored generation before planning: it rebuilds the agent inventory and policy from the receipt's own Git revision (`git show <revision>:<path>`), takes only the installed names from the receipt, and compares every recorded output with the bytes on disk. A manually edited agent TOML, an edited receipt, a missing output or a revision your checkout no longer contains stops the install with a fixed code and changes nothing.
 
@@ -115,6 +115,15 @@ If the parity receipt points to the exact predecessor recorded in the verified s
 | `codex-start-transaction-failed`, `codex-start-rollback-conflict` | Inspect the most recent private `model-start-*` backup and verify the anchored generation. A rollback conflict leaves the concurrent writer's bytes in place. |
 
 See [Codex configuration precedence](https://learn.chatgpt.com/docs/config-file/config-basic), [the CLI reference](https://learn.chatgpt.com/docs/cli/reference), [the Windows app](https://learn.chatgpt.com/docs/windows/windows-app), and [Windows application activation](https://learn.microsoft.com/en-us/windows/win32/api/shobjidl_core/nf-shobjidl_core-iapplicationactivationmanager-activateapplication).
+
+#### Codex Desktop started normally
+
+A Codex Desktop app that you start yourself (macOS, or Windows without `--desktop`) does not refresh the model selection. It uses the top-level `model` that the last install or managed start wrote, so a new model generation reaches new Desktop chats only after a refresh and a restart:
+
+1. Run `node codex/start.mts --prepare-only --workspace <absolute path>` from the matching Kherep checkout.
+2. Quit the Desktop app completely and open it again.
+
+Measured on macOS (#994): a running app keeps the previous root model for new chats until it is restarted; after the restart, new chats use the refreshed root model, even when a different model was chosen in the picker before. No Codex hook runs early enough to change the model of a session that is starting, so there is no automatic refresh for a normal Desktop start.
 
 ### Routing-only update
 
