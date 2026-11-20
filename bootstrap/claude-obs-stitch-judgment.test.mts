@@ -33,6 +33,11 @@ test("snippets are data, shared words are no reason, and no link beats a wrong l
     /No link is better than a wrong link\./]) assert.match(CLAUDE_OBS, pattern);
 });
 
+test("no related hit states the result of that search, not a claim about the whole space", () => {
+  assert.match(CLAUDE_OBS, /"The related search before\s+writing found no page on this topic\."/);
+  assert.doesNotMatch(CLAUDE_OBS, /No existing page in this space\s+matched this finding\./);
+});
+
 test("a search that did not run and a refused write have their own failure status", () => {
   assert.match(CLAUDE_OBS, /Exit code 1 means the search did not run[\s\S]{0,80}`OBS-RESULT: failed stitch search did not run`/);
   assert.match(CLAUDE_OBS, /A `refused` line means nothing was written: report `OBS-RESULT: failed stitch refused`\. You never\s+retry with other ids\./);
