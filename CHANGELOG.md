@@ -265,6 +265,10 @@ increments the minor version; every other release increments the patch version.
 
 ### Fixed
 
+- The `claude-obs` no-match sentence now states the result of the related
+  search before writing ("The related search before writing found no page on
+  this topic.") instead of claiming that no page in the space matched, so
+  later stitch back-links no longer contradict it (#999).
 - A refused Codex observation link now says why (#989). `links-refused`
   checks every finding before the first create and names each refusal as
   `OBS-RESULT: failed links-refused why=<position>:<code>[,...]` from a fixed
