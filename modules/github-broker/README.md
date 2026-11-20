@@ -223,8 +223,9 @@ whose noreply address `allowedAuthorBotIds` admits for this runtime
 (`open-base-pull-request`); no active ruleset rule applies to it
 (`branch-rules`); `refs/pull/<n>/head` points at the request sha
 (`pull-ref-mismatch`); and, read last, the branch is unprotected
-(`protected-branch`) and still at the request sha (`head-moved`). A malformed
-provider answer refuses with `unexpected-answer`. A branch already absent at the
+(`protected-branch`) and still at the request sha (`head-moved`). A non-array
+answer to a list read fails as `transport-failed`; any other malformed provider
+answer refuses with `unexpected-answer`. A branch already absent at the
 last read is not deleted again, after all the checks before it passed. Otherwise
 the receipt is known before the one
 `DELETE /repos/{owner}/{repo}/git/refs/heads/{branch}`, so a lost answer is
