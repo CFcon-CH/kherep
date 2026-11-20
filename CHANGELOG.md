@@ -163,6 +163,12 @@ increments the minor version; every other release increments the patch version.
 
 ### Changed
 
+- `docs/CODEX.md` documents how a normally started Codex Desktop app picks up a
+  new model generation: run `node codex/start.mts --prepare-only`, then quit and
+  reopen the app. A running app keeps its root model until restart, and after a
+  restart the root model wins over an earlier picker choice. The model-policy
+  example now says that a start pin must name the newest model of its family
+  (#994).
 - The control-plane Worker suite covers more refusal and error branches
   (#965). New tests drive NodeSession frames, liveness alarms, the stale
   handshake sweep, native Lead confirmation, MCP inbox reads and reference
