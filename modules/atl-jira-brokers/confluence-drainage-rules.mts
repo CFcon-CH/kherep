@@ -1,4 +1,5 @@
 import { outgoingIds } from './confluence-related.mts';
+import { namesCodeFile } from './confluence-claim-text.mts';
 import { claimBody, claimViews, plainText as plain, revisionBody, revisionLines } from './confluence-evidence.mts';
 
 export interface Snapshot {
@@ -30,14 +31,15 @@ function revisionsValid(body: string, labels: string[]): boolean {
     && labels.some(label=>['evidence-assumed','evidence-refuted','evidence-superseded'].includes(label));
   return bound.length + unbound.length > 0 && !malformed.length && (nonConfirmed || !unbound.length);
 }
-export function drainageRules(pages: Snapshot[], graphComplete: boolean): Candidate[] {
+// everyFileName counts each file name, also in page titles and product names (the check of a page that is being confirmed or refuted).
+export function drainageRules(pages: Snapshot[], graphComplete: boolean, everyFileName = false): Candidate[] {
   const out: Candidate[] = [];
   for (const p of pages) {
     const text = plain(p.body);
     // Only the author's claim decides code-boundness; the run of measurement blocks decide appended before the footer is metadata (#650, #666).
-    const claim = plain(claimBody(p.body));
-    const codeBound = /^[^\S\n\r\u2028\u2029]*(?:Code|Repository|Repo|Revision|Commit|Code[- ]bound)\s*:/im.test(claimViews(claimBody(p.body)).join('\n'))
-      || /\b[\w/-]+\.(?:mts|ts|tsx|js|py|java|go|rs)\b/.test(claim);
+    const claim = claimBody(p.body);
+    const codeBound = /^[^\S\n\r\u2028\u2029]*(?:Code|Repository|Repo|Revision|Commit|Code[- ]bound)\s*:/im.test(claimViews(claim).join('\n'))
+      || (everyFileName ? /\b[\w/-]+\.(?:mts|ts|tsx|js|py|java|go|rs)\b/.test(plain(claim)) : namesCodeFile(claim, p.id));
     // Revision lines are read without base-form blocks, positional or not, tail optional, as on d5c15f4 (#650 T8, #666).
     if (p.labels.includes('type-observation') && codeBound && !revisionsValid(revisionBody(p.body),p.labels)) {
       out.push(candidate(p,'revision-missing-or-invalid','review-format','Code-bound observation lacks valid repository@full-SHA Revision lines (with an optional repo-relative path list) or an allowed non-confirmed no-binding declaration; original evidence required.'));

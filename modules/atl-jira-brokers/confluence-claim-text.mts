@@ -35,6 +35,33 @@ export function plainText(body: string, mark = ''): string { let depth = 0;
     : tag[1] === '/' ? (depth > 0 && --depth === 0 && mark ? `${tag}\n${mark}` : tag) : tag.endsWith('/>') ? tag : (depth++ === 0 && mark ? `${mark}\n${tag}` : tag));
   return replaceTags(marked.replace(/<\/(?:p|div|h[1-6]|li)>/gi, '\n'), () => ' ').replace(/&(?:nbsp|amp|lt|gt|quot);/g, ' ').replace(/[ \t]+/g, ' ').trim();
 }
+// The title of another page is not a claim of this one, so the title in a page link names no code file here. Only the text
+// of a whole plain-text anchor is blanked, and only if its first href starts with a site-relative path of another page and
+// the text reads as a title: three plain words or more and no path written with separators, backslashes or odd entities.
+// The tags stay, so the text around them reads as before. Comments, CDATA, PIs and an anchor with markup inside are skipped.
+const ANCHOR = /<!--[^]*?(?:-->|$)|<!\[CDATA\[[^]*?(?:\]\]>|$)|<\?[^]*?(?:\?>|$)|<a((?:\s+[\w:-]+="[^"<]*")+)\s*>([^<]*)<\/a>/gi;
+const PAGE_HREF = /^\/wiki\/(?:spaces\/[^/"\s]+\/pages\/|pages\/viewpage\.action\?pageId=)(\d+)(?![\w-])/;
+function titleLike(text: string): boolean {
+  const plain = text.replace(/&(?:amp|quot|apos|[lr][sd]quo|[nm]dash);/g, ' ');
+  return !/[&\\]|(?:^|\s)[/>›»→|]+(?=\s|$)/.test(plain) && plain.split(/\s+/).filter(word => /^["'(]?\p{L}{2,}[.,:;!?)"']*$/u.test(word)).length >= 3;
+}
+// A comment, CDATA or PI sets no group, so it has no href and stays.
+const withoutPageTitles = (claim: string, ownId: string): string => claim.replace(ANCHOR, (region, attributes: string = '', text: string = '') => {
+  const target = PAGE_HREF.exec(/\shref="([^"<]*)"/i.exec(attributes)?.[1] ?? '')?.[1];
+  return target && target !== ownId && titleLike(text) ? `${region.slice(0, -text.length - 4)} </a>` : region;
+});
+// A product whose name ends like a file. It is one only as a bare name, not after a path or a dot, nor before a path, a longer name or a line reference.
+const PRODUCT_NAMES: ReadonlySet<string> = new Set(['Node.js', 'Next.js', 'Vue.js']);
+const bareProduct = (text: string, at: number, name: string): boolean => PRODUCT_NAMES.has(name)
+  && !/[/\\]\s*$|\.$/.test(text.slice(Math.max(0, at - 40), at))
+  && !/^(?:[\w-]|\.\w|\s*(?:[/\\#]|:\s*\d))/.test(text.slice(at + name.length, at + name.length + 12));
+// Whether a claim names a code file in its own text. The scanner's report and the check of a superseded page read it.
+// classifyClaim and every other promotion still count each file name, so a page is never easier to confirm or refute.
+export function namesCodeFile(claim: string, ownId = ''): boolean {
+  const text = plainText(withoutPageTitles(claim, ownId));
+  for (const m of text.matchAll(/\b[\w/-]+\.(?:mts|ts|tsx|js|py|java|go|rs)\b/g)) if (!bareProduct(text, m.index, m[0])) return true;
+  return false;
+}
 const CLAIM_BARRIER = '\x01';
 function markedClaimLine(line: string): string {
   let start = 0;

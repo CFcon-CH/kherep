@@ -123,9 +123,10 @@ async function decideMode(io: Io): Promise<number> {
     const added = [...decision.labelsAdd, ...(labels.some(l => l.startsWith('runtime-')) ? [] : [runtime])];
     after = [...new Set([...labels.filter(l => !decision.labelsRemove.includes(l)), ...added])].sort((left, right) => Number(left > right) - Number(left < right));
     body = insertBeforeFooter(record.body!, renderMeasurementBlock(decision, m as Measurement, runtime, options.superseded));
-    // Defect 1, checked on the result: the next drainage scan must accept the promoted page.
+    // Defect 1, checked on the result: the next drainage scan must accept the promoted page. Only a superseded page may leave
+    // out page titles and product names, as the scan does; a confirmed or refuted one counts every file name.
     const scan = drainageRules([{ id: record.pageId, version: record.readVersion ?? 0, title: '', spaceId: record.spaceId ?? '',
-      parentId: null, body, labels: after }], false);
+      parentId: null, body, labels: after }], false, decision.outcome !== 'superseded');
     if (scan.some(c => c.problem === 'revision-missing-or-invalid')) {
       decision = { outcome: 'unknown', reason: 'promoted-body-revision-invalid', labelsAdd: [], labelsRemove: [] };
       [body, after] = [undefined, labels];
