@@ -288,6 +288,18 @@ increments the minor version; every other release increments the patch version.
 
 ### Fixed
 
+- The brain-drainage scanner no longer reports a page as
+  `revision-missing-or-invalid` because a link to another page has a title
+  that names a code file, or because the text says `Node.js`, `Next.js` or
+  `Vue.js` as a bare name (#1006). Only the plain text of a site-relative page
+  link with at least three words is left out; a link that is only a path, a
+  link to the page itself or to any other address, and markup, comments or
+  CDATA inside an anchor still count. A page marked superseded may leave these
+  out too, so `decide` no longer needs a Revision line for it (with a recorded
+  `--kind` override if it is classified `code`). Classification is unchanged,
+  and so is the check of a page that is confirmed or refuted, which counts
+  every file name. Page labels, Revision lines, label lines and tracker keys
+  are read as before.
 - The `claude-obs` no-match sentence now states the result of the related
   search before writing ("The related search before writing found no page on
   this topic.") instead of claiming that no page in the space matched, so
