@@ -119,6 +119,14 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
+## Not bundled
+
+`claude-security@claude-plugins-official` is not part of this distribution and no
+file of it is in this repository. It is proprietary. When the operator sets
+`KHEREP_INSTALL_CLAUDE_SECURITY=1`, the Claude installer asks Claude Code to install
+it, and Claude Code fetches it from Anthropic's marketplace under Anthropic's terms.
+It is never available to Codex.
+
 ## Adapted and copied material outside the plugin sources
 
 | Material | Kherep paths | Upstream source | Upstream revision | License | Copyright |

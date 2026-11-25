@@ -34,6 +34,7 @@ function depsPhase(claudeHome: string, env: Record<string, string> = {}) {
     "node() { printf 'CALL %s\\n' \"$*\"; }",
     "settle_settings() { echo 'CALL settle_settings'; }",
     "REPO_ROOT=/repo", `CLAUDE_HOME='${claudeHome}'`, "SKIP_DEPS=0", "INSTALL_ATLASSIAN_TOOLS=0",
+    `INSTALL_CLAUDE_SECURITY='${env.KHEREP_INSTALL_CLAUDE_SECURITY ?? "0"}'`,
     between("# ---- C. deps", "# ---- C2."),
   ], { HOME: "/home/one", KHEREP_PROFILE: "mac", ...env });
   assert.equal(run.status, 0, run.stderr);
@@ -116,4 +117,15 @@ test("an unreadable settings.json is reported and left as it is", (t) => {
   fs.writeFileSync(ctx.settings, "{not json");
   assert.notEqual(ctx.settle().status, 0);
   assert.equal(fs.readFileSync(ctx.settings, "utf8"), "{not json");
+});
+
+// The opt-in for the Claude Security plugin is a second reconcile run of its own
+// manifest, without a raise; without the switch no call names the manifest.
+test("only the exact switch adds the optional plugin run", () => {
+  const optional = "CALL /repo/bootstrap/reconcile-plugins.mts /repo/bootstrap/manifest/marketplaces.json /repo/bootstrap/manifest/plugins.optional.json";
+  assert.deepEqual(depsPhase("/home/one/.claude", { KHEREP_INSTALL_CLAUDE_SECURITY: "1" }).reconcile, [`${RAISE} /home/one/.claude`, optional]);
+  for (const value of ["0", "yes"]) {
+    assert.doesNotMatch(depsPhase("/home/one/.claude", { KHEREP_INSTALL_CLAUDE_SECURITY: value }).out, /plugins\.optional/);
+  }
+  assert.match(INSTALL, /^INSTALL_CLAUDE_SECURITY="\$\{KHEREP_INSTALL_CLAUDE_SECURITY:-0\}"$/m);
 });

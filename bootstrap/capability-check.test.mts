@@ -155,3 +155,33 @@ process.on("exit", () => {
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+// Issue #1010. An optional plugin is managed: present it is information, absent
+// it is nothing, and --strict fails on neither.
+test("an installed optional plugin is information, never an unexpected plugin", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "capability-optional-"));
+  try {
+    const claudeHome = path.join(root, ".claude");
+    const id = "claude-security@claude-plugins-official";
+    fs.mkdirSync(path.join(claudeHome, "plugins"), { recursive: true });
+    fs.writeFileSync(path.join(root, ".claude.json"), "{}");
+    const env: NodeJS.ProcessEnv = { ...process.env, CLAUDE_HOME: claudeHome };
+    for (const key of ["KHEREP_USER_HOME", "KHEREP_WORKSPACE", "KHEREP_PROFILE", "CAPABILITY_STRICT"]) delete env[key];
+    const run = (present: boolean): string => {
+      fs.writeFileSync(path.join(claudeHome, "settings.json"), JSON.stringify({ enabledPlugins: present ? { [id]: true } : {} }));
+      fs.writeFileSync(path.join(claudeHome, "plugins", "installed_plugins.json"), JSON.stringify({ plugins: present ? { [id]: [] } : {} }));
+      const result = spawnSync(process.execPath, [path.join(import.meta.dirname, "capability-check.mts"), "--live", "--strict", "--profile", "mac"],
+        { encoding: "utf8", env });
+      return result.stdout.split(/\r?\n/).filter((line) => line.includes(id)).join("\n");
+    };
+    assert.equal(run(true), `INFO | optional plugin present | ${id}`);
+    assert.equal(run(false), "");
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("the optional plugin contract matches its manifest in the source check", () => {
+  const result = spawnSync(process.execPath, [path.join(import.meta.dirname, "capability-check.mts"), "--profile", "mac"], { encoding: "utf8" });
+  assert.match(result.stdout, /^PASS \| optional plugin contract equals optional manifest$/m);
+});

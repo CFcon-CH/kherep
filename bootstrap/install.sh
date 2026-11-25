@@ -14,6 +14,7 @@ AGE_KEY="${SOPS_AGE_KEY_FILE:-}"
 SKIP_SECRETS="${SKIP_SECRETS:-1}"
 SKIP_DEPS="${SKIP_DEPS:-0}"
 INSTALL_ATLASSIAN_TOOLS="${KHEREP_INSTALL_ATLASSIAN_TOOLS:-0}"
+INSTALL_CLAUDE_SECURITY="${KHEREP_INSTALL_CLAUDE_SECURITY:-0}"
 PREFLIGHT_DIR=""
 INSTALL_BACKUP=""
 CLAUDE_PROBE_PAUSED=0
@@ -431,6 +432,13 @@ if [[ "$SKIP_DEPS" = "0" ]]; then
   node "$REPO_ROOT/bootstrap/reconcile-plugins.mts" \
     "$REPO_ROOT/bootstrap/manifest/marketplaces.json" "$REPO_ROOT/bootstrap/manifest/plugins.json" \
     ${PLUGIN_RAISE_ARGS[@]+"${PLUGIN_RAISE_ARGS[@]}"} || post_rc=1
+  # Issue #1010. An operator opt-in for Claude only: Claude Code fetches the
+  # plugin under its own terms. Without the switch nothing names it, and an
+  # installed copy is neither raised, disabled nor removed.
+  if [[ "$INSTALL_CLAUDE_SECURITY" = "1" ]]; then
+    node "$REPO_ROOT/bootstrap/reconcile-plugins.mts" \
+      "$REPO_ROOT/bootstrap/manifest/marketplaces.json" "$REPO_ROOT/bootstrap/manifest/plugins.optional.json" || post_rc=1
+  fi
   if [[ "$post_rc" = "0" ]]; then
     echo "install: npm globals + marketplaces + plugins done."
   else
