@@ -1,7 +1,6 @@
 {
   "schemaVersion": 2,
   "plugins": [
-    "ai-plugins@claude-plugins-official",
     "andrej-karpathy-skills@karpathy-skills",
     "caveman@caveman",
     "claude-code-setup@claude-plugins-official",

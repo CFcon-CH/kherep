@@ -1954,6 +1954,27 @@ test("an upgrade removes the retired kherep-twg wrapper with backups and leaves 
   assert.equal(second.receipt.projection.skills.some((entry) => entry.name === "kherep-twg"), false);
 });
 
+// Issue #1010. ai-plugins is no longer bundled: an upgrade removes the skill an
+// older install projected from it, by the prior receipt and with a backup.
+test("an upgrade removes the projected ai-plugins skill with a backup", (t) => {
+  const { root, codexHome, installOptions } = fixture();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const first = install(installOptions);
+  const skill = path.join(codexHome, "skills", "endor-setup");
+  assert.equal(fs.existsSync(skill), false);
+  fs.mkdirSync(skill, { recursive: true });
+  fs.writeFileSync(path.join(skill, "SKILL.md"), "old projected skill\n");
+  const priorReceipt = JSON.parse(fs.readFileSync(first.targets.receipt, "utf8"));
+  priorReceipt.projection.skills.push({ name: "endor-setup", source: "ai-plugins@claude-plugins-official", status: "projected" });
+  fs.writeFileSync(first.targets.receipt, `${JSON.stringify(priorReceipt, null, 2)}\n`);
+
+  const second = install(installOptions);
+  assert.equal(fs.existsSync(skill), false);
+  assert.equal(fs.readFileSync(path.join(second.backupRoot, "skills", "endor-setup", "SKILL.md"), "utf8"), "old projected skill\n");
+  assert.deepEqual(second.receipt.projection.removed?.skills, ["endor-setup"]);
+  assert.equal(second.receipt.projection.plugins.some((entry) => entry.id === "ai-plugins@claude-plugins-official"), false);
+});
+
 // #44. The Codex installer retires workspace files through the same declaration
 // and the same gate as install.sh: bootstrap/manifest/retired.txt, project/
 // entries only, parked into a _deprecated/ sibling with a backup, never deleted.

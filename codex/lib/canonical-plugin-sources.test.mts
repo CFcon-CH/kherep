@@ -18,7 +18,7 @@ test("versioned canonical plugin sources are complete, LF-stable, and hash-valid
   const capabilities = JSON.parse(fs.readFileSync(path.join(repoRoot, "codex", "parity", "capabilities.json"), "utf8")) as Capabilities;
   const canonicalRoot = path.join(repoRoot, "codex", "parity", "plugin-sources");
   const sources = loadCanonicalPluginSources({ capabilities, pluginSourceRoot: canonicalRoot, repoRoot });
-  assert.equal(sources.size, 14);
+  assert.equal(sources.size, 13);
   const crlfFiles = files(canonicalRoot).filter((file) => fs.readFileSync(file).includes(Buffer.from("\r\n")));
   assert.deepEqual(crlfFiles, []);
 });

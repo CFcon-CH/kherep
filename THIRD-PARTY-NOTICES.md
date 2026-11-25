@@ -25,7 +25,6 @@ component equals the upstream file.
 
 | Component | Version | Upstream source | Upstream revision | License | Copyright |
 |---|---|---|---|---|---|
-| `ai-plugins@claude-plugins-official` | `1.0.0` | [endorlabs/ai-plugins](https://github.com/endorlabs/ai-plugins) | `acc7aafcb9e6` | MIT | Copyright (c) 2026 Endor Labs |
 | `andrej-karpathy-skills@karpathy-skills` | `1.0.0` | [forrestchang/andrej-karpathy-skills](https://github.com/forrestchang/andrej-karpathy-skills) | `64723a49ea61` | MIT (declared; text reproduced below) | forrestchang |
 | `atlassian@claude-plugins-official` | `9b52fb18e184` | [atlassian/atlassian-mcp-server](https://github.com/atlassian/atlassian-mcp-server) | `9b52fb18e184` | Apache-2.0 | Copyright (c) [2025] Atlassian US., Inc. |
 | `caveman@caveman` | `ef6050c5e184` | [JuliusBrussee/caveman](https://github.com/JuliusBrussee/caveman) | `ef6050c5e184` | MIT | Copyright (c) 2026 Julius Brussee |
@@ -47,7 +46,6 @@ hash of empty input.
 
 | Component | Path | contentSha256 |
 |---|---|---|
-| `ai-plugins@claude-plugins-official` | `ai-plugins_claude-plugins-official` | `0a06ca0ed11698e6e13f72ffedfb4371eb7e1155a97697c10674fa16df3fe3c8` |
 | `andrej-karpathy-skills@karpathy-skills` | `andrej-karpathy-skills_karpathy-skills` | `5b6e6d12a1e5ebdb81eca27f0ccd611adb5a9c6fe0c785989979a0a4971ac19a` |
 | `atlassian@claude-plugins-official` | `atlassian_claude-plugins-official` | `2c1376c30debba77d85275e6d2a34dedb9f54f53bb973d2f132c572d030cc060` |
 | `caveman@caveman` | `caveman_caveman` | `0d00692c9f4029dd8ed8fcc6663acdd92e61a51d9803177d08d1e9cdaef01e2a` |

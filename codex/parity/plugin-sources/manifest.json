@@ -2,12 +2,6 @@
   "schemaVersion": 1,
   "plugins": [
     {
-      "id": "ai-plugins@claude-plugins-official",
-      "version": "1.0.0",
-      "path": "ai-plugins_claude-plugins-official",
-      "contentSha256": "0a06ca0ed11698e6e13f72ffedfb4371eb7e1155a97697c10674fa16df3fe3c8"
-    },
-    {
       "id": "andrej-karpathy-skills@karpathy-skills",
       "version": "1.0.0",
       "path": "andrej-karpathy-skills_karpathy-skills",
