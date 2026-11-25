@@ -53,11 +53,9 @@ export function parseVersionManifest(raw: unknown): Map<string, string> {
 }
 
 function isNewer(left: string, right: string): boolean {
-  const reference = right.split(".").map(Number);
-  for (const [index, part] of left.split(".").map(Number).entries()) {
-    if (part !== reference[index]) return part > reference[index];
-  }
-  return false;
+  const [mine, theirs] = [left, right].map((version) => version.split(".").map(Number));
+  const index = mine.findIndex((part, position) => part !== theirs[position]);
+  return index >= 0 && mine[index] > theirs[index];
 }
 
 // Only two release numbers can be ordered. A commit id, `unknown` or a missing
