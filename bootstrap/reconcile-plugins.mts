@@ -25,6 +25,8 @@ import {
   type MarketplaceExpectation,
   type PluginEntry,
 } from "./plugin-contract.mts";
+import { parseVersionManifest, raisePlugins, type RaiseRequest } from "./plugin-raise.mts";
+import { warnUnmanagedScopes } from "./plugin-scopes.mts";
 import { errorStatus, isArgvList, isRecord } from "./shape.mts";
 
 const MAX_OUTPUT = 16 * 1024 * 1024;
@@ -119,23 +121,6 @@ function runClaudeJson(command: ClaudeCommand, args: string[], label: string): u
   return parsed;
 }
 
-// A plugin scope this installer does not manage is reported once per scope,
-// although the list is re-read after every mutator (issue #338). Scope and
-// ids passed the contract's safe-string checks; no path is printed.
-const reportedScopes = new Set<string>();
-
-function warnUnmanagedScopes(entries: PluginEntry[]): void {
-  const idsByScope = new Map<string, string[]>();
-  for (const entry of entries) {
-    idsByScope.set(entry.scope, [...(idsByScope.get(entry.scope) ?? []), entry.id]);
-  }
-  for (const [scope, ids] of idsByScope) {
-    if (reportedScopes.has(scope)) continue;
-    reportedScopes.add(scope);
-    process.stdout.write(`reconcile-plugins: skipping plugin scope ${scope}: ${ids.join(", ")} (not managed here)\n`);
-  }
-}
-
 function readState(command: ClaudeCommand): ClaudeState {
   const marketplaces = parseMarketplaceList(
     runClaudeJson(command, ["plugin", "marketplace", "list", "--json"], "marketplace list"),
@@ -150,8 +135,7 @@ function readState(command: ClaudeCommand): ClaudeState {
 }
 
 function runMutation(command: ClaudeCommand, args: string[]): { ok: boolean } {
-  const result = execClaude(command, args, false);
-  return isFailure(result) ? { ok: false } : { ok: true };
+  return { ok: !isFailure(execClaude(command, args, false)) };
 }
 
 function reconcileMarketplace(command: ClaudeCommand, state: ClaudeState, expected: MarketplaceExpectation): ClaudeState {
@@ -206,10 +190,14 @@ function reconcilePlugin(command: ClaudeCommand, state: ClaudeState, id: string)
   return current;
 }
 
-export function reconcile(marketplaceManifestPath: string, pluginManifestPath: string, env: NodeJS.ProcessEnv = process.env): void {
+// Without `raise`, installed plugins keep their versions.
+export function reconcile(
+  marketplaceManifestPath: string, pluginManifestPath: string, raise?: RaiseRequest, env: NodeJS.ProcessEnv = process.env,
+): void {
   const marketplaces = parseMarketplaceManifest(readManifest(marketplaceManifestPath, "marketplaces"));
   const names = new Set(marketplaces.map((item) => item.name));
   const requiredPlugins = parsePluginManifest(readManifest(pluginManifestPath, "plugins"), names);
+  const reviewed = raise ? parseVersionManifest(readManifest(raise.versionManifestPath, "plugin versions")) : new Map<string, string>();
   const command = getClaudeCommand(env);
 
   let state = readState(command); // Complete list-json preflight before any mutator.
@@ -217,14 +205,23 @@ export function reconcile(marketplaceManifestPath: string, pluginManifestPath: s
   for (const expected of marketplaces) state = reconcileMarketplace(command, state, expected);
   for (const id of requiredPlugins) state = reconcilePlugin(command, state, id);
 
+  const notRaised = raisePlugins(state, reviewed, raise?.claudeHome ?? "", {
+    mutate: (args) => runMutation(command, args).ok,
+    readState: () => readState(command),
+  });
+
   state = readState(command); // Independent final capability snapshot.
   verifyFinalState(state, marketplaces, requiredPlugins);
+  if (notRaised.length > 0) fail(`plugin not raised: ${notRaised.join(", ")}`);
   process.stdout.write("reconcile-plugins: required marketplaces and plugins verified\n");
 }
 
 function cli(): void {
-  if (process.argv.length !== 4) fail("usage: reconcile-plugins.mts <marketplaces.json> <plugins.json>");
-  reconcile(process.argv[2], process.argv[3]);
+  const [marketplaces, plugins, versionManifestPath, claudeHome, ...rest] = process.argv.slice(2);
+  if (!plugins || Boolean(versionManifestPath) !== Boolean(claudeHome) || rest.length > 0) {
+    fail("usage: reconcile-plugins.mts <marketplaces.json> <plugins.json> [<plugin-versions.json> <claude-home>]");
+  }
+  reconcile(marketplaces, plugins, versionManifestPath ? { versionManifestPath, claudeHome } : undefined);
 }
 
 // Node loads the main module from its real path, so a script started through a

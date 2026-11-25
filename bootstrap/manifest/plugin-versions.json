@@ -1,0 +1,20 @@
+{
+  "versions": {
+    "code-simplifier@claude-plugins-official": "1.0.0",
+    "atlassian@claude-plugins-official": "b74220d41142",
+    "claude-code-setup@claude-plugins-official": "1.0.0",
+    "caveman@caveman": "4.2.0",
+    "skill-creator@claude-plugins-official": "6985b2d88dc0",
+    "code-review@claude-plugins-official": "1.0.1",
+    "andrej-karpathy-skills@karpathy-skills": "1.0.0",
+    "frontend-design@claude-plugins-official": "1.1.1",
+    "playwright@claude-plugins-official": "6985b2d88dc0",
+    "security-guidance@claude-plugins-official": "2.0.21",
+    "mcp-server-dev@claude-plugins-official": "6985b2d88dc0",
+    "claude-md-management@claude-plugins-official": "1.0.0",
+    "ralph-loop@claude-plugins-official": "1.0.1",
+    "feature-dev@claude-plugins-official": "1.0.1",
+    "cloudflare@claude-plugins-official": "1.0.4",
+    "superpowers@claude-plugins-official": "7.0.2"
+  }
+}

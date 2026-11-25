@@ -127,7 +127,7 @@ test("a wrong argument count is a usage error that runs nothing", (t) => {
   const ctx = fixture(t);
   const result = ctx.run({}, [ctx.files.marketplaces]);
   assert.equal(result.status, 1);
-  assert.match(result.stderr, /^reconcile-plugins: FATAL: usage: reconcile-plugins\.mts <marketplaces\.json> <plugins\.json>$/m);
+  assert.match(result.stderr, /^reconcile-plugins: FATAL: usage: reconcile-plugins\.mts <marketplaces\.json> <plugins\.json> \[<plugin-versions\.json> <claude-home>\]$/m);
   assert.deepEqual(result.log, []);
 });
 

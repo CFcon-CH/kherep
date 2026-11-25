@@ -137,11 +137,13 @@ Connection profiles ship unconfigured. Kherep does not provision a Confluence sp
 | `KHEREP_PROFILE` | Explicit `win` or `mac` host profile |
 | `KHEREP_CREDENTIALS_ROOT` | External integration-configuration root |
 | `KHEREP_LOCAL_CONFIG` | Local-inference configuration |
-| `KHEREP_INSTALL_PREVIEW` | Candidate preview: implies `KHEREP_INSTALL_SKIP_GITCONFIG`, `_SKIP_RUNTIME_AGENT`, `_SKIP_ATL_CREDENTIAL`, `_SKIP_ATL_MCP` and `_SKIP_KNOWLEDGE_SPACE` for any `CLAUDE_HOME` and wins over the `ALLOW` switches; only `1` counts |
+| `KHEREP_INSTALL_PREVIEW` | Candidate preview: implies `KHEREP_INSTALL_SKIP_GITCONFIG`, `_SKIP_RUNTIME_AGENT`, `_SKIP_ATL_CREDENTIAL`, `_SKIP_ATL_MCP`, `_SKIP_PLUGIN_RAISE` and `_SKIP_KNOWLEDGE_SPACE` for any `CLAUDE_HOME` and wins over the `ALLOW` switches; only `1` counts |
 | `KHEREP_INSTALL_SKIP_GITCONFIG` | Skip Git configuration during a preview |
 | `KHEREP_INSTALL_ALLOW_GITCONFIG` | With a `CLAUDE_HOME` other than `<HOME>/.claude`, set global (and opted-in system) and repo-local `core.hooksPath` anyway; without it that step is skipped. Only `1` allows; the default home needs no switch |
 | `KHEREP_INSTALL_ALLOW_ATL_CREDENTIAL` | With a `CLAUDE_HOME` other than `<HOME>/.claude`, run the credential step anyway, which reads the file named by `KHEREP_ATL_CRED_FILE_CLAUDE` and checks it live; without it that step is skipped. Only `1` allows; the default home needs no switch |
 | `KHEREP_INSTALL_ALLOW_ATL_MCP` | With a `CLAUDE_HOME` other than `<HOME>/.claude`, run the Atlassian MCP step anyway, which writes the user-scope `~/.claude.json` and disables `atlassian@claude-plugins-official`; without it that step is skipped. Only `1` allows; the default home needs no switch |
+| `KHEREP_INSTALL_ALLOW_PLUGIN_RAISE` | With a `CLAUDE_HOME` other than `<HOME>/.claude`, raise installed plugins anyway (see [Plugin versions](#plugin-versions-1010)); without it that step is skipped. Only `1` allows; the default home needs no switch |
+| `KHEREP_INSTALL_SKIP_PLUGIN_RAISE` | Leave installed plugins at their versions; only `1` skips |
 | `KHEREP_INSTALL_SYSTEM_HOOKSPATH` | Opt into setting the system-wide `core.hooksPath`, which binds every account on the host; only `1` opts in. Without it a differing system value is reported and left unchanged |
 | `KHEREP_INSTALL_SKIP_KNOWLEDGE_SPACE` | Skip resolving the Confluence knowledge space (throwaway installs such as the smoke test); only `1` skips |
 | `KHEREP_INSTALL_SKIP_ATL_CREDENTIAL` | Skip reading and live-verifying the Atlassian service-account credential (throwaway installs such as the smoke test); only `1` skips |
@@ -290,6 +292,57 @@ up the previous settings. Start a new Claude Code session after upgrading.
 Other workspaces and external higher-precedence settings require separate review.
 The existing settings renderer normalizes JSON formatting while preserving
 unrelated setting values; it does not promise arbitrary input whitespace.
+
+### Plugin versions (#1010)
+
+`bootstrap/manifest/plugin-versions.json` names, for every plugin in
+`bootstrap/manifest/plugins.json`, the version Kherep last reviewed. For the plugins
+the Codex projection bundles it is the bundled version. The dependency phase compares
+it with the user-scope plugins Claude reports. For each one that differs, it runs
+`claude plugin marketplace update` once per affected marketplace and
+`claude plugin update --scope user`, and reads the list again:
+
+- A changed version is reported as raised. Claude takes no version argument, so it is
+  whatever the marketplace pins at that time, which can be newer than the reviewed one.
+- An unchanged version after a clean update is what the marketplace offers; it is
+  reported and the run goes on. Until the repository names that version, every
+  installation repeats the check.
+- A failed update without a change, for example offline, fails the dependency phase
+  after every plugin was attempted. The managed files stay installed.
+
+A release number above the reviewed one is left alone, and so is a plugin that is not
+installed. A declared plugin that is disabled, such as
+`atlassian@claude-plugins-official`, is raised when it is installed, never installed
+or enabled. A host at the reviewed versions runs no Claude command that changes
+anything and needs no network for this step.
+
+An installation into another `CLAUDE_HOME` raises nothing by default. Even with
+`KHEREP_INSTALL_ALLOW_PLUGIN_RAISE=1`, only plugins whose files lie inside that
+`CLAUDE_HOME` are raised: the Claude CLI works on the home that `CLAUDE_CONFIG_DIR`
+or the account names, which need not be the one being installed.
+
+A raise is not undone by installing an older Kherep revision, because Claude has no
+command for an older version. Set `KHEREP_INSTALL_SKIP_PLUGIN_RAISE=1` to hold a host
+at its versions.
+
+`claude-code-setup@claude-plugins-official` changed its content without changing its
+version `1.0.0`. `claude plugin update` reports it as current and changes nothing, so
+refresh it by hand:
+
+```text
+claude plugin uninstall claude-code-setup@claude-plugins-official
+claude plugin install --scope user claude-code-setup@claude-plugins-official
+```
+
+The Claude CLI writes `settings.json` with another key order inside the hook entries
+when it changes a plugin. After the plugin step the installer renders the file once
+more, so `drift-check.sh` reports only real differences. The installer does this only
+for its own plugin step; a plugin command you run yourself can leave
+`DRIFT settings.json`, which the next installation settles.
+
+On Windows a marketplace checkout under a long Claude home can fail with
+`Filename too long`. That concerns Claude's own checkout; Kherep changes no Git
+configuration for it.
 
 ### Plugins Kherep no longer ships (#1010)
 

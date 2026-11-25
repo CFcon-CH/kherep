@@ -197,7 +197,7 @@ function installPathIsDirectory(entry: PluginEntry | undefined): boolean {
   }
 }
 
-function userPluginEntry(state: ClaudeState, id: string): PluginEntry | undefined {
+export function userPluginEntry(state: ClaudeState, id: string): PluginEntry | undefined {
   return state.plugins.get(`${id}\0user`);
 }
 
