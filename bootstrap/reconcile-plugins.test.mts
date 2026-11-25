@@ -59,7 +59,11 @@ if (args.slice(0, 5).join(" ") === "plugin marketplace add --scope user") {
     const entry = state.plugins.find((item) => item.id === id && item.scope === "user");
     if (entry) entry.enabled = true;
   }
-} else {
+} else if (args.slice(0, 4).join(" ") === "plugin update --scope user") {
+  const entry = state.plugins.find((item) => item.id === args[4] && item.scope === "user");
+  const version = state.catalog.versions && state.catalog.versions[args[4]];
+  if (shouldApply && entry && version) entry.version = version;
+} else if (args.slice(0, 3).join(" ") !== "plugin marketplace update" || args.length !== 4) {
   process.stderr.write("unexpected fake command");
   process.exit(64);
 }
@@ -93,7 +97,7 @@ interface Outcome {
 interface FakeState {
   marketplaces: Marketplace[];
   plugins: Plugin[];
-  catalog: { marketplaces: Record<string, Marketplace>; plugins: Record<string, Plugin> };
+  catalog: { marketplaces: Record<string, Marketplace>; plugins: Record<string, Plugin>; versions?: Record<string, string> };
   outcomes: Record<string, Outcome>;
   pluginListResponses?: unknown[];
   marketplaceListResponses?: unknown[];
@@ -153,10 +157,10 @@ function fixture(t: TestContext) {
   return { files, installPath, marketplace, marketplacesManifest, plugin, pluginsManifest, save, state };
 }
 
-function invoke(ctx: Fixture) {
+function invoke(ctx: Fixture, args: string[] = []) {
   return spawnSync(
     process.execPath,
-    [subject, ctx.files.marketplaceManifest, ctx.files.pluginManifest],
+    [subject, ctx.files.marketplaceManifest, ctx.files.pluginManifest, ...args],
     {
       encoding: "utf8",
       env: {
@@ -360,4 +364,84 @@ test("a declared plugin present only as a synced row gets its own user-scope ins
   assert.deepEqual(mutations(ctx), [["plugin", "install", "--scope", "user", "alpha@main"]]);
   const final = JSON.parse(fs.readFileSync(ctx.files.state, "utf8")) as FakeState;
   assert.deepEqual(final.plugins.filter((item) => item.scope === "synced"), [synced]);
+});
+
+// Issue #1010. With the version manifest, an installed plugin that is not at the
+// reviewed version is raised; the marketplace is refreshed once, before the update.
+function invokeRaise(ctx: Fixture, versions: Record<string, unknown>, claudeHome = ctx.files.root) {
+  const file = path.join(ctx.files.root, "plugin-versions.json");
+  fs.writeFileSync(file, JSON.stringify({ versions }));
+  return invoke(ctx, [file, claudeHome]);
+}
+
+const MARKETPLACE_UPDATE = ["plugin", "marketplace", "update", "main"];
+const update = (id: string): string[] => ["plugin", "update", "--scope", "user", id];
+
+test("a converged host performs zero mutators with the version manifest too", (t) => {
+  const ctx = fixture(t);
+  const result = invokeRaise(ctx, { "alpha@main": "1.0.0", "absent@main": "2.0.0" });
+  assert.equal(result.status, 0, output(result));
+  assert.deepEqual(mutations(ctx), []);
+});
+
+test("plugins behind the reviewed version are raised after one marketplace update, and a second run is quiet", (t) => {
+  const ctx = fixture(t);
+  ctx.state.plugins.push({ ...ctx.plugin, id: "beta@main", version: "aaaaaaaaaaaa", enabled: false });
+  ctx.state.catalog.versions = { "alpha@main": "1.2.0", "beta@main": "bbbbbbbbbbbb" };
+  ctx.save();
+  const reviewed = { "alpha@main": "1.2.0", "beta@main": "bbbbbbbbbbbb" };
+  const result = invokeRaise(ctx, reviewed);
+  assert.equal(result.status, 0, output(result));
+  assert.deepEqual(mutations(ctx), [MARKETPLACE_UPDATE, update("alpha@main"), update("beta@main")]);
+  assert.match(output(result), /raised plugin alpha@main from 1\.0\.0 to 1\.2\.0 \(reviewed 1\.2\.0\)/);
+  const state = JSON.parse(fs.readFileSync(ctx.files.state, "utf8")) as FakeState;
+  assert.equal(state.plugins.find((item) => item.id === "beta@main")?.enabled, false, "a raise enables nothing");
+  fs.rmSync(ctx.files.log);
+  const second = invokeRaise(ctx, reviewed);
+  assert.equal(second.status, 0, output(second));
+  assert.deepEqual(mutations(ctx), []);
+});
+
+test("an update that fails without a change is reported after every plugin was attempted", (t) => {
+  const ctx = fixture(t);
+  ctx.state.plugins.push({ ...ctx.plugin, id: "beta@main" });
+  ctx.state.catalog.versions = { "beta@main": "2.0.0" };
+  ctx.state.outcomes[update("alpha@main").join(" ")] = { exit: 1, apply: false, stderr: SECRET };
+  ctx.save();
+  const result = invokeRaise(ctx, { "alpha@main": "2.0.0", "beta@main": "2.0.0" });
+  assert.equal(result.status, 1);
+  assert.deepEqual(mutations(ctx), [MARKETPLACE_UPDATE, update("alpha@main"), update("beta@main")]);
+  assert.match(output(result), /FATAL: plugin not raised: alpha@main \(installed 1\.0\.0, reviewed 2\.0\.0\)$/m);
+  assert.doesNotMatch(output(result), new RegExp(SECRET));
+});
+
+test("a plugin installed outside the Claude home of this run is never raised", (t) => {
+  const ctx = fixture(t);
+  ctx.state.catalog.versions = { "alpha@main": "2.0.0" };
+  ctx.save();
+  const candidate = path.join(ctx.files.root, "candidate");
+  fs.mkdirSync(candidate);
+  const result = invokeRaise(ctx, { "alpha@main": "2.0.0" }, candidate);
+  assert.equal(result.status, 0, output(result));
+  assert.deepEqual(mutations(ctx), []);
+  assert.match(output(result), /not raised, installed outside this Claude home: alpha@main/);
+});
+
+test("without the version manifest nothing is raised", (t) => {
+  const ctx = fixture(t);
+  ctx.state.catalog.versions = { "alpha@main": "2.0.0" };
+  ctx.save();
+  assert.equal(invoke(ctx).status, 0);
+  assert.deepEqual(mutations(ctx), []);
+});
+
+test("a missing or malformed version manifest, or one without its home, fails before any Claude invocation", (t) => {
+  const ctx = fixture(t);
+  for (const args of [[path.join(ctx.files.root, "absent.json"), ctx.files.root], [ctx.files.pluginManifest, ctx.files.root],
+    [ctx.files.pluginManifest], [ctx.files.pluginManifest, ctx.files.root, "extra"]]) {
+    const result = invoke(ctx, args);
+    assert.equal(result.status, 1, output(result));
+    assert.match(output(result), /FATAL: (?:cannot read plugin versions manifest|plugin version manifest must contain|usage: )/);
+  }
+  assert.deepEqual(commands(ctx), []);
 });
