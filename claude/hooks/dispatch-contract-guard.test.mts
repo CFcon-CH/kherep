@@ -175,7 +175,7 @@ check("non-dispatch tool ignored", { tool_name: "Bash", tool_input: { command: "
 check("malformed dispatch input fails closed", "not-json", true, "HOOK_INPUT_INVALID");
 check("missing tool_input fails closed", { tool_name: "Agent" }, true, "HOOK_SCHEMA_UNKNOWN");
 const OWNED_AGENTS = ["kherep-builder", "forge-deploy-validator", "n8n-workflow-deploy-runner", "dc-plugin-build-runner",
-  "win-agent", "mac-agent", "lmstudio-win-researcher", "lmstudio-mac-researcher", "claude-obs", "atlassian-broker"];
+  "win-agent", "mac-agent", "lmstudio-win-researcher", "lmstudio-mac-researcher", "claude-obs", "atlassian-broker", "silent-failure-reviewer"];
 for (const agent of OWNED_AGENTS.filter((name) => name !== "claude-obs")) {
   for (const model of ["opus", "sonnet", "haiku", "fable"]) {
     check("absent model config allows " + agent + " on " + model, call(agent, model), false, "", ABSENT_MODEL_CONFIG);

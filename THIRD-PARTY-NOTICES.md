@@ -125,6 +125,14 @@ SOFTWARE.
 |---|---|---|---|---|---|
 | Engineering skills | `claude/skills/domain-modeling`, `claude/skills/codebase-design`, `claude/skills/improve-codebase-architecture` | [mattpocock/skills](https://github.com/mattpocock/skills) `skills/engineering/*` | `84fdeffd12f2` | MIT | Copyright (c) 2026 Matt Pocock |
 | Code-discovery hooks and skill | `claude/hooks/cbm-session-reminder`, `claude/hooks/cbm-subagent-reminder`, `claude/hooks/cbm-code-discovery-gate`, `claude/skills/codebase-memory/SKILL.md` | [DeusData/codebase-memory-mcp](https://github.com/DeusData/codebase-memory-mcp) | unknown | MIT | Copyright (c) 2025 DeusData |
+| Silent failure reviewer agent | `claude/agents/silent-failure-reviewer.md` | [anthropics/claude-plugins-official](https://github.com/anthropics/claude-plugins-official) `plugins/pr-review-toolkit/agents/silent-failure-hunter.md` | `6985b2d88dc0` | Apache-2.0 | Anthropic |
+
+The silent failure reviewer is adapted: it keeps the upstream review questions on
+logging, catch specificity, fallbacks, propagation and messages, and drops the
+upstream's project-specific logging functions, error catalogue, examples and tone.
+Kherep wrote the baseline, the distinguishability question, the severity scale and
+the output format. It is projected to Codex from the same file. The Apache-2.0 text
+is in [LICENSE](LICENSE).
 
 The Matt Pocock skills are adapted; their attribution and full MIT notice are in
 [claude/skills/THIRD-PARTY.md](claude/skills/THIRD-PARTY.md).
