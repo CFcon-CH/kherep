@@ -114,6 +114,30 @@ test("fresh-install manifests and Codex parity omit the retired plugin and marke
   assert.doesNotMatch(fs.readFileSync(path.join(repo, "bootstrap/manifest/npm-globals.txt"), "utf8"), /^@openai\/codex\b/m);
 });
 
+// Issue #1010. Dropped from the contracts only: a host that has one keeps its state.
+const DROPPED = ["context7@claude-plugins-official", "ai-plugins@claude-plugins-official"];
+test("the manifests omit the dropped plugins, and an upgrade renders no tombstone for them", (t) => {
+  const plugins = read(path.join(repo, "bootstrap/manifest/plugins.json"));
+  const capabilities = read(path.join(repo, "bootstrap/manifest/capabilities.json"));
+  const parity = read(path.join(repo, "codex/parity/capabilities.json"));
+  const { root, render } = fixture(t);
+  const registry = path.join(root, "claude/plugins/installed_plugins.json");
+  fs.mkdirSync(path.dirname(registry), { recursive: true });
+  fs.writeFileSync(registry, JSON.stringify({ plugins: Object.fromEntries(DROPPED.map((id) => [id, [{ scope: "user" }]])) }));
+  for (const id of DROPPED) {
+    assert.equal(Object.hasOwn(plugins.enabledPlugins ?? {}, id), false, id);
+    assert.equal((capabilities.plugins as string[]).includes(id), false, id);
+    assert.equal(Object.hasOwn(capabilities.pluginEntrypoints as object, id), false, id);
+    assert.equal((parity.plugins as { id: string }[]).some((entry) => entry.id === id), false, id);
+  }
+  for (const profile of ["win", "mac"]) {
+    for (const enabledPlugins of [{}, ...[true, false].map((on) => Object.fromEntries(DROPPED.map((id) => [id, on])))]) {
+      const rendered = render(profile, { enabledPlugins }, { enabledPlugins });
+      assert.deepEqual(rendered.map((settings) => settings.enabledPlugins), [enabledPlugins, enabledPlugins]);
+    }
+  }
+});
+
 test("strict capability check accepts retained disabled registry but fails a reenabled or unretired install", (t) => {
   const { root } = fixture(t);
   const home = path.join(root, "claude");
