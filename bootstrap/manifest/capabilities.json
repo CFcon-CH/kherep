@@ -15,7 +15,8 @@
     "ralph-loop@claude-plugins-official",
     "security-guidance@claude-plugins-official",
     "skill-creator@claude-plugins-official",
-    "superpowers@claude-plugins-official"
+    "superpowers@claude-plugins-official",
+    "typescript-lsp@claude-plugins-official"
   ],
   "mcpServers": [
     "atlassian",

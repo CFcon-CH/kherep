@@ -15,7 +15,8 @@
     "ralph-loop@claude-plugins-official": true,
     "feature-dev@claude-plugins-official": true,
     "cloudflare@claude-plugins-official": true,
-    "superpowers@claude-plugins-official": true
+    "superpowers@claude-plugins-official": true,
+    "typescript-lsp@claude-plugins-official": true
   },
   "extraKnownMarketplaces": {
     "caveman": {
