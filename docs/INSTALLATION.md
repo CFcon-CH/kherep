@@ -344,6 +344,22 @@ On Windows a marketplace checkout under a long Claude home can fail with
 `Filename too long`. That concerns Claude's own checkout; Kherep changes no Git
 configuration for it.
 
+### TypeScript language server (#1010)
+
+The plugin `typescript-lsp@claude-plugins-official` gives Claude Code the diagnostics
+and navigation of `typescript-language-server`, which the npm step installs globally.
+Two prerequisites stay with you:
+
+- A TypeScript with `tsserver`, in the project's `node_modules` or installed globally.
+  Use `typescript@6.0.3` or another 6.x release. TypeScript 7 ships no `tsserver`, so
+  the server refuses to start with it, and it refuses to start without any TypeScript.
+  Kherep installs no global `typescript`: an unpinned one would be version 7, and a
+  pinned one would replace yours.
+- Node.js 22.22.2 or newer for `typescript-language-server@6.1.0`. Kherep itself also
+  supports older 22.x releases; there npm prints an engine warning.
+
+The plugin is for Claude only. Codex has no counterpart.
+
 ### Plugins Kherep no longer ships (#1010)
 
 The Claude installer no longer installs or enables

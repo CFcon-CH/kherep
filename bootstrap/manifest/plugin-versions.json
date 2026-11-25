@@ -15,6 +15,7 @@
     "ralph-loop@claude-plugins-official": "1.0.1",
     "feature-dev@claude-plugins-official": "1.0.1",
     "cloudflare@claude-plugins-official": "1.0.4",
-    "superpowers@claude-plugins-official": "7.0.2"
+    "superpowers@claude-plugins-official": "7.0.2",
+    "typescript-lsp@claude-plugins-official": "1.0.0"
   }
 }
