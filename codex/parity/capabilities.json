@@ -108,14 +108,10 @@
     "rovo",
     "kherep-linkedin-cli"
   ],
+  "retiredManagedMcpServers": [
+    "context7"
+  ],
   "pluginMcpServers": {
-    "context7": {
-      "command": "npx",
-      "args": [
-        "-y",
-        "@upstash/context7-mcp@3.2.4"
-      ]
-    },
     "openaiDeveloperDocs": {
       "url": "https://developers.openai.com/mcp"
     }
@@ -159,11 +155,6 @@
       "id": "code-simplifier@claude-plugins-official",
       "mode": "agent",
       "target": "code-simplifier agent"
-    },
-    {
-      "id": "context7@claude-plugins-official",
-      "mode": "mcp",
-      "target": "context7 MCP"
     },
     {
       "id": "feature-dev@claude-plugins-official",

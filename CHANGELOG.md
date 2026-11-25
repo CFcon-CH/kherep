@@ -286,6 +286,18 @@ increments the minor version; every other release increments the patch version.
   `kherep-linkedin-draft` skill stays. Operator action: on a Claude node, a
   leftover `kherep-linkedin-cli` entry is removed by hand.
 
+- `context7` from both runtimes (#1010). The Claude installer no longer
+  requires, installs or enables `context7@claude-plugins-official`; a host that
+  has it keeps it, and the live capability check shows it as an unexpected
+  plugin. The Codex contract drops the plugin row and the MCP server and lists
+  the name under the new key `retiredManagedMcpServers`: an upgrade removes the
+  table from the managed block with its sub-tables, unless a table of that name
+  stands outside the block, which stays unchanged. Operator action: on a Claude
+  host, run `claude plugin uninstall context7@claude-plugins-official` to remove
+  the plugin; before installing an older revision again, restore the Codex
+  `config.toml` from the install backup, because an older revision refuses a
+  block without the table.
+
 ### Fixed
 
 - `smoke-test.sh` gives `install-transaction.test.sh` 5400 s instead of 1800 s

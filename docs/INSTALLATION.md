@@ -291,6 +291,32 @@ Other workspaces and external higher-precedence settings require separate review
 The existing settings renderer normalizes JSON formatting while preserving
 unrelated setting values; it does not promise arbitrary input whitespace.
 
+### Plugins Kherep no longer ships (#1010)
+
+The Claude installer no longer installs or enables
+`context7@claude-plugins-official`. A host that has it keeps it: nothing disables
+or uninstalls it, and `capability-check.mts --live` reports it as an unexpected
+plugin, a warning that `--strict` turns into a failure. To remove it from a host:
+
+```text
+claude plugin uninstall context7@claude-plugins-official
+```
+
+The Codex installer no longer renders `[mcp_servers.context7]`. An upgrade removes
+the table an earlier install put into the managed block of `config.toml`, together
+with its sub-tables such as a tool approval behind the end marker, and the receipt
+reports `context7` as `removed` under `retiredMcpServers`. The previous file is in
+the installation backup. When a `[mcp_servers.context7]` table stands outside the
+managed block, it is the operator's: the installer keeps it and its sub-tables
+unchanged and the receipt has no `context7` entry. A table the Codex app moved behind
+the end marker when it split the block counts as outside; remove it by hand if you
+do not want it.
+
+Before installing an older revision again, restore `config.toml` from the backup of
+the upgrade (`<CODEX_HOME>/backups/kherep/<timestamp>/config.toml`). An older
+revision expects the table and refuses a managed block without it, unless a
+`[mcp_servers.context7]` table stands outside the block.
+
 ### Failed managed service activation (#746)
 
 Upgrade and rollback distinguish a daemon instance by PID and `startedAt`. A reused
