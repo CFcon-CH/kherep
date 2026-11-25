@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
 
+import { requireTrustedExecutable } from "../../claude/hooks/lib/trusted-executable.mts";
 import { loadCanonicalPluginSources } from "./canonical-plugin-sources.mts";
 import type { Capabilities } from "./contracts.mts";
 import { readOverlay } from "./plugin-source-overlay.mts";
@@ -41,4 +43,31 @@ test("the bundled tree carries every declared overlay change", () => {
       assert.equal(text.includes(change.with), true, change.file);
     }
   }
+});
+
+// Issue #1010. Upstream's executable scripts are called by path from their skills.
+// Git keeps the bit; a Windows checkout does not show it, so the index is read.
+test("the scripts upstream ships executable are executable here, and no other file is", (t) => {
+  const repoRoot = path.resolve(import.meta.dirname, "..", "..");
+  if (!fs.existsSync(path.join(repoRoot, ".git"))) return t.skip("not a Git checkout");
+  const rows = execFileSync(requireTrustedExecutable("git"),
+    ["-C", repoRoot, "ls-files", "--stage", "-z", "--", "codex/parity/plugin-sources"], { encoding: "utf8" }).split("\0").filter(Boolean);
+  const executable = rows.filter((row) => row.startsWith("100755 ")).map((row) => row.slice(row.indexOf("\t") + 1));
+  for (const file of executable) assert.match(fs.readFileSync(path.join(repoRoot, file), "utf8"), /^#!/, file);
+  assert.deepEqual(executable.map((file) => file.replace("codex/parity/plugin-sources/", "")), [
+    "cloudflare_claude-plugins-official/skills/turnstile-spin/scripts/auth-probe.sh",
+    "cloudflare_claude-plugins-official/skills/turnstile-spin/scripts/persist-skill.sh",
+    "cloudflare_claude-plugins-official/skills/turnstile-spin/scripts/validate.sh",
+    "cloudflare_claude-plugins-official/skills/turnstile-spin/scripts/widget-create.sh",
+    "superpowers_claude-plugins-official/skills/brainstorming/scripts/start-server.sh",
+    "superpowers_claude-plugins-official/skills/brainstorming/scripts/stop-server.sh",
+    "superpowers_claude-plugins-official/skills/executing-plans/scripts/task-done",
+    "superpowers_claude-plugins-official/skills/executing-plans/scripts/task-start",
+    "superpowers_claude-plugins-official/skills/subagent-driven-development/scripts/review-package",
+    "superpowers_claude-plugins-official/skills/subagent-driven-development/scripts/sdd-repo",
+    "superpowers_claude-plugins-official/skills/subagent-driven-development/scripts/sdd-workspace",
+    "superpowers_claude-plugins-official/skills/subagent-driven-development/scripts/task-brief",
+    "superpowers_claude-plugins-official/skills/systematic-debugging/find-polluter.sh",
+    "superpowers_claude-plugins-official/skills/writing-skills/render-graphs.js",
+  ]);
 });

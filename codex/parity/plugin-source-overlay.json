@@ -1,1 +1,35 @@
-{}
+{
+  "caveman@caveman": {
+    "exclude": [
+      "skills/caveman-discover",
+      "skills/caveman-evidence-review",
+      "skills/caveman-manage",
+      "skills/caveman-optimize",
+      "skills/caveman-setup"
+    ],
+    "replace": [
+      {
+        "file": "skills/caveman-commit/SKILL.md",
+        "find": "- \"Generated with Claude Code\" or any AI attribution — unless the user's own rule requires an `Assisted-by`/AI-attribution trailer, then add it as a trailer\n",
+        "with": "<!-- Modified by Kherep: one line removed, see THIRD-PARTY-NOTICES.md. -->\n"
+      },
+      {
+        "file": "skills/caveman-commit/README.md",
+        "find": "No AI attribution, no \"this commit does X\"",
+        "with": "<!-- Modified by Kherep, see THIRD-PARTY-NOTICES.md. -->No \"this commit does X\""
+      }
+    ]
+  },
+  "superpowers@claude-plugins-official": {
+    "exclude": [
+      "skills/writing-skills/references/anthropic-best-practices.md"
+    ],
+    "replace": [
+      {
+        "file": "skills/writing-skills/SKILL.md",
+        "find": "see references/anthropic-best-practices.md",
+        "with": "see [Skill authoring best practices](https://platform.claude.com/docs/en/agents-and-tools/agent-skills/best-practices)"
+      }
+    ]
+  }
+}
