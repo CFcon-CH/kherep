@@ -3,6 +3,7 @@ import path from "node:path";
 
 import { componentHash } from "./component-hash.mts";
 import type { Capabilities, CanonicalEntry, CanonicalSource } from "./contracts.mts";
+import { selectComponents } from "./plugin-source-selection.mts";
 
 export interface CanonicalSourceContext {
   capabilities: Capabilities;
@@ -33,6 +34,10 @@ function validateDirectory(canonicalRoot: string, entry: CanonicalEntry): Canoni
   for (const name of ["agents", "commands", "skills"]) {
     const stat = fs.lstatSync(path.join(root, name), { throwIfNoEntry: false });
     if (stat?.isSymbolicLink()) throw new Error(`Canonical plugin component link is not allowed: ${entry.id}/${name}`);
+  }
+  const [unselected] = selectComponents(root).dropped;
+  if (unselected !== undefined) {
+    throw new Error(`Canonical plugin source is outside the snapshot selection: ${entry.id}/${unselected}`);
   }
   const actualHash = componentHash(root);
   if (actualHash !== entry.contentSha256) {

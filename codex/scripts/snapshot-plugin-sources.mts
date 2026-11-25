@@ -8,12 +8,19 @@ import { TextDecoder } from "node:util";
 import { componentHash } from "../lib/component-hash.mts";
 import type { Capabilities } from "../lib/contracts.mts";
 import { newest } from "../lib/parity-projection.mts";
+import { applyOverlay, readOverlay, type OverlayManifest } from "../lib/plugin-source-overlay.mts";
+import { selectComponents } from "../lib/plugin-source-selection.mts";
 
 const repoRoot = path.resolve(import.meta.dirname, "..", "..");
 const capabilities = JSON.parse(
   fs.readFileSync(path.join(repoRoot, "codex", "parity", "capabilities.json"), "utf8"),
 ) as Capabilities;
 const targetRoot = path.join(repoRoot, "codex", "parity", "plugin-sources");
+
+export interface SnapshotSource {
+  capabilities: Pick<Capabilities, "plugins">;
+  overlay: OverlayManifest;
+}
 
 interface SnapshotEntry {
   id: string;
@@ -30,16 +37,12 @@ function copyProjectionSource(sourceRoot: string, targetRoot: string): void {
   fs.mkdirSync(targetRoot, { recursive: true });
   fs.writeFileSync(path.join(targetRoot, ".canonical-source"), "Kherep Codex canonical plugin projection source.\n");
   for (const entry of fs.readdirSync(sourceRoot, { withFileTypes: true })) {
-    if (entry.isFile() && /^(license|notice|copying)(?:\.|$)/i.test(entry.name)) {
+    if (entry.isFile() && /^(license|notice|copying)(?:[.-]|$)/i.test(entry.name)) {
       fs.copyFileSync(path.join(sourceRoot, entry.name), path.join(targetRoot, entry.name));
     }
   }
-  for (const name of ["agents", "commands", "skills"]) {
-    const source = path.join(sourceRoot, name);
-    const stat = fs.lstatSync(source, { throwIfNoEntry: false });
-    if (stat?.isSymbolicLink()) throw new Error(`Plugin component link is not allowed: ${source}`);
-    if (!stat?.isDirectory()) continue;
-    fs.cpSync(source, path.join(targetRoot, name), { recursive: true, errorOnExist: true });
+  for (const relative of selectComponents(sourceRoot).selected) {
+    fs.cpSync(path.join(sourceRoot, relative), path.join(targetRoot, relative), { recursive: true, errorOnExist: true });
   }
 }
 
@@ -61,14 +64,21 @@ export function normalizeTextTree(root: string): void {
   }
 }
 
-export function snapshot(registry: Record<string, unknown>, destination: string = targetRoot): SnapshotEntry[] {
+export function snapshot(
+  registry: Record<string, unknown>,
+  destination: string = targetRoot,
+  source: SnapshotSource = { capabilities, overlay: readOverlay(repoRoot) },
+): SnapshotEntry[] {
   if (fs.existsSync(destination)) {
     throw new Error(`Snapshot target already exists; move it to _deprecated before regenerating: ${destination}`);
   }
   const stage = `${destination}.stage-${process.pid}-${Date.now()}`;
   const plugins: SnapshotEntry[] = [];
+  const required = source.capabilities.plugins.filter((entry) => ["agent", "project"].includes(entry.mode));
+  const unknown = Object.keys(source.overlay).find((id) => !required.some((entry) => entry.id === id));
+  if (unknown !== undefined) throw new Error(`Plugin overlay names a plugin that is not bundled: ${unknown}`);
   try {
-    for (const plugin of capabilities.plugins.filter((entry) => ["agent", "project"].includes(entry.mode))) {
+    for (const plugin of required) {
       const installed = newest(registry[plugin.id]);
       if (!installed) throw new Error(`Installed Claude plugin source missing: ${plugin.id}`);
       const installPath = String(installed.installPath || "");
@@ -85,6 +95,7 @@ export function snapshot(registry: Record<string, unknown>, destination: string 
       const target = path.join(stage, relative);
       copyProjectionSource(sourceRoot, target);
       normalizeTextTree(target);
+      applyOverlay(target, source.overlay[plugin.id] ?? {});
       plugins.push({
         id: plugin.id,
         version: String(installed.version || "unknown"),
