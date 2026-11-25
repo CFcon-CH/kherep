@@ -291,8 +291,9 @@ increments the minor version; every other release increments the patch version.
   has it keeps it, and the live capability check shows it as an unexpected
   plugin. The Codex contract drops the plugin row and the MCP server and lists
   the name under the new key `retiredManagedMcpServers`: an upgrade removes the
-  table from the managed block with its sub-tables, unless a table of that name
-  stands outside the block, which stays unchanged. Operator action: on a Claude
+  table from the managed block with its sub-tables and reports it as `removed`.
+  With a table of that name outside the block, or none in it, everything of that
+  name stays unchanged and the receipt lists nothing. Operator action: on a Claude
   host, run `claude plugin uninstall context7@claude-plugins-official` to remove
   the plugin; before installing an older revision again, restore the Codex
   `config.toml` from the install backup, because an older revision refuses a

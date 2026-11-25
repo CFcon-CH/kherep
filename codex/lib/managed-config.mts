@@ -114,6 +114,8 @@ export function removeExactUnmanagedMcp(
   };
 }
 
+// Full-line comments, the managed markers among them, stay with the blank lines
+// behind them: they are no part of a removed table.
 export function removeMcpTables(config: string, names: string[]): string {
   const patterns = names.map((name) => {
     const escaped = String(name).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -122,11 +124,13 @@ export function removeMcpTables(config: string, names: string[]): string {
     );
   });
   let removing = false;
+  let comment = false;
   return tomlLines(config).filter((line) => {
     const content = line.replace(/(?:\r\n|\n|\r)$/, "");
     if (/^\s*(?:\[[^[\]]+\]|\[\[[^[\]]+\]\])\s*(?:#.*)?$/.test(content)) {
       removing = patterns.some((pattern) => pattern.test(content));
     }
-    return !removing;
+    if (content.trim()) comment = content.trimStart().startsWith("#");
+    return !removing || comment;
   }).join("");
 }
