@@ -311,12 +311,14 @@ backup.
 The Codex installer no longer renders `[mcp_servers.context7]`. An upgrade removes
 the table an earlier install put into the managed block of `config.toml`, together
 with its sub-tables such as a tool approval behind the end marker, and the receipt
-reports `context7` as `removed` under `retiredMcpServers`. The previous file is in
-the installation backup. When a `[mcp_servers.context7]` table stands outside the
-managed block, it is the operator's: the installer keeps it and its sub-tables
-unchanged and the receipt has no `context7` entry. A table the Codex app moved behind
-the end marker when it split the block counts as outside; remove it by hand if you
-do not want it.
+reports `context7` as `removed` under `retiredMcpServers`. Full-line comments stay.
+The previous file is in the installation backup. This needs the
+`[mcp_servers.context7]` table in the managed block and none of that name outside it.
+In every other case, a table outside the block or only sub-tables with a dotted or
+quoted main table among them, the entries are the operator's: the installer keeps
+them unchanged and the receipt has no `context7` entry. A table the Codex app moved
+behind the end marker when it split the block counts as outside; remove it by hand if
+you do not want it.
 
 Before installing an older revision again, restore `config.toml` from the backup of
 the upgrade (`<CODEX_HOME>/backups/kherep/<timestamp>/config.toml`). An older

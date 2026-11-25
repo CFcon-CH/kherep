@@ -251,7 +251,6 @@ function installPluginAgents(context: ProjectionContext, plugin: CapabilityPlugi
 function initialStatus(plugin: CapabilityPlugin, entry: CanonicalSource | undefined): string {
   if (plugin.mode === "not-applicable") return "not-applicable";
   if (plugin.mode === "native") return "target-declared-restart-required";
-  if (plugin.mode === "mcp") return "configured";
   return entry ? "source-found" : "source-missing";
 }
 

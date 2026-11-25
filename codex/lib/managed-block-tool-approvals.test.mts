@@ -210,9 +210,33 @@ test("removes a retired server's tables before it lifts a live approval", () => 
   }
 });
 
+const PROBE = ["# kherep-binding-probe:start", "[mcp_servers.kherep_binding_probe]", "enabled = false", "required = false",
+  String.raw`command = 'C:\Synthetic\node.exe'`, "enabled_tools = ['binding_probe']", "",
+  "[mcp_servers.kherep_binding_probe.tools.binding_probe]", "approval_mode = 'prompt'", "# kherep-binding-probe:end", ""].join("\n");
+
+// Issue #1010. The line behind a removed table can be a managed marker or the operator's.
+test("keeps every marker and comment line around a retired server's tables", () => {
+  const kept = { kept_fixture: { url: "https://kept.example.invalid/mcp" } };
+  const options = { ...OPTS, pluginMcpServers: kept, retiredMcpServerNames: ["retired_fixture"] };
+  const fresh = prepareManagedConfig("", options).config;
+  const old = prepareManagedConfig("", { ...OPTS, pluginMcpServers: { retired_fixture: { command: "retired" }, ...kept } }).config;
+  const approval = '[mcp_servers.retired_fixture.tools.old]\napproval_mode = "approve"';
+  const operator = "# operator comment\n\n[operator_after]\nkeep = 1\n";
+  for (const [config, expected] of [
+    [atEnd(old, approval), fresh.replace(`\n${END}`, `\n\n${END}`)],
+    [old.replace(START, `${approval}\n${START}`), fresh],
+    [`${old}\n${approval}\n\n${operator}`, `${fresh}\n${operator}`],
+    [`${old}\n${approval}\n${PROBE}`, `${fresh}\n${PROBE}`],
+  ]) {
+    const result = prepareManagedConfig(config, options);
+    assert.equal(result.config, expected);
+    assert.deepEqual(result.retiredMcpServers, [{ name: "retired_fixture", status: "removed" }]);
+    stable(result.config, options);
+  }
+  // Inside the block a comment of the operator's still refuses, as before the retirement.
+  assert.throws(() => prepareManagedConfig(before(old, OBS, "# operator comment"), options), REFUSAL);
+});
+
 test("leaves the operator's binding-probe tables outside the block untouched", () => {
-  const probe = ["# kherep-binding-probe:start", "[mcp_servers.kherep_binding_probe]", "enabled = false", "required = false",
-    String.raw`command = 'C:\Synthetic\node.exe'`, "enabled_tools = ['binding_probe']", "",
-    "[mcp_servers.kherep_binding_probe.tools.binding_probe]", "approval_mode = 'prompt'", "# kherep-binding-probe:end", ""].join("\n");
-  for (const block of [FRESH, FRESH.replace(RENDERED, CHANGED)]) stable(`${block}\n${probe}`);
+  for (const block of [FRESH, FRESH.replace(RENDERED, CHANGED)]) stable(`${block}\n${PROBE}`);
 });

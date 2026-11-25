@@ -144,3 +144,60 @@ test("MCP table ranges keep their offsets across CRLF, lone CR, U+2028 and a mis
   assert.deepEqual(mcpTableRange(config, "x"), { start: 0, end: config.length, text: config });
   assert.ok(performance.now() - started < 200, "linear before a U+2028");
 });
+
+test("keeps the comments of a removed table and the blank lines behind them", () => {
+  const config = [
+    "[mcp_servers.keep]",
+    'command = "keep"',
+    "",
+    "[mcp_servers.claude-baton]",
+    "# inside",
+    'command = "legacy"',
+    "",
+    "# before the sub-table",
+    "",
+    "[mcp_servers.claude-baton.env]",
+    'LEGACY = "1"',
+    "",
+    "  # operator note",
+    "",
+    "# second note",
+    "",
+    "[mcp_servers.after]",
+    'command = "after"',
+    "",
+    "[mcp_servers.claude-baton.tools.x]",
+    'approval_mode = "approve"',
+    "# last note",
+  ];
+  const expected = [
+    "[mcp_servers.keep]",
+    'command = "keep"',
+    "",
+    "# inside",
+    "# before the sub-table",
+    "",
+    "  # operator note",
+    "",
+    "# second note",
+    "",
+    "[mcp_servers.after]",
+    'command = "after"',
+    "",
+    "# last note",
+  ];
+  for (const newline of ["\n", "\r\n"]) {
+    assert.equal(removeMcpTables(config.join(newline), ["claude-baton"]), expected.join(newline));
+  }
+});
+
+test("keeps a managed marker line directly behind a removed table", () => {
+  const table = '[mcp_servers.claude-baton.tools.x]\napproval_mode = "approve"\n';
+  for (const marker of [CONFIG_START, CONFIG_END]) {
+    assert.equal(removeMcpTables(`[keep]\na = 1\n\n${table}${marker}\n\n[after]\n`, ["claude-baton"]),
+      `[keep]\na = 1\n\n${marker}\n\n[after]\n`);
+  }
+  // A key behind the marker is the removed table's in TOML; left there it would join [keep].
+  assert.equal(removeMcpTables(`[keep]\na = 1\n\n${table}${CONFIG_END}\noutput_token_limit = 5\n\n[after]\n`, ["claude-baton"]),
+    `[keep]\na = 1\n\n${CONFIG_END}\n[after]\n`);
+});

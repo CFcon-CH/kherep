@@ -397,9 +397,9 @@ export function install(options: InstallOptions = {}) {
   const retiredMcpServerNames = [...new Set([
     ...RETIRED_MCP_SERVERS,
     ...(capabilities.retiredMcpServers || []),
-    // Issue #1010. A table of that name outside the managed block is the operator's.
-    ...(capabilities.retiredManagedMcpServers || [])
-      .filter((name) => !managedConfig.hasUnmanagedMcp(existingConfig, name, CONFIG_START, CONFIG_END)),
+    // Issue #1010. Only a main table in the managed block is Kherep's; everything else of that name is the operator's.
+    ...capabilities.retiredManagedMcpServers.filter((name) => managedConfig.mcpTableRange(existingConfig, name) !== undefined
+      && !managedConfig.hasUnmanagedMcp(existingConfig, name, CONFIG_START, CONFIG_END)),
   ])];
   const basePluginMcpServers = capabilities.pluginMcpServers || {};
   // Issue #397. An upgrade keeps the optional Atlassian tool set an earlier

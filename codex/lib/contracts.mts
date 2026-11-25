@@ -48,8 +48,8 @@ export interface Capabilities {
   projectedAgents?: Record<string, ProjectedAgentDefault>;
   mcpServers: string[];
   retiredMcpServers?: string[];
-  // Issue #1010. Retired only while no table of that name stands outside the managed block.
-  retiredManagedMcpServers?: string[];
+  // Issue #1010. Retired only while the managed block, and nothing outside it, holds the main table.
+  retiredManagedMcpServers: string[];
   pluginMcpServers?: Record<string, PluginMcpServer>;
   plugins: CapabilityPlugin[];
   // Runtime-gap entries such as preToolUseRuntime carry a `status`; the

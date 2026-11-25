@@ -964,7 +964,31 @@ test("removes the context7 table of an older block, a tool approval behind the e
   // A block without the table is current.
   const repeated = install(installOptions);
   assert.equal(fs.readFileSync(configTarget, "utf8"), expected);
-  assert.equal(context7Retirement(repeated), "absent");
+  assert.equal(context7Retirement(repeated), undefined);
+});
+
+// Without a main table in the managed block nothing of that name is Kherep's: a
+// dotted or partly quoted main table keeps its sub-tables.
+test("keeps context7 sub-tables while the managed block holds no context7 table", (t) => {
+  const { root, codexHome, installOptions } = fixture();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const configTarget = path.join(codexHome, "config.toml");
+  const env = '[mcp_servers.context7.env]\nSAMPLE = "1"\n\n[mcp_servers.context7.tools.lookup]\napproval_mode = "approve"\n';
+  const upgrade = (seeded: string): string => {
+    fs.writeFileSync(configTarget, seeded);
+    assert.equal(context7Retirement(install(installOptions)), undefined);
+    return fs.readFileSync(configTarget, "utf8");
+  };
+  const dotted = `mcp_servers.context7.command = "personal-context7"\n\n${env}`;
+  const installed = upgrade(dotted);
+  assert.ok(installed.startsWith(dotted) && installed.includes(CONFIG_START));
+  assert.equal(upgrade(installed), installed);
+
+  const block = installed.slice(installed.indexOf(CONFIG_START), installed.indexOf(CONFIG_END) + CONFIG_END.length);
+  const quoted = `[features]\nhooks = true\n\n${block}\n\n["mcp_servers".context7]\ncommand = "personal-context7"\n\n${env}`;
+  assert.ok(upgrade(quoted).startsWith(quoted.trimEnd()));
+  const dottedBehind = `mcp_servers.context7.command = "personal-context7"\n\n[features]\nhooks = true\n\n${block}\n\n${env}`;
+  assert.ok(upgrade(dottedBehind).startsWith(dottedBehind.trimEnd()));
 });
 
 test("keeps an operator's context7 table outside the managed block byte for byte", (t) => {
@@ -997,7 +1021,7 @@ test("upgrades a split block that still has the old context7 table", (t) => {
   const removed = upgrade(inside.config);
   assert.equal(removed.config.includes("context7"), false);
   assert.deepEqual(removed, { config: upgrade(splitByTrust(current, DOCS_HEADER).config).config, status: "removed" });
-  assert.deepEqual(upgrade(removed.config), { config: removed.config, status: "absent" });
+  assert.deepEqual(upgrade(removed.config), { config: removed.config, status: undefined });
 
   const behind = splitByTrust(withOldContext7Table(current));
   assert.ok(behind.tail.includes(OLD_CONTEXT7_TABLE));
