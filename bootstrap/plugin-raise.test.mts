@@ -18,7 +18,7 @@ test("a different version needs a raise unless two release numbers show it is ne
     ["1.0.0", "1.0.0", false], ["1.0.0", "1.0.1", true], ["1.9.0", "1.10.0", true], ["2.0.0", "10.0.0", true],
     ["1.0.2", "1.0.1", false], ["1.10.0", "1.9.9", false], ["7.0.2", "6.9.9", false],
     ["aaaaaaaaaaaa", "aaaaaaaaaaaa", false], ["aaaaaaaaaaaa", "bbbbbbbbbbbb", true], ["5.1.0", "bbbbbbbbbbbb", true],
-    ["unknown", "1.0.0", true], [undefined, "1.0.0", true], [42, "1.0.0", true], ["2.0.0-beta", "1.0.0", true],
+    ["unknown", "1.0.0", true], [undefined, "1.0.0", true], [42, "1.0.0", true], ["2.0.0-beta", "1.0.0", true], ["1.0.01", "1.0.1", true],
   ];
   for (const [installed, reviewed, expected] of cases) {
     assert.equal(needsRaise(installed, reviewed), expected, `${String(installed)} against ${reviewed}`);
