@@ -50,6 +50,22 @@ claude_probe_resume() {
     echo "install: WARNING Kherep node Claude probe lock not removed; the daemon ignores it after 30 minutes" >&2
 }
 
+# Issue #1010. `claude plugin install|enable|disable|update` rewrites
+# settings.json with another key order inside the hook entries, which
+# drift-check.sh reports. This renders the live file the way drift-check.sh does
+# and replaces it only when the bytes differ; operator settings survive the merge.
+settle_settings() {
+  local settled="$PREFLIGHT_DIR/settled-settings.json"
+  node "$REPO_ROOT/bootstrap/render-profile.mts" settings \
+    "$KHEREP_PROFILE" "$WS" "$CREDENTIALS_ROOT" "$CLAUDE_HOME" \
+    "$CLAUDE_SRC/settings.user.json" "$CLAUDE_SRC/settings.project.json" \
+    "$CLAUDE_HOME/settings.json" "$WS/.claude/settings.local.json" \
+    "$settled" "$PREFLIGHT_DIR/settled-settings.local.json" >/dev/null || return 1
+  ! cmp -s "$settled" "$CLAUDE_HOME/settings.json" || return 0
+  mv -f "$settled" "$CLAUDE_HOME/settings.json" || return 1
+  echo "install: settings.json rendered again after the plugin step"
+}
+
 bootstrap_on_exit() {
   local rc="$1" rollback_rc=0
   trap - ERR INT TERM EXIT
@@ -403,8 +419,18 @@ if [[ "$SKIP_DEPS" = "0" ]]; then
   [[ -n "$SKIP_CLAUDE_READINESS" ]] || node "$REPO_ROOT/bootstrap/claude-readiness-check.mts" precheck || true
   node "$REPO_ROOT/bootstrap/npm-globals.mts" "$REPO_ROOT/bootstrap/manifest/npm-globals.txt" \
     "?$REPO_ROOT/bootstrap/manifest/npm-globals.${KHEREP_PROFILE}.txt" || post_rc=1
+  # Issue #1010. An installed plugin that is not at the reviewed version is
+  # raised; a candidate home raises nothing (profile.sh), and the raise itself
+  # touches only plugins whose files lie inside this CLAUDE_HOME.
+  PLUGIN_RAISE_ARGS=("$REPO_ROOT/bootstrap/manifest/plugin-versions.json" "$CLAUDE_HOME")
+  SKIP_PLUGIN_RAISE="$(kherep_install_skip_reason PLUGIN_RAISE)"
+  if [[ -n "$SKIP_PLUGIN_RAISE" ]]; then
+    echo "install: SKIP_PLUGIN_RAISE=1 (by $SKIP_PLUGIN_RAISE; installed plugins keep their versions)"
+    PLUGIN_RAISE_ARGS=()
+  fi
   node "$REPO_ROOT/bootstrap/reconcile-plugins.mts" \
-    "$REPO_ROOT/bootstrap/manifest/marketplaces.json" "$REPO_ROOT/bootstrap/manifest/plugins.json" || post_rc=1
+    "$REPO_ROOT/bootstrap/manifest/marketplaces.json" "$REPO_ROOT/bootstrap/manifest/plugins.json" \
+    ${PLUGIN_RAISE_ARGS[@]+"${PLUGIN_RAISE_ARGS[@]}"} || post_rc=1
   if [[ "$post_rc" = "0" ]]; then
     echo "install: npm globals + marketplaces + plugins done."
   else
@@ -424,6 +450,10 @@ if [[ "$SKIP_DEPS" = "0" ]]; then
       echo "install: WARNING no Atlassian MCP server for Claude - nothing falls back to a personal login"
     fi
   fi
+  settle_settings || {
+    post_rc=1
+    echo "install: WARNING settings.json could not be rendered again after the plugin step; drift-check.sh may report it"
+  }
   echo "install: MCP -> review 'claude mcp list'. forge-knowledge needs interactive OAuth re-consent."
 else
   echo "install: SKIP_DEPS=1 (no npm/plugins/mcp)"
