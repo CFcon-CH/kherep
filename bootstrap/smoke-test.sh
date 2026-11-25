@@ -41,7 +41,10 @@ case "${SMOKE_SOURCE:-head}" in
   working-tree) tar --exclude=.git -cf - -C "$REPO" . | tar -xf - -C "$TMP/repo" ;;
   *) echo "SMOKE FAIL: SMOKE_SOURCE must be head or working-tree"; exit 1 ;;
 esac
-SUBTEST_TIMEOUT="${SMOKE_SUBTEST_TIMEOUT:-1800}"
+# Issue #1008: a backstop for a sub-test that never returns, not a speed limit. A
+# passing run has taken 2699 s on a loaded Windows host. Keep the whole run below
+# the 180-minute stale lock of claude/hooks/smoke-test-nudge.mts.
+SUBTEST_TIMEOUT="${SMOKE_SUBTEST_TIMEOUT:-5400}"
 case "$SUBTEST_TIMEOUT" in
   ''|*[!0-9]*) SUBTEST_TIMEOUT=0 ;;
 esac
