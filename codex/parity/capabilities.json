@@ -118,10 +118,6 @@
   },
   "plugins": [
     {
-      "id": "ai-plugins@claude-plugins-official",
-      "mode": "project"
-    },
-    {
       "id": "andrej-karpathy-skills@karpathy-skills",
       "mode": "project"
     },

@@ -294,13 +294,19 @@ unrelated setting values; it does not promise arbitrary input whitespace.
 ### Plugins Kherep no longer ships (#1010)
 
 The Claude installer no longer installs or enables
-`context7@claude-plugins-official`. A host that has it keeps it: nothing disables
-or uninstalls it, and `capability-check.mts --live` reports it as an unexpected
-plugin, a warning that `--strict` turns into a failure. To remove it from a host:
+`context7@claude-plugins-official` and `ai-plugins@claude-plugins-official`. A host
+that has them keeps them: nothing disables or uninstalls them, and
+`capability-check.mts --live` reports each as an unexpected plugin, a warning that
+`--strict` turns into a failure. To remove them from a host:
 
 ```text
 claude plugin uninstall context7@claude-plugins-official
+claude plugin uninstall ai-plugins@claude-plugins-official
 ```
+
+Codex no longer receives the `endor-setup` skill of `ai-plugins`. An upgrade removes
+the skill an earlier install projected; the previous files are in the installation
+backup.
 
 The Codex installer no longer renders `[mcp_servers.context7]`. An upgrade removes
 the table an earlier install put into the managed block of `config.toml`, together

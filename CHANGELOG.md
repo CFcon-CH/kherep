@@ -297,6 +297,12 @@ increments the minor version; every other release increments the patch version.
   the plugin; before installing an older revision again, restore the Codex
   `config.toml` from the install backup, because an older revision refuses a
   block without the table.
+- `ai-plugins` from both runtimes (#1010): the Claude requirement, the Codex
+  plugin row and the bundled source with its notices. A Claude host that has the
+  plugin keeps it; a Codex upgrade removes the projected `endor-setup` skill and
+  keeps the previous files in the install backup. Operator action: on a Claude
+  host, run `claude plugin uninstall ai-plugins@claude-plugins-official` to
+  remove the plugin.
 
 ### Fixed
 
