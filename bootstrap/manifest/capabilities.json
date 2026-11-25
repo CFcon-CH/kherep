@@ -18,6 +18,9 @@
     "superpowers@claude-plugins-official",
     "typescript-lsp@claude-plugins-official"
   ],
+  "optionalPlugins": [
+    "claude-security@claude-plugins-official"
+  ],
   "mcpServers": [
     "atlassian",
     "claude-baton",

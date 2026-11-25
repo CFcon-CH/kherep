@@ -21,6 +21,8 @@ interface ProfileBaseline {
 // is asserted at the read instead of validated on every run.
 interface CapabilityManifest {
   plugins: string[];
+  // Issue #1010. Installed only on the operator's opt-in, never required.
+  optionalPlugins: string[];
   mcpServers: string[];
   ownedAgents: Record<string, string>;
   skills: string[];
@@ -113,6 +115,8 @@ function checkSource(): void {
   const plugins = readJson<EnabledPlugins>(path.join(here, "manifest", "plugins.json"));
   const manifestKeys = enabledKeys(plugins);
   ok("plugin contract equals install manifest", same(expected.plugins, manifestKeys), `expected=${expected.plugins.length} actual=${manifestKeys.length}`);
+  const optional = enabledKeys(readJson<EnabledPlugins>(path.join(here, "manifest", "plugins.optional.json")));
+  ok("optional plugin contract equals optional manifest", same(expected.optionalPlugins, optional));
 
   for (const [name, file] of Object.entries(expected.ownedAgents)) {
     const target = path.join(repo, "claude", "agents", file);
@@ -147,14 +151,18 @@ function checkLive(): void {
     ok(`live plugin enabled ${key}`, enabled.includes(key));
     ok(`live plugin installed ${key}`, installed.includes(key));
   }
-  reportExtras("enabled plugin", enabled, expected.plugins, baseline.plugins, true);
+  const managedPlugins = [...expected.plugins, ...expected.optionalPlugins];
+  for (const key of expected.optionalPlugins.filter((id) => enabled.includes(id) || installed.includes(id))) {
+    info("optional plugin present", key);
+  }
+  reportExtras("enabled plugin", enabled, managedPlugins, baseline.plugins, true);
   const retiredInstalled = installed.includes(RETIRED_CODEX_PLUGIN);
   ok(`retired plugin disabled ${RETIRED_CODEX_PLUGIN}`,
     !enabled.includes(RETIRED_CODEX_PLUGIN) && workspaceSettings?.enabledPlugins?.[RETIRED_CODEX_PLUGIN] !== true
       && (!retiredInstalled || settings.enabledPlugins?.[RETIRED_CODEX_PLUGIN] === false));
   // The retained exact retired registry entry is a recovery artifact, not an
   // unexpected active capability. Its disabled state is asserted above.
-  reportExtras("installed plugin", installed, [...expected.plugins, RETIRED_CODEX_PLUGIN], baseline.plugins, true);
+  reportExtras("installed plugin", installed, [...managedPlugins, RETIRED_CODEX_PLUGIN], baseline.plugins, true);
 
   for (const [plugin, files] of Object.entries(expected.pluginEntrypoints)) {
     const entries = registry.plugins && registry.plugins[plugin];
