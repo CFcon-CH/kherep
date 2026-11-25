@@ -29,3 +29,11 @@ for (const file of manifests) {
     assert.deepEqual(pinned, []);
   });
 }
+
+// Issue #1010. An unpinned global TypeScript would be version 7, which ships no
+// tsserver for typescript-language-server; a pinned one would replace the operator's.
+test("no manifest installs a global TypeScript; the language server is pinned", () => {
+  const entries = manifests.flatMap((file) => readManifest(file));
+  assert.equal(entries.some((entry) => entry.name === "typescript"), false);
+  assert.match(String(entries.find((entry) => entry.name === "typescript-language-server")?.pin), /^\d+\.\d+\.\d+$/);
+});
