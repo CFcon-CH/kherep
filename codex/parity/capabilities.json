@@ -61,6 +61,10 @@
       "sandbox": "read-only",
       "role": "support"
     },
+    "silent-failure-reviewer": {
+      "sandbox": "read-only",
+      "role": "support"
+    },
     "lmstudio-mac-researcher": {
       "sandbox": "read-only",
       "role": "researcher"

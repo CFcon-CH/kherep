@@ -12,6 +12,7 @@
   "agents": {
     "kherep-builder": { "role": "builder" },
     "forge-deploy-validator": { "role": "support" },
+    "silent-failure-reviewer": { "role": "support" },
     "n8n-workflow-deploy-runner": { "role": "support" },
     "dc-plugin-build-runner": { "role": "support" },
     "win-agent": { "role": "researcher" },

@@ -43,6 +43,7 @@ test("the shipped default resolves today's mapping and the observer default effo
   const pairs = Object.fromEntries([...policy.agents].map(([agent, c]) => [agent, [c.model, c.effort]]));
   assert.deepEqual(pairs, {
     "kherep-builder": ["opus", undefined], "forge-deploy-validator": ["sonnet", undefined],
+    "silent-failure-reviewer": ["sonnet", undefined],
     "n8n-workflow-deploy-runner": ["sonnet", undefined], "dc-plugin-build-runner": ["sonnet", undefined],
     "win-agent": ["haiku", undefined], "mac-agent": ["haiku", undefined],
     "lmstudio-win-researcher": ["haiku", undefined], "lmstudio-mac-researcher": ["haiku", undefined],
