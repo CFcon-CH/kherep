@@ -288,6 +288,9 @@ increments the minor version; every other release increments the patch version.
 
 ### Fixed
 
+- `smoke-test.sh` gives `install-transaction.test.sh` 5400 s instead of 1800 s
+  by default (#1008). On a loaded Windows host a passing run took 2699 s, past the
+  old bound. `SMOKE_SUBTEST_TIMEOUT` still overrides it.
 - The brain-drainage scanner no longer reports a page as
   `revision-missing-or-invalid` because a link to another page has a title
   that names a code file, or because the text says `Node.js`, `Next.js` or
