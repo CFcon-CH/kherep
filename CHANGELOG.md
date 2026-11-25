@@ -20,6 +20,32 @@ increments the minor version; every other release increments the patch version.
   it (`held_ms`), how far the event loop's 1 s tick was overdue at arrival
   (`loop_overdue_ms`) and the lag and age of the last tick that ran
   (`tick_lag_ms`, `tick_age_ms`).
+- The Claude installer raises installed plugins to the reviewed versions
+  (#1010). `bootstrap/manifest/plugin-versions.json` names the version Kherep
+  reviewed for every declared plugin; a user-scope plugin that differs gets one
+  `claude plugin marketplace update` per marketplace and one
+  `claude plugin update --scope user`, judged by the re-read list. Every plugin
+  is attempted before a failure fails the dependency phase; a higher release
+  number is left alone, and a raise installs or enables nothing. A candidate
+  `CLAUDE_HOME` raises nothing without `KHEREP_INSTALL_ALLOW_PLUGIN_RAISE=1`,
+  and a plugin whose files lie outside the installed `CLAUDE_HOME` is never
+  raised. `KHEREP_INSTALL_SKIP_PLUGIN_RAISE=1` holds a host at its versions.
+  After the plugin step the installer renders `settings.json` again, so the
+  key order the Claude CLI writes no longer shows as drift. Operator action:
+  `claude-code-setup` changed its content under the same version 1.0.0, which
+  `claude plugin update` does not refresh; uninstall and install it by hand.
+- `typescript-lsp@claude-plugins-official` for Claude (#1010), with
+  `typescript-language-server@6.1.0` among the npm globals. A TypeScript 6.x
+  with `tsserver` and Node.js 22.22.2 or newer are documented prerequisites;
+  Kherep installs no global TypeScript.
+- The agent `silent-failure-reviewer` for Claude and Codex (#1010), a read-only
+  reviewer of error handling adapted from the pr-review-toolkit agent
+  `silent-failure-hunter` (Apache-2.0), in the support role.
+- `KHEREP_INSTALL_CLAUDE_SECURITY=1` installs and enables
+  `claude-security@claude-plugins-official` for Claude (#1010). The plugin is
+  proprietary and not part of Kherep; the repository names only its id, Codex
+  never receives it, and the live capability check reports an installed copy
+  as information.
 
 - Automatic failed-only rerun of CI runs that lost a macOS job to GitHub
   runner capacity (#973). The workflow `.github/workflows/ci-rerun.yml` runs
@@ -178,6 +204,20 @@ increments the minor version; every other release increments the patch version.
   diagnostic `target owner resolution timed out` is no hold, so the sending
   session may send the same message once more, once (#1012, operator decision).
   Every other refusal and every `loop-held` hold still stops the session.
+- The bundled plugin sources are refreshed to the versions the marketplaces
+  pinned for the snapshot (#1010): superpowers 7.0.2, caveman 4.2.0,
+  cloudflare 1.0.4, atlassian `b74220d41142`, frontend-design 1.1.1,
+  feature-dev and ralph-loop 1.0.1, security-guidance 2.0.21 and the
+  marketplace revision `6985b2d88dc0` for the others. The snapshot now bundles
+  only what the Codex projection reads and every licence file, and applies the
+  changes declared in `codex/parity/plugin-source-overlay.json`; the notices
+  list each change and a test compares them with the manifest. Scripts that
+  upstream ships executable are executable here. On a Codex upgrade the
+  projected skills follow the new trees: the caveman skills that work with
+  Caveman Cloud (`caveman-setup`, `caveman-discover`, `caveman-manage`,
+  `caveman-optimize`, `caveman-evidence-review`) are not projected, and a skill
+  or command an earlier install projected and the new tree no longer has is
+  removed into the installation backup.
 
 - `docs/CODEX.md` documents how a normally started Codex Desktop app picks up a
   new model generation: run `node codex/start.mts --prepare-only`, then quit and
