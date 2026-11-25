@@ -20,8 +20,10 @@ import {
 } from "./install.mts";
 import { adaptSkillText } from "./lib/component-render.mts";
 import { fixtureModelOptions } from "./lib/model-policy.fixture.mts";
+import { prepareManagedConfig } from "./lib/config-preservation.mts";
 import type { Capabilities } from "./lib/contracts.mts";
 import { legacyForm } from "./lib/legacy-control-plane-form.mts";
+import { OPTIONS as BLOCK_OPTIONS, REFUSAL } from "./lib/managed-block-split.fixture.mts";
 import { command, hookGroup, renderRegistryMcpServer } from "./lib/parity-config.mts";
 import { retiredCentralBrainRender } from "./lib/retired-central-brain.mts";
 import { withoutRetiredTable, withRetiredCentralBrain } from "./lib/retired-central-brain-fixture.mts";
@@ -291,11 +293,11 @@ function fromSourcePin(config: string, pin: string): string {
 // The layout the Codex app writes when it stores hook trust (issue #274): its
 // trust tables inside the block, the block's tail behind the end marker.
 const TRUST = "[hooks.state]\n\n[hooks.state.'config.toml:stop:0:0']\ntrusted_hash = \"sha256:fixture\"";
-function splitByTrust(config: string): { config: string; head: string; tail: string } {
+function splitByTrust(config: string, tailStart = "[[hooks.SessionStart]]"): { config: string; head: string; tail: string } {
   const start = config.indexOf(CONFIG_START) + CONFIG_START.length;
   const end = config.indexOf(CONFIG_END);
   const body = config.slice(start, end);
-  const cut = body.lastIndexOf("[[hooks.SessionStart]]");
+  const cut = body.lastIndexOf(tailStart);
   const head = body.slice(0, cut).trimEnd();
   const tail = body.slice(cut).trim();
   return {
@@ -622,6 +624,9 @@ test("targets the v2 Atlassian MCP server and retires v1 rovo", () => {
   assert.equal(CAPABILITIES.mcpServers.includes(ATLASSIAN_MCP_SERVER), false);
   assert.deepEqual(CAPABILITIES.retiredMcpServers, ["rovo", "kherep-linkedin-cli"]);
   assert.equal(CAPABILITIES.mcpServers.includes("rovo"), false);
+  // Issue #1010.
+  assert.deepEqual(CAPABILITIES.retiredManagedMcpServers, ["context7"]);
+  assert.equal(Object.hasOwn(CAPABILITIES.pluginMcpServers || {}, "context7"), false);
   assert.equal(JSON.stringify(CAPABILITIES).includes("atlassian-rovo@openai-curated"), false);
 });
 test("uses canonical Kherep product identifiers", () => {
@@ -705,7 +710,7 @@ test("installs the Mac-compatible projection without replacing user state", asyn
   assert.ok(n8n.includes(`args = [${JSON.stringify(result.targets.registryRuntime)}]`));
   assert.match(n8n, /NODE_EXTRA_CA_CERTS/);
   assert.doesNotMatch(n8n, /NODE_TLS_REJECT_UNAUTHORIZED/);
-  // The operator's own atlassian table wins over the managed v2 render, as context7's does.
+  // The operator's own atlassian table wins over the managed v2 render.
   assert.equal(occurrences(config, "[mcp_servers.atlassian]"), 1);
   assert.match(mcpTable(config, "atlassian"), /command = "legacy"/);
   assert.equal(config.includes("[mcp_servers.openaiDeveloperDocs]"), true);
@@ -806,7 +811,9 @@ test("installs the Mac-compatible projection without replacing user state", asyn
   assert.equal(fs.readFileSync(path.join(result.backupRoot, "agents", "win-agent.toml"), "utf8"), 'name = "personal"\n');
   assert.equal(result.receipt.projection.commands.find((entry) => entry.name === "kickoff")?.status, "replaced-with-backup");
   assert.equal(result.receipt.projection.agents.find((entry) => entry.name === "win-agent")?.status, "replaced-with-backup");
-  assert.equal(result.receipt.pluginMcpServers.find((entry) => entry.name === "context7")?.status, "preserved-existing");
+  // Issue #1010. No longer rendered, and the operator's own table is not retired.
+  assert.equal(result.receipt.pluginMcpServers.some((entry) => entry.name === "context7"), false);
+  assert.equal(result.receipt.retiredMcpServers.some((entry) => entry.name === "context7"), false);
   assert.equal(result.receipt.pluginMcpServers.find((entry) => entry.name === "atlassian")?.status, "preserved-existing");
   assert.equal(result.receipt.atlassianMcp.status, "preserved-existing");
   assert.deepEqual(
@@ -849,6 +856,7 @@ test("install keeps the operator's reasoning effort and reports it", async (t) =
 // rovo table is the wanted state, and the connector table is the operator's.
 const OLD_ROVO_TABLE = '[mcp_servers.rovo]\nenabled = true\nrequired = false\nurl = "https://rovo.example.invalid/mcp"\n'
   + "startup_timeout_sec = 30.0\ntool_timeout_sec = 60.0\n\n";
+const DOCS_HEADER = "[mcp_servers.openaiDeveloperDocs]";
 for (const rovo of ["removed by the host", "still in the block"]) {
   test(`installs the v2 Atlassian server over an old block with rovo ${rovo}, beside a foreign app table`, (t) => {
     const { root, codexCalls, codexHome, installOptions } = fixture();
@@ -857,7 +865,7 @@ for (const rovo of ["removed by the host", "still in the block"]) {
     install({ ...installOptions, installAtlassianTools: false });
     let old = fs.readFileSync(configTarget, "utf8");
     assert.equal(old.includes("[mcp_servers.atlassian]"), false);
-    if (rovo === "still in the block") old = old.replace("[mcp_servers.context7]", `${OLD_ROVO_TABLE}[mcp_servers.context7]`);
+    if (rovo === "still in the block") old = old.replace(DOCS_HEADER, `${OLD_ROVO_TABLE}${DOCS_HEADER}`);
     const foreign = "[apps.connector_0000]\nenabled = true\n";
     const seeded = `${old}\n${foreign}`;
     fs.writeFileSync(configTarget, seeded);
@@ -899,11 +907,12 @@ for (const placement of ["inside the managed block", "outside the managed block"
     t.after(() => fs.rmSync(root, { recursive: true, force: true }));
     const configTarget = path.join(codexHome, "config.toml");
     const current = fs.readFileSync(install(installOptions).targets.config, "utf8");
-    assert.ok(current.indexOf("[mcp_servers.context7]") < current.indexOf(CONFIG_END), "context7 renders inside the block");
+    const docsAt = current.indexOf(DOCS_HEADER);
+    assert.ok(docsAt > 0 && docsAt < current.indexOf(CONFIG_END), "openaiDeveloperDocs renders inside the block");
     const operator = '[mcp_servers.keep]\ncommand = "keep"\n';
     const expected = `${current}\n${operator}`;
     const seeded = placement === "inside the managed block"
-      ? `${current.replace("[mcp_servers.context7]", `${LINKEDIN_CLI_TABLE}[mcp_servers.context7]`)}\n${operator}`
+      ? `${current.replace(DOCS_HEADER, `${LINKEDIN_CLI_TABLE}${DOCS_HEADER}`)}\n${operator}`
       : `${current}\n${LINKEDIN_CLI_TABLE}${LINKEDIN_CLI_TOOL_TABLE}${operator}`;
     fs.writeFileSync(configTarget, seeded);
 
@@ -922,6 +931,98 @@ for (const placement of ["inside the managed block", "outside the managed block"
       { name: "kherep-linkedin-cli", status: "absent" });
   });
 }
+
+// Issue #1010. Kherep no longer renders context7. The table an older install put
+// into the managed block goes; a table of that name outside it is the operator's.
+const OLD_CONTEXT7_TABLE = '[mcp_servers.context7]\nenabled = true\nrequired = false\ncommand = "npx"\n'
+  + 'args = ["-y", "@upstash/context7-mcp@3.2.4"]\nstartup_timeout_sec = 30.0\ntool_timeout_sec = 60.0\n\n';
+const CONTEXT7_APPROVAL = '[mcp_servers.context7.tools.resolve-library-id]\napproval_mode = "approve"\n\n';
+function withOldContext7Table(config: string): string {
+  const old = config.replace(DOCS_HEADER, `${OLD_CONTEXT7_TABLE}${DOCS_HEADER}`);
+  assert.ok(old.includes(OLD_CONTEXT7_TABLE) && old.indexOf(OLD_CONTEXT7_TABLE) < old.indexOf(CONFIG_END));
+  return old;
+}
+const context7Retirement = (result: ReturnType<typeof install>): string | undefined =>
+  result.receipt.retiredMcpServers.find((entry) => entry.name === "context7")?.status;
+
+test("removes the context7 table of an older block, a tool approval behind the end marker included", (t) => {
+  const { root, codexHome, installOptions } = fixture();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const configTarget = path.join(codexHome, "config.toml");
+  const current = fs.readFileSync(install(installOptions).targets.config, "utf8");
+  assert.equal(current.includes("context7"), false);
+  const operator = '[mcp_servers.keep]\ncommand = "keep"\n';
+  const expected = `${current}\n${operator}`;
+  for (const approval of ["", CONTEXT7_APPROVAL]) {
+    const seeded = `${withOldContext7Table(current)}\n${approval}${operator}`;
+    fs.writeFileSync(configTarget, seeded);
+    const result = install(installOptions);
+    assert.equal(fs.readFileSync(configTarget, "utf8"), expected, "every other table is unchanged");
+    assert.equal(fs.readFileSync(path.join(result.backupRoot, "config.toml"), "utf8"), seeded);
+    assert.equal(context7Retirement(result), "removed");
+  }
+  // A block without the table is current.
+  const repeated = install(installOptions);
+  assert.equal(fs.readFileSync(configTarget, "utf8"), expected);
+  assert.equal(context7Retirement(repeated), "absent");
+});
+
+test("keeps an operator's context7 table outside the managed block byte for byte", (t) => {
+  const { root, codexHome, installOptions } = fixture();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const configTarget = path.join(codexHome, "config.toml");
+  const current = fs.readFileSync(install(installOptions).targets.config, "utf8");
+  const seeded = `${current}\n[mcp_servers.context7]  # mine\ncommand = "personal-context7"\n\n${CONTEXT7_APPROVAL}`;
+  fs.writeFileSync(configTarget, seeded);
+  const result = install(installOptions);
+  assert.equal(fs.readFileSync(configTarget, "utf8"), seeded);
+  assert.equal(context7Retirement(result), undefined);
+});
+
+// Issue #274. The split decides the side: the table goes where it stayed in the
+// block; behind the end marker it reads as the operator's, like the table of
+// every other plugin server there.
+test("upgrades a split block that still has the old context7 table", (t) => {
+  const { root, codexHome, installOptions } = fixture();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const configTarget = path.join(codexHome, "config.toml");
+  const current = fs.readFileSync(install(installOptions).targets.config, "utf8");
+  const upgrade = (seeded: string): { config: string; status: string | undefined } => {
+    fs.writeFileSync(configTarget, seeded);
+    const result = install(installOptions);
+    return { config: fs.readFileSync(configTarget, "utf8"), status: context7Retirement(result) };
+  };
+  const inside = splitByTrust(withOldContext7Table(current), DOCS_HEADER);
+  assert.ok(inside.head.includes("[mcp_servers.context7]"));
+  const removed = upgrade(inside.config);
+  assert.equal(removed.config.includes("context7"), false);
+  assert.deepEqual(removed, { config: upgrade(splitByTrust(current, DOCS_HEADER).config).config, status: "removed" });
+  assert.deepEqual(upgrade(removed.config), { config: removed.config, status: "absent" });
+
+  const behind = splitByTrust(withOldContext7Table(current));
+  assert.ok(behind.tail.includes(OLD_CONTEXT7_TABLE));
+  const kept = upgrade(behind.config);
+  assert.equal(kept.status, undefined);
+  assert.equal(occurrences(kept.config, "[mcp_servers.context7]"), 1);
+  assert.ok(kept.config.slice(kept.config.indexOf(CONFIG_END)).includes(OLD_CONTEXT7_TABLE));
+  assert.deepEqual(upgrade(kept.config), kept);
+});
+
+// The control for the tests above: only the retired name lets an old block pass,
+// and the render that still had the entry refuses a block without its table.
+test("refuses the old context7 block without the retired name, and the old render a block without the table", () => {
+  const openaiDeveloperDocs = { url: "https://docs.example.invalid/mcp" };
+  const before = { ...BLOCK_OPTIONS, pluginMcpServers: { context7: { command: "npx", args: ["-y", "fixture"] }, openaiDeveloperDocs } };
+  const dropped = { ...BLOCK_OPTIONS, pluginMcpServers: { openaiDeveloperDocs } };
+  const retired = { ...dropped, retiredMcpServerNames: ["context7"] };
+  const old = prepareManagedConfig("", before).config;
+  const fresh = prepareManagedConfig("", dropped).config;
+  assert.throws(() => prepareManagedConfig(old, dropped), REFUSAL);
+  assert.equal(prepareManagedConfig(old, retired).config, fresh);
+  assert.throws(() => prepareManagedConfig(fresh, before), REFUSAL);
+  const unchanged = prepareManagedConfig(fresh, retired);
+  assert.deepEqual([unchanged.config, unchanged.managedFragment], [fresh, "current"]);
+});
 
 // Issue #376. The managed Atlassian table: the secret-file wrapper with the
 // Codex service account's key file, and executeDestructive behind a prompt.
