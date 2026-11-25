@@ -194,6 +194,7 @@ agents/kherep-lead.md
 agents/kherep-team-lead.md
 agents/dc-plugin-build-runner.md
 agents/forge-deploy-validator.md
+agents/silent-failure-reviewer.md
 agents/lmstudio-mac-researcher.md
 agents/lmstudio-win-researcher.md
 agents/mac-agent.md

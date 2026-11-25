@@ -29,6 +29,7 @@
     "kherep-builder": "kherep-builder.md",
     "dc-plugin-build-runner": "dc-plugin-build-runner.md",
     "forge-deploy-validator": "forge-deploy-validator.md",
+    "silent-failure-reviewer": "silent-failure-reviewer.md",
     "lmstudio-mac-researcher": "lmstudio-mac-researcher.md",
     "lmstudio-win-researcher": "lmstudio-win-researcher.md",
     "mac-agent": "mac-agent.md",
