@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
 import test from "node:test";
 
 import type { TaskControlExecuteBody, TaskControlResultBody } from "../protocol-task-control.mts";
 import { applyQueryResult, beginOperation, completeOperation, ensureDeliveryRegistrations, pendingControlQueries, pendingControlSubmits,
   pendingRegistrations, pendingResults, queueControlRequest, readControlRequest, readRegistrationAuthority, recordRegistrationReceipt, recoverOperations, receiptResult } from "./task-control-store.mts";
-import { setDeliveryTask, storeMessage } from "./inbox.mts";
+import { listInbox, setDeliveryTask, storeMessage } from "./inbox.mts";
 import { taskNode, TASK, T0 } from "./task-fixture.mts";
 import { runVersionOf } from "./task-control-local.mts";
 import { readTask, writeTask } from "./task-records.mts";
@@ -208,4 +210,30 @@ test("an older delayed receipt cannot revert a newer authority for the same task
     origin: { kind: "source-message", sourceMessageId: messageId }, associationVersion: 1, grantVersion: 1 }, T0 + 4);
   assert.deepEqual(readRegistrationAuthority(node.paths, TASK)?.sources[messageId],
     { associationVersion: 3, grantVersion: 3 });
+});
+
+// Issue #1012: the exchange round passes its inbox snapshot instead of a fresh list and read.
+test("1012: registrations from a records snapshot match the ones from the inbox read, a record without delivery registers nothing", (t) => {
+  const registered = (records: boolean): { file: string; record: Record<string, unknown> }[] => {
+    const node = taskNode(t);
+    for (const [n, delivery] of [[1, true], [2, false], [3, true]] as const) {
+      const messageId = `40000000-0000-4000-8000-00000000003${n}`;
+      storeMessage(node.paths.inbox, { messageId, from: { nodeId: OWNER, session: "owner" }, toSession: "target", text: "private",
+        createdAt: new Date(T0).toISOString() }, T0);
+      if (delivery) setDeliveryTask(node.paths.inbox, messageId, { taskId: TASK, runtime: "codex" });
+    }
+    ensureDeliveryRegistrations(node.paths, T0, records ? listInbox(node.paths.inbox) : undefined);
+    const dir = path.join(node.paths.taskControl, "registrations");
+    return fs.readdirSync(dir).sort().map((file) => {
+      const record = JSON.parse(fs.readFileSync(path.join(dir, file), "utf8"));
+      return { file, record: { ...record, body: { ...record.body, registrationId: "ignored" } } };
+    });
+  };
+  const fromRead = registered(false);
+  assert.deepEqual(fromRead.map((entry) => entry.file),
+    ["40000000-0000-4000-8000-000000000031.json", "40000000-0000-4000-8000-000000000033.json"]);
+  assert.deepEqual(registered(true), fromRead);
+  const node = taskNode(t);
+  ensureDeliveryRegistrations(node.paths, T0, []);
+  assert.deepEqual(pendingRegistrations(node.paths, T0), [], "an empty snapshot registers nothing");
 });

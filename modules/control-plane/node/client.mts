@@ -5,6 +5,7 @@ import { unlistedRuntimes } from "./known-sessions.mts";
 import { compatibleDiagnostic, isMessageDiagnostic, type MessageDiagnostic } from "../protocol-diagnostics.mts";
 import { RecordLockBusy } from "./inbox-record-lock.mts";
 import type { BindingStorageSnapshot } from "./inbox-storage.mts";
+import type { FrameArrival } from "./intake-diagnostics.mts";
 import { isResolveRequest, SELECTED_BINDING_CAPABILITY } from "../protocol-message-binding.mts";
 import type { MessageReferenceResolver } from "./message-reference.mts";
 import { identitySnapshotOf } from "./session-identity.mts";
@@ -198,7 +199,7 @@ export class NodeClient {
 
   // live: the frame arrived on the socket that is current and open when it is
   // handled (the daemon decides; tests and the default take it as live).
-  async onFrame(raw: string, live = true): Promise<string[]> {
+  async onFrame(raw: string, live = true, arrival?: FrameArrival): Promise<string[]> {
     this.sampleStorage();
     if (raw === PONG_FRAME) return [];
     const parsed = parseEnvelope(raw);
@@ -268,7 +269,7 @@ export class NodeClient {
         return this.authenticated ? this.onCommand(envelope) : [];
       case "message.resolve.request": {
         const body = envelope.body, references = this.options.selectedReferences;
-        const skip = (reason: string): string[] => { this.logResolve(`skipped: ${reason}`, body); return []; };
+        const skip = (reason: string): string[] => { this.logResolve(`skipped: ${reason}`, body, arrival); return []; };
         if (!live) return skip("not live");
         if (!this.authenticated) return skip("not authenticated");
         if (!this.storageReady) return skip("storage not ready");
@@ -277,7 +278,7 @@ export class NodeClient {
         const response = references.resolve(body, JSON.stringify(this.policy));
         const late = body.expiresAt - (this.options.now?.() ?? Date.now()) < RESOLVE_LATE_MS;
         if (late || response.results.some(r => r.code !== "BOUND")) {
-          this.logResolve(`answered ${response.results.map(r => `${r.role}:${r.code}`).join(",")}`, body);
+          this.logResolve(`answered ${response.results.map(r => `${r.role}:${r.code}`).join(",")}`, body, arrival);
         }
         return [this.frame("message.resolve.response", { ...response })];
       }
@@ -742,10 +743,17 @@ export class NodeClient {
   }
 
   // Issue #706: metadata only. A skipped body is unchecked, so only a UUID requestId and an integer expiresAt are used.
-  private logResolve(outcome: string, body: unknown): void {
+  // Issue #1012: arrival_margin_ms, held_ms and the arrival's loop_overdue_ms, tick_lag_ms and tick_age_ms; unknown without an arrival.
+  private logResolve(outcome: string, body: unknown, arrival?: FrameArrival): void {
     const { requestId, expiresAt } = body as { requestId?: unknown; expiresAt?: unknown };
-    const margin = Number.isSafeInteger(expiresAt) ? Number(expiresAt) - (this.options.now?.() ?? Date.now()) : "unknown";
-    this.options.log?.(`kherep-node: message.resolve ${outcome} requestId=${isMessageId(requestId) ? requestId : "invalid"} margin_ms=${margin}`);
+    const now = this.options.now?.() ?? Date.now(), expires = Number.isSafeInteger(expiresAt) ? Number(expiresAt) : undefined;
+    const field = (value: number | undefined): number | string => Number.isSafeInteger(value) ? value! : "unknown";
+    const arrivedAt = arrival ? Math.round(arrival.wallMs) : undefined;
+    this.options.log?.(`kherep-node: message.resolve ${outcome} requestId=${isMessageId(requestId) ? requestId : "invalid"}`
+      + ` margin_ms=${expires === undefined ? "unknown" : expires - now}`
+      + ` arrival_margin_ms=${field(expires === undefined || arrivedAt === undefined ? undefined : expires - arrivedAt)}`
+      + ` held_ms=${field(arrivedAt === undefined ? undefined : now - arrivedAt)} loop_overdue_ms=${field(arrival?.overdueMs)}`
+      + ` tick_lag_ms=${field(arrival?.tickLagMs)} tick_age_ms=${field(arrival?.tickAgeMs)}`);
   }
 
   // A failing local write is logged; the frame loop goes on.

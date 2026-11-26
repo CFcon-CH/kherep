@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { TaskControlEventBody, TaskControlExecuteBody, TaskControlResultBody } from "../protocol-task-control.mts";
-import { setDeliveryTask, storeMessage } from "./inbox.mts";
+import { listInbox, setDeliveryTask, storeMessage } from "./inbox.mts";
 import { handleTaskControlExecute, pollTaskControl } from "./task-control-exchange.mts";
 import { applyQueryResult, beginOperation, completeOperation, pendingResults, queueControlRequest, receiptResult } from "./task-control-store.mts";
 import { runVersionOf } from "./task-control-run.mts";
@@ -85,6 +85,24 @@ test("the exchange retries registrations, submits and results, then queries pend
   assert.ok(sent.some((body) => body.name === "task.control.query"));
 });
 
+
+// Issue #1012: the round's records produce the same register frame as the call that reads the inbox itself.
+test("1012: pollTaskControl with the round's records sends the same register frame as without", (t) => {
+  const sentBy = (records: boolean): TaskControlEventBody[] => {
+    const node = taskNode(t);
+    const messageId = "40000000-0000-4000-8000-000000000041";
+    storeMessage(node.paths.inbox, { messageId, from: { nodeId: OWNER, session: "owner" }, toSession: "target", text: "private",
+      createdAt: new Date(T0).toISOString() }, T0);
+    setDeliveryTask(node.paths.inbox, messageId, { taskId: TASK, runtime: "codex" });
+    const sent: TaskControlEventBody[] = [];
+    pollTaskControl({ sendTaskControl: (body) => { sent.push(body); return ["frame"]; } }, node.paths, new Set(), () => true, T0, true,
+      records ? listInbox(node.paths.inbox) : undefined);
+    return sent.map((body) => ({ ...body, registrationId: "ignored" }) as TaskControlEventBody);
+  };
+  const withoutRecords = sentBy(false);
+  assert.deepEqual(withoutRecords.map((body) => body.name), ["task.control.register"]);
+  assert.deepEqual(sentBy(true), withoutRecords);
+});
 
 test("current policy gate prevents task-control traffic until enabled", (t) => {
   const node = taskNode(t);

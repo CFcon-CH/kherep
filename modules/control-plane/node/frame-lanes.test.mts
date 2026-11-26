@@ -5,7 +5,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { laneTimer, lockRounds } from "./frame-lanes.mts";
+import { intakeLane, laneTimer, lockRounds } from "./frame-lanes.mts";
+import type { NodeClient } from "./client.mts";
+import type { FrameArrival } from "./intake-diagnostics.mts";
 import {
   RECORD_LOCK_POLL_MS, RECORD_LOCK_WAIT_MS, withRecordLock, type RecordLockBusy,
 } from "./inbox-record-lock.mts";
@@ -107,4 +109,22 @@ test("concurrent lane items each have their own allowance; none is left outside 
   assert.deepEqual(waited, [100, 100], "the intake item did not spend the chain item's allowance");
   held();
   assert.equal(waited.at(-1), RECORD_LOCK_WAIT_MS);
+});
+
+// Issue #1012: the intake lane hands the frame's arrival to onFrame, which logs a late resolve with it.
+test("1012: the intake lane passes the arrival to onFrame as third argument", async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "kherep-intake-lane-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const calls: [string, boolean, FrameArrival | undefined][] = [];
+  const client = { refreshPolicy: async () => [], onFrame: async (data: string, live: boolean, arrival?: FrameArrival) => {
+    calls.push([data, live, arrival]); return [];
+  } } as unknown as NodeClient;
+  let done: () => void = () => {};
+  const finished = new Promise<void>((resolve) => { done = resolve; });
+  const lane = intakeLane({ client, policyFile: path.join(root, "policy.json"), inbox: path.join(root, "inbox"), log: () => {},
+    timed: async (_lane, _kind, run) => { try { await run(); } finally { done(); } } });
+  const arrival: FrameArrival = { monoMs: 1, wallMs: 2, kind: 6, overdueMs: 3, tickLagMs: 4, tickAgeMs: 5 };
+  lane("synthetic-frame", 0, { live: () => true, send: () => true, publishRegistration: () => true }, arrival);
+  await finished;
+  assert.deepEqual(calls, [["synthetic-frame", true, arrival]]);
 });

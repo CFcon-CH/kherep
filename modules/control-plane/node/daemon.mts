@@ -38,6 +38,7 @@ import { loadPolicy, type NodePolicy } from "./policy.mts";
 import { routeFrame } from "./readiness-lane.mts";
 import { classifySocketError, roundTally, tallyKind, type SocketErrorClass } from "./round-tally.mts";
 import { probeRuntime, type ProbeResult } from "./runtime-probe.mts";
+import { roundTiming } from "./round-timing.mts";
 import { createReadiness } from "./runtime-readiness.mts";
 import { retainServiceAdmission, waitForServiceAdmission } from "./service-drain.mts";
 import { reportSlowSync } from "./sync-timing.mts";
@@ -258,6 +259,8 @@ export function startDaemon(config: NodeConfig, paths: NodePaths, log: (line: st
     state = { ...state, intake }; recordDaemonState(paths, state, log);
   } });
   const timed = lockRounds(laneTimer(log, lanes.slowLaneMs), DAEMON_RECORD_LOCK_WAIT_MS);
+  // Issue #1012: per-step timing of a slow exchange round (round-timing.mts).
+  const rounds = roundTiming(log, { slowMs: lanes.roundSlowMs, alwaysMs: lanes.roundSlowMs });
   const tally = roundTally(); // inbound items since the last round, by kind (issues #487, #493)
   // Issue #441: deliveries on a lane of their own (frame-lanes.mts); spans reconnects like chain.
   const intake = intakeLane({ client, policyFile: config.policyFile, inbox: paths.inbox, log, intakeSlowMs: lanes.intakeSlowMs,
@@ -387,11 +390,12 @@ export function startDaemon(config: NodeConfig, paths: NodePaths, log: (line: st
         exchangePending = true;
         chain = chain.then(enqueued(timed, "chain", "exchange-round", () => {
           if (!generation.current()) return;
-          if (!bindingStorage.recheck()) { indexedInbox.invalidate(); selectedReferences.clear(); }
+          const timing = rounds.begin();
+          timing.step("storage", () => { if (!bindingStorage.recheck()) { indexedInbox.invalidate(); selectedReferences.clear(); } });
           return exchangeRound({ client, paths, policyFile: config.policyFile,
           runner, inbox, log, inflight, requestsInflight, taskControlInflight: () => taskControlInflight, mcpInflight: () => mcpInflight,
           send, publishRegistration, live: () => generation.current() && ws.readyState === WebSocket.OPEN, defer: dispatchFrame,
-          window: (window) => { intakeWindow = window; }, diagnostics, tally }); }))
+          window: (window) => { intakeWindow = window; }, diagnostics, tally, timing }); }))
           .catch((error: unknown) => log(`kherep-node: message exchange failed: ${String(error)}`))
           .finally(() => { exchangePending = false; });
       }, EXCHANGE_INTERVAL_MS);
@@ -434,7 +438,7 @@ export function startDaemon(config: NodeConfig, paths: NodePaths, log: (line: st
         publishRegistration(refreshed);
         const wasAuthed = client.authenticated;
         // Issue #408 (design r3 section 3.3): live is decided when the lane reaches the frame.
-        const frames = await client.onFrame(data, generation.current() && ws.readyState === WebSocket.OPEN);
+        const frames = await client.onFrame(data, generation.current() && ws.readyState === WebSocket.OPEN, arrival);
         if (!generation.current()) return;
         authenticated = client.authenticated;
         let sent = true;

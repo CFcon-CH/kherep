@@ -20,7 +20,10 @@ import { loadPolicy } from "./policy.mts";
 
 export const SLOW_LANE_MS = 5_000;
 export const INTAKE_SLOW_MS = 60_000;
-export interface LaneOptions { slowLaneMs?: number; intakeSlowMs?: number }
+export interface LaneOptions {
+  slowLaneMs?: number; intakeSlowMs?: number;
+  roundSlowMs?: number; // issue #1012: the round-slow line threshold (round-timing.mts); tests lower it, as the other two
+}
 
 const seconds = (ms: number): string => (ms / 1000).toFixed(1);
 const label = (value: unknown): string => String(value).replace(/[^\w.:-]/g, "_").slice(0, 64);
@@ -96,7 +99,7 @@ export function intakeLane(options: IntakeOptions): (data: string, arrivedAt: nu
         const refreshed = await options.client.refreshPolicy(loadPolicy(options.policyFile));
         if (!connection.live()) return;
         connection.publishRegistration(refreshed);
-        const frames = await options.client.onFrame(data, connection.live());
+        const frames = await options.client.onFrame(data, connection.live(), arrival);
         for (const frame of frames) if (!connection.send(frame)) break;
         logSlowIntake(options, data, arrivedAt);
       };

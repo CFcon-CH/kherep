@@ -1,5 +1,6 @@
 import type { TaskControlEventBody, TaskControlExecuteBody, TaskControlResultBody } from "../protocol-task-control.mts";
 import type { NodePaths } from "./config.mts";
+import type { InboxRecord } from "./inbox.mts";
 import {
   beginOperation, completeOperation, ensureDeliveryRegistrations, pendingControlQueries, pendingControlSubmits, pendingRegistrations,
   pendingResults, recoverOperation,
@@ -46,9 +47,9 @@ function fairBatch<T>(paths: NodePaths, lane: Lane, values: T[], identity: (valu
 }
 
 export function pollTaskControl(client: TaskControlSender, paths: NodePaths, inflight: Set<string>,
-  send: (frame: string) => boolean, now: number = Date.now(), enabled = true): void {
+  send: (frame: string) => boolean, now: number = Date.now(), enabled = true, records?: InboxRecord[]): void {
   if (!enabled) return;
-  ensureDeliveryRegistrations(paths, now);
+  ensureDeliveryRegistrations(paths, now, records);
   const durable = (body: TaskControlEventBody, key: string): void => {
     if (inflight.has(key)) return;
     const frames = client.sendTaskControl(body);

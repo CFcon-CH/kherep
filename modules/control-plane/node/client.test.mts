@@ -423,7 +423,7 @@ for (const [reason, overrides, live] of [
   assert.deepEqual(await client.onFrame(resolveFrame({}), live), []);
   assert.equal(logs.length, 1);
   assert.match(logs[0], new RegExp(`skipped: ${reason} `));
-  assert.match(logs[0], new RegExp(`requestId=${REQUEST_ID} margin_ms=5000$`));
+  assert.match(logs[0], new RegExp(`requestId=${REQUEST_ID} margin_ms=5000 arrival_margin_ms=unknown held_ms=unknown loop_overdue_ms=unknown tick_lag_ms=unknown tick_age_ms=unknown$`));
   assertMetadataOnly(logs[0]);
 });
 
@@ -431,19 +431,19 @@ test("706: a malformed resolve is skipped without repeating its fields", async t
   const { client, logs } = resolveClient(t);
   assert.deepEqual(await client.onFrame(resolveFrame({ requestId: SESSION_NAME, expiresAt: SESSION_ID })), []);
   assert.deepEqual(await client.onFrame(resolveFrame({ extra: SESSION_NAME })), []);
-  assert.deepEqual(logs.map(line => line.replace(/^.*skipped: /, "")), ["malformed requestId=invalid margin_ms=unknown",
-    `malformed requestId=${REQUEST_ID} margin_ms=5000`]);
+  assert.deepEqual(logs.map(line => line.replace(/^.*skipped: /, "")), ["malformed requestId=invalid margin_ms=unknown arrival_margin_ms=unknown held_ms=unknown loop_overdue_ms=unknown tick_lag_ms=unknown tick_age_ms=unknown",
+    `malformed requestId=${REQUEST_ID} margin_ms=5000 arrival_margin_ms=unknown held_ms=unknown loop_overdue_ms=unknown tick_lag_ms=unknown tick_age_ms=unknown`]);
   logs.forEach(assertMetadataOnly);
 });
 
 test("706: an answer with a non-BOUND result logs its role:code pairs, the margin may be negative", async t => {
   const { client, logs } = resolveClient(t);
   assert.equal((await client.onFrame(resolveFrame({ selections: [{ role: "from", ref: "synthetic-absent" }, { role: "to", ref: SESSION_ID }] }))).length, 1);
-  assert.match(logs[0], new RegExp(`answered from:MISSING,to:BOUND requestId=${REQUEST_ID} margin_ms=5000$`));
+  assert.match(logs[0], new RegExp(`answered from:MISSING,to:BOUND requestId=${REQUEST_ID} margin_ms=5000 arrival_margin_ms=unknown held_ms=unknown loop_overdue_ms=unknown tick_lag_ms=unknown tick_age_ms=unknown$`));
   assert.doesNotMatch(logs[0], /synthetic-absent/);
   assertMetadataOnly(logs[0]);
   assert.equal((await client.onFrame(resolveFrame({ expiresAt: RESOLVE_NOW - 200 }))).length, 1);
-  assert.match(logs[1], new RegExp(`answered to:STALE requestId=${REQUEST_ID} margin_ms=-200$`));
+  assert.match(logs[1], new RegExp(`answered to:STALE requestId=${REQUEST_ID} margin_ms=-200 arrival_margin_ms=unknown held_ms=unknown loop_overdue_ms=unknown tick_lag_ms=unknown tick_age_ms=unknown$`));
   assert.equal(logs.length, 2);
 });
 
@@ -454,6 +454,54 @@ test("706: a BOUND answer logs only when under one second of margin remains", as
   assert.deepEqual(logs, [], "a healthy BOUND resolve logs nothing");
   assert.equal((await client.onFrame(resolveFrame({ expiresAt: RESOLVE_NOW + 999 }))).length, 1);
   assert.equal(logs.length, 1);
-  assert.match(logs[0], new RegExp(`answered to:BOUND requestId=${REQUEST_ID} margin_ms=999$`));
+  assert.match(logs[0], new RegExp(`answered to:BOUND requestId=${REQUEST_ID} margin_ms=999 arrival_margin_ms=unknown held_ms=unknown loop_overdue_ms=unknown tick_lag_ms=unknown tick_age_ms=unknown$`));
   assertMetadataOnly(logs[0]);
+});
+
+// Issue #1012: a logged resolve carries the margin at arrival, the time the node held it and the loop state at arrival.
+const arrivedAt = (beforeNow: number, loop: { overdueMs?: number; tickLagMs?: number; tickAgeMs?: number } = {}) =>
+  ({ monoMs: 0, wallMs: RESOLVE_NOW - beforeNow, kind: 6, overdueMs: 0, tickLagMs: 0, tickAgeMs: 200, ...loop });
+
+test("1012: a late BOUND answer held on the node logs its arrival margin and hold time", async t => {
+  const { client, logs } = resolveClient(t);
+  assert.equal((await client.onFrame(resolveFrame({ expiresAt: RESOLVE_NOW + 500 }), true, arrivedAt(3500))).length, 1);
+  assert.deepEqual(logs, [`kherep-node: message.resolve answered to:BOUND requestId=${REQUEST_ID} margin_ms=500 arrival_margin_ms=4000`
+    + " held_ms=3500 loop_overdue_ms=0 tick_lag_ms=0 tick_age_ms=200"]);
+  t.diagnostic(logs[0]);
+  assertMetadataOnly(logs[0]);
+});
+
+test("1012: a STALE answer that arrived expired logs a negative arrival margin and the arrival's loop state", async t => {
+  const { client, logs } = resolveClient(t);
+  await client.onFrame(resolveFrame({ expiresAt: RESOLVE_NOW - 200 }), true, arrivedAt(8, { overdueMs: 4200, tickLagMs: 3100, tickAgeMs: 900 }));
+  assert.match(logs[0], new RegExp(`answered to:STALE requestId=${REQUEST_ID} margin_ms=-200 arrival_margin_ms=-192 held_ms=8`
+    + " loop_overdue_ms=4200 tick_lag_ms=3100 tick_age_ms=900$"));
+  assertMetadataOnly(logs[0]);
+});
+
+for (const [roles, selections] of [
+  ["from", [{ role: "from", ref: SESSION_ID }]], ["to", [{ role: "to", ref: SESSION_ID }]],
+  ["from,to", [{ role: "from", ref: SESSION_ID }, { role: "to", ref: SESSION_NAME }]],
+] as const) test(`1012: a late answer for ${roles} names its roles and carries the arrival fields`, async t => {
+  const { client, logs } = resolveClient(t);
+  await client.onFrame(resolveFrame({ selections, expiresAt: RESOLVE_NOW + 100 }), true, arrivedAt(50));
+  assert.equal(logs.length, 1);
+  const outcome = roles.split(",").map(role => `${role}:[A-Z_]+`).join(",");
+  assert.match(logs[0], new RegExp(`answered ${outcome} requestId=${REQUEST_ID} margin_ms=100 arrival_margin_ms=150 held_ms=50`
+    + " loop_overdue_ms=0 tick_lag_ms=0 tick_age_ms=200$"));
+  assertMetadataOnly(logs[0]);
+});
+
+test("1012: a skipped resolve with an arrival logs the arrival fields as numbers", async t => {
+  const { client, logs } = resolveClient(t);
+  assert.deepEqual(await client.onFrame(resolveFrame({}), false, arrivedAt(20, { overdueMs: 7 })), []);
+  assert.match(logs[0], new RegExp(`skipped: not live requestId=${REQUEST_ID} margin_ms=5000 arrival_margin_ms=5020 held_ms=20`
+    + " loop_overdue_ms=7 tick_lag_ms=0 tick_age_ms=200$"));
+  assertMetadataOnly(logs[0]);
+});
+
+test("1012: a BOUND answer with one second or more left still logs nothing with an arrival", async t => {
+  const { client, logs } = resolveClient(t);
+  assert.equal((await client.onFrame(resolveFrame({ expiresAt: RESOLVE_NOW + 1000 }), true, arrivedAt(4000))).length, 1);
+  assert.deepEqual(logs, []);
 });

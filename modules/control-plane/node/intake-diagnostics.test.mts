@@ -105,3 +105,23 @@ test("a tick gap of at least the pong deadline signals wake, a shorter one does 
   clock.advance(10_000); assert.equal(wakes.length, 1, "regular ticks do not wake");
   diagnostics.stop();
 });
+
+// Issue #1012: the arrival carries the tick's overdue amount and the last tick's lag and age, separately.
+test("1012: an arrival records the overdue tick, the last tick's lag and its age, in memory only", () => {
+  const f = fixture(), d = f.diagnostics;
+  const idle = d.receive(PONG_FRAME);
+  assert.equal(idle.overdueMs, 0, "an idle clock is not overdue");
+  assert.equal(idle.tickLagMs, undefined, "no tick ran yet");
+  f.clock.time = 1_700; // past the tick's due time; the tick has not run
+  const overdue = d.receive(frame("message.resolve.request"));
+  assert.equal(overdue.overdueMs, 700);
+  assert.equal(overdue.tickAgeMs, undefined);
+  f.clock.time = 3_500; f.clock.fire(); // a tick 2500 ms late
+  const late = d.receive(frame("message.resolve.request"));
+  assert.deepEqual([late.overdueMs, late.tickLagMs, late.tickAgeMs], [0, 2_500, 0]);
+  f.clock.time += 400;
+  const after = d.receive(frame("message.resolve.request"));
+  assert.deepEqual([after.overdueMs, after.tickLagMs, after.tickAgeMs], [0, 2_500, 400]);
+  assert.deepEqual(f.lines, []); assert.deepEqual(f.snapshots, []);
+  d.stop();
+});
