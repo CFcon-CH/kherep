@@ -4,7 +4,7 @@ import type {
   TaskControlErrorCode, TaskControlRegisterBody, TaskControlRegistrationReceiptBody,
 } from "../protocol-task-control.mts";
 import { ensureDir, type NodePaths } from "./config.mts";
-import { getMessage, messageIds, readJson, writeJsonAtomic } from "./inbox.mts";
+import { getMessage, messageIds, readJson, writeJsonAtomic, type InboxRecord } from "./inbox.mts";
 
 type RegistrationRecord = {
   version: 1;
@@ -59,10 +59,16 @@ function nextRegistration(sourceMessageId: string, taskId: string, runtime: "cla
   };
 }
 
-export function ensureDeliveryRegistrations(paths: NodePaths, now: number = Date.now()): void {
+// records: the caller's inbox snapshot (issue #1012, the exchange round's index
+// read); without it the inbox is listed and each record read as it is reached.
+function* deliveries(paths: NodePaths, records?: InboxRecord[]): Generator<[string, InboxRecord["delivery"]]> {
+  if (records) for (const record of records) yield [record.messageId, record.delivery];
+  else for (const id of messageIds(paths.inbox)) yield [id, getMessage(paths.inbox, id)?.delivery];
+}
+
+export function ensureDeliveryRegistrations(paths: NodePaths, now: number = Date.now(), records?: InboxRecord[]): void {
   ensureDir(registrationsDir(paths));
-  for (const sourceMessageId of messageIds(paths.inbox)) {
-    const delivery = getMessage(paths.inbox, sourceMessageId)?.delivery;
+  for (const [sourceMessageId, delivery] of deliveries(paths, records)) {
     if (!delivery) continue;
     const existing = readRegistration(paths, sourceMessageId);
     if (existing?.body.taskId === delivery.taskId && existing.body.runtime === delivery.runtime) continue;

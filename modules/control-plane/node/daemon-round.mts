@@ -11,6 +11,7 @@ import type { InboxIndex } from "./inbox-index.mts";
 import { pollMcpIntents } from "./mcp-local.mts";
 import { loadPolicy } from "./policy.mts";
 import { tallyKind, type RoundTally, type TallyKind } from "./round-tally.mts";
+import { untimed, type RoundTimer } from "./round-timing.mts";
 import type { RunnerDeps } from "./session-runner.mts";
 import { pollTaskControl } from "./task-control-exchange.mts";
 import { pollTasks } from "./task-exchange.mts";
@@ -43,12 +44,19 @@ export interface RoundContext {
   window(window: CodexIntakeWindow | null): void;
   // Inbound items handled since the previous round, by kind (issue #493 D2); take() resets it.
   tally: RoundTally;
+  // Issue #1012: the daemon's round timer; absent in direct callers.
+  timing?: RoundTimer;
 }
 
 export async function exchangeRound(ctx: RoundContext): Promise<void> {
+  const t = ctx.timing ?? untimed;
+  try { await runRound(ctx, t); } finally { t.finish(); }
+}
+
+async function runRound(ctx: RoundContext, t: RoundTimer): Promise<void> {
   if (!ctx.live()) return;
   const { client, paths, runner, log } = ctx;
-  const current = loadPolicy(ctx.policyFile);
+  const current = t.step("policy", () => loadPolicy(ctx.policyFile));
   let applied = current;
   // Issue #890 (retirement R3): no proxy send gate, so the exchange holds every
   // Codex fork proxy answer whatever wake.codexFork says; the Codex queue's relay
@@ -56,26 +64,26 @@ export async function exchangeRound(ctx: RoundContext): Promise<void> {
   const counts: ExchangeCounts = { status: 0, outbox: 0 };
   const exchange = (records?: InboxRecord[]): void => pollExchange(client, paths, ctx.inflight, ctx.send, Date.now(), Math.random,
     undefined, { unreported: (now) => ctx.inbox.unreported(now, records), counts, outboxGate: true });
-  const refreshed = await client.refreshPolicy(applied);
+  const refreshed = await t.step("policy", () => client.refreshPolicy(applied));
   if (!ctx.live()) return;
-  let published = ctx.publishRegistration(refreshed);
-  const records = ctx.inbox.records();
+  let published = t.step("registration", () => ctx.publishRegistration(refreshed));
+  const records = t.step("inbox", () => ctx.inbox.records());
   const round: RunnerDeps = { ...runner, inbox: () => records };
-  observeClaudeDeliveryProgress({ ...round, policy: current });
-  observeCodexTaskProgress(round);
-  exchange(records);
-  pollTasks(client, paths, applied, ctx.requestsInflight, ctx.send);
+  t.step("claude-progress", () => observeClaudeDeliveryProgress({ ...round, policy: current }));
+  t.step("codex-progress", () => observeCodexTaskProgress(round));
+  t.step("exchange", () => exchange(records));
+  t.step("tasks", () => pollTasks(client, paths, applied, ctx.requestsInflight, ctx.send));
   const enabled = current.sessions?.enabled === true && current.sessions.ownTaskControl === true
     && current.sessions.runtimes.length > 0;
-  pollTaskControl(client, paths, ctx.taskControlInflight(), ctx.send, Date.now(), enabled);
-  await pollMcpIntents(client, paths, ctx.mcpInflight(), ctx.send, async () => {
+  t.step("task-control", () => pollTaskControl(client, paths, ctx.taskControlInflight(), ctx.send, Date.now(), enabled, records));
+  await t.step("mcp-intents", () => pollMcpIntents(client, paths, ctx.mcpInflight(), ctx.send, async () => {
     applied = loadPolicy(ctx.policyFile);
     const refreshed = await client.refreshPolicy(applied);
     if (!ctx.live()) return false;
     const sent = ctx.publishRegistration(refreshed);
     published = published && sent;
     return sent;
-  });
+  }));
   if (!ctx.live()) return;
   // Peer messages for ended Codex task sessions resume them (issue #63).
   // Keep runtime mutation serialized while the existing queue lane and
@@ -88,13 +96,15 @@ export async function exchangeRound(ctx: RoundContext): Promise<void> {
     queue: () => pollCodexQueue({ ...runner, policy: applied }, log), defer: ctx.defer, diagnostics: ctx.diagnostics,
     handled: (data) => { const kind = tallyKind(data); windowKinds.set(kind, (windowKinds.get(kind) ?? 0) + 1); }, log }) : null;
   ctx.window(window);
-  try { await pollCodexInbound({ ...runner, policy: applied }, log); }
-  finally { await window?.drain(); ctx.window(null); }
+  await t.step("codex-inbound", async () => {
+    try { await pollCodexInbound({ ...runner, policy: applied }, log); }
+    finally { await window?.drain(); ctx.window(null); }
+  });
   if (!ctx.live()) return;
   // ... and wake idle interactive Codex sessions with a pointer (issue #66).
   // Not awaited: queue runs have their own lane and never block this chain.
   // Issue #444: this round's policy, as the intake window passes it; the fork gate and queue authorization re-read the file.
-  pollCodexQueue({ ...runner, policy: applied }, log);
+  t.step("codex-queue", () => pollCodexQueue({ ...runner, policy: applied }, log));
   for (const [kind, count] of windowKinds) ctx.tally.add(kind, count);
   const { total, summary } = ctx.tally.take();
   if (counts.status + counts.outbox > ROUND_COUNTERS_MIN || total > ROUND_COUNTERS_MIN) {

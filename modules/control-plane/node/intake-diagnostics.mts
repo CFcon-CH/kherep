@@ -4,7 +4,9 @@ import { nodeClock, type NodeClock } from "./node-clock.mts";
 
 // Stable numeric class order in logs and doctor. Never copy an incoming label.
 export const FRAME_CLASSES = ["ping", "pong", "auth", "deliver", "status", "receipt", "resolve", "command", "other", "invalid"] as const;
-export interface FrameArrival { monoMs: number; wallMs: number; kind: number }
+// Issue #1012: at arrival, how far the 1 s tick was overdue (overdueMs), and the lag
+// of the last tick that ran (tickLagMs) with its age (tickAgeMs); none before a first tick.
+export interface FrameArrival { monoMs: number; wallMs: number; kind: number; overdueMs?: number; tickLagMs?: number; tickAgeMs?: number }
 export interface IntakeNumbers {
   monoMs: number; wallMs: number; receiveMs: number; receiveWallMs: number; pongMs: number; pongWallMs: number;
   lagMs: number; maxLagMs: number; appGapMs: number; pending: number;
@@ -56,7 +58,7 @@ export function createIntakeDiagnostics(options: Options) {
   const rx = zeros(), tx = zeros(), enterMs = zeros(), exitMs = zeros();
   let receiveMs = 0, receiveWallMs = 0, pongMs = 0, pongWallMs = 0, appMs = clock.now();
   let lagMs = 0, maxLagMs = 0, due = clock.now() + 1_000, publishedAt = clock.now();
-  let pendingSince: number | null = null, silent = false, sawPong = false, stopped = false;
+  let pendingSince: number | null = null, silent = false, sawPong = false, stopped = false, tickedAt: number | null = null;
   const lastLog = new Map<number, number>();
   const schedule = (): unknown => {
     const timer = clock.schedule(tick, 1_000); clock.unref?.(timer); return timer;
@@ -77,7 +79,7 @@ export function createIntakeDiagnostics(options: Options) {
   const tick = (): void => {
     if (stopped) return;
     const now = clock.now();
-    lagMs = number(now - due); maxLagMs = Math.max(lagMs, maxLagMs);
+    lagMs = number(now - due); maxLagMs = Math.max(lagMs, maxLagMs); tickedAt = now;
     if (lagMs > 5_000) report(2);
     if (lagMs >= PONG_DEADLINE_MS) options.wake?.();
     if (options.pending()) pendingSince ??= now;
@@ -93,7 +95,9 @@ export function createIntakeDiagnostics(options: Options) {
   return {
     // Socket callbacks only update memory. No log, publish, filesystem or await.
     receive(data: string): FrameArrival {
-      const arrival = { monoMs: clock.now(), wallMs: wall(), kind: kind(data) };
+      const monoMs = clock.now();
+      const arrival: FrameArrival = { monoMs, wallMs: wall(), kind: kind(data), overdueMs: number(monoMs - due),
+        ...(tickedAt === null ? {} : { tickLagMs: lagMs, tickAgeMs: number(monoMs - tickedAt) }) };
       receiveMs = number(arrival.monoMs); receiveWallMs = number(arrival.wallMs); rx[arrival.kind]++;
       if (arrival.kind === 1) { pongMs = receiveMs; pongWallMs = receiveWallMs; sawPong = true; }
       else if (arrival.kind !== 0) { appMs = arrival.monoMs; silent = false; }

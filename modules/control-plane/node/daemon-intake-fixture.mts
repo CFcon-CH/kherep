@@ -39,7 +39,7 @@ export interface FakeSocket { index: number; sent: Envelope[]; message(raw: stri
 export interface HarnessOptions {
   policy?: Record<string, unknown>;
   probe?: (runtime: TaskRuntime) => Promise<ProbeResult>;
-  daemonOptions?: { slowLaneMs?: number; intakeSlowMs?: number };
+  daemonOptions?: { slowLaneMs?: number; intakeSlowMs?: number; roundSlowMs?: number };
   livenessSource?: LivenessSource;
 }
 

@@ -40,12 +40,13 @@ const atReplyLimit = (record: InboxRecord): boolean => !automaticReplyDecision(r
 const ids = (records: InboxRecord[]): string[] => records.map((r) => r.messageId);
 
 // Each message is audited once per action, not at every 2-second round.
-// Entries of messages that left the inbox are pruned.
+// Entries of messages that left the inbox are pruned. present: the ids of an
+// inbox read the caller already did (issue #1012); without it the inbox is listed.
 const noted = new Map<string, AutonomyAction>();
-export function pruneNoted(paths: NodePaths): void {
+export function pruneNoted(paths: NodePaths, present?: string[]): void {
   if (noted.size === 0) return;
-  const present = new Set(messageIds(paths.inbox));
-  for (const id of noted.keys()) if (!present.has(id)) noted.delete(id);
+  const kept = new Set(present ?? messageIds(paths.inbox));
+  for (const id of noted.keys()) if (!kept.has(id)) noted.delete(id);
 }
 export function note(paths: NodePaths, now: number, sessionId: string, messageIds: string[], action: AutonomyAction,
   grant?: WakeGrant): void {
@@ -59,17 +60,20 @@ export async function pollCodexInbound(deps: RunnerDeps, log: (line: string) => 
   const tasks = listTasks(deps.paths).filter((record) => record.runtime === "codex" && isPlainSessionId(record.sessionId)
     && !isActive(record) && record.operatorStoppedAt === undefined);
   if (tasks.length === 0) return;
-  pruneNoted(deps.paths);
   // Issue #487: one inbox read serves the routing and every task's selection;
   // it was one full read per ended task. It is read again, before the next
   // task, only after a task acted on due messages (a wake may await a run) or
   // refused one. A failed routing read is retried per task, as before.
+  // Issue #1012: the routing read's ids prune the audit memory; after a failed
+  // read the inbox is listed for it, as before.
   let inbox: InboxRecord[] | null = null;
   try {
     inbox = inboxOf(deps);
+    pruneNoted(deps.paths, ids(inbox));
     const targets = new Set(inbox.filter((r) => r.state === "accepted" || r.state === "offered").map((r) => r.toSession));
     if (!tasks.some((record) => targets.has(record.sessionId!) || targets.has(record.name))) return;
   } catch (error) {
+    pruneNoted(deps.paths);
     log(`kherep-node: could not read inbox for Codex task routing: ${String((error as Error).message ?? error)}`);
   }
   // Only an initially empty round skips the loop. A pending round keeps every

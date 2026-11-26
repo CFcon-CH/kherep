@@ -5,9 +5,10 @@ import path from "node:path";
 import test from "node:test";
 
 import { makeEnvelope, PONG_FRAME } from "../protocol.mts";
-import { AUTH_OK, flush, intakeHarness, statuses } from "./daemon-intake-fixture.mts";
+import { AUTH_OK, flush, intakeHarness, NODE, PEER as PEER_NODE, statuses } from "./daemon-intake-fixture.mts";
+import { ROUND_STEPS } from "./round-timing.mts";
 import { EXCHANGE_INTERVAL_MS } from "./exchange.mts";
-import { markDelivered, type InboxRecord } from "./inbox.mts";
+import { markDelivered, setDeliveryTask, type InboxRecord } from "./inbox.mts";
 
 // Issue #487: the production daemon's exchange round, against a large settled
 // inbox. A round after the first reads no record or receipt; a record a hook
@@ -63,6 +64,43 @@ test("a round after the first reads no record of a 3000-record settled inbox and
   assert.ok(reads() - before <= 10, `the round after a hook write read ${reads() - before} inbox files`);
 });
 
+// Issue #1012: with own task control the delivery registrations use the
+// round's index snapshot; before, every round listed and read each record.
+test("1012: with own task control a round after the first reads no record of a 3000-record inbox and still registers a delivery", async (t) => {
+  const h = await connectedRound(t);
+  const policy = JSON.parse(fs.readFileSync(h.paths.policy, "utf8"));
+  fs.writeFileSync(h.paths.policy, JSON.stringify({ ...policy, sessions: { ...policy.sessions, ownTaskControl: true } }));
+  populate(h.paths.inbox, 3000, () => "delivered");
+  const task = "3f2a1b0c-0000-4000-8000-000000000001";
+  setDeliveryTask(h.paths.inbox, idOf(0), { taskId: task, runtime: "claude" });
+  await h.round();
+  const registration = JSON.parse(fs.readFileSync(path.join(h.paths.taskControl, "registrations", `${idOf(0)}.json`), "utf8"));
+  assert.equal(registration.body.taskId, task, "the delivery record is registered");
+  assert.equal(registration.body.sourceMessageId, idOf(0));
+  assert.deepEqual(fs.readdirSync(path.join(h.paths.taskControl, "registrations")), [`${idOf(0)}.json`], "records without delivery register nothing");
+  const reads = countInboxReads(t, h.paths.inbox);
+  await h.round();
+  t.diagnostic(`second round inbox reads: ${reads()}`);
+  assert.ok(reads() <= 10, `the second round read ${reads()} inbox files`);
+});
+
+// Issue #1012: with the threshold at 0 every round writes its per-step line, metadata only.
+const ROUND_LINE = /^kherep-node: round slow total_ms=\d+ sync_ms=\d+ cpu_ms=\d+ host_busy_pct=(\d+|unknown) skipped=\d+ steps=([a-z-]+:\d+(\+\d+)?\/\d+)(,[a-z-]+:\d+(\+\d+)?\/\d+)*$/;
+test("1012: a slow round logs every step of the round in fixed order, metadata only", async (t) => {
+  const h = await connectedRound(t, { daemonOptions: { roundSlowMs: 0 } });
+  populate(h.paths.inbox, 5, () => "delivered");
+  await h.round();
+  const lines = h.logs.filter((entry) => entry.startsWith("kherep-node: round slow"));
+  assert.equal(lines.length, 1, h.logs.join("\n"));
+  t.diagnostic(lines[0]);
+  assert.match(lines[0], ROUND_LINE);
+  const names = lines[0].replace(/^.* steps=/, "").split(",").map((step) => step.replace(/:.*$/, ""));
+  assert.deepEqual(names, [...ROUND_STEPS]);
+  for (const forbidden of [h.paths.dir, path.basename(h.paths.dir), NODE, PEER_NODE, PEER.session, "synthetic-node", "synthetic-closed-session"]) {
+    assert.equal(lines[0].includes(forbidden), false, forbidden);
+  }
+});
+
 test("a round that sends more than 32 frames logs its counters, a quiet round does not", async (t) => {
   const h = await connectedRound(t);
   populate(h.paths.inbox, 40, () => null);
@@ -109,6 +147,7 @@ test("item 11: 32 handled items log nothing", async (t) => {
   const h = await connectedRound(t);
   await pongs(h, 31); // plus the initial auth.ok: 32
   assert.deepEqual(counterLines(h.logs), []);
+  assert.deepEqual(h.logs.filter((entry) => entry.includes("round slow")), [], "a quiet round stays under the default threshold");
 });
 
 test("items 11 and 12: 33 log the line, and every following round starts from zero", async (t) => {
@@ -134,6 +173,10 @@ test("a round whose Codex queue poll throws carries no window frame into the nex
   fs.mkdirSync(h.paths.tasks, { recursive: true });
   const read = fs.readdirSync;
   let injected = false, thrown = false;
+  // Issue #1012: the round timer's step frames push exchangeRound past the default stack depth of 10.
+  const depth = Error.stackTraceLimit;
+  Error.stackTraceLimit = 50;
+  t.after(() => { Error.stackTraceLimit = depth; });
   t.mock.method(fs, "readdirSync", (...args: Parameters<typeof fs.readdirSync>) => {
     const stack = path.resolve(String(args[0])) === path.resolve(h.paths.tasks) ? new Error().stack ?? "" : "";
     if (!injected && stack.includes("pollCodexInbound")) { injected = true; h.socket().message(receipt(0)); }

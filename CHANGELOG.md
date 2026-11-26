@@ -11,6 +11,16 @@ increments the minor version; every other release increments the patch version.
 
 ### Added
 
+- Attribution for a slow node event loop (#1012), metadata only. An exchange
+  round that takes 2 s (its cadence) or longer logs `kherep-node: round slow`
+  with the wall and CPU time of each step, the process CPU time and how busy
+  the host was (always from 5 s, otherwise at most once every 30 s, counting
+  the rounds not logged). A logged `message.resolve` line also carries the
+  margin when the request arrived (`arrival_margin_ms`), the time the node held
+  it (`held_ms`), how far the event loop's 1 s tick was overdue at arrival
+  (`loop_overdue_ms`) and the lag and age of the last tick that ran
+  (`tick_lag_ms`, `tick_age_ms`).
+
 - Automatic failed-only rerun of CI runs that lost a macOS job to GitHub
   runner capacity (#973). The workflow `.github/workflows/ci-rerun.yml` runs
   `bootstrap/ci-rerun-main.mts` from `main` when a CI run completes, as a sweep
@@ -163,6 +173,12 @@ increments the minor version; every other release increments the patch version.
 
 ### Changed
 
+- Operating rules (`ROUTING.md` for Claude and Codex) and the guarded peer
+  message text: a send refused with `loop-resolution-required` and the
+  diagnostic `target owner resolution timed out` is no hold, so the sending
+  session may send the same message once more, once (#1012, operator decision).
+  Every other refusal and every `loop-held` hold still stops the session.
+
 - `docs/CODEX.md` documents how a normally started Codex Desktop app picks up a
   new model generation: run `node codex/start.mts --prepare-only`, then quit and
   reopen the app. A running app keeps its root model until restart, and after a
@@ -306,6 +322,14 @@ increments the minor version; every other release increments the patch version.
   remove the plugin.
 
 ### Fixed
+
+- The node's exchange round no longer lists and reads the inbox again for the
+  Codex task wake bookkeeping (`pruneNoted` after the routing read of
+  `pollCodexInbound`) and for the task-control delivery registrations (#1012);
+  both use an inbox read the round already did. This removes part of each
+  round's synchronous work: with own task control on, a round over a settled
+  3000-record inbox reads 0 record files instead of 3000. The Codex queue's
+  `pruneNoted` still lists the inbox while its audit memory is not empty.
 
 - `smoke-test.sh` gives `install-transaction.test.sh` 5400 s instead of 1800 s
   by default (#1008). On a loaded Windows host a passing run took 2699 s, past the
