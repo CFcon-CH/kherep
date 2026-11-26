@@ -114,9 +114,11 @@ export function removeExactUnmanagedMcp(
   };
 }
 
-// Full-line comments, the managed markers among them, stay with the blank lines
-// behind them: they are no part of a removed table.
-export function removeMcpTables(config: string, names: string[]): string {
+// A full-line comment in a removed table's region stays, with the blank lines
+// behind it, unless both the table and the comment are inside the managed block:
+// there only the markers stay, because such a comment is no known managed
+// fragment and kept it would make the install refuse the block.
+export function removeMcpTables(config: string, names: string[], block?: { start: string; end: string }): string {
   const patterns = names.map((name) => {
     const escaped = String(name).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     return new RegExp(
@@ -124,13 +126,20 @@ export function removeMcpTables(config: string, names: string[]): string {
     );
   });
   let removing = false;
-  let comment = false;
+  let inside = false;
+  let tableInside = false;
+  let kept = true;
   return tomlLines(config).filter((line) => {
     const content = line.replace(/(?:\r\n|\n|\r)$/, "");
     if (/^\s*(?:\[[^[\]]+\]|\[\[[^[\]]+\]\])\s*(?:#.*)?$/.test(content)) {
       removing = patterns.some((pattern) => pattern.test(content));
+      tableInside = inside;
     }
-    if (content.trim()) comment = content.trimStart().startsWith("#");
-    return !removing || comment;
+    const text = content.trim();
+    if (!text) return !removing || kept;
+    const marker = text === block?.start || text === block?.end;
+    kept = !removing || marker || (text.startsWith("#") && !(inside && tableInside));
+    if (marker) inside = text === block?.start;
+    return kept;
   }).join("");
 }

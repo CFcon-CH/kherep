@@ -381,7 +381,9 @@ backup.
 The Codex installer no longer renders `[mcp_servers.context7]`. An upgrade removes
 the table an earlier install put into the managed block of `config.toml`, together
 with its sub-tables such as a tool approval behind the end marker, and the receipt
-reports `context7` as `removed` under `retiredMcpServers`. Full-line comments stay.
+reports `context7` as `removed` under `retiredMcpServers`. A full-line comment
+between the removed table's lines goes with it inside the block, the managed markers
+excepted, and stays outside it.
 The previous file is in the installation backup. This needs the
 `[mcp_servers.context7]` table in the managed block and none of that name outside it.
 In every other case, a table outside the block or only sub-tables with a dotted or
