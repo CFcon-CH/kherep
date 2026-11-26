@@ -1,11 +1,14 @@
+import { env } from "cloudflare:workers";
 import { runInDurableObject } from "cloudflare:test";
 import { beforeEach, expect, it } from "vitest";
+import { handleApi } from "../src/api.mts";
+import type { Env } from "../src/env.mts";
 import { MessageStore } from "../src/message-store.mts";
 import { MessageLoopStore } from "../src/message-loop-store.mts";
 import { LOOP_FIELDS } from "../src/message-loop-identity.mts";
 import { MESSAGING_CAPABILITY } from "../../protocol-messages.mts";
 import { LOOP_IDLE_MS } from "../../protocol-loop-brake.mts";
-import { FACTS, registry } from "./helpers.mts";
+import { BASE, FACTS, registry } from "./helpers.mts";
 import { pair } from "./message-loop-fixture.mts";
 const query = <T,>(run: (sql: SqlStorage) => T) => runInDurableObject(registry(), (_i, state) => run(state.storage.sql));
 beforeEach(async () => { await query((sql) => { sql.exec("DELETE FROM messages"); sql.exec("DELETE FROM message_tombstones"); sql.exec("DELETE FROM message_loop_pairs"); }); });
@@ -75,16 +78,68 @@ it("dedup does not score; non-novel normalized repeats hold while novel content 
   expect(await query((sql) => sql.exec("SELECT admitted_count FROM message_loop_pairs").one().admitted_count)).toBe(6);
 });
 
-it("256 admissions span roots; concurrent candidates cannot bypass the fuse and queued siblings are refused", async () => {
+it("256 admissions span roots; the next admission rolls to generation 1 without a hold, concurrent candidates included", async () => {
+  // Issue #1016: a full segment starts a new one instead of holding a productive pair.
   const { a, b, send } = await pair();
+  let root = "";
   for (let n = 0; n < 255; n++) {
     const result = await send(a, b, `Synthetic step ${n}`); if (!result.ok) throw new Error(result.error);
     expect(result.status.state).toBe("queued"); await take(a, b, result.status.messageId);
+    if (n === 0) root = result.status.messageId;
   }
   const results = await Promise.all([send(a, b, "Synthetic step255"), send(b, a, "Synthetic step256")]);
-  expect(results.map((r) => r.ok && r.status.state).sort()).toEqual(["queued", "refused"]);
+  expect(results.map((r) => r.ok && r.status.state)).toEqual(["queued", "queued"]);
+  const loops = results.map((r) => r.ok && r.effects.deliveries[0].body.loop);
+  expect(loops.map((l) => l && [l.generation, l.ordinal]).sort()).toEqual([[0, 256], [1, 1]]);
+  expect(await registry().listMessageHolds(10)).toEqual([]);
+  expect((await registry().pendingMessagesFor(b)).deliveries).toHaveLength(1);
+  expect((await registry().pendingMessagesFor(a)).deliveries).toHaveLength(1);
+  // A reply to a generation-0 parent is admitted in generation 1, and the rolled row keeps validating.
+  const reply = await send(b, a, "Synthetic answer to step 0", root); if (!reply.ok) throw new Error(reply.error);
+  expect(reply.status.state).toBe("queued");
+  expect(reply.effects.deliveries[0].body.loop).toMatchObject({ generation: 1, ordinal: 2, depth: 1, threadId: root });
+  expect(await query((sql) => sql.exec("SELECT generation, admitted_count, hold_id FROM message_loop_pairs").one()))
+    .toEqual({ generation: 1, admitted_count: 2, hold_id: null });
+});
+
+it("a third no-progress strike on the segment boundary holds as ack-or-repeat without rolling and stops a queued sibling", async () => {
+  const { a, b, send } = await pair();
+  const first = await send(a, b, "ack"); if (!first.ok) throw new Error(first.error); await take(a, b, first.status.messageId);
+  const sibling = await send(a, b, "ok"); expect(sibling.ok && sibling.status.state).toBe("queued");
+  await query((sql) => sql.exec("UPDATE message_loop_pairs SET admitted_count = 256"));
+  const third = await send(a, b, "received");
+  expect(third.ok && third.status.reason).toMatch(/^loop-held: ack-or-repeat; /);
+  expect(await registry().listMessageHolds(10)).toMatchObject([{ reason: "ack-or-repeat", generation: 0, admittedCount: 256, noProgressCount: 3 }]);
   expect((await registry().pendingMessagesFor(b)).deliveries).toEqual([]);
-  const held = await registry().listMessageHolds(10); expect(held[0]).toMatchObject({ admittedCount: 256, reason: "segment-limit" });
+});
+
+it("strikes survive the segment roll, so volume cannot clear an ack-or-repeat streak", async () => {
+  const { a, b, send } = await pair();
+  const first = await send(a, b, "ack"); if (!first.ok) throw new Error(first.error); await take(a, b, first.status.messageId);
+  await query((sql) => sql.exec("UPDATE message_loop_pairs SET admitted_count = 256"));
+  const second = await send(a, b, "ok"); if (!second.ok) throw new Error(second.error);
+  expect(second.effects.deliveries[0].body.loop).toMatchObject({ generation: 1, ordinal: 1 });
+  await take(a, b, second.status.messageId);
+  const third = await send(a, b, "received");
+  expect(third.ok && third.status.reason).toMatch(/^loop-held: ack-or-repeat; /);
+  expect(await registry().listMessageHolds(10)).toMatchObject([{ reason: "ack-or-repeat", generation: 1, admittedCount: 1, noProgressCount: 3 }]);
+});
+
+it("an existing segment-limit hold still refuses, lists and releases", async () => {
+  const { a, b, send } = await pair();
+  const root = await send(a, b, "Synthetic step 1"); if (!root.ok) throw new Error(root.error); await take(a, b, root.status.messageId);
+  const holdId = crypto.randomUUID();
+  await query((sql) => sql.exec(`UPDATE message_loop_pairs SET hold_id = ?, hold_code = 'segment-limit', trigger_id = ?, held_at = ?,
+    version = version + 1, admitted_count = 256`, holdId, crypto.randomUUID(), Date.now()));
+  const refused = await send(a, b, "Synthetic step 2");
+  expect(refused.ok && refused.status.reason).toBe(`loop-held: segment-limit; hold=${holdId}; operator release required`);
+  const [hold] = await registry().listMessageHolds(10);
+  expect(hold).toMatchObject({ holdId, reason: "segment-limit", generation: 0, admittedCount: 256 });
+  const released = await handleApi(new Request(`${BASE}/api/message-holds/${holdId}/release`, { method: "POST",
+    body: JSON.stringify({ expectedVersion: hold.version }) }), env as Env, "synthetic-verified-operator");
+  expect(released.status).toBe(200);
+  const next = await send(a, b, "Synthetic step 3"); if (!next.ok) throw new Error(next.error);
+  expect(next.effects.deliveries[0].body.loop).toMatchObject({ generation: 1, ordinal: 1 });
 });
 
 it("reference-bound pair cleanup, missing-state generation and capacity fail closed", async () => {
