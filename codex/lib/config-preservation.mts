@@ -223,7 +223,7 @@ export function prepareManagedConfig(config: string, options: ManagedConfigOptio
     // again once the split is undone; any other unknown block still refuses.
     if (!(error instanceof UnknownManagedFragmentError)) throw error;
     // Issue #921: a retired server's tables, which the install removes anyway, hold no lift back.
-    anchored = reanchorSplitManagedBlock(managedConfig.removeMcpTables(config, options.retiredMcpServerNames),
+    anchored = reanchorSplitManagedBlock(managedConfig.removeMcpTables(config, options.retiredMcpServerNames, markers(options)),
       options.startMarker, options.endMarker, error.knownFragments);
     if (!anchored) throw error;
     baseline = anchored.config;
@@ -240,13 +240,17 @@ export function prepareManagedConfig(config: string, options: ManagedConfigOptio
   return result;
 }
 
+function markers(options: ManagedConfigOptions): { start: string; end: string } {
+  return { start: options.startMarker, end: options.endMarker };
+}
+
 // `original` is the config as read, before a re-anchor, for the receipt.
 function prepareAnchoredConfig(config: string, options: ManagedConfigOptions, original = config) {
   const retiredMcpServers = options.retiredMcpServerNames.map((name) => ({
     name,
-    status: managedConfig.removeMcpTables(original, [name]) !== original ? "removed" : "absent",
+    status: managedConfig.removeMcpTables(original, [name], markers(options)) !== original ? "removed" : "absent",
   }));
-  let migrated = managedConfig.removeMcpTables(config, options.retiredMcpServerNames);
+  let migrated = managedConfig.removeMcpTables(config, options.retiredMcpServerNames, markers(options));
   const recoveredMcpServers = new Set<string>();
   const registryProjections = options.registryProjections.map((projection) => {
     if (projection.transport === "http" || projection.transport === "stdio") return projection;
