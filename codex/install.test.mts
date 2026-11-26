@@ -856,8 +856,9 @@ test("install keeps the operator's reasoning effort and reports it", async (t) =
 // rovo table is the wanted state, and the connector table is the operator's.
 const OLD_ROVO_TABLE = '[mcp_servers.rovo]\nenabled = true\nrequired = false\nurl = "https://rovo.example.invalid/mcp"\n'
   + "startup_timeout_sec = 30.0\ntool_timeout_sec = 60.0\n\n";
+const COMMENTED_ROVO_TABLE = OLD_ROVO_TABLE.replace("required = false\n", "required = false\n# operator note on rovo\n");
 const DOCS_HEADER = "[mcp_servers.openaiDeveloperDocs]";
-for (const rovo of ["removed by the host", "still in the block"]) {
+for (const rovo of ["removed by the host", "still in the block", "still in the block with a comment between its keys"]) {
   test(`installs the v2 Atlassian server over an old block with rovo ${rovo}, beside a foreign app table`, (t) => {
     const { root, codexCalls, codexHome, installOptions } = fixture();
     t.after(() => fs.rmSync(root, { recursive: true, force: true }));
@@ -865,7 +866,8 @@ for (const rovo of ["removed by the host", "still in the block"]) {
     install({ ...installOptions, installAtlassianTools: false });
     let old = fs.readFileSync(configTarget, "utf8");
     assert.equal(old.includes("[mcp_servers.atlassian]"), false);
-    if (rovo === "still in the block") old = old.replace(DOCS_HEADER, `${OLD_ROVO_TABLE}${DOCS_HEADER}`);
+    const table = rovo === "still in the block" ? OLD_ROVO_TABLE : COMMENTED_ROVO_TABLE;
+    if (rovo !== "removed by the host") old = old.replace(DOCS_HEADER, `${table}${DOCS_HEADER}`);
     const foreign = "[apps.connector_0000]\nenabled = true\n";
     const seeded = `${old}\n${foreign}`;
     fs.writeFileSync(configTarget, seeded);
@@ -877,13 +879,14 @@ for (const rovo of ["removed by the host", "still in the block"]) {
     assert.equal(occurrences(config, foreign), 1);
     assert.equal(outside(config), outside(seeded), "everything after the managed block, the app table included, is unchanged");
     assert.equal(config.includes("[mcp_servers.rovo]"), false);
+    assert.equal(config.includes("# operator note on rovo"), false, "a comment of the removed table inside the block goes with it");
     assertServiceAccountAtlassian(config, result.targets.registryRuntime, installOptions.atlassianMcpTokenFile);
     assert.ok(config.indexOf("[mcp_servers.atlassian]") < config.indexOf(end));
     assert.equal(result.receipt.pluginMcpServers.find((entry) => entry.name === "atlassian")?.status, "configured");
     assert.deepEqual(result.receipt.atlassianMcp,
       { status: "configured", authentication: "secret-file-bearer", tokenSource: "option" });
     assert.deepEqual(result.receipt.retiredMcpServers.find((entry) => entry.name === "rovo"),
-      { name: "rovo", status: rovo === "still in the block" ? "removed" : "absent" });
+      { name: "rovo", status: rovo === "removed by the host" ? "absent" : "removed" });
     assert.equal(codexCalls.some(({ args }) => args.join(" ").includes("atlassian-rovo")), false);
     assert.equal(fs.readFileSync(install(installOptions).targets.config, "utf8"), config, "a reinstall is idempotent");
 

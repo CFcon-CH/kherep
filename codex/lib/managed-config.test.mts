@@ -191,6 +191,18 @@ test("keeps the comments of a removed table and the blank lines behind them", ()
   }
 });
 
+test("inside the managed block only the markers of a removed table's region stay", () => {
+  const block = { start: CONFIG_START, end: CONFIG_END };
+  const config = [
+    "# operator before", CONFIG_START, "[keep]", "a = 1", "", "[mcp_servers.rovo]", "enabled = true", "# between keys",
+    'url = "https://rovo.example.invalid/mcp"', "", "# after the last key", "", "[mcp_servers.rovo.tools.x]", "# in a sub-table",
+    'approval_mode = "approve"', CONFIG_END, "# behind the end", "", "[mcp_servers.rovo]", "# operator note", "enabled = false", "", "[after]", "",
+  ].join("\n");
+  assert.equal(removeMcpTables(config, ["rovo"], block), [
+    "# operator before", CONFIG_START, "[keep]", "a = 1", "", CONFIG_END, "# behind the end", "", "# operator note", "[after]", "",
+  ].join("\n"));
+});
+
 test("keeps a managed marker line directly behind a removed table", () => {
   const table = '[mcp_servers.claude-baton.tools.x]\napproval_mode = "approve"\n';
   for (const marker of [CONFIG_START, CONFIG_END]) {
