@@ -108,7 +108,7 @@ type Fixture = ReturnType<typeof fixture>;
 function fixture(t: TestContext) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "kherep-plugin-reconcile-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  const installPath = path.join(root, "installed", "alpha");
+  const installPath = path.join(root, "plugins", "cache", "alpha");
   fs.mkdirSync(installPath, { recursive: true });
   const marketplace: Marketplace = {
     name: "main",

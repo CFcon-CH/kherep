@@ -47,6 +47,10 @@ test("the bundled tree carries every declared overlay change", () => {
 
 // Issue #1010. Upstream's executable scripts are called by path from their skills.
 // Git keeps the bit; a Windows checkout does not show it, so the index is read.
+// The list is every bundled file that the upstream Git tree at the revision in
+// THIRD-PARTY-NOTICES.md stores as 100755, read from those trees when the
+// snapshot was taken; caveman 47c61be2d10a stores none of its bundled files so.
+// A refresh compares the upstream trees again and updates the list.
 test("the scripts upstream ships executable are executable here, and no other file is", (t) => {
   const repoRoot = path.resolve(import.meta.dirname, "..", "..");
   if (!fs.existsSync(path.join(repoRoot, ".git"))) return t.skip("not a Git checkout");

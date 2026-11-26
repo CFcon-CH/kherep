@@ -3,7 +3,10 @@
 // differs from the reviewed one gets its marketplace refreshed and one
 // `plugin update`; the re-read state decides what happened. Claude takes no
 // version argument, so a raise lands on whatever the marketplace pins now.
-// Plugins that live outside the Claude home this run installs are never touched.
+// Plugins that live outside the plugin directory of the Claude home this run
+// installs are never touched.
+
+import path from "node:path";
 
 import { ReconcileError, safeString, userPluginEntry, type ClaudeState } from "./plugin-contract.mts";
 import { isRecord } from "./shape.mts";
@@ -72,7 +75,7 @@ export function raiseTargets(state: ClaudeState, reviewed: Map<string, string>, 
   for (const [id, version] of reviewed) {
     const entry = userPluginEntry(state, id);
     if (!entry || !needsRaise(entry.version, version)) continue;
-    if (insideRoot(entry.installPath, claudeHome)) {
+    if (insideRoot(entry.installPath, path.join(claudeHome, "plugins"))) {
       targets.push({ id, marketplace: id.slice(id.indexOf("@") + 1), installed: entry.version, reviewed: version });
     } else foreign.push(id);
   }

@@ -106,6 +106,24 @@ test("a version that is no one-line string is never printed", (t) => {
   assert.doesNotMatch(result.out, /FORGED/);
 });
 
+test("a Claude home above the one Claude uses raises nothing: only its own plugin directory counts", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "kherep-plugin-raise-above-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const entry: PluginEntry = { id: "alpha@main", scope: "user", enabled: true, version: "1.0.0",
+    installPath: path.join(root, "home", ".claude", "plugins", "cache", "alpha") };
+  const state: ClaudeState = { marketplaces: new Map(), plugins: new Map([["alpha@main\0user", entry]]) };
+  const calls: string[][] = [];
+  let out = "";
+  const write = t.mock.method(process.stdout, "write", (text: string) => { out += text; return true; });
+  const actions = { mutate: (args: string[]) => { calls.push(args); return true; }, readState: () => state };
+  for (const home of [root, path.join(root, "home")]) {
+    assert.deepEqual(raisePlugins(state, new Map([["alpha@main", "2.0.0"]]), home, actions), []);
+  }
+  write.mock.restore();
+  assert.deepEqual(calls, []);
+  assert.equal(out.split("not raised, installed outside this Claude home: alpha@main").length, 3);
+});
+
 test("nothing behind means no call and no read; a plugin without a user-scope row is left alone", (t) => {
   const result = run(t, { "alpha@main": "2.0.0" }, {}, { "alpha@main": "2.0.0", "beta@main": "1.0.0" });
   assert.deepEqual([result.failed, result.calls, result.reads, result.out], [[], [], 0, ""]);
