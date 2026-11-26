@@ -67,11 +67,12 @@ export function normalizeTextTree(root: string): void {
 export function snapshot(
   registry: Record<string, unknown>,
   destination: string = targetRoot,
-  source: SnapshotSource = { capabilities, overlay: readOverlay(repoRoot) },
+  given?: SnapshotSource,
 ): SnapshotEntry[] {
   if (fs.existsSync(destination)) {
     throw new Error(`Snapshot target already exists; move it to _deprecated before regenerating: ${destination}`);
   }
+  const source = given ?? { capabilities, overlay: readOverlay(repoRoot) };
   const stage = `${destination}.stage-${process.pid}-${Date.now()}`;
   const plugins: SnapshotEntry[] = [];
   const required = source.capabilities.plugins.filter((entry) => ["agent", "project"].includes(entry.mode));
