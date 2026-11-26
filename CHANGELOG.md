@@ -364,6 +364,22 @@ increments the minor version; every other release increments the patch version.
 
 ### Fixed
 
+- The Worker loop brake no longer holds a productive session pair with
+  `segment-limit` after 256 admissions in one segment (#1016). Two sessions
+  working together through a night never reached the 6 hour idle reset, so
+  the operator had to release the pair by hand. A full segment now rolls over
+  like the idle reset: the next admission advances the generation, resets the
+  segment count and is admitted as ordinal 1. `ack-or-repeat` is checked first,
+  so a third no-progress strike on the boundary still holds, and strikes and
+  the fingerprint window survive the roll. A reply to a parent in the earlier
+  generation is still admitted. `LOOP_SEGMENT`, the `segment-limit` code and
+  its parser stay, so existing holds still list and release. Accepted
+  trade-off: the Worker now stops an autonomous loop only through
+  `ack-or-repeat`; a loop that writes new, non-acknowledgement text in every
+  turn has no Worker-side stop, and the node wake budget limits wakes, not
+  messages into running turns. No protocol, Node or capability change.
+  Operator action: deploy the Worker. Refs #1016
+
 - The node's exchange round no longer lists and reads the inbox again for the
   Codex task wake bookkeeping (`pruneNoted` after the routing read of
   `pollCodexInbound`) and for the task-control delivery registrations (#1012);

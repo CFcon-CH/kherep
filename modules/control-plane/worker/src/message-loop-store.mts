@@ -60,18 +60,20 @@ export class MessageLoopStore {
     for (const r of rows) this.read(String(r.pair_key));
     return rows.length !== 0;
   }
+  // Issues #946 and #1016: a new segment is generation + 1 with count 0; strikes and fingerprints stay.
+  private roll(key: string, r: Row): Row {
+    const generation = Number(r.generation) + 1;
+    if (!Number.isSafeInteger(generation)) throw new Error("loop-state-unavailable");
+    this.sql.exec("UPDATE message_loop_pairs SET generation = ?, admitted_count = 0 WHERE pair_key = ?", generation, key);
+    return this.read(key)!;
+  }
   admit(c: LoopCandidate): { loop: LoopAdmissionV1 } | { reason: string } {
     let r = this.read(c.key);
     if (r?.hold_id) return { reason: loopHeldReason(r.hold_code as LoopHoldCode, String(r.hold_id)) };
     if (c.parentGeneration !== undefined && (!r || c.parentGeneration > Number(r.generation))) return { reason: LOOP_LINEAGE };
     // Issue #946: an unheld pair idle for LOOP_SEGMENT_IDLE_MS starts a new segment. Strikes and fingerprints
     // stay, so ack-or-repeat cannot be bypassed by waiting; held pairs returned above.
-    if (r && Number(r.admitted_count) > 0 && c.now - Number(r.last_activity) >= LOOP_SEGMENT_IDLE_MS) {
-      const generation = Number(r.generation) + 1;
-      if (!Number.isSafeInteger(generation)) throw new Error("loop-state-unavailable");
-      this.sql.exec("UPDATE message_loop_pairs SET generation = ?, admitted_count = 0 WHERE pair_key = ?", generation, c.key);
-      r = this.read(c.key)!;
-    }
+    if (r && Number(r.admitted_count) > 0 && c.now - Number(r.last_activity) >= LOOP_SEGMENT_IDLE_MS) r = this.roll(c.key, r);
     if (!r) {
       const count = Number(this.sql.exec("SELECT COUNT(*) AS n FROM message_loop_pairs").one().n);
       if (count >= LOOP_PAIRS) return { reason: "loop-capacity" };
@@ -81,15 +83,17 @@ export class MessageLoopStore {
     }
     const ring = JSON.parse(String(r.fingerprints)) as string[];
     const strikes = c.signal.acknowledgement || ring.includes(c.signal.fingerprint) ? Number(r.no_progress_count) + 1 : 0;
-    const code = Number(r.admitted_count) >= LOOP_SEGMENT ? "segment-limit" : strikes >= LOOP_STRIKES ? "ack-or-repeat" : null;
-    if (code) {
+    if (strikes >= LOOP_STRIKES) {
       if (Number(r.version) >= Number.MAX_SAFE_INTEGER) throw new Error("loop-state-unavailable");
       const id = crypto.randomUUID();
       this.sql.exec(`UPDATE message_loop_pairs SET hold_id = ?, hold_code = ?, trigger_id = ?, held_at = ?,
         version = version + 1, no_progress_count = ?, last_activity = ? WHERE pair_key = ?`,
-      id, code, c.messageId, c.now, Math.min(strikes, LOOP_STRIKES), c.now, c.key);
-      return { reason: loopHeldReason(code, id) };
+      id, "ack-or-repeat", c.messageId, c.now, Math.min(strikes, LOOP_STRIKES), c.now, c.key);
+      return { reason: loopHeldReason("ack-or-repeat", id) };
     }
+    // Issue #1016: a full segment starts a new one instead of holding the pair. ack-or-repeat was checked first,
+    // so a third no-progress strike on the boundary still holds; "segment-limit" stays only for existing holds.
+    if (Number(r.admitted_count) >= LOOP_SEGMENT) r = this.roll(c.key, r);
     const ordinal = Number(r.admitted_count) + 1;
     this.sql.exec(`UPDATE message_loop_pairs SET admitted_count = ?, no_progress_count = ?, fingerprints = ?, last_activity = ?
       WHERE pair_key = ?`, ordinal, strikes, JSON.stringify([...ring, c.signal.fingerprint].slice(-LOOP_RING)), c.now, c.key);

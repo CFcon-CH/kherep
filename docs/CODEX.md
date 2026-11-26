@@ -643,7 +643,7 @@ independently of that probe. The probe remains bounded to two seconds and cached
 for ten seconds; Windows does not connect to that daemon socket.
 
 The kill switch, full-id authorization or `codexApp` grant, permission-mode check
-and Worker-issued reply-admission checks remain. Legacy paths retain the six-hop limit; guarded paths use pair strikes and the 256-admission segment fuse. CP hint admission and claim do not check or spend
+and Worker-issued reply-admission checks remain. Legacy paths retain the six-hop limit; guarded paths use pair strikes; a full 256-admission segment rolls over without a hold (issue #1016). CP hint admission and claim do not check or spend
 the shared turn budget or spacing. Actual listener wakes and Stop continuations retain their existing
 autonomous-turn gates.
 App-grant decisions retain `"grant": "codexApp"` in the metadata-only wake audit.
@@ -730,7 +730,7 @@ For source changes, run `npm run typecheck` and `npm run test:codex`. Keep skips
 
 ### Guarded Control Plane reply admission
 
-The daemon, wake/resume hooks, native Queue producer, busy hints and fork admission share the same predicate: absent Worker loop metadata retains the legacy depth-six ceiling; present metadata must validate exactly and match the stored authoritative depth. Valid new/new guarded paths can exceed six, subject to all existing owner, permission, task, attempt, generation, kill-switch and wake-budget checks. The Worker holds a session pair after three consecutive bounded ACK/exact-normalized-repeat strikes, or on attempted admission 257 across roots. This is a textual signal, not proof of semantic progress. Peer framing requests information-bearing replies and tells the owner to stop on a hold.
+The daemon, wake/resume hooks, native Queue producer, busy hints and fork admission share the same predicate: absent Worker loop metadata retains the legacy depth-six ceiling; present metadata must validate exactly and match the stored authoritative depth. Valid new/new guarded paths can exceed six, subject to all existing owner, permission, task, attempt, generation, kill-switch and wake-budget checks. The Worker holds a session pair after three consecutive bounded ACK/exact-normalized-repeat strikes; admission 257 of a segment starts a new segment instead of holding (issue #1016). This is a textual signal, not proof of semantic progress. Peer framing requests information-bearing replies and tells the owner to stop on a hold.
 
 The Worker and all consuming node/hook/staged-client artifacts must ship together before advanced capability is advertised. A queued downgrade is refused, and remembered local guarded lineage is deny-only when an older Worker omits metadata. Release is operator-only via the existing Access API, with version checks; it starts no session, sends no message and resets no local turn budget. Derived keyed fingerprints and durable content-free hold retention are documented in the [Control Plane reference](../modules/control-plane/README.md#pair-loop-brake-and-operator-release). Source verification does not establish installed or live behavior.
 

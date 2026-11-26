@@ -78,13 +78,16 @@ it("a held pair idle over 6 h stays held with the same hold and generation", asy
   expect((await pairRow())[0]).toMatchObject({ generation: 0, admitted_count: 2 });
 });
 
-it("256 admissions without a 6 h gap still hold the segment", async () => {
+it("256 admissions without a 6 h gap roll the segment instead of holding (#1016)", async () => {
   for (const idle of [0, LOOP_SEGMENT_IDLE_MS - 60_000]) {
     const { a, b, send } = await pair();
     await take(a, b, sent(await send(a, b, "Synthetic first result")).status.messageId);
     await age(idle, LOOP_SEGMENT);
-    expect(sent(await send(a, b, "Synthetic over the fuse")).status.reason).toMatch(/^loop-held: segment-limit; /);
+    const next = sent(await send(a, b, "Synthetic over the fuse"));
+    expect(next.status.state).toBe("queued");
+    expect(next.effects.deliveries[0].body.loop).toMatchObject({ generation: 1, ordinal: 1 });
   }
+  expect(await registry().listMessageHolds(10)).toEqual([]);
 });
 
 it("a released pair idle over 6 h keeps the release generation; an empty segment is not reset again", async () => {
@@ -100,19 +103,22 @@ it("a released pair idle over 6 h keeps the release generation; an empty segment
   expect(next.effects.deliveries[0].body.loop).toMatchObject({ generation: 1, ordinal: 1 });
 });
 
-it("store boundary: exactly 6 h resets, 1 ms less does not, and generation overflow fails closed", async () => {
+it("store boundary: exactly 6 h resets, 1 ms less does not, a full segment rolls, and generation overflow fails closed", async () => {
   await query((sql) => {
     const store = new MessageLoopStore(sql);
-    const seed = (key: string, generation: number) => sql.exec(`INSERT INTO message_loop_pairs (pair_key, from_node, to_node, generation, version,
-      last_activity, admitted_count, no_progress_count, fingerprints) VALUES (?, 'synthetic-a', 'synthetic-b', ?, 0, 0, ?, 0, '[]')`, key, generation, LOOP_SEGMENT);
+    const seed = (key: string, generation: number, count: number) => sql.exec(`INSERT INTO message_loop_pairs (pair_key, from_node, to_node, generation, version,
+      last_activity, admitted_count, no_progress_count, fingerprints) VALUES (?, 'synthetic-a', 'synthetic-b', ?, 0, 0, ?, 0, '[]')`, key, generation, count);
     const admit = (key: string, now: number, n: number) => store.admit({ key, fromNode: "synthetic-a", toNode: "synthetic-b", messageId: crypto.randomUUID(),
       threadId: crypto.randomUUID(), depth: 0, signal: { fingerprint: n.toString(16).padStart(64, "0"), acknowledgement: false }, now });
-    seed("a".repeat(64), 0); seed("b".repeat(64), Number.MAX_SAFE_INTEGER);
-    expect(admit("a".repeat(64), LOOP_SEGMENT_IDLE_MS - 1, 1)).toMatchObject({ reason: expect.stringMatching(/^loop-held: segment-limit; /) });
-    seed("c".repeat(64), 0);
+    const row = (key: string) => sql.exec("SELECT generation, admitted_count FROM message_loop_pairs WHERE pair_key = ?", key).one();
+    seed("a".repeat(64), 0, 1); seed("c".repeat(64), 0, 1); seed("d".repeat(64), 0, LOOP_SEGMENT);
+    seed("b".repeat(64), Number.MAX_SAFE_INTEGER, 1); seed("e".repeat(64), Number.MAX_SAFE_INTEGER, LOOP_SEGMENT);
+    expect(admit("a".repeat(64), LOOP_SEGMENT_IDLE_MS - 1, 1)).toMatchObject({ loop: { generation: 0, ordinal: 2 } });
     expect(admit("c".repeat(64), LOOP_SEGMENT_IDLE_MS, 2)).toMatchObject({ loop: { generation: 1, ordinal: 1 } });
-    expect(() => admit("b".repeat(64), LOOP_SEGMENT_IDLE_MS, 3)).toThrow("loop-state-unavailable");
-    expect(sql.exec("SELECT generation, admitted_count FROM message_loop_pairs WHERE pair_key = ?", "b".repeat(64)).one())
-      .toEqual({ generation: Number.MAX_SAFE_INTEGER, admitted_count: LOOP_SEGMENT });
+    expect(admit("d".repeat(64), LOOP_SEGMENT_IDLE_MS - 1, 3)).toMatchObject({ loop: { generation: 1, ordinal: 1 } });
+    expect(() => admit("b".repeat(64), LOOP_SEGMENT_IDLE_MS, 4)).toThrow("loop-state-unavailable");
+    expect(row("b".repeat(64))).toEqual({ generation: Number.MAX_SAFE_INTEGER, admitted_count: 1 });
+    expect(() => admit("e".repeat(64), LOOP_SEGMENT_IDLE_MS - 1, 5)).toThrow("loop-state-unavailable");
+    expect(row("e".repeat(64))).toEqual({ generation: Number.MAX_SAFE_INTEGER, admitted_count: LOOP_SEGMENT });
   });
 });
