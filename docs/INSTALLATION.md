@@ -318,7 +318,7 @@ or enabled. A host at the reviewed versions runs no Claude command that changes
 anything and needs no network for this step.
 
 An installation into another `CLAUDE_HOME` raises nothing by default. Even with
-`KHEREP_INSTALL_ALLOW_PLUGIN_RAISE=1`, only plugins whose files lie inside that
+`KHEREP_INSTALL_ALLOW_PLUGIN_RAISE=1`, only plugins whose files lie inside `plugins/` of that
 `CLAUDE_HOME` are raised: the Claude CLI works on the home that `CLAUDE_CONFIG_DIR`
 or the account names, which need not be the one being installed.
 
