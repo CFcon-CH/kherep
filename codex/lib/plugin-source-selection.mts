@@ -17,7 +17,7 @@ function isSelected(component: typeof COMPONENTS[number], directory: string, ent
     return entry.isDirectory()
       && fs.statSync(path.join(directory, entry.name, "SKILL.md"), { throwIfNoEntry: false })?.isFile() === true;
   }
-  return entry.isFile() && (entry.name.endsWith(".md") || component === "commands" && entry.name.endsWith(".toml"));
+  return entry.isFile() && (entry.name.endsWith(".md") || (component === "commands" && entry.name.endsWith(".toml")));
 }
 
 // Both lists hold paths relative to the plugin root, with forward slashes.

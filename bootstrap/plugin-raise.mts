@@ -56,7 +56,8 @@ export function parseVersionManifest(raw: unknown): Map<string, string> {
 }
 
 function isNewer(left: string, right: string): boolean {
-  const [mine, theirs] = [left, right].map((version) => version.split(".").map(Number));
+  const mine = left.split(".").map(Number);
+  const theirs = right.split(".").map(Number);
   const index = mine.findIndex((part, position) => part !== theirs[position]);
   return index >= 0 && mine[index] > theirs[index];
 }
@@ -72,12 +73,15 @@ export function needsRaise(installed: unknown, reviewed: string): boolean {
 export function raiseTargets(state: ClaudeState, reviewed: Map<string, string>, claudeHome: string): RaiseTarget[] {
   const targets: RaiseTarget[] = [];
   const foreign: string[] = [];
+  const pluginRoot = path.join(claudeHome, "plugins");
   for (const [id, version] of reviewed) {
     const entry = userPluginEntry(state, id);
     if (!entry || !needsRaise(entry.version, version)) continue;
-    if (insideRoot(entry.installPath, path.join(claudeHome, "plugins"))) {
-      targets.push({ id, marketplace: id.slice(id.indexOf("@") + 1), installed: entry.version, reviewed: version });
-    } else foreign.push(id);
+    if (!insideRoot(entry.installPath, pluginRoot)) {
+      foreign.push(id);
+      continue;
+    }
+    targets.push({ id, marketplace: id.slice(id.indexOf("@") + 1), installed: entry.version, reviewed: version });
   }
   if (foreign.length > 0) say(`not raised, installed outside this Claude home: ${foreign.join(", ")}`);
   return targets;
@@ -90,8 +94,9 @@ function raised(target: RaiseTarget, state: ClaudeState, ok: boolean): boolean {
     say(`raised plugin ${target.id} from ${before} to ${shown(entry.version)} (reviewed ${target.reviewed})`);
     return true;
   }
-  if (entry && ok) say(`plugin ${target.id} is current at its marketplace (installed ${before}, reviewed ${target.reviewed})`);
-  return entry !== undefined && ok;
+  if (!entry || !ok) return false;
+  say(`plugin ${target.id} is current at its marketplace (installed ${before}, reviewed ${target.reviewed})`);
+  return true;
 }
 
 // Returns what could not be raised. Every target is attempted first, so one
