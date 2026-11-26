@@ -422,7 +422,7 @@ if [[ "$SKIP_DEPS" = "0" ]]; then
     "?$REPO_ROOT/bootstrap/manifest/npm-globals.${KHEREP_PROFILE}.txt" || post_rc=1
   # Issue #1010. An installed plugin that is not at the reviewed version is
   # raised; a candidate home raises nothing (profile.sh), and the raise itself
-  # touches only plugins whose files lie inside this CLAUDE_HOME.
+  # touches only plugins whose files lie inside $CLAUDE_HOME/plugins.
   PLUGIN_RAISE_ARGS=("$REPO_ROOT/bootstrap/manifest/plugin-versions.json" "$CLAUDE_HOME")
   SKIP_PLUGIN_RAISE="$(kherep_install_skip_reason PLUGIN_RAISE)"
   if [[ -n "$SKIP_PLUGIN_RAISE" ]]; then
