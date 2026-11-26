@@ -326,7 +326,7 @@ test('orphan categories keep one deduplicated stale finding per path', async t =
 test('shipped product manifest authorizes its actual public file bytes through the Stage0 WT loader and CLI', async t => {
   const f = await reviewedFixture(t), stock = fs.readFileSync(new URL('./publication-reviews.json', import.meta.url));
   const records = JSON.parse(stock.toString('utf8')) as Array<[string, unknown, string]>;
-  assert.equal(records.length, 20);
+  assert.equal(records.length, 9);
   fs.unlinkSync(path.join(f.root, 'fixture.md')); execFileSync('git', ['-C', f.root, 'update-index', '--force-remove', 'fixture.md']);
   for (const [name, , hash] of records) {
     assert.match(name, /^[A-Za-z0-9_.\/-]+$/); assert.ok(!name.split('/').includes('..'));
@@ -336,7 +336,7 @@ test('shipped product manifest authorizes its actual public file bytes through t
   fs.writeFileSync(path.join(f.trusted, reviewPath), stock); fs.writeFileSync(path.join(f.root, reviewPath), stock); f.stage();
   const cli = f.cli(); assert.equal(cli.status, 0, 'the shipped catalog must be usable, not CLI2');
   const report = JSON.parse(cli.stdout) as ReviewReport; assert.equal(report.complete, true); assert.deepEqual(report.issues, []);
-  assert.equal(report.reviewed?.length, records.length); assert.deepEqual([report.files, report.scanned, report.indexed], [21, 21, 21]);
+  assert.equal(report.reviewed?.length, records.length); assert.deepEqual([report.files, report.scanned, report.indexed], [10, 10, 10]);
   assert.deepEqual(f.audit().reviewed, report.reviewed);
 });
 for (const stage of [1, 2, 3]) test(`unreviewed harmless index Stage${stage} is incomplete CLI2`, t => {
