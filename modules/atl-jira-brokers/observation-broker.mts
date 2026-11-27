@@ -6,7 +6,7 @@ import { createPage, findSpace, getPage, listChildren, listLabels } from './conf
 import { ensureRuntimeLabel } from './confluence-label-cli.mts';
 import { runtimeLabel } from './confluence-runtime-label.mts';
 import { requireResolvableAnchors } from './confluence-related.mts';
-import { semanticProposals } from './confluence-semantic.mts';
+import { semanticFor, type SemanticSearch } from './confluence-semantic.mts';
 import { SCOPES, v2, type ConfluenceSession } from './confluence-contract.mts';
 import type { ObservationBroker, Authority } from './observation-publisher.mts';
 import { ObservationLookupError } from './observation-lookup.mts';
@@ -45,7 +45,7 @@ export function checkedSession(session: ConfluenceSession): ConfluenceSession {
         } };
 }
 export function observationBroker(home: string, context?: ConfluenceContext, options: {
-    semantic?: typeof semanticProposals;
+    semantic?: SemanticSearch;
 } = {}): ObservationBroker & { candidates(input: unknown): Promise<{ text: string; isError: boolean }> } {
     const ctx = context ?? { env: process.env, credEnv: CREDENTIAL, readFile: fs.readFile, fetch: boundedFetch, now: Date.now, session: {} };
     if (ctx.credEnv !== CREDENTIAL)
@@ -56,7 +56,7 @@ export function observationBroker(home: string, context?: ConfluenceContext, opt
         if (await fs.readFile(path.join(home, 'kherep', 'confluence.json'), 'utf8') !== authorityText)
             throw new Error('authority-unavailable');
     };
-    const linking = observationLinking({ session, home, semantic: options.semantic ?? semanticProposals, env: ctx.env,
+    const linking = observationLinking({ session, home, semantic: options.semantic ?? semanticFor(CREDENTIAL, ctx.env), env: ctx.env,
         authority: async () => JSON.parse(await fs.readFile(path.join(home, 'kherep', 'confluence.json'), 'utf8')) as Authority,
         assertAuthorityUnchanged });
     return {

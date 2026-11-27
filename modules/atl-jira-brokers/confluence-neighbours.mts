@@ -12,7 +12,7 @@ import {
   type IndexedPage,
   type SpaceIndex,
 } from "./confluence-related.mts";
-import type { Proposals } from "./confluence-semantic.mts";
+import type { Proposals, SemanticOptions } from "./confluence-semantic.mts";
 import { textFailureLine, textSearch } from "./confluence-text-search.mts";
 import { topicQuery } from "./confluence-topic-query.mts";
 
@@ -22,7 +22,9 @@ export interface NeighbourDeps {
   spaceKey: string;
   log: (line: string) => void;
   logError: (line: string) => void;
-  semantic: (query: string, limit?: number, options?: { spaceKey?: string }) => Promise<Proposals>;
+  // The model backend ranks a pool built from the inventory the caller already
+  // holds (issue #1020); twg reads only spaceKey.
+  semantic: (query: string, limit?: number, options?: SemanticOptions) => Promise<Proposals>;
   // Only the stitching call writes. It is injected rather than imported so the
   // read-only calls cannot reach a write path at all.
   update: (id: string, storage: string, message: string) => Promise<void>;
@@ -57,7 +59,7 @@ export interface RelatedResult {
 export async function findRelated(deps: NeighbourDeps, request: RelatedRequest): Promise<RelatedResult> {
   const index = await spaceIndex(deps.session, deps.spaceId);
   const query = topicQuery(request.title, request.topic);
-  const proposed = await deps.semantic(query, undefined, { spaceKey: deps.spaceKey });
+  const proposed = await deps.semantic(query, undefined, { spaceKey: deps.spaceKey, pool: { session: deps.session, spaceKey: deps.spaceKey, pages: index } });
   const exact = await textSearch(deps.session, deps.spaceKey, request.title);
   const candidates = selectCandidates(index, { id: request.id, title: request.title }, proposalItems(proposed), exact.titles, request.limit ?? 3);
   const failed: string[] = [];
@@ -77,6 +79,8 @@ export async function findRelated(deps: NeighbourDeps, request: RelatedRequest):
 export async function reportRelated(deps: NeighbourDeps, request: RelatedRequest): Promise<number> {
   const { candidates: related, failed, semanticFailed, exactFailed } = await findRelated(deps, request);
   for (const candidate of related) deps.log(`related\t${candidateRow(candidate)}`);
+  // Issue #1020: on stdout, so an exact-only list never reads as "none found".
+  if (semanticFailed) deps.log(`semantic\tunavailable\t${failed[0].replace(/\s+/g, " ")}`);
   deps.log(`count: ${related.length}`);
   if (!failed.length) return 0;
 

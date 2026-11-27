@@ -242,6 +242,16 @@ cmp_file "project/tools/confluence-session.mts" \
   "$HERE/../modules/atl-jira-brokers/confluence-session.mts" "$WS/tools/confluence-session.mts"
 cmp_file "project/tools/confluence-related.mts" \
   "$HERE/../modules/atl-jira-brokers/confluence-related.mts" "$WS/tools/confluence-related.mts"
+cmp_file "project/tools/confluence-model-gates.mts" \
+  "$HERE/../modules/atl-jira-brokers/confluence-model-gates.mts" "$WS/tools/confluence-model-gates.mts"
+cmp_file "project/tools/confluence-model-runner.mts" \
+  "$HERE/../modules/atl-jira-brokers/confluence-model-runner.mts" "$WS/tools/confluence-model-runner.mts"
+cmp_file "project/tools/confluence-semantic-pool.mts" \
+  "$HERE/../modules/atl-jira-brokers/confluence-semantic-pool.mts" "$WS/tools/confluence-semantic-pool.mts"
+cmp_file "project/tools/confluence-semantic-model.mts" \
+  "$HERE/../modules/atl-jira-brokers/confluence-semantic-model.mts" "$WS/tools/confluence-semantic-model.mts"
+cmp_file "project/tools/confluence-semantic-twg.mts" \
+  "$HERE/../modules/atl-jira-brokers/confluence-semantic-twg.mts" "$WS/tools/confluence-semantic-twg.mts"
 cmp_file "project/tools/confluence-page-cli.mts" \
   "$HERE/../modules/atl-jira-brokers/confluence-page-cli.mts" "$WS/tools/confluence-page-cli.mts"
 cmp_file "project/tools/confluence-space-index.mts" \

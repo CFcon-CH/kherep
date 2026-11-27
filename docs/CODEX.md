@@ -245,8 +245,10 @@ rewritten on every install and restored with the install transaction on failure;
 other rule files are left alone. Its single `prefix_rule` allows exactly
 `["node", "<workspace>/tools/atl-confluence.mts", ["search", "get"]]`, with the
 workspace path in forward slashes. These two read-only knowledge lookup verbs run
-outside the sandbox without approval review. Broker `search` also runs
-`twg rovo search` as a child process under the local Teamwork Graph sign-in.
+outside the sandbox without approval review. With the `twg` semantic backend, the Codex default, broker `search` also runs
+`twg rovo search` as a child process under the local Teamwork Graph sign-in;
+with `KHEREP_SEMANTIC_BACKEND=model` it runs `codex exec` for Luna instead
+(issue #1020, see [installation](INSTALLATION.md#semantic-search-backend-1020)).
 The other broker verbs and the Claude broker `atl-confluence-ccoder.mts` do not
 match. A compound shell command such as `x && node ... search` does not match
 this rule; use the broker invocation on its own. The rule does not enable global

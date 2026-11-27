@@ -12,7 +12,7 @@ import { findSpace, getPage, updatePage } from './confluence-content.mts';
 import { existingRelated, findRelated, relatedSection, withRelated, type NeighbourDeps } from './confluence-neighbours.mts';
 import { replaceTags } from './confluence-topic-query.mts';
 import { outgoingIds, requireResolvableAnchors } from './confluence-related.mts';
-import type { semanticProposals } from './confluence-semantic.mts';
+import type { SemanticOptions, SemanticSearch } from './confluence-semantic.mts';
 import { DEFAULT_PER_PAGE, writeApproved, type Approved } from './confluence-stitch.mts';
 import { LinksRefused, pageId, safeId, type Finding } from './observation-policy.mts';
 import type { Authority } from './observation-publisher.mts';
@@ -25,7 +25,7 @@ export interface Linked {
 export interface LinkingContext {
     session: ConfluenceSession;
     home: string;
-    semantic: typeof semanticProposals;
+    semantic: SemanticSearch;
     env: Record<string, string | undefined>;
     authority: () => Promise<Authority>;
     assertAuthorityUnchanged: () => Promise<void>;
@@ -73,8 +73,8 @@ function readReceipt(dir: string, token: string): Receipt | null {
 export function observationLinking(ctx: LinkingContext) {
     const { session } = ctx;
     const now = ctx.now ?? Date.now;
-    const semantic = (query: string, limit?: number, options?: { spaceKey?: string }) =>
-        ctx.semantic(query, limit ?? 25, { env: ctx.env, spaceKey: options?.spaceKey });
+    const semantic = (query: string, limit?: number, options?: SemanticOptions) =>
+        ctx.semantic(query, limit ?? 25, { env: ctx.env, ...options });
     const deps = (spaceId: string, spaceKey: string, errors: string[], log: (line: string) => void, createdId?: string): NeighbourDeps => ({ session, spaceId, spaceKey, semantic,
         log, logError: (line: string) => errors.push(line), update: async (id: string, value: string, message: string) => {
             await ctx.assertAuthorityUnchanged();

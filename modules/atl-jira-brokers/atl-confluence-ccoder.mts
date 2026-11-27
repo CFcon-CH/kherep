@@ -28,7 +28,7 @@ import {
 import { cmdLabels, ensureRuntimeLabel } from "./confluence-label-cli.mts";
 import { cmdList } from "./confluence-list-cli.mts";
 import { requireResolvableAnchors } from "./confluence-related.mts";
-import { semanticProposals } from "./confluence-semantic.mts";
+import { semanticFor } from "./confluence-semantic.mts";
 import { createSession } from "./confluence-session.mts";
 import { bodyOf, cmdDelete, cmdGet, cmdPurge, cmdSelftest, cmdUpdate, printPage, UNKNOWN } from "./confluence-page-cli.mts";
 
@@ -156,7 +156,7 @@ export async function runCli(argv: string[], injected: Injected = {}): Promise<n
     log: injected.log ?? ((line) => console.log(line)),
     logError: injected.logError ?? ((line) => console.error(line)),
     now: injected.now ?? (() => Date.now()),
-    semantic: injected.semantic ?? semanticProposals,
+    semantic: injected.semantic ?? semanticFor(CRED_ENV, injected.env ?? process.env),
     writeOut: injected.writeOut ?? ((chunk) => { process.stdout.write(chunk); }),
     // Fresh per run. That binding is what makes the token cache safe.
     session: {},

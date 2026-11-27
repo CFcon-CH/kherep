@@ -196,6 +196,16 @@ The `research-stop` hook counts a Skill as a Central Brain lookup when its name 
 
 The optional encrypted-secrets phase requires an external bundle and key. Enable `SKIP_SECRETS=0` only after configuring and reviewing the destination.
 
+### Semantic search backend (#1020)
+
+The broker verbs `search`, `related` and `stitch` and the Codex `related_candidates` tool take their semantic proposals from one of two backends, described in the [broker README](../modules/atl-jira-brokers/README.md): `twg` (Rovo search under the operator's Teamwork Graph sign-in) or `model` (the small model of the calling runtime ranks a pool built on the host). The default is per runtime and lives in the installed `confluence-semantic.mts`; this release keeps `twg` for both runtimes. `KHEREP_SEMANTIC_BACKEND=model|twg` overrides it for one process. Requirements of the `model` backend:
+
+- **Claude:** Claude Code 2.1.293 or later, signed in with `claude auth login`; Haiku 5.5 needs that version, and an older CLI fails the search with `run claude update`. Run `claude update` before switching a host to `model`. The broker does not forward `CLAUDE_CODE_OAUTH_TOKEN` to the child; `CLAUDE_CONFIG_DIR` is forwarded.
+- **Codex:** `codex login` with a ChatGPT plan that includes CLI use of GPT-6 Luna (Plus or higher). The Luna id and effort come from the installed model selection; the receipt must match its anchor. The observation server table forwards `KHEREP_SEMANTIC_BACKEND` and `KHEREP_CODEX_BIN`. The pre-build probe found that `codex exec` 0.169.0 still offers the child command and agent tools with every pinned feature disabled and still loads the global `AGENTS.md`; the Codex `model` backend is therefore not proven tool-free and stays off by default.
+- **Cross-runtime case:** the entry file decides the vendor. A Claude session that runs the Codex broker `atl-confluence.mts` gets Luna, and a Codex session that runs `atl-confluence-ccoder.mts` gets Haiku; in both cases page titles and excerpts reach the other vendor through that explicit invocation.
+- **Subscription limits:** with CLI sign-ins the calls count against the plan. An exhausted plan fails every `model` call with a reason; nothing falls back to `twg`.
+- macOS install locations, Keychain access from the child and the behaviour there are UNKNOWN until probed on a macOS host.
+
 ### Control-plane tasks
 
 An enrolled control-plane node can run tasks as Claude Code background sessions (details: [Tasks](../modules/control-plane/README.md#tasks)). The installer changes nothing for this; it stays off until the node's `policy.json` enables it. Prerequisites on the node: the daemon runs (`kherep-node daemon`), and the Claude CLI is installed and signed in for the account the daemon runs as. On Windows the node runs the native `claude.exe` that an npm install ships next to its `claude.cmd` shim; a shim without it cannot receive the task text safely through `cmd.exe`, so starts through it fail with that reason.

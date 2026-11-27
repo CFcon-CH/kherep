@@ -10,12 +10,17 @@ export interface ObservationProjection {
 // one-tool table is the known predecessor the observation installer replaces.
 export const OBSERVATION_TOOLS = ['publish_observations', 'related_candidates'] as const;
 export const PREDECESSOR_OBSERVATION_TOOLS = ['publish_observations'] as const;
-export function renderObservationPublisher(projection: ObservationProjection, node: string, tools: readonly string[] = OBSERVATION_TOOLS): string {
+// Issue #1020: the five env_vars every table before the semantic backend
+// forwarded, frozen so both earlier tables stay recognizable predecessors.
+export const PREDECESSOR_OBSERVATION_ENV_VARS = ['KHEREP_ATL_CRED_FILE_CODEX', 'KHEREP_ATL_SITE', 'KHEREP_PROFILE', 'KHEREP_TWG_BIN', 'NODE_EXTRA_CA_CERTS'] as const;
+export const OBSERVATION_ENV_VARS = [...PREDECESSOR_OBSERVATION_ENV_VARS, 'KHEREP_SEMANTIC_BACKEND', 'KHEREP_CODEX_BIN'] as const;
+export function renderObservationPublisher(projection: ObservationProjection, node: string, tools: readonly string[] = OBSERVATION_TOOLS,
+    envVars: readonly string[] = OBSERVATION_ENV_VARS): string {
     return [`[mcp_servers.${OBSERVATION_SERVER}]`, 'enabled = true', 'required = false',
         `command = ${JSON.stringify(node)}`, `args = [${JSON.stringify(projection.entry)}]`,
         `env = { CODEX_HOME = ${JSON.stringify(projection.home)} }`, 'startup_timeout_sec = 30.0', 'tool_timeout_sec = 600.0',
         `enabled_tools = [${tools.map(tool => JSON.stringify(tool)).join(',')}]`,
-        'env_vars = ["KHEREP_ATL_CRED_FILE_CODEX", "KHEREP_ATL_SITE", "KHEREP_PROFILE", "KHEREP_TWG_BIN", "NODE_EXTRA_CA_CERTS"]'].join('\n');
+        `env_vars = [${envVars.map(name => JSON.stringify(name)).join(', ')}]`].join('\n');
 }
 /** Flat broker import closure, excluding tests and with no dependency on Claude setup. */
 export function observationFiles(repo: string): string[] {

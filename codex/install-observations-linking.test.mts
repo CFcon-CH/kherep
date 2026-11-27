@@ -8,7 +8,7 @@ import { install } from './install.mts';
 import { installObservationPublisher, checkObservationPublisher } from './install-observations.mts';
 import { fixtureModelOptions, legacyModelHome } from './lib/model-policy.fixture.mts';
 import { renderAgent } from './lib/component-render.mts';
-import { PREDECESSOR_OBSERVATION_TOOLS, renderObservationHook, renderObservationPublisher } from './lib/observation-projection.mts';
+import { PREDECESSOR_OBSERVATION_ENV_VARS, PREDECESSOR_OBSERVATION_TOOLS, renderObservationHook, renderObservationPublisher } from './lib/observation-projection.mts';
 import { observationHash, OBSERVATION_SOURCES } from './lib/observation-source.mts';
 const REPO = path.resolve(import.meta.dirname, '..');
 const old = JSON.parse(fs.readFileSync(path.join(REPO, 'codex/parity/observation-linking-predecessor.json'), 'utf8')) as Record<string, string>;
@@ -81,7 +81,7 @@ function fixture(t: { after(fn: () => void): void }) {
     const config = path.join(home, 'config.toml'), entry = { entry: path.join(workspace, 'tools', 'observation-stdio.mts'), home };
     const text = fs.readFileSync(config, 'utf8'), current = renderObservationPublisher(entry, process.execPath);
     assert.equal(text.split(current).length, 2);
-    fs.writeFileSync(config, text.replace(current, renderObservationPublisher(entry, process.execPath, PREDECESSOR_OBSERVATION_TOOLS)));
+    fs.writeFileSync(config, text.replace(current, renderObservationPublisher(entry, process.execPath, PREDECESSOR_OBSERVATION_TOOLS, PREDECESSOR_OBSERVATION_ENV_VARS)));
     targets['config-table'] = config;
     return { root, home, workspace, targets, agentOptions };
 }
