@@ -4,12 +4,13 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
 import { CODEX_DISABLED_FEATURES } from "./confluence-model-gates.mts";
-import { childEnv, claudeArgs, codexArgs, codexEvents, modelCwd, parseClaude, resolveModelCli, spawnModel } from "./confluence-model-runner.mts";
+import { childEnv, claudeArgs, codexArgs, codexEvents, modelCwd, modelCwdCandidates, parseClaude, resolveModelCli, spawnModel, workspaceRoot } from "./confluence-model-runner.mts";
 import { claudeEnvelope, codexStream } from "./semantic-model.fixture.mts";
 
 test("Claude argv: safe mode, an empty tool list, no session file, Haiku at medium effort; no --json-schema, no --bare", () => {
@@ -79,11 +80,28 @@ test("codexEvents: agent message and reasoning pass, any other item is tool use"
 
 test("modelCwd: created empty and reused; a planted file or a path inside the workspace is refused", async () => {
   const tmp = mkdtempSync(path.join(tmpdir(), "kherep-cwd-test-"));
-  const dir = await modelCwd(tmp, path.join(tmp, "elsewhere"));
-  assert.equal(await modelCwd(tmp, path.join(tmp, "elsewhere")), dir);
-  await assert.rejects(modelCwd(tmp, tmp), /inside the workspace/);
+  const dir = await modelCwd([tmp], path.join(tmp, "elsewhere"));
+  assert.equal(await modelCwd([tmp], path.join(tmp, "elsewhere")), dir);
+  await assert.rejects(modelCwd([tmp], tmp), /no model working directory lies outside the workspace/);
   writeFileSync(path.join(dir, "CLAUDE.md"), "planted");
-  await assert.rejects(modelCwd(tmp, path.join(tmp, "elsewhere")), /not empty/);
+  await assert.rejects(modelCwd([tmp], path.join(tmp, "elsewhere")), /not empty/);
+});
+
+test("modelCwd: a session in the home folder falls back to the next candidate; a drive root fails closed", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "kherep-cwd-home-"));
+  const home = path.join(root, "Users", "u"), temp = path.join(home, "AppData", "Local", "Temp"), shared = path.join(root, "ProgramData", "kherep", "u");
+  mkdirSync(temp, { recursive: true });
+  const chosen = await modelCwd([temp, shared], home);
+  assert.equal(chosen, await realpath(path.join(shared, "kherep-model-cwd")), "%TEMP% lies under the home folder, so the ProgramData candidate is used");
+  await assert.rejects(modelCwd([temp, shared], root), /no model working directory lies outside the workspace/, "a drive root contains every candidate");
+  assert.deepEqual(modelCwdCandidates({ ProgramData: "C:\\ProgramData", USERNAME: "u" }, "win32").slice(1), [path.join("C:\\ProgramData", "kherep", "u")]);
+  assert.equal(modelCwdCandidates({ ProgramData: "C:\\ProgramData", USERNAME: "u" }, "darwin").length, 1);
+});
+
+test("workspaceRoot: the git top-level of the working directory, else the directory itself", () => {
+  const repo = path.resolve("/r/repo"), seen = new Set([path.join(repo, ".git")]);
+  assert.equal(workspaceRoot(path.join(repo, "a", "b"), (file) => seen.has(file)), repo);
+  assert.equal(workspaceRoot(path.resolve("/home/u"), () => false), path.resolve("/home/u"));
 });
 
 test("spawnModel: prompt on stdin; on timeout the whole tree is killed and no grandchild survives", async () => {

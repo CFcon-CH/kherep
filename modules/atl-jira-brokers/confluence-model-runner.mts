@@ -3,7 +3,7 @@
 // exact environment allowlist, a fixed empty working directory outside the
 // workspace, the prompt on stdin, a 45 s limit and a process-tree kill.
 import { execFile, spawn } from "node:child_process";
-import { statSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { mkdir, readdir, realpath } from "node:fs/promises";
 import { homedir as osHomedir, tmpdir } from "node:os";
 import path, { posix, win32 } from "node:path";
@@ -82,19 +82,40 @@ export function codexArgs(o: { cwd: string; model: string; effort: string; schem
     "--json", "--output-schema", o.schema, "-o", o.out, "-"];
 }
 
+// The workspace the broker runs in: the git top-level of the working
+// directory, or the directory itself when it is in no repository.
+export function workspaceRoot(start: string = process.cwd(), exists: (file: string) => boolean = existsSync): string {
+  for (let dir = path.resolve(start); ; dir = path.dirname(dir)) {
+    if (exists(path.join(dir, ".git"))) return dir;
+    if (path.dirname(dir) === dir) return path.resolve(start);
+  }
+}
+
+// Where the model directory may live: the temp directory, and on Windows a
+// per-user directory under ProgramData for the case where %TEMP% lies inside
+// the workspace (a session started in the home folder).
+export function modelCwdCandidates(env: Record<string, string | undefined> = process.env, platform: string = process.platform): string[] {
+  const user = (env.USERNAME ?? env.USER ?? "").replace(/[^A-Za-z0-9._-]/g, "_");
+  return platform === "win32" && env.ProgramData && user ? [tmpdir(), path.join(env.ProgramData, "kherep", user)] : [tmpdir()];
+}
+
 // One directory per user, reused, never written to. A file in it could be an
 // AGENTS.md or CLAUDE.md planted as instructions, so it must be empty, and it
-// must lie outside the workspace the broker runs in.
-export async function modelCwd(tmp: string = tmpdir(), workspace: string = process.cwd()): Promise<string> {
-  const dir = path.join(tmp, "kherep-model-cwd");
+// must lie outside the workspace the broker runs in. The first candidate
+// outside the workspace is used; with none, the search does not run.
+export async function modelCwd(candidates: string[] = modelCwdCandidates(), workspace: string = workspaceRoot()): Promise<string> {
+  const root = await realpath(workspace).catch(() => path.resolve(workspace));
+  const outside = (dir: string) => {
+    const relative = path.relative(root, dir);
+    return Boolean(relative) && (relative.startsWith("..") || path.isAbsolute(relative));
+  };
+  const base = candidates.map((candidate) => path.resolve(candidate)).find((candidate) => outside(path.join(candidate, "kherep-model-cwd")));
+  if (!base) throw new Error("no model working directory lies outside the workspace");
+  const dir = path.join(base, "kherep-model-cwd");
   await mkdir(dir, { recursive: true, mode: 0o700 });
   if ((await readdir(dir)).length) throw new Error("the model working directory is not empty");
   const real = await realpath(dir);
-  const root = await realpath(workspace).catch(() => path.resolve(workspace));
-  const relative = path.relative(root, real);
-  if (!relative || (!relative.startsWith("..") && !path.isAbsolute(relative))) {
-    throw new Error("the model working directory lies inside the workspace");
-  }
+  if (!outside(real)) throw new Error("the model working directory lies inside the workspace");
   return real;
 }
 

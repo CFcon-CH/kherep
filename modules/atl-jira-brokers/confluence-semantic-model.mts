@@ -3,7 +3,6 @@
 // returns candidate numbers only; they map back to inventory pages, so it can
 // rank and drop but never invent a page. Nothing is persisted, and a failure is
 // an error with its reason, never a fallback to twg or to the other vendor.
-import { execFile } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -64,9 +63,16 @@ export function validateRanking(text: string, count: number): number[] | null {
   return ranked as number[];
 }
 
-const defaultExec: GateExec = (file, args) => new Promise((resolve, reject) => {
-  execFile(file, args, { timeout: 15_000, windowsHide: true }, (error, stdout) => (error ? reject(error) : resolve({ stdout: String(stdout) })));
-});
+// The version and feature checks start the same binary, so they run like the
+// ranking child: allowlisted environment, the model directory, a tree kill.
+function gateExecFor(spawn: SpawnModel, env: Record<string, string>, cwd: string): GateExec {
+  return async (file, args) => {
+    const result = await spawn({ file, args, env, cwd, stdin: "", timeoutMs: 15_000 });
+    if (result.timedOut) throw new Error("timed out after 15 s");
+    if (result.code !== 0) throw new Error(`exited with code ${result.code}`);
+    return { stdout: result.stdout };
+  };
+}
 
 interface Run { parsed: Parsed; detail: string }
 
@@ -118,8 +124,15 @@ export async function modelProposals(query: string, limit = 25, deps: ModelDeps 
   } catch (error) {
     return fail((error as Error).message);
   }
+  let cwd: string;
+  try {
+    cwd = await modelCwd(deps.tmp ? [deps.tmp] : undefined, deps.workspace);
+  } catch (error) {
+    return fail((error as Error).message);
+  }
+  const childEnvironment = childEnv(runtime, env, deps.platform ?? process.platform);
   const started = now();
-  const exec = deps.gateExec ?? defaultExec;
+  const exec = deps.gateExec ?? gateExecFor(deps.spawn ?? spawnModel(), childEnvironment, cwd);
   const [built, gate] = await Promise.all([buildPool(query, pool), runtime === "claude-code" ? claudeGate(exec, bin) : codexGate(exec, bin)]);
   if ("error" in gate) return fail(gate.error);
   if ("error" in built) return fail(built.error);
@@ -130,14 +143,7 @@ export async function modelProposals(query: string, limit = 25, deps: ModelDeps 
     trace("model=none\tmodel_ms=0");
     return { titles: [], items: [] };
   }
-  let cwd: string;
-  try {
-    cwd = await modelCwd(deps.tmp, deps.workspace);
-  } catch (error) {
-    return fail((error as Error).message);
-  }
   const prompt = promptFor(query, built.entries, limit);
-  const childEnvironment = childEnv(runtime, env, deps.platform ?? process.platform);
   const run = runtime === "claude-code"
     ? await runClaude(deps, bin, childEnvironment, cwd, prompt)
     : await runCodex(deps, bin, childEnvironment, cwd, prompt);

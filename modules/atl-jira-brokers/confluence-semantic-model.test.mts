@@ -102,3 +102,18 @@ test("the gate failing never starts the child", async () => {
   await modelProposals("credential", 3, deps({ spawn: child.spawn, gateExec: fakeGate({ claude: "2.1.289" }).exec }));
   assert.equal(child.runs.length, 0);
 });
+
+test("the version gate runs like the ranking child: allowlisted env, the model directory, never a desktop or API variable", async () => {
+  const child = fakeChild((run) => ({ stdout: run.args[0] === "--version" ? "2.1.332 (Claude Code)" : claudeEnvelope('{"ranked":[1]}') }));
+  const result = await modelProposals("credential", 3, deps({
+    spawn: child.spawn, gateExec: undefined,
+    env: { KHEREP_CLAUDE_BIN: BIN, PATH: "p", CLAUDE_CODE_ENTRYPOINT: "claude-desktop", CLAUDECODE: "1", ANTHROPIC_BASE_URL: "x", ANTHROPIC_API_KEY: "x" },
+  }));
+  assert.equal(result.error, undefined);
+  const [gate, ranking] = child.runs;
+  assert.deepEqual(gate.args, ["--version"]);
+  assert.equal(gate.cwd, ranking.cwd, "the gate runs in the model directory, not the workspace");
+  assert.deepEqual(gate.env, ranking.env);
+  assert.deepEqual(Object.keys(gate.env), ["PATH"]);
+  assert.equal(gate.timeoutMs, 15_000);
+});

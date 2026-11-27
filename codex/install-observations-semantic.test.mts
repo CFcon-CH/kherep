@@ -6,12 +6,14 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { install } from './install.mts';
 import { installObservationPublisher, checkObservationPublisher } from './install-observations.mts';
 import { fixtureModelOptions, legacyModelHome } from './lib/model-policy.fixture.mts';
 import { OBSERVATION_ENV_VARS, OBSERVATION_TOOLS, PREDECESSOR_OBSERVATION_ENV_VARS, PREDECESSOR_OBSERVATION_TOOLS,
     renderObservationPublisher } from './lib/observation-projection.mts';
 const REPO = path.resolve(import.meta.dirname, '..');
+const BASE = 'ba8cf9b9f40bb0c8ff9c5cd636d085db416d17e4';
 const old = JSON.parse(fs.readFileSync(path.join(REPO, 'codex/parity/observation-semantic-backend-predecessor.json'), 'utf8')) as Record<string, string>;
 const source = (relative: string) => fs.readFileSync(path.join(REPO, relative), 'utf8');
 function snapshot(root: string) {
@@ -81,13 +83,22 @@ for (const [label, tools] of [['two-tool (ba8cf9b9)', OBSERVATION_TOOLS], ['one-
         assert.deepEqual(snapshot(f.root), before);
     });
 }
-test('the 952b8e04 bytes of the files the default flip changed are an accepted predecessor', t => {
-    const previous = JSON.parse(fs.readFileSync(path.join(REPO, 'codex/parity/observation-semantic-default-predecessor.json'), 'utf8')) as Record<string, string>;
-    assert.deepEqual(Object.keys(previous).sort(), ['modules/atl-jira-brokers/confluence-semantic-model.mts', 'modules/atl-jira-brokers/confluence-semantic.mts']);
-    const f = fixture(t, OBSERVATION_TOOLS);
-    for (const [relative, bytes] of Object.entries(previous)) fs.writeFileSync(path.join(f.workspace, 'tools', path.basename(relative)), bytes);
-    installObservationPublisher({ codexHome: f.home, workspace: f.workspace });
-    for (const relative of Object.keys(previous)) assert.equal(fs.readFileSync(path.join(f.workspace, 'tools', path.basename(relative)), 'utf8'), source(relative));
+// The ba8cf9b9 state is installed live, so that upgrade path must be complete:
+// every closure file of ba8cf9b9 that changed since must carry its exact bytes.
+const git = (...args: string[]) => execFileSync('git', ['-C', REPO, ...args], { encoding: 'utf8', maxBuffer: 64 << 20 });
+const hasGit = (() => { try { git('cat-file', '-e', `${BASE}^{commit}`); return true; } catch { return false; } })();
+test('the ba8cf9b9 predecessor is byte-exact and covers every closure file changed since', { skip: !hasGit && 'no git history' }, () => {
+    const closure = new Set<string>(), queue = ['observation-stdio.mts'];
+    while (queue.length) {
+        const name = queue.shift()!;
+        if (closure.has(name)) continue;
+        closure.add(name);
+        for (const [, spec] of git('show', `${BASE}:modules/atl-jira-brokers/${name}`).matchAll(/(?:from\s*|import\s*)['"]\.\/([^'"]+\.mts)['"]/g)) queue.push(spec);
+    }
+    const changed = new Set(git('diff', '--name-only', BASE, 'HEAD').split('\n').filter(Boolean));
+    const expected = [...closure].map(name => `modules/atl-jira-brokers/${name}`).filter(relative => changed.has(relative)).sort();
+    assert.deepEqual(Object.keys(old).sort(), expected);
+    for (const [relative, bytes] of Object.entries(old)) assert.equal(bytes, git('show', `${BASE}:${relative}`), relative);
 });
 test('a foreign table still refuses before writes', t => {
     const f = fixture(t, OBSERVATION_TOOLS);
