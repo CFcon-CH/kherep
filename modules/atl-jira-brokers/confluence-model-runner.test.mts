@@ -32,7 +32,7 @@ test("Codex argv: every pinned --disable name, no project doc, effort from the r
   assert.deepEqual(args.slice(-5), ["--output-schema", "s.json", "-o", "o.json", "-"]);
 });
 
-test("child env: exactly the allowlist; desktop and credential variables never pass (Brain page 276430850)", () => {
+test("child env: exactly the allowlist; desktop-started parents (CLAUDE_CODE_ENTRYPOINT=claude-desktop) and credential variables never pass", () => {
   const parent = {
     PATH: "p", SystemRoot: "r", USERPROFILE: "u", TEMP: "t", APPDATA: "a", LOCALAPPDATA: "l",
     CLAUDE_CODE_ENTRYPOINT: "claude-desktop", CLAUDECODE: "1", CLAUDE_CODE_OAUTH_TOKEN: "x", CLAUDE_CODE_SIMPLE: "1",
