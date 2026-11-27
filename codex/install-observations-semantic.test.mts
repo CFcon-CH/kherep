@@ -8,7 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { install } from './install.mts';
 import { installObservationPublisher, checkObservationPublisher } from './install-observations.mts';
-import { fixtureModelOptions } from './lib/model-policy.fixture.mts';
+import { fixtureModelOptions, legacyModelHome } from './lib/model-policy.fixture.mts';
 import { OBSERVATION_ENV_VARS, OBSERVATION_TOOLS, PREDECESSOR_OBSERVATION_ENV_VARS, PREDECESSOR_OBSERVATION_TOOLS,
     renderObservationPublisher } from './lib/observation-projection.mts';
 const REPO = path.resolve(import.meta.dirname, '..');
@@ -36,6 +36,7 @@ function fixture(t: { after(fn: () => void): void }, tools: readonly string[]) {
     fs.writeFileSync(registry, '{"mcpServers":{}}', { mode: 0o600 });
     install({ ...fixtureModelOptions(), codexHome: home, workspace, claudeRegistryFile: registry, claudeConfigDir: path.join(root, 'empty-claude'),
         nodePath: process.execPath, skipPluginRegistration: true, resolveRegistryRuntime: () => ({}), log: () => {}, controlPlaneOutbox: path.join(root, 'outbox') });
+    legacyModelHome(home);
     // The ba8cf9b9 broker bytes of every closure file this change touches; files new in #1020 did not exist then.
     for (const [relative, bytes] of Object.entries(old)) fs.writeFileSync(path.join(workspace, 'tools', path.basename(relative)), bytes);
     const config = path.join(home, 'config.toml'), entry = { entry: path.join(workspace, 'tools', 'observation-stdio.mts'), home };

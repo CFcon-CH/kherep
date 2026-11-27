@@ -123,10 +123,9 @@ in one sentence why. Shared words are not a reason. When in doubt, no: no link i
 exactly `<a href="/wiki/spaces/<spaceKey>/pages/<id>">the title the verb printed</a>`, with the id from that line only. NEVER
 write another page's title as plain prose ("see also X"): it reads like a page that exists. The broker refuses a body whose links
 point outside this space. `count: 0` (exit 0) or no hit on topic: you write no link and say in the body "The related search before
-writing found no page on this topic." - the result of that one search, not a claim about the whole space. A line
-`semantic<TAB>unavailable<TAB><reason>` before `count:` means the semantic half did not run: link on-topic hits as above, but do
-NOT write that sentence; write that the semantic half of the related search did not run and the result is UNKNOWN. Exit code 1: the search
-did not run, that is UNKNOWN: you write NO link and report `OBS-RESULT: failed related search did not run` with the ids.
+writing found no page on this topic." - the result of that one search, not a claim about the whole space. A stdout line
+`semantic<TAB>unavailable<TAB><reason>` means the semantic half did not run: link on-topic hits, but say the result is UNKNOWN,
+not that sentence. Exit code 1: the search did not run, that is UNKNOWN: you write NO link and report `OBS-RESULT: failed related search did not run` with the ids.
 
 After the page exists, link it back: nobody points at it yet. The broker never decides a link; you judge what it found:
 
