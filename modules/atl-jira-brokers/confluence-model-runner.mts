@@ -60,11 +60,12 @@ export function resolveModelCli(runtime: Runtime, lookup: BinaryLookup = {}): st
   }
   const name = platform === "win32" ? `${base}.exe` : base;
   const onPath = String(env.PATH ?? env.Path ?? "").split(paths.delimiter).filter(Boolean).map((entry) => paths.join(entry, name));
-  const installed = platform !== "win32" ? [paths.join(home, ".local", "bin", name)]
-    : runtime === "claude-code"
-      ? [paths.join(env.APPDATA || paths.join(home, "AppData", "Roaming"), "npm", "node_modules", "@anthropic-ai", "claude-code", "bin", name)]
-      : [paths.join(env.LOCALAPPDATA || paths.join(home, "AppData", "Local"), "Programs", "OpenAI", "Codex", "bin", name)];
-  const found = [...onPath, ...installed].find(exists);
+  let installed: string;
+  if (platform !== "win32") installed = paths.join(home, ".local", "bin", name);
+  else if (runtime === "claude-code") {
+    installed = paths.join(env.APPDATA || paths.join(home, "AppData", "Roaming"), "npm", "node_modules", "@anthropic-ai", "claude-code", "bin", name);
+  } else installed = paths.join(env.LOCALAPPDATA || paths.join(home, "AppData", "Local"), "Programs", "OpenAI", "Codex", "bin", name);
+  const found = [...onPath, installed].find(exists);
   if (!found) throw new Error(`${base} not found on ${variable}, PATH or the install location`);
   return found;
 }
@@ -142,8 +143,11 @@ const firstLine = (text: string) => text.split(/\r?\n/).find((line) => line.trim
 // The Claude JSON envelope (probe P4): `result` holds the answer and
 // `modelUsage` names the served model per key. Every key must be a Haiku id; a
 // fallback model is never accepted silently.
+interface ClaudeUsage { inputTokens?: number; outputTokens?: number; cacheCreationInputTokens?: number; cacheReadInputTokens?: number }
+interface ClaudeEnvelope { is_error?: unknown; result?: unknown; subtype?: unknown; api_error_status?: unknown; modelUsage?: Record<string, ClaudeUsage> }
+
 export function parseClaude(result: ChildResult): Parsed {
-  let envelope: { is_error?: unknown; result?: unknown; subtype?: unknown; api_error_status?: unknown; modelUsage?: Record<string, { inputTokens?: number; outputTokens?: number; cacheCreationInputTokens?: number; cacheReadInputTokens?: number }> };
+  let envelope: ClaudeEnvelope;
   try {
     envelope = JSON.parse(result.stdout);
   } catch {

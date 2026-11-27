@@ -73,8 +73,8 @@ interface Run { parsed: Parsed; detail: string }
 async function runClaude(deps: ModelDeps, bin: string, env: Record<string, string>, cwd: string, prompt: string): Promise<Run> {
   const spawn = deps.spawn ?? spawnModel();
   const result = await spawn({ file: bin, args: claudeArgs(RANKING_INSTRUCTION), env, cwd, stdin: prompt, timeoutMs: MODEL_TIMEOUT_MS });
-  if (result.timedOut) return { parsed: { error: `the model timed out after ${MODEL_TIMEOUT_MS / 1000} s` }, detail: "effort=medium" };
-  return { parsed: parseClaude(result), detail: "effort=medium" };
+  const parsed = result.timedOut ? { error: `the model timed out after ${MODEL_TIMEOUT_MS / 1000} s` } : parseClaude(result);
+  return { parsed, detail: "effort=medium" };
 }
 
 async function runCodex(deps: ModelDeps, bin: string, env: Record<string, string>, cwd: string, prompt: string): Promise<Run> {
@@ -145,7 +145,9 @@ export async function modelProposals(query: string, limit = 25, deps: ModelDeps 
   const ranked = validateRanking(run.parsed.text, built.entries.length);
   if (!ranked) return fail("the model output is not a valid ranking");
   trace(`model=${run.parsed.model}\t${run.detail}\tmodel_ms=${now() - pooled}\ttokens=${run.parsed.usage}`);
-  const items = ranked.slice(0, limit).map((n) => built.entries[n - 1])
-    .map((entry) => ({ id: entry.id, title: entry.title, snippet: entry.excerpt }));
+  const items = ranked.slice(0, limit).map((n) => {
+    const entry = built.entries[n - 1];
+    return { id: entry.id, title: entry.title, snippet: entry.excerpt };
+  });
   return { titles: items.map((item) => item.title), items };
 }

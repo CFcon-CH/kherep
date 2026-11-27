@@ -42,10 +42,11 @@ export function titleCandidates(index: SpaceIndex, terms: readonly string[], lim
   const average = docs.reduce((sum, doc) => sum + doc.terms.size, 0) / docs.length || 1;
   const df = new Map<string, number>();
   for (const doc of docs) for (const term of doc.terms) df.set(term, (df.get(term) ?? 0) + 1);
+  const queryTerms = new Set(terms);
   const scored: { page: IndexedPage; score: number }[] = [];
   for (const doc of docs) {
     let score = 0;
-    for (const term of new Set(terms)) {
+    for (const term of queryTerms) {
       if (!doc.terms.has(term)) continue;
       const n = df.get(term) ?? 0;
       const idf = Math.log(1 + (docs.length - n + 0.5) / (n + 0.5));
