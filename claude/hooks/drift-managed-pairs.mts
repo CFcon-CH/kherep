@@ -132,6 +132,8 @@ export function fixedPairs(home: string, workspace: string): ManagedPair[] {
       live: joinPathLike(workspace, "tools/confluence-related.mts"),
       source: "modules/atl-jira-brokers/confluence-related.mts",
     },
+    { live: joinPathLike(workspace, "tools/confluence-page-cli.mts"), source: "modules/atl-jira-brokers/confluence-page-cli.mts" },
+    { live: joinPathLike(workspace, "tools/confluence-space-index.mts"), source: "modules/atl-jira-brokers/confluence-space-index.mts" },
     {
       live: joinPathLike(workspace, "tools/confluence-text-search.mts"),
       source: "modules/atl-jira-brokers/confluence-text-search.mts",

@@ -341,7 +341,7 @@ test("the two Confluence brokers differ only in which runtime they belong to", (
   assert.doesNotMatch(codeOnly(claudeCreate), /bodyOf\(/);
   assert.doesNotMatch([codexImport, codexFlags, codexCreate, codex.rest].join("\n"), /observationCreateBody/);
   assert.match(codexFlags, /oneOf: \[BODY\]/);
-  assert.match(codeOnly(codexCreate), /const value = await bodyOf\(ctx, args\);/);
+  assert.match(codeOnly(codexCreate), /const value = await bodyOf\(ctx, args, fail\);/);
 });
 
 test("the Confluence transport uses the shared credential parser without a Jira broker dependency", () => {

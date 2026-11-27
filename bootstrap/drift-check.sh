@@ -242,6 +242,10 @@ cmp_file "project/tools/confluence-session.mts" \
   "$HERE/../modules/atl-jira-brokers/confluence-session.mts" "$WS/tools/confluence-session.mts"
 cmp_file "project/tools/confluence-related.mts" \
   "$HERE/../modules/atl-jira-brokers/confluence-related.mts" "$WS/tools/confluence-related.mts"
+cmp_file "project/tools/confluence-page-cli.mts" \
+  "$HERE/../modules/atl-jira-brokers/confluence-page-cli.mts" "$WS/tools/confluence-page-cli.mts"
+cmp_file "project/tools/confluence-space-index.mts" \
+  "$HERE/../modules/atl-jira-brokers/confluence-space-index.mts" "$WS/tools/confluence-space-index.mts"
 cmp_file "project/tools/confluence-text-search.mts" \
   "$HERE/../modules/atl-jira-brokers/confluence-text-search.mts" "$WS/tools/confluence-text-search.mts"
 cmp_file "project/tools/confluence-semantic.mts" \
