@@ -117,7 +117,7 @@ test("search through each entry: the Claude entry runs claude, the Codex entry c
   assert.match(claude.err.join("\n"), /semantic search did not run: claude exited with code /);
   const codex = cli("KHEREP_ATL_CRED_FILE_CODEX", { KHEREP_SEMANTIC_BACKEND: "model", KHEREP_CODEX_BIN: process.execPath, KHEREP_TWG_BIN: twgTrap });
   assert.equal(await runCodex(["search", "--space", "KB", "--query", "credential rotation"], codex.injected), 2);
-  assert.match(codex.err.join("\n"), /semantic search did not run: codex feature list is unreadable/);
+  assert.match(codex.err.join("\n"), /semantic search did not run: no tool-free Luna path yet \(issue #1020\)/);
   const missing = cli("KHEREP_ATL_CRED_FILE_CLAUDE", { KHEREP_SEMANTIC_BACKEND: "model", KHEREP_CLAUDE_BIN: path.join(tmpdir(), "absent", "claude.exe"), KHEREP_TWG_BIN: twgTrap });
   assert.equal(await runClaude(["search", "--space", "KB", "--query", "credential rotation"], missing.injected), 2);
   assert.match(missing.err.join("\n"), /KHEREP_CLAUDE_BIN is not an absolute path to an existing file/);

@@ -16,8 +16,11 @@ increments the minor version; every other release increments the patch version.
   space's leaf titles plus one CQL full-text request): Claude Haiku through
   `claude -p` under the Claude broker, Luna through `codex exec` under the
   Codex broker, through the existing CLI sign-ins. `KHEREP_SEMANTIC_BACKEND=
-  model|twg` selects it; the per-runtime default stays `twg` until a runtime
-  passes the comparison. The child has an environment allowlist, an empty
+  model|twg` selects it. Claude defaults to `model` after passing the frozen
+  comparison against twg (20 queries, on-topic top-3 pages 38 vs 32, no
+  errors, model stage median 5 s); Codex stays on `twg`, and its `model` path
+  fails closed without starting a process until a tool-free Luna path exists.
+  The child has an environment allowlist, an empty
   fixed working directory, no session file and a 45 s limit with a tree kill;
   Claude Code below 2.1.293 and an unlisted Codex feature name fail closed.
   `related` prints `semantic<TAB>unavailable<TAB><reason>` when the semantic

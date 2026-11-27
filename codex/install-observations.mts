@@ -95,6 +95,8 @@ function prepareObservationPublisher(options: ObservationInstallOptions) {
     const reasonsPredecessor = JSON.parse(read(path.join(repo, 'codex', 'parity', 'observation-link-reasons-predecessor.json'))) as Record<string, string>;
     // Issue #1020: frozen exact ba8cf9b9 bytes, before the semantic backend dispatcher.
     const semanticPredecessor = JSON.parse(read(path.join(repo, 'codex', 'parity', 'observation-semantic-backend-predecessor.json'))) as Record<string, string>;
+    // Issue #1020: frozen exact 952b8e04 bytes, before the Claude default became the model backend.
+    const semanticDefaultPredecessor = JSON.parse(read(path.join(repo, 'codex', 'parity', 'observation-semantic-default-predecessor.json'))) as Record<string, string>;
     const source = (relative: string) => read(path.join(repo, relative));
     const configFile = path.join(home, 'config.toml'), beforeConfig = read(configFile);
     const start = beforeConfig.indexOf(START), end = beforeConfig.indexOf(END);
@@ -181,7 +183,7 @@ function prepareObservationPublisher(options: ObservationInstallOptions) {
         if (fs.existsSync(file) && read(file) !== source(relative) && read(file) !== predecessor[relative] && read(file) !== lookupPredecessor[relative]
             && read(file) !== headerPredecessor[relative] && read(file) !== prosePredecessor[relative] && read(file) !== scopedPredecessor[relative] && read(file) !== handbackPredecessor[relative]
             && read(file) !== linkingPredecessor[relative] && read(file) !== promotionPredecessor[relative] && read(file) !== reasonsPredecessor[relative]
-            && read(file) !== semanticPredecessor[relative])
+            && read(file) !== semanticPredecessor[relative] && read(file) !== semanticDefaultPredecessor[relative])
             throw new Error('observation-broker-drift');
     }
     // Reverse exactly the validated command-line edits and the optional table insertion.

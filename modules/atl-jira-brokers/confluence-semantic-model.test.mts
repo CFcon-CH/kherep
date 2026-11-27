@@ -50,19 +50,14 @@ test("Claude: the ranked numbers map back to inventory ids, prompt on stdin, tra
   assert.doesNotMatch(d.traces.join("\n"), /credential|Rotating/);
 });
 
-test("Codex: model and effort come from the anchored receipt; the out file is read", async () => {
-  const child = fakeChild((run) => {
-    writeFileSync(run.args[run.args.indexOf("-o") + 1], '{"ranked":[1]}');
-    return { stdout: codexStream() };
-  });
-  const result = await modelProposals("credential", 3, deps({
-    runtime: "codex", spawn: child.spawn, selection: () => ({ model: "gpt-6-luna", effort: "low" }),
-  }));
-  assert.equal(result.error, undefined);
-  assert.deepEqual(result.items?.map((i) => i.id), ["2"]);
-  const args = child.runs[0].args;
-  assert.equal(args[args.indexOf("-m") + 1], "gpt-6-luna");
-  assert.ok(args.includes('model_reasoning_effort="low"'));
+test("Codex fails closed until a tool-free Luna path exists: no gate process, no child, no request", async () => {
+  const child = fakeChild({ stdout: codexStream() });
+  const gate = fakeGate();
+  const { session, specs } = recordingSession();
+  const result = await modelProposals("credential", 3, deps({ runtime: "codex", spawn: child.spawn, gateExec: gate.exec, pool: pool(session),
+    selection: () => ({ model: "gpt-6-luna", effort: "medium" }) }));
+  assert.deepEqual(result, { titles: [], items: [], error: "semantic search did not run: no tool-free Luna path yet (issue #1020)" });
+  assert.deepEqual([child.runs.length, gate.calls.length, specs.length], [0, 0, 0]);
 });
 
 test("a pool with no candidate is a measured empty: no model call, no error", async () => {
@@ -85,13 +80,11 @@ test("golden rule 12 matrix: every failure has a distinct reason and none calls 
   await run("override unusable", { exists: () => false });
   await run("cli too old", { gateExec: fakeGate({ claude: "2.1.289" }).exec });
   await run("version unreadable", { gateExec: fakeGate({ fail: true }).exec });
-  await run("feature not listed", { runtime: "codex", gateExec: fakeGate({ features: ["hooks"] }).exec });
-  await run("receipt mismatch", { runtime: "codex", selection: () => ({ error: "the Codex model-selection receipt does not match its anchor hash" }) });
+  await run("codex not tool-free", { runtime: "codex" });
   await run("cql refused", { pool: pool(refusingSession(403)) });
   await run("timed out", { spawn: fakeChild({ timedOut: true, code: null }).spawn });
   await run("exit code", { spawn: fakeChild({ code: 1, stdout: claudeEnvelope("", "claude-haiku-5-5", { is_error: true, subtype: "error_during_execution" }) }).spawn });
   await run("not haiku", { spawn: fakeChild({ stdout: claudeEnvelope('{"ranked":[1]}', "claude-sonnet-5-5") }).spawn });
-  await run("tool used", { runtime: "codex", selection: () => ({ model: "gpt-6-luna", effort: "medium" }), spawn: fakeChild({ stdout: codexStream(["command_execution"]) }).spawn });
   await run("invalid output", { spawn: fakeChild({ stdout: claudeEnvelope("here you go: [1]") }).spawn });
   const planted = tmp();
   mkdirSync(path.join(planted, "kherep-model-cwd"));
@@ -107,6 +100,5 @@ test("golden rule 12 matrix: every failure has a distinct reason and none calls 
 test("the gate failing never starts the child", async () => {
   const child = fakeChild({ stdout: claudeEnvelope('{"ranked":[1]}') });
   await modelProposals("credential", 3, deps({ spawn: child.spawn, gateExec: fakeGate({ claude: "2.1.289" }).exec }));
-  await modelProposals("credential", 3, deps({ runtime: "codex", spawn: child.spawn, gateExec: fakeGate({ features: [] }).exec }));
   assert.equal(child.runs.length, 0);
 });

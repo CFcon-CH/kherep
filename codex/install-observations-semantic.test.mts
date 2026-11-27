@@ -81,6 +81,14 @@ for (const [label, tools] of [['two-tool (ba8cf9b9)', OBSERVATION_TOOLS], ['one-
         assert.deepEqual(snapshot(f.root), before);
     });
 }
+test('the 952b8e04 bytes of the files the default flip changed are an accepted predecessor', t => {
+    const previous = JSON.parse(fs.readFileSync(path.join(REPO, 'codex/parity/observation-semantic-default-predecessor.json'), 'utf8')) as Record<string, string>;
+    assert.deepEqual(Object.keys(previous).sort(), ['modules/atl-jira-brokers/confluence-semantic-model.mts', 'modules/atl-jira-brokers/confluence-semantic.mts']);
+    const f = fixture(t, OBSERVATION_TOOLS);
+    for (const [relative, bytes] of Object.entries(previous)) fs.writeFileSync(path.join(f.workspace, 'tools', path.basename(relative)), bytes);
+    installObservationPublisher({ codexHome: f.home, workspace: f.workspace });
+    for (const relative of Object.keys(previous)) assert.equal(fs.readFileSync(path.join(f.workspace, 'tools', path.basename(relative)), 'utf8'), source(relative));
+});
 test('a foreign table still refuses before writes', t => {
     const f = fixture(t, OBSERVATION_TOOLS);
     fs.writeFileSync(f.config, fs.readFileSync(f.config, 'utf8').replace('"NODE_EXTRA_CA_CERTS"]', '"NODE_EXTRA_CA_CERTS", "OTHER"]'));

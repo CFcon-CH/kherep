@@ -105,6 +105,10 @@ export async function modelProposals(query: string, limit = 25, deps: ModelDeps 
   const fail = (reason: string): Proposals => ({ titles: [], items: [], error: `semantic search did not run: ${reason}` });
   const { runtime, pool } = deps;
   if (!runtime) return fail("the model backend needs the runtime of the broker entry, and none was bound");
+  // Probe P6 (issue #1020): with every pinned feature disabled the Luna child still
+  // reported command and agent tools, so the Codex runtime fails closed and no
+  // process starts. runCodex stays for the tool-free path that replaces this.
+  if (runtime === "codex") return fail("no tool-free Luna path yet (issue #1020)");
   if (!pool) return fail("the model backend needs the loaded space inventory, and the caller passed none");
   const now = deps.now ?? Date.now;
   const env = deps.env ?? process.env;

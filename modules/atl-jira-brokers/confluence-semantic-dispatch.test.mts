@@ -34,8 +34,8 @@ function deps(over: Partial<SemanticDeps> = {}) {
   return { d, twg, child };
 }
 
-test("the committed defaults are twg for both runtimes until a runtime passes the comparison", () => {
-  assert.deepEqual(DEFAULT_BACKEND, { "claude-code": "twg", codex: "twg" });
+test("the committed defaults: model for Claude (passed the comparison), twg for Codex (no tool-free Luna path yet)", () => {
+  assert.deepEqual(DEFAULT_BACKEND, { "claude-code": "model", codex: "twg" });
 });
 
 test("the default follows the map of the bound runtime, both values injected", async () => {
@@ -53,11 +53,12 @@ test("the default follows the map of the bound runtime, both values injected", a
 });
 
 test("KHEREP_SEMANTIC_BACKEND overrides both ways; any other value is an error; explicit env beats process.env", async () => {
-  const toModel = deps({ runtime: "codex", env: { KHEREP_SEMANTIC_BACKEND: "model", KHEREP_CODEX_BIN: BIN }, selection: () => ({ error: "receipt gone" }) });
+  const toModel = deps({ runtime: "codex", env: { KHEREP_SEMANTIC_BACKEND: "model", KHEREP_CODEX_BIN: BIN } });
   const failed = await semanticSearch("credential", 3, toModel.d);
   assert.equal(failed.backend, "model:codex");
-  assert.equal(failed.error, "semantic search did not run: receipt gone");
+  assert.equal(failed.error, "semantic search did not run: no tool-free Luna path yet (issue #1020)");
   assert.equal(toModel.twg.calls.length, 0, "a model failure never falls back to twg");
+  assert.equal(toModel.child.runs.length, 0, "no codex exec starts");
   const toTwg = deps({ runtime: "claude-code", defaults: { "claude-code": "model", codex: "model" }, env: { KHEREP_SEMANTIC_BACKEND: "twg" } });
   assert.equal((await semanticSearch("credential", 3, toTwg.d)).backend, "twg");
   assert.equal(toTwg.child.runs.length, 0);
@@ -68,7 +69,7 @@ test("KHEREP_SEMANTIC_BACKEND overrides both ways; any other value is an error; 
   const saved = process.env.KHEREP_SEMANTIC_BACKEND;
   process.env.KHEREP_SEMANTIC_BACKEND = "model";
   try {
-    const explicit = deps({ runtime: "claude-code", env: {} });
+    const explicit = deps({ runtime: "claude-code", env: {}, defaults: { "claude-code": "twg", codex: "twg" } });
     assert.equal((await semanticSearch("credential", 3, explicit.d)).backend, "twg", "the injected env decides, not process.env");
   } finally {
     if (saved === undefined) delete process.env.KHEREP_SEMANTIC_BACKEND; else process.env.KHEREP_SEMANTIC_BACKEND = saved;
@@ -76,7 +77,7 @@ test("KHEREP_SEMANTIC_BACKEND overrides both ways; any other value is an error; 
 });
 
 test("a twg failure never starts a model child", async () => {
-  const run = deps({ runtime: "claude-code", exec: async () => { throw new Error("twg missing"); } });
+  const run = deps({ runtime: "codex", exec: async () => { throw new Error("twg missing"); } });
   const result = await semanticSearch("credential", 3, run.d);
   assert.match(result.error ?? "", /^semantic search did not run: twg missing/);
   assert.equal(run.child.runs.length, 0);
@@ -86,9 +87,9 @@ test("semanticFor binds the runtime from the entry's credential variable", async
   const claude = deps({ env: { KHEREP_SEMANTIC_BACKEND: "model", KHEREP_CLAUDE_BIN: BIN, KHEREP_CODEX_BIN: BIN } });
   await semanticFor("KHEREP_ATL_CRED_FILE_CLAUDE")("credential", 3, claude.d);
   assert.equal(claude.child.runs[0].args[0], "-p");
-  const codex = deps({ env: { KHEREP_SEMANTIC_BACKEND: "model", KHEREP_CLAUDE_BIN: BIN, KHEREP_CODEX_BIN: BIN }, selection: () => ({ model: "gpt-6-luna", effort: "medium" }) });
-  await semanticFor("KHEREP_ATL_CRED_FILE_CODEX")("credential", 3, codex.d);
-  assert.equal(codex.child.runs[0].args[0], "exec");
+  const codex = deps({ env: { KHEREP_SEMANTIC_BACKEND: "model", KHEREP_CLAUDE_BIN: BIN, KHEREP_CODEX_BIN: BIN } });
+  const codexResult = await semanticFor("KHEREP_ATL_CRED_FILE_CODEX")("credential", 3, codex.d);
+  assert.deepEqual([codexResult.backend, codexResult.error, codex.child.runs.length], ["model:codex", "semantic search did not run: no tool-free Luna path yet (issue #1020)", 0]);
   assert.throws(() => semanticFor("SOMETHING_ELSE"), /Cannot tell the runtime/);
   const unbound = await semanticSearch("credential", 3, { ...deps().d, env: { KHEREP_SEMANTIC_BACKEND: "model" } });
   assert.equal(unbound.error, "semantic search did not run: the model backend needs the runtime of the broker entry, and none was bound");

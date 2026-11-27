@@ -65,8 +65,10 @@ export type SemanticBackend = "model" | "twg";
 
 // The default per runtime. Each value is set from that runtime's comparison
 // against twg (issue #1020): passed = "model", not passed or not run = "twg".
+// Claude passed all five criteria on 2026-11-27 (N = 20, P3 38 vs 32); Codex
+// has no tool-free Luna path yet and stays on twg.
 // Versioned and installed like every broker file; no host setting carries it.
-export const DEFAULT_BACKEND: Readonly<Record<Runtime, SemanticBackend>> = { "claude-code": "twg", codex: "twg" };
+export const DEFAULT_BACKEND: Readonly<Record<Runtime, SemanticBackend>> = { "claude-code": "model", codex: "twg" };
 
 export interface SemanticDeps extends TwgDeps, ModelDeps {
   defaults?: Readonly<Record<Runtime, SemanticBackend>>;

@@ -247,7 +247,8 @@ other rule files are left alone. Its single `prefix_rule` allows exactly
 workspace path in forward slashes. These two read-only knowledge lookup verbs run
 outside the sandbox without approval review. With the `twg` semantic backend, the Codex default, broker `search` also runs
 `twg rovo search` as a child process under the local Teamwork Graph sign-in;
-with `KHEREP_SEMANTIC_BACKEND=model` it runs `codex exec` for Luna instead
+`KHEREP_SEMANTIC_BACKEND=model` fails closed under Codex until a tool-free
+Luna path exists
 (issue #1020, see [installation](INSTALLATION.md#semantic-search-backend-1020)).
 The other broker verbs and the Claude broker `atl-confluence-ccoder.mts` do not
 match. A compound shell command such as `x && node ... search` does not match
