@@ -15,15 +15,19 @@ Before reading sources or dispatching work, classify whether the subject may con
 
 Model the subject as a decision tree. Ask only questions whose prerequisites are settled. Group independent questions into one round, wait for answers, then recompute the open frontier.
 
-Use this format when it helps:
+Ask every round through the runtime's interactive question tool (in Claude Code: `AskUserQuestion`), never as a list of questions in the chat text. One call holds at most four questions; a larger round becomes several calls. Each question:
+
+- stands on its own, because the user may see only the question dialog;
+- offers two to four concrete alternatives, not an open "what do you think";
+- puts the recommended option first and marks it `(Recommended)`, with the one-sentence reason in its description.
+
+Recommendations are required when there is enough evidence to make one. Clearly label uncertainty. Only when the runtime has no interactive question tool, fall back to this text format:
 
 ```text
 Q1 - Short title
 Question with concrete alternatives.
 Recommendation: preferred option and one-sentence reason.
 ```
-
-Recommendations are required when there is enough evidence to make one. Clearly label uncertainty.
 
 ## Measure facts, ask for decisions
 
