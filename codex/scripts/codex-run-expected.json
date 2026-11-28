@@ -21,7 +21,8 @@
       { "name": "metadata app-server closes its exact owned process group after catalog success", "reason": null },
       { "name": "metadata deadline kills the owned server without any real Codex or auth call", "reason": null },
       { "name": "the POSIX start entry reads a real fixture catalog, prepares or launches, and reports launch failure", "reason": null },
-      { "name": "resolveWorkspace keeps a POSIX workspace on a POSIX host", "reason": null }
+      { "name": "resolveWorkspace keeps a POSIX workspace on a POSIX host", "reason": null },
+      { "name": "the ba8cf9b9 predecessor is byte-exact and covers every closure file changed since", "reason": "no git history" }
     ],
     "linux": [
       { "name": "codex execpolicy loads the Windows launcher rule and allows only msg subcommands", "reason": "codex is not on PATH" },
@@ -32,7 +33,8 @@
       { "name": "native selection rejects Windows-unrepresentable bindings without changing old three-field compatibility", "reason": null },
       { "name": "native CA path survives the actual Windows command shell", "reason": null },
       { "name": "every new native command argument rejects Windows expansion bytes before emission", "reason": null },
-      { "name": "resolveWorkspace turns an MSYS drive path into the Windows drive", "reason": null }
+      { "name": "resolveWorkspace turns an MSYS drive path into the Windows drive", "reason": null },
+      { "name": "the ba8cf9b9 predecessor is byte-exact and covers every closure file changed since", "reason": "no git history" }
     ]
   }
 }
