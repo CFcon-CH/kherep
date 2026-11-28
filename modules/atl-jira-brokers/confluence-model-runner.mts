@@ -4,7 +4,7 @@
 // workspace, the prompt on stdin, a 45 s limit and a process-tree kill.
 import { execFile, spawn } from "node:child_process";
 import { existsSync, statSync } from "node:fs";
-import { mkdir, readdir, realpath } from "node:fs/promises";
+import { lstat, mkdir, readdir, realpath } from "node:fs/promises";
 import { homedir as osHomedir, tmpdir } from "node:os";
 import path, { posix, win32 } from "node:path";
 
@@ -113,6 +113,16 @@ export async function modelCwd(candidates: string[] = modelCwdCandidates(), work
   if (!base) throw new Error("no model working directory lies outside the workspace");
   const dir = path.join(base, "kherep-model-cwd");
   await mkdir(dir, { recursive: true, mode: 0o700 });
+  // The directory may already exist: under a shared /tmp another user could have
+  // made it, writable for them or as a link to one they own, and fill it after
+  // the emptiness check. Only a plain directory this user owns, that nobody
+  // else may write to, is used. Windows reports no owner here; there the
+  // per-user temp directory is the first candidate.
+  const info = await lstat(dir);
+  if (!info.isDirectory()) throw new Error("the model working directory is not a plain directory");
+  if (typeof process.getuid === "function" && (info.uid !== process.getuid() || (info.mode & 0o022) !== 0)) {
+    throw new Error("the model working directory is not private to this user");
+  }
   if ((await readdir(dir)).length) throw new Error("the model working directory is not empty");
   const real = await realpath(dir);
   if (!outside(real)) throw new Error("the model working directory lies inside the workspace");

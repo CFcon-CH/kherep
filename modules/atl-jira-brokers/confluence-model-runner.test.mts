@@ -3,7 +3,7 @@
 // process-tree kill on timeout.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
 import { realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -85,6 +85,17 @@ test("modelCwd: created empty and reused; a planted file or a path inside the wo
   await assert.rejects(modelCwd([tmp], tmp), /no model working directory lies outside the workspace/);
   writeFileSync(path.join(dir, "CLAUDE.md"), "planted");
   await assert.rejects(modelCwd([tmp], path.join(tmp, "elsewhere")), /not empty/);
+});
+
+test("modelCwd: a link in place of the directory, or one others may write to, is refused", async () => {
+  const linked = mkdtempSync(path.join(tmpdir(), "kherep-cwd-link-")), target = mkdtempSync(path.join(tmpdir(), "kherep-cwd-target-"));
+  symlinkSync(target, path.join(linked, "kherep-model-cwd"), "junction");
+  await assert.rejects(modelCwd([linked], path.join(linked, "elsewhere")), /not a plain directory/);
+  // Windows reports no owner or mode bits, so the second half is POSIX only.
+  if (process.platform === "win32") return;
+  const open = mkdtempSync(path.join(tmpdir(), "kherep-cwd-open-"));
+  chmodSync(await modelCwd([open], path.join(open, "elsewhere")), 0o777);
+  await assert.rejects(modelCwd([open], path.join(open, "elsewhere")), /not private to this user/);
 });
 
 test("modelCwd: a session in the home folder falls back to the next candidate; a drive root fails closed", async () => {
