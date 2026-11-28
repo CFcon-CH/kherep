@@ -10,7 +10,7 @@ import path from "node:path";
 import test from "node:test";
 
 import { CODEX_DISABLED_FEATURES } from "./confluence-model-gates.mts";
-import { childEnv, claudeArgs, codexArgs, codexEvents, modelCwd, modelCwdCandidates, parseClaude, resolveModelCli, spawnModel, workspaceRoot } from "./confluence-model-runner.mts";
+import { childEnv, claudeArgs, codexArgs, codexEvents, modelCwd, modelCwdCandidates, parseClaude, resolveModelCli, spawnModel, taskkillPath, workspaceRoot } from "./confluence-model-runner.mts";
 import { claudeEnvelope, codexStream } from "./semantic-model.fixture.mts";
 
 test("Claude argv: safe mode, an empty tool list, no session file, Haiku at medium effort; no --json-schema, no --bare", () => {
@@ -132,4 +132,10 @@ test("spawnModel: prompt on stdin; on timeout the whole tree is killed and no gr
   }
   if (alive) spawnSync(process.platform === "win32" ? "taskkill" : "kill", process.platform === "win32" ? ["/PID", String(pid), "/F"] : ["-9", String(pid)]);
   assert.equal(alive, false, "the grandchild survived the tree kill");
+});
+
+test("taskkill runs by its absolute System32 path, never through a PATH lookup", () => {
+  assert.equal(taskkillPath({ SystemRoot: String.raw`D:\Win` }), String.raw`D:\Win\System32\taskkill.exe`);
+  assert.equal(taskkillPath({ WINDIR: String.raw`E:\Windows` }), String.raw`E:\Windows\System32\taskkill.exe`);
+  assert.equal(taskkillPath({}), String.raw`C:\Windows\System32\taskkill.exe`);
 });

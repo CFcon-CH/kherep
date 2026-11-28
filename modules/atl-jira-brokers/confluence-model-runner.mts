@@ -134,10 +134,15 @@ export interface ChildRun { file: string; args: string[]; env: Record<string, st
 export type SpawnModel = (run: ChildRun) => Promise<ChildResult>;
 export type KillTree = (pid: number) => void;
 
-// Windows: taskkill /T ends the child's helpers too. Elsewhere the child leads
-// its own process group, and the group is signalled.
+// Windows: taskkill /T ends the child's helpers too, started by its absolute
+// System32 path so no PATH entry decides which binary runs. Elsewhere the
+// child leads its own process group, and the group is signalled.
+export function taskkillPath(env: Record<string, string | undefined> = process.env): string {
+  return win32.join(env.SystemRoot || env.WINDIR || String.raw`C:\Windows`, "System32", "taskkill.exe");
+}
+
 export const killTree: KillTree = (pid) => {
-  if (process.platform === "win32") execFile("taskkill", ["/PID", String(pid), "/T", "/F"], () => {});
+  if (process.platform === "win32") execFile(taskkillPath(), ["/PID", String(pid), "/T", "/F"], () => {});
   else { try { process.kill(-pid, "SIGKILL"); } catch { /* already gone */ } }
 };
 
