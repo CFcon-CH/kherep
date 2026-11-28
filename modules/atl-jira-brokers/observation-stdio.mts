@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 /** Local MCP surface: one bounded publication tool and one read-only candidate search, no arbitrary broker/CLI. */
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { codexHome } from './confluence-model-gates.mts';
 import { publishObservations } from './observation-publisher.mts';
 import { observationBroker } from './observation-broker.mts';
 import { invalidRequest, observationRequest } from './observation-policy.mts';
@@ -147,7 +147,7 @@ export async function serveObservations(input: AsyncIterable<Buffer | string>, w
 async function main() {
     if (process.argv.length !== 2)
         throw new Error('invalid-request');
-    const home = path.resolve(process.env.CODEX_HOME || path.join(os.homedir(), '.codex'));
+    const home = codexHome(process.env);
     // Lazy broker construction preserves the empty-finding zero-I/O contract.
     await serveObservations(process.stdin, line => process.stdout.write(line), async (request) => {
         const validated = observationRequest(request);

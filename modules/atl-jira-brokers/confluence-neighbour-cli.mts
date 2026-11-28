@@ -9,7 +9,7 @@ import { ConfluenceError } from "./confluence-contract.mts";
 import { findSpace, getPageBody, listChildren, listLabels, movePage, updatePage } from "./confluence-content.mts";
 import { reportContext, reportOrphans, reportRelated, type NeighbourDeps } from "./confluence-neighbours.mts";
 import { spaceIndex } from "./confluence-related.mts";
-import type { Proposals } from "./confluence-semantic.mts";
+import type { Proposals, SemanticOptions } from "./confluence-semantic.mts";
 import { createSession, siteOrigin, type ConfluenceContext } from "./confluence-session.mts";
 import { stitchCandidates, stitchDecisions, stitchSweep } from "./confluence-stitch.mts";
 
@@ -18,7 +18,7 @@ export interface NeighbourCliContext extends ConfluenceContext {
   logError: (line: string) => void;
   // The only dependency that reaches outside the Confluence API. Injected so a
   // test never spawns a process and a host without the tool fails loudly.
-  semantic: (query: string, limit?: number, options?: { spaceKey?: string }) => Promise<Proposals>;
+  semantic: (query: string, limit?: number, options?: SemanticOptions) => Promise<Proposals>;
   // The payload channel: stdout, written as is. Only get --body-only uses it.
   writeOut: (chunk: string) => void;
   // Creates a new file and fails on an existing one. Only stitch --out uses it.
@@ -141,15 +141,17 @@ export async function cmdSearch(ctx: NeighbourCliContext, args: NeighbourArgs): 
     const index = await spaceIndex(deps.session, deps.spaceId);
     // Issue #315: one ranked twg page of at most 100 proposals and no total.
     const asked = Math.min(Math.max(limit, 25), 100);
-    const proposed = await deps.semantic(query, asked);
+    const proposed = await deps.semantic(query, asked, { pool: { session: deps.session, spaceKey: deps.spaceKey, pages: index } });
     if (proposed.error) {
       ctx.logError(proposed.error);
       throw new ConfluenceError("Nothing was searched, so nothing was found. This result is UNKNOWN, not zero.");
     }
     const hits = new Map<string, string>();
     let more = false; // a further leaf page of the space matched beyond --limit
-    for (const title of proposed.titles) {
-      const page = index.byTitle.get(title.trim().toLowerCase());
+    // Issue #1020: by page id first, so a renamed page is still found.
+    const items = proposed.items ?? proposed.titles.map((title) => ({ id: "", title }));
+    for (const item of items) {
+      const page = (item.id && index.byId.get(item.id)) || index.byTitle.get(item.title.trim().toLowerCase());
       if (!page || index.parents.has(page.id) || hits.has(page.id)) continue;
       if (hits.size >= limit) { more = true; break; }
       hits.set(page.id, page.title);
@@ -161,7 +163,7 @@ export async function cmdSearch(ctx: NeighbourCliContext, args: NeighbourArgs): 
         .catch(() => "evidence UNKNOWN - labels not readable");
       ctx.log(`hit\t${id}\t${title}\t${evidence}\t${base}/${id}`);
     }
-    ctx.log(`truncated: ${more || proposed.titles.length >= asked || limit > asked}`);
+    ctx.log(`truncated: ${more || items.length >= asked || limit > asked}`);
     ctx.log(`count: ${hits.size}`);
     ctx.log(`status: ${hits.size ? "hit" : "no match"}`);
     return hits.size ? 0 : 1;

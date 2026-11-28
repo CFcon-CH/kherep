@@ -11,6 +11,23 @@ increments the minor version; every other release increments the patch version.
 
 ### Added
 
+- Semantic search backend `model` beside `twg` (#1020). The small model of the
+  calling runtime ranks a candidate pool built on the host (BM25 over the
+  space's leaf titles plus one CQL full-text request): Claude Haiku through
+  `claude -p` under the Claude broker, Luna through `codex exec` under the
+  Codex broker, through the existing CLI sign-ins. `KHEREP_SEMANTIC_BACKEND=
+  model|twg` selects it. Claude defaults to `model` after passing the frozen
+  comparison against twg (20 queries, on-topic top-3 pages 38 vs 32, no
+  errors, model stage median 5 s); Codex stays on `twg`, and its `model` path
+  fails closed without starting a process until a tool-free Luna path exists.
+  The child has an environment allowlist, an empty
+  fixed working directory, no session file and a 45 s limit with a tree kill;
+  Claude Code below 2.1.293 and an unlisted Codex feature name fail closed.
+  `related` prints `semantic<TAB>unavailable<TAB><reason>` when the semantic
+  half did not run, and `claude-obs` then reports UNKNOWN instead of "found no
+  page". `search` matches a hit by page id first. The Codex observation table
+  forwards `KHEREP_SEMANTIC_BACKEND` and `KHEREP_CODEX_BIN`; both earlier
+  tables upgrade in place.
 - Attribution for a slow node event loop (#1012), metadata only. An exchange
   round that takes 2 s (its cadence) or longer logs `kherep-node: round slow`
   with the wall and CPU time of each step, the process CPU time and how busy
@@ -199,6 +216,11 @@ increments the minor version; every other release increments the patch version.
 
 ### Changed
 
+- `atl-confluence.mts`, `atl-confluence-ccoder.mts` and
+  `confluence-related.mts` are split below the file-size limit: the shared page
+  verbs move to `confluence-page-cli.mts`, the space inventory to
+  `confluence-space-index.mts` (re-exported), the twg search to
+  `confluence-semantic-twg.mts` (#1020). No behaviour change.
 - Operating rules (`ROUTING.md` for Claude and Codex) and the guarded peer
   message text: a send refused with `loop-resolution-required` and the
   diagnostic `target owner resolution timed out` is no hold, so the sending

@@ -33,7 +33,7 @@ export const DEFAULT_PER_PAGE = 5;
 async function searchCandidates(
   deps: StitchDeps, index: SpaceIndex, page: IndexedPage, query: string, limit: number,
 ): Promise<{ candidates: Candidate[] } | { error: string }> {
-  const proposed = await deps.semantic(query, SEARCH_LIMIT, { spaceKey: deps.spaceKey });
+  const proposed = await deps.semantic(query, SEARCH_LIMIT, { spaceKey: deps.spaceKey, pool: { session: deps.session, spaceKey: deps.spaceKey, pages: index } });
   if (proposed.error) return { error: proposed.error };
   const exact = await textSearch(deps.session, deps.spaceKey, page.title);
   if (exact.failure) return { error: textFailureLine(exact) };

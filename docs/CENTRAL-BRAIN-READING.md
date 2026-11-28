@@ -11,7 +11,7 @@ This guide is for any client that reads the Central Brain: Claude Code, Codex or
 | [Atlassian brokers](../modules/atl-jira-brokers/README.md) | Policy-enforced access under a service account: search with evidence labels, guarded writes, computed runtime labels, readback |
 | Observation agents (`claude-obs`, Codex candidates through the Maestro) | The only path that files new observations |
 | `brain-drainage` and the evidence confirm path | The only lifecycle workflows: they repair pages and confirm or refute them |
-| Teamwork Graph and Rovo | Optional semantic candidate search; a hit from them is a locator, not evidence |
+| Teamwork Graph and Rovo, or the runtime's small model | Semantic candidate search behind the broker (`KHEREP_SEMANTIC_BACKEND=twg|model`, issue #1020); a hit from either is a locator, not evidence |
 | [Control Plane](../modules/control-plane/README.md) | Session messaging; it carries no knowledge |
 
 ## Reading rules

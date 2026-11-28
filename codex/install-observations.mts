@@ -5,7 +5,7 @@ import { pathToFileURL } from 'node:url';
 import { InstallTransaction } from './lib/install-transaction.mts';
 import { renderAgent } from './lib/component-render.mts';
 import { selectModelResolution } from './lib/model-install-state.mts';
-import { copyObservationBroker, observationFiles, PREDECESSOR_OBSERVATION_TOOLS, renderObservationPublisher, renderObservationHook } from './lib/observation-projection.mts';
+import { copyObservationBroker, observationFiles, OBSERVATION_TOOLS, PREDECESSOR_OBSERVATION_ENV_VARS, PREDECESSOR_OBSERVATION_TOOLS, renderObservationPublisher, renderObservationHook } from './lib/observation-projection.mts';
 import { copyObservationSnapshot, observationHash } from './lib/observation-source.mts';
 import { stableNodePath } from './lib/node-path.mts';
 import { observationWiring } from './lib/observation-wiring.mts';
@@ -93,6 +93,8 @@ function prepareObservationPublisher(options: ObservationInstallOptions) {
     const promotionPredecessor = JSON.parse(read(path.join(repo, 'codex', 'parity', 'observation-promotion-predecessor.json'))) as Record<string, string>;
     // Issue #989: frozen exact 132221d6 bytes, before links-refused named its reasons.
     const reasonsPredecessor = JSON.parse(read(path.join(repo, 'codex', 'parity', 'observation-link-reasons-predecessor.json'))) as Record<string, string>;
+    // Issue #1020: frozen exact ba8cf9b9 bytes, before the semantic backend dispatcher.
+    const semanticPredecessor = JSON.parse(read(path.join(repo, 'codex', 'parity', 'observation-semantic-backend-predecessor.json'))) as Record<string, string>;
     const source = (relative: string) => read(path.join(repo, relative));
     const configFile = path.join(home, 'config.toml'), beforeConfig = read(configFile);
     const start = beforeConfig.indexOf(START), end = beforeConfig.indexOf(END);
@@ -149,11 +151,12 @@ function prepareObservationPublisher(options: ObservationInstallOptions) {
     const contextConfig = config;
     let insertedText = '', insertedAt = 0, swapped: { at: number; before: string } | null = null;
     if (config.includes('[mcp_servers.kherep_observations]')) {
-        // Issue #736: the exact one-tool table is a known predecessor and is
-        // replaced in place; any other table is still drift.
-        const previous = renderObservationPublisher({ entry: path.join(workspace, 'tools', 'observation-stdio.mts'), home }, wiring.node, PREDECESSOR_OBSERVATION_TOOLS);
+        // Issues #736 and #1020: the exact one-tool and two-tool tables with the
+        // earlier env_vars are known predecessors, replaced in place; any other table is still drift.
         const managed = config.slice(start, end + commandDelta);
-        if (config.split('[mcp_servers.kherep_observations]').length !== 2 || (!managed.includes(table) && managed.split(previous).length !== 2))
+        const previous = [OBSERVATION_TOOLS, PREDECESSOR_OBSERVATION_TOOLS].map(tools => renderObservationPublisher({ entry: path.join(workspace, 'tools', 'observation-stdio.mts'), home },
+            wiring.node, tools, PREDECESSOR_OBSERVATION_ENV_VARS)).find(known => managed.split(known).length === 2) ?? '';
+        if (config.split('[mcp_servers.kherep_observations]').length !== 2 || (!managed.includes(table) && !previous))
             throw new Error('observation-tool-table-drift');
         if (!managed.includes(table)) {
             const at = start + managed.indexOf(previous);
@@ -177,7 +180,8 @@ function prepareObservationPublisher(options: ObservationInstallOptions) {
         const relative = `modules/atl-jira-brokers/${name}`;
         if (fs.existsSync(file) && read(file) !== source(relative) && read(file) !== predecessor[relative] && read(file) !== lookupPredecessor[relative]
             && read(file) !== headerPredecessor[relative] && read(file) !== prosePredecessor[relative] && read(file) !== scopedPredecessor[relative] && read(file) !== handbackPredecessor[relative]
-            && read(file) !== linkingPredecessor[relative] && read(file) !== promotionPredecessor[relative] && read(file) !== reasonsPredecessor[relative])
+            && read(file) !== linkingPredecessor[relative] && read(file) !== promotionPredecessor[relative] && read(file) !== reasonsPredecessor[relative]
+            && read(file) !== semanticPredecessor[relative])
             throw new Error('observation-broker-drift');
     }
     // Reverse exactly the validated command-line edits and the optional table insertion.
